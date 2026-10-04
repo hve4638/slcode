@@ -7,5 +7,5 @@ superlite 용 에이전트 하네스 slcode 와 그 superlite 플러그인(id `s
 - 플러그인 id 는 `slcode` 다 (2026-10-04 `agent` 에서 바뀜). 설정·storage·팔레트·사이드바 id 가 이 값을 따른다.
 - 플러그인이 쓰는 API(`api.services`, `ServiceStartOptions`, `webUrl` 등)와 와이어는 superlite repo(code-superlight)의 `plugin-api/` 가 정한다. 이 repo 는 그 소비자다.
 - 배포 구조(플러그인 소스 설치 + Releases 바이너리 자가 설치)의 결정 문서는 ws repo 의 `docs/report/slcode-distribution.html` 이다. ticket·보고서도 ws repo(code-superlight-ws)에 둔다.
-- 빌드·테스트: `cd slcode && pnpm install && pnpm build && pnpm test`. `~/.local/bin/slcode` 는 이 체크아웃의 `slcode/dist/cli.js` 를 가리킨다 (재빌드 뒤 `chmod +x`).
+- 빌드·테스트: `cd slcode && pnpm install && pnpm build && pnpm test`. 바이너리 zip 은 `slcode/scripts/release.sh` (자산 이름·zip 구조는 slcode/README.md "바이너리 배포", 플러그인 자가 설치가 그 규칙을 읽는다). `~/.local/bin/slcode` 는 이 체크아웃의 `slcode/dist/cli.js` 를 가리킨다 (재빌드 뒤 `chmod +x`).
 - intentir 를 쓴다. 의도가 바뀌는 변경은 `.itir/` 를 먼저 고치고, 커밋 전에 `itir check` 를 통과시킨다 (error 0). `main.js`·`slcode/web/` 은 JS 라 검사 밖이다.
