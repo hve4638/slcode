@@ -1,0 +1,15 @@
+role: 기동 잠금 startup.lock (O_EXCL, 내용 pid — Codex app-server-startup.lock 선례). 종료 경쟁 대응: 살아 있는 소유자가 있으면 바로 포기하지 않고 waitMs(3s) 동안 100ms 간격으로 다시 본다 — 죽어 가는 core 가 lock 을 곧 지우는 틈에 새 core 가 뜨는 경우 (background-service 검증에서 발견, 2026-09-26)
+
+export fn pidAlive(pid) -> Bool {
+  role: kill(pid, 0) — EPERM 도 살아 있음
+}
+export fn acquireLock(lockPath, pid, waitMs) -> LockResult {
+  role: 쥔다 / 살아 있는 소유자를 기다리다 포기 {ok:false, holder} / 죽은 소유자의 스테일 잠금은 지우고 다시
+}
+export fn readPid(p) -> Int {
+  role: 잠금·pid 파일의 pid, 없으면 0
+}
+export fn releaseLock(lockPath, pid) {
+  role: 소유자만 지운다 — 다른 core 가 새 잠금을 만들었을 수 있다
+}
+type LockResult

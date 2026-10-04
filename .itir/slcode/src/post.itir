@@ -1,0 +1,23 @@
+import { corePaths, ensureDir } from './paths'
+import { acquireLock, releaseLock } from './lock'
+import { CoreError, ERR, PROTOCOL_VERSION } from './protocol'
+
+role: 우체국 프로세스 진입 (node dist/post.js, 클라이언트가 detached 로 띄운다) — 머신에 하나, 세션을 쥐지 않는다. 하는 일 셋: 세션 등록(post.register 한 연결이 살아 있는 동안 live 목록, 끊기면 제거 — 같은 id 재등록은 새 연결이 이긴다), 우편 보관(mail/<to>/<id>.json, tmp+rename, ack 로 삭제 — 진실은 디스크), 시그널({event:mail, params:{to}} 만 — 본문은 세션이 mail.fetch). 폴링 없음 (사용자 결정 2026-09-27). 수명: 등록 0·연결 0 이 GRACE(SLCODE_GRACE_SECS, 기본 10s) 지속되면 자진 종료, SIGHUP 무시. 종료 경쟁 순서는 옛 core 와 같다 — server.close·소켓·pid·lock 먼저 삭제, 이후 요청엔 shutting_down, post.shutdown 시그널, 100ms 뒤 exit. 버전 공존: 옛 세션 프로세스가 붙어도 깨지지 않게 계약은 늘리기만 mail.send 는 선택 필드 re(답장의 원 우편 id)를 봉투에 그대로 싣는다(2026-10-02).
+
+val GRACE_MS
+val handlers
+fn readMail(to) -> Mail[] {
+  role: 받는 세션의 보관 우편 전부, ts 순
+}
+fn writeMail(m) {
+  role: mail/<to>/<id>.json (tmp 뒤 rename)
+}
+fn onLine(conn, line) {
+  role: 프레임 한 줄 디스패치 — bad json / id+method / shutting_down / handlers[method] → {id,result} 또는 {id,error}
+}
+fn shutdown(reason) {
+  role: 위 종료 순서 — 한 번만
+}
+fn armGrace, disarmGrace {
+  role: idle 판정 타이머
+}

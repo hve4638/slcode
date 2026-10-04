@@ -1,0 +1,29 @@
+import { corePaths, ensureDir } from './paths'
+import { CoreError, isEvent } from './protocol'
+
+role: JSON 줄 RPC 클라이언트 — 세션 소켓(sessions/<슬러그>/<id>/sock, Methods)과 우체국(post.sock, PostMethods)에 같은 꼴로 붙는다. 우체국은 없으면 detached 로 띄운다 (tmux 의 클라이언트가 서버를 불러오는 방식); 세션 소켓은 띄우지 않는다 — 세션은 `slcode` 명령이 본체. 종료 경쟁: 우체국에 붙었는데 post.info 가 실패하면(종료 중) 150ms 뒤 다시, timeout(15s) 안에서 반복
+
+export val PKG
+export val VERSION
+export class RpcClient {
+  role: 타입 있는 요청 id 매칭(Methods 또는 PostMethods)·이벤트 구독·닫힘 프로미스 done. 끊기면 대기 요청은 closed 로 거절하고 disconnected 를 이벤트로 흘린다
+  export fn request(method, params) -> result {
+    role: 타입 매칭 요청
+  }
+  export fn onEvent(h) {
+    role: 이벤트 구독 — 해제 함수
+  }
+  export fn close() {
+    role: 소켓 end
+  }
+}
+export fn connectSession(sockPath) -> RpcClient {
+  role: 세션 소켓에 붙는다 — 없으면 no_session
+}
+export fn spawnPost(dir) -> Int? {
+  role: process.execPath dist/post.js 를 detached·unref 로, stdio 는 post.log, env 는 CLAUDE_* 제거 + SLCODE_DIR
+}
+export fn connectPost(opts) -> PostConnectResult {
+  role: 우체국에 붙거나 띄운다 — {client, spawned, pid}. autoStart false 면 no_post
+}
+type PostConnectOptions

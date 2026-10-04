@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>slcode</title>
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<div id="root"></div>
+<script type="module">
+// 웹 모드 캐리어. 이 서버(slcode 명령 하나)는 세션 하나만 다룬다 — 어느 세션인지는 server.info 로 받는다.
+// ?token= 은 localStorage 로 옮기고 URL 에서 지운다 (루프백 밖으로 열었을 때만 붙는다).
+import { WsTransport } from './rpc.js';
+import { mountAgentFront } from './app.js';
+
+const q = new URLSearchParams(location.search);
+if (q.get('token')) { localStorage.setItem(`slcode.token.${location.host}`, q.get('token')); history.replaceState(null, '', location.pathname); }
+const token = localStorage.getItem(`slcode.token.${location.host}`) ?? '';
+// 상대 경로 — superlite /svc/<토큰>/ 아래에서도 이 페이지 옆의 ws 로 (ticket plugin-service-web)
+const wsUrl = new URL('ws', location.href); wsUrl.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'; wsUrl.search = '';
+const transport = new WsTransport(wsUrl.href, token);
+mountAgentFront(document.getElementById('root'), transport, {
+  onAttach: (id, info) => { document.title = info.title || `agent · ${id}`; },
+});
+</script>
+</body>
+</html>

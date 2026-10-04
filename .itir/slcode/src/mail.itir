@@ -1,0 +1,11 @@
+import { Mail } from './protocol'
+
+role: 우편 본문 꼴 (ticket superlite-agent-messaging, 사용자 확정 2026-10-02 — 스탠드얼론 slcode 메시징, superlite 등록부 매핑 없음) — 세션 턴에 들어가는 머리말 `[mail <id> from <세션 id> (<제목>) at <iso> kind=<kind> re=<원 우편 id>]` + 둘째 줄 `답장: slcode reply <id> <본문>` + 본문. serve.ts(flushMail, 재기동 때 받은 우편 복원)와 cli.ts(check 출력)가 같은 꼴을 쓴다. web/app.js 의 MAIL_HEAD 는 이 정규식의 사본(브라우저라 import 못 한다). 보낸 이는 세션 id(공백 없음), 제목은 괄호 안 — 역할 개념이 없어 제목이 그 자리. 답장 안내 줄은 우편을 받은 Claude 가 Claude Code 의 SendMessage 를 부른 실측(agent-core-split) 때문
+
+export fn formatMail(m, fromTitle) -> String {
+  role: 머리말 + 답장 안내 + 본문(문자열 아니면 JSON)
+}
+export val MAIL_HEAD
+export fn parseMailHeads(text) -> MailHead[] {
+  role: 한 턴 본문(빈 줄로 이은 여러 통)에서 우편 id·보낸 이를 꺼낸다 — 재기동 뒤 reply 대상 복원
+}

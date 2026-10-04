@@ -1,0 +1,30 @@
+import { ClaudeSession } from './session'
+import { CodexSession } from './codex'
+import { AgentSession } from './base'
+import { EventLog } from './eventLog'
+import { connectPost, VERSION, RpcClient } from './client'
+import { corePaths, ensureDir, readOrCreateToken } from './paths'
+import { CoreError, ERR, PROTOCOL_VERSION } from './protocol'
+import { formatMail, parseMailHeads } from './mail'
+
+role: 세션 프로세스 본체 — `slcode` 명령 하나 = 세션 하나 (사용자 결정 2026-09-27, ticket agent-core-split). 세션(AgentSession — meta.vendor 가 codex 면 CodexSession, 아니면 ClaudeSession; 새 세션의 벤더는 ServeOptions.vendor, 2026-09-30)을 직접 쥐고 같은 Methods 를 두 통로로 낸다: sessions/<슬러그>/<id>/sock UDS(소켓 0600 이 곧 인증 — CLI·superlite)와 http+WebSocket /ws(정적 web/ + 프레임, 토큰은 루프백 밖 호스트일 때만 core.auth 로 검사). params.id 가 이 세션이 아니면 거절. 세션 선택: 새로 / --resume id(find) / --continue(그 cwd 슬러그 폴더에서 updatedAt 최대). 같은 세션의 소켓이 살아 있으면(붙어 본다) 거절 — 다른 slcode 가 서빙 중. 우체국: connectPost 로 붙어 post.register, 연결 유지; 시그널 mail → mail.fetch → seen 으로 중복 제거 → idle(첫 프롬프트 전 starting 포함)이면 즉시, 아니면 다음 idle 에 한 턴(origin 'mail', 여러 통은 한 본문)으로 session.send 하고 mail.ack. 우체국이 끊기면 재접속 — 세션 동작은 우체국과 무관. 수명: close(Ctrl-C·session.close·벤더 종료) → 세션 close·WS·UDS 닫고 소켓 삭제·우체국 연결 끊기(등록 해제). 로그는 남아 --resume. 옛 평탄 구조는 기동 때 EventLog.migrate. SDK 자식에는 CLAUDE_* 를 뺀 env 메시징(2026-10-02): 벤더 env 에 SLCODE_SESSION=<id>; 우편 턴 본문은 mail.ts formatMail(보낸 이 제목은 같은 디렉토리의 그 세션 meta 에서); 받은 우편 id→보낸 이 는 메모리에 두고 재기동 때 로그의 mail 턴에서 복원(session.reply 의 대상); session.ask 는 받는 이가 우체국 live 목록에 없으면 not_live 로 거절하고(꺼진 세션에 무기한 대기 방지), 있으면 kind=ask 로 보내고 대기 표에 넣는다 — fetchMail 이 kind=reply 로 대기 중인 re 를 보면 턴에 넣지 않고 그 요청을 푼다(ack 포함), 타임아웃·닫힘이면 거절; session.check 는 지금 우체국에서 가져와 inbox 전부를 ack 하고 본문으로 돌려준다(진행 중 턴 안에서 밀린 우편을 읽는 용도). 세 번째 통로 stdio(ServeOptions.stdio, ticket agent-plugin-card 2026-10-04): 이 프로세스의 stdin/stdout 을 UDS 와 같은 프레임 연결 하나로 — stdin 의 JSON 줄은 onLine 으로, 응답·이벤트는 stdout 에 JSON 줄, 인증 없음(띄운 데몬이 신뢰 경계), stdin 이 닫히면 연결만 끊고 세션은 산다. superlite 백그라운드 서비스의 stdio 통로가 이것에 붙는다. reachable(url) 은 0.0.0.0 을 접속 가능한 IPv4 로 — CLI·hello·server.info.url 이 같은 값.
+
+export val WEB_DIR
+val SDK_ENV
+fn sockAlive(p) -> Bool {
+  role: 소켓 파일에 붙어 본다 — 살아 있는 프로세스 것인지
+}
+export fn serveSession(opts) -> ServeHandle {
+  role: 세션 선택·생성 → UDS listen → (webSock 이면) 서비스 웹 http+wss(인증 없음 — UDS 와 같은 신뢰 경계, ticket plugin-service-web) → (web 이면) TCP http+wss → 우체국 등록 → {url, sock, session, close, done}
+}
+export fn staticHandler(req, res) {
+  role: web/ 정적 파일 — 세션 웹과 resume --stdio 프록시의 서비스 웹이 같이 쓴다. 페이지의 주소는 상대라 relay /svc/<토큰>/ 접두사 아래에서도 돈다
+}
+export fn listenAddr(server, addr) {
+  role: 서비스 웹 소켓 주소(SUPERLITE_SERVICE_WEB)에 listen — `/` 로 시작하면 uds(남은 파일 지우고 0600), 아니면 host:port
+}
+type ServeOptions
+type ServeHandle
+export fn reachable(url) -> url {
+  role: 0.0.0.0 바인드 주소를 첫 비내부 IPv4 로 바꾼다 (없으면 localhost)
+}

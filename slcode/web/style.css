@@ -1,0 +1,330 @@
+/* agent front — Codex Desktop 감각: 중립 회색, 넓은 여백, 가운데 한 열, 둥근 작성창. 라이트·다크는 시스템을 따른다.
+   모든 선택자는 .acf 아래 — superlite 카드(Shadow DOM)에 그대로 넣어도 밖으로 새지 않는다 */
+:root {
+  --acf-bg: #f7f7f8; --acf-panel: #ffffff; --acf-fg: #1f1f23; --acf-muted: #6b6f76; --acf-line: #e2e3e8; --acf-soft: #ececef;
+  --acf-accent: #2f6fed; --acf-ok: #17834a; --acf-warn: #b45f06; --acf-err: #c93a3a; --acf-user: #eaecf1; --acf-shadow: rgba(0,0,0,.12);
+  --acf-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --acf-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, "Noto Sans KR", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --acf-bg: #18181b; --acf-panel: #1f1f23; --acf-fg: #ececef; --acf-muted: #9a9ca3; --acf-line: #2c2c31; --acf-soft: #26262b;
+    --acf-accent: #6b9cff; --acf-ok: #3ec27a; --acf-warn: #f0a23a; --acf-err: #ef6b6b; --acf-user: #26262b; --acf-shadow: rgba(0,0,0,.4);
+  }
+}
+html, body { margin: 0; height: 100%; background: var(--acf-bg); }
+#root { height: 100%; container-type: inline-size; } /* 좁은 화면 기준은 창이 아니라 이 컨테이너 폭 — superlite 카드 안에서는 카드 폭 (ticket agent-plugin-card) */
+
+.acf { font: 15px/1.55 var(--acf-sans); color: var(--acf-fg); background: var(--acf-bg); height: 100%; display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr) 300px; min-height: 320px; }
+.acf * { box-sizing: border-box; }
+.acf, .acf * { scrollbar-width: thin; scrollbar-color: var(--acf-line) transparent; }
+.acf button { font: inherit; color: inherit; background: var(--acf-panel); border: 1px solid var(--acf-line); border-radius: 8px; padding: 5px 11px; cursor: pointer; }
+.acf button:hover { background: var(--acf-soft); }
+.acf button.primary { background: var(--acf-accent); border-color: var(--acf-accent); color: #fff; }
+.acf button.primary:hover { filter: brightness(1.08); }
+.acf button.danger { color: var(--acf-err); }
+.acf button.ghost { border-color: transparent; background: transparent; color: var(--acf-muted); }
+.acf button.ghost:hover { background: var(--acf-soft); color: var(--acf-fg); }
+.acf button:disabled { opacity: .5; cursor: default; }
+.acf button:focus-visible { outline: 2px solid var(--acf-accent); outline-offset: 1px; }
+.acf code, .acf pre { font-family: var(--acf-mono); font-size: 13px; }
+.acf pre { line-height: 1.5; tab-size: 2; }
+.acf a { color: var(--acf-accent); }
+
+/* 왼쪽 레일 — 세션 이름·cwd·상태. 상단 바 대신 (2026-09-27) */
+.acf .left { padding: 18px 14px; display: flex; flex-direction: column; gap: 6px; min-width: 0; align-items: flex-start; }
+.acf .left .title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.acf .left .cwd { color: var(--acf-muted); font-size: 12px; font-family: var(--acf-mono); overflow-wrap: anywhere; }
+.acf .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--acf-line); color: var(--acf-muted); white-space: nowrap; }
+.acf .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.acf .pill.running { color: var(--acf-accent); }
+.acf .pill.requires_action { color: var(--acf-warn); }
+.acf .pill.idle { color: var(--acf-ok); }
+.acf .pill.exited, .acf .pill.disconnected { color: var(--acf-err); }
+.acf .pill.starting, .acf .pill.stored { color: var(--acf-muted); }
+
+/* 가운데 = 피드 + 작성창 */
+.acf .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.acf .feed { flex: 1; overflow-y: auto; padding: 20px 16px 8px; scroll-behavior: smooth; }
+.acf .col { max-width: 780px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+.acf .older:not(:empty) { margin-bottom: 14px; } /* 앞 턴 붙이기 — 위치 보정은 app.js 가 직접 한다, 브라우저 scroll anchoring 과 겹치면 두 번 밀린다 */
+.acf .feed { overflow-anchor: none; }
+
+.acf .user { align-self: flex-end; max-width: 85%; display: flex; flex-direction: column; align-items: flex-end; }
+.acf .user .bubble { background: var(--acf-user); border-radius: 14px 14px 4px 14px; padding: 9px 14px; white-space: pre-wrap; word-break: break-word; }
+.acf .acts { display: flex; gap: 4px; align-items: center; margin: 2px 0 -8px; opacity: 0; transition: opacity .15s; font-size: 12px; }
+.acf .user:hover .acts, .acf .assistant:hover .acts, .acf .acts:focus-within { opacity: 1; }
+.acf .acts button { padding: 1px 7px; font-size: 12px; }
+.acf .acts button.ico { width: 24px; height: 24px; padding: 0; border: 0; background: transparent; color: var(--acf-muted); border-radius: 6px; display: grid; place-items: center; }
+.acf .acts button.ico:hover { background: var(--acf-soft); color: var(--acf-fg); }
+.acf .acts button.ico svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.acf .acts .q { color: var(--acf-muted); margin-right: 4px; }
+.acf .user .acts { justify-content: flex-end; }
+.acf .assistant .acts { margin-left: -6px; }
+.acf .user .origin { display: block; font-size: 11px; color: var(--acf-muted); margin-bottom: 2px; }
+.acf .assistant { word-break: break-word; }
+/* 마지막 블록의 아래 여백은 없앤다 — 끝에 붙는 아이콘 줄(.acts)은 세지 않는다 */
+.acf .assistant > :first-child { margin-top: 0; } .acf .assistant > :nth-last-child(1 of :not(.acts)) { margin-bottom: 0; }
+.acf .assistant p { margin: 0 0 .7em; }
+.acf .assistant pre { margin: .7em 0; background: var(--acf-soft); border: 1px solid var(--acf-line); border-radius: 8px; padding: 10px 12px; overflow-x: auto; }
+.acf .assistant code { background: var(--acf-soft); padding: 1px 5px; border-radius: 4px; font-size: .87em; }
+.acf .assistant pre code { background: none; padding: 0; font-size: 13px; }
+.acf .assistant h2, .acf .assistant h3, .acf .assistant h4, .acf .assistant h5 { margin: 1.2em 0 .45em; font-weight: 600; line-height: 1.35; }
+.acf .assistant h2 { font-size: 1.2em; } .acf .assistant h3 { font-size: 1.08em; } .acf .assistant h4, .acf .assistant h5 { font-size: 1em; }
+.acf .assistant ul, .acf .assistant ol { margin: .3em 0 .7em; padding-left: 1.5em; }
+.acf .assistant li { margin: .15em 0; } .acf .assistant li::marker { color: var(--acf-muted); }
+.acf .assistant blockquote { margin: .7em 0; padding: 2px 0 2px 12px; border-left: 3px solid var(--acf-line); color: var(--acf-muted); }
+.acf .assistant a { text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.acf .assistant hr { border: 0; border-top: 1px solid var(--acf-line); margin: 1em 0; }
+/* 표 — 넓으면 표 안에서 가로 스크롤 */
+.acf .assistant table { display: block; max-width: 100%; width: max-content; overflow-x: auto; border-collapse: collapse; margin: .7em 0; font-size: 14px; }
+.acf .assistant th, .acf .assistant td { border: 1px solid var(--acf-line); padding: 5px 10px; text-align: left; vertical-align: top; }
+.acf .assistant th { background: var(--acf-soft); font-weight: 600; }
+.acf .assistant.streaming::after { content: "▍"; color: var(--acf-muted); animation: acf-blink 1s steps(2) infinite; }
+@keyframes acf-blink { to { opacity: 0; } }
+
+.acf details.thinking { color: var(--acf-muted); font-size: 13px; }
+.acf details.thinking summary { min-width: 0; }
+.acf details.thinking summary .pre { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.acf details.thinking[open] summary .pre { display: none; } .acf details.thinking[open] summary::after { content: "생각"; }
+.acf details.thinking .t { white-space: pre-wrap; margin-top: 4px; padding-left: 12px; border-left: 2px solid var(--acf-line); }
+
+/* 도구 블록 — 한 줄 요약, 펼치면 입력·결과 */
+.acf .tool { border: 1px solid var(--acf-line); border-radius: 10px; background: var(--acf-panel); font-size: 13px; overflow: hidden; }
+.acf .tool summary { display: flex; align-items: center; gap: 8px; padding: 7px 12px; cursor: pointer; list-style: none; }
+.acf .tool summary::-webkit-details-marker { display: none; }
+.acf .tool summary:hover { background: var(--acf-soft); }
+.acf .tool .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--acf-muted); flex: none; }
+.acf .tool.running .dot { background: var(--acf-accent); animation: acf-blink 1s steps(2) infinite; }
+.acf .tool.ok .dot { background: var(--acf-ok); } .acf .tool.err .dot { background: var(--acf-err); }
+.acf .tool .name { font-weight: 600; flex: none; }
+.acf .tool .arg { color: var(--acf-muted); font-family: var(--acf-mono); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
+.acf .tool .detail { border-top: 1px solid var(--acf-line); padding: 10px 12px 12px; display: grid; gap: 6px; }
+.acf .tool .detail pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; background: var(--acf-soft); border-radius: 8px; padding: 8px 10px; font-size: 12px; }
+.acf .tool.err .detail pre:last-of-type { color: var(--acf-err); }
+/* 서브에이전트 작업 — Agent 도구 카드 안: 상태 줄(종류·토큰·도구 수·경과·마지막 도구·요약) + 중첩 피드 (2026-09-30) */
+.acf .tool .tstat { font-size: 12px; display: grid; gap: 2px; }
+.acf .tool .tstat .dim { color: var(--acf-muted); font-family: var(--acf-mono); }
+.acf .tool .tstat .sum { color: var(--acf-fg); }
+.acf .tool .sub { display: flex; flex-direction: column; gap: 8px; border-left: 2px solid var(--acf-line); padding-left: 10px; font-size: 13px; }
+.acf .tool .sub:empty { display: none; }
+.acf .tool .detail .lbl { font-size: 12px; font-weight: 600; color: var(--acf-muted); }
+
+/* 승인·질문 카드 */
+/* 카드 외곽 E안 (사용자 2026-09-28): 중립 테두리 + 왼쪽 3px 띠 — 질문은 파랑, 승인은 주황 */
+.acf .card { --acf-card: var(--acf-warn); border: 1px solid var(--acf-line); border-left: 3px solid var(--acf-card); border-radius: 12px; background: var(--acf-panel); padding: 12px 14px; display: grid; gap: 10px; min-width: 0; }
+.acf .card.ask { --acf-card: var(--acf-accent); }
+.acf .card.resolved { --acf-card: var(--acf-line); opacity: .75; }
+.acf .card .head { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.acf .card .head .kind { font-size: 11px; font-weight: 600; line-height: 18px; color: var(--acf-card); border: 1px solid currentColor; border-radius: 999px; padding: 0 7px; }
+.acf .card.resolved .head .kind { color: var(--acf-muted); }
+/* 서브에이전트가 낸 요청이면 헤더 끝에 출처 */
+.acf .card .head .from { margin-left: auto; font-size: 12px; font-weight: 400; color: var(--acf-muted); }
+.acf .card pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 200px; overflow: auto; background: var(--acf-soft); border-radius: 8px; padding: 8px 10px; }
+/* 명령 미리보기는 본문 크기로, 펼친 입력 원문은 한 단계 작게 */
+.acf .card > pre { border: 1px solid var(--acf-line); padding: 10px 12px; }
+.acf .card details.in pre { font-size: 12px; color: var(--acf-muted); }
+.acf .card .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+/* 질문 카드 — 탭 띠(질문마다 하나 + 제출), 패널, 구분선 아래 '채팅으로 답하기' */
+.acf .card .tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.acf .card .tabs:empty { display: none; }
+.acf .card .tab { display: inline-flex; align-items: center; gap: 6px; padding: 3px 12px; border: 1px solid var(--acf-line); border-radius: 999px; background: transparent; color: var(--acf-muted); font-size: 13px; font-weight: 500; }
+.acf .card button.tab:hover { color: var(--acf-fg); }
+.acf .card .tab i { width: 11px; height: 11px; border: 1.5px solid currentColor; border-radius: 3px; display: inline-block; }
+.acf .card .tab.done { color: var(--acf-fg); }
+.acf .card .tab.done i { border-color: var(--acf-ok); background: var(--acf-ok); box-shadow: inset 0 0 0 2px var(--acf-panel); }
+.acf .card .tab.on, .acf .card button.tab.on:hover { background: var(--acf-accent); border-color: var(--acf-accent); color: #fff; font-weight: 600; }
+.acf .card .tab.on.done i { border-color: #fff; background: #fff; box-shadow: inset 0 0 0 2px var(--acf-accent); }
+.acf .card .tab.submit { border-style: dashed; }
+.acf .card .review ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.acf .card .review li .a { color: var(--acf-ok); padding-left: 14px; }
+.acf .card .review li .a.none { color: var(--acf-muted); }
+.acf .card .review .warn { color: var(--acf-warn); font-size: 13px; }
+.acf .card .chat { border-top: 1px solid var(--acf-line); padding-top: 8px; margin-top: 2px; }
+.acf .card .q { display: grid; gap: 6px; }
+.acf .card .q .qt, .acf .card .review .qt { font-weight: 600; }
+.acf .card .q label { display: flex; gap: 10px; align-items: flex-start; padding: 7px 12px; border: 1px solid var(--acf-line); border-radius: 8px; cursor: pointer; }
+.acf .card .q label input { flex: none; margin: 5px 0 0; width: 14px; height: 14px; accent-color: var(--acf-accent); }
+.acf .card .q label:hover { background: var(--acf-soft); }
+.acf .card .q label:has(input:checked) { border-color: var(--acf-accent); background: var(--acf-soft); }
+.acf .card:focus { outline: none; }
+.acf .card.live:focus-visible .q .cur, .acf .card.live:focus .q .cur { box-shadow: 0 0 0 2px var(--acf-accent); }
+.acf .card .q label .d { color: var(--acf-muted); font-size: 13px; }
+.acf .card .q input[type=text] { font: inherit; padding: 7px 12px; border: 1px solid var(--acf-line); border-radius: 8px; background: transparent; color: inherit; }
+.acf .card .result { color: var(--acf-muted); font-size: 13px; }
+
+.acf .meta { color: var(--acf-muted); font-size: 12px; text-align: center; }
+.acf .meta.err { color: var(--acf-err); }
+.acf .notice { color: var(--acf-muted); font-size: 12px; border: 1px dashed var(--acf-line); border-radius: 10px; padding: 6px 12px; text-align: center; }
+
+/* 작성창 */
+/* 실행 중 표시 (2026-09-30) */
+.acf .busy { display: flex; align-items: baseline; gap: 6px; font-size: 13px; color: var(--acf-muted); padding: 2px 0; }
+.acf .busy .info { font-family: var(--acf-mono); font-size: 12px; }
+.acf .busy[hidden] { display: none; }
+.acf .busy i { font-style: normal; font-family: var(--acf-mono); color: var(--acf-accent); width: 1em; text-align: center; }
+.acf .busy .what { color: var(--acf-fg); }
+/* 입력창 자리의 대기 카드 (2026-09-30) */
+.acf .dock { padding: 8px 16px 14px; }
+.acf .dock:empty { display: none; }
+.acf .dock > .card { max-width: 780px; margin: 0 auto; }
+.acf .composer[hidden] { display: none; }
+/* 피드의 호출 표식 — 대기 중엔 클릭하면 그 카드가 입력창 자리로 */
+.acf .mark { display: flex; gap: 8px; align-items: baseline; font-size: 13px; color: var(--acf-muted); border: 1px solid var(--acf-line); border-radius: 10px; padding: 7px 12px; }
+.acf .mark .kind { font-weight: 600; color: var(--acf-warn); } .acf .mark.ask .kind { color: var(--acf-accent); }
+.acf .mark .what { font-family: var(--acf-mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.acf .mark .res { font-size: 12px; }
+.acf .mark.pending { cursor: pointer; background: var(--acf-panel); border-left: 3px solid var(--acf-warn); } .acf .mark.pending.ask { border-left-color: var(--acf-accent); }
+.acf .mark.pending:hover { background: var(--acf-soft); }
+.acf .mark.allow .res { color: var(--acf-ok); } .acf .mark.deny .res, .acf .mark.cancelled .res { color: var(--acf-err); }
+/* 접힘 공통 — 브라우저 기본 ▶ 대신 얇은 쉐브론 (사이드바 목록과 같은 꼴). 생각 블록·카드의 입력 펼침이 쓴다 (2026-09-30) */
+.acf details.chev > summary { list-style: none; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 6px; }
+.acf details.chev > summary::-webkit-details-marker { display: none; }
+.acf details.chev > summary::before { content: ""; width: 12px; height: 12px; flex: none; background: currentColor; opacity: .55; transition: transform .15s;
+  -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>') center/contain no-repeat;
+          mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>') center/contain no-repeat; }
+.acf details.chev[open] > summary::before { transform: rotate(90deg); }
+.acf .card details.in > summary { font-size: 12px; font-weight: 600; color: var(--acf-muted); padding: 2px 0; }
+.acf .card details.in > summary:hover { color: var(--acf-fg); }
+.acf .card details.in[open] > summary { margin-bottom: 6px; }
+.acf .composer { padding: 8px 16px 14px; }
+.acf .composer .box { max-width: 780px; margin: 0 auto; background: var(--acf-panel); border: 1px solid var(--acf-line); border-radius: 14px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+.acf .composer .row { display: flex; gap: 8px; align-items: flex-end; }
+.acf .composer .tools { display: flex; justify-content: flex-end; }
+.acf .composer button.add { width: 34px; height: 34px; padding: 0; font-size: 20px; line-height: 1; }
+.acf .composer .tools { gap: 6px; }
+.acf button.pill-btn { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 3px 8px 3px 10px; border-radius: 8px; background: var(--acf-soft); color: var(--acf-fg); }
+.acf button.pill-btn svg { width: 14px; height: 14px; fill: none; stroke: var(--acf-muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.acf button.effort { text-transform: capitalize; }
+.acf #acf-effort { min-width: 260px; padding: 10px 14px 14px; }
+.acf #acf-effort .lbl { text-align: center; text-transform: capitalize; font-size: 15px; margin-bottom: 10px; }
+.acf #acf-effort .track { position: relative; height: 32px; }
+.acf #acf-effort input[type=range] { position: absolute; inset: 0; width: 100%; margin: 0; -webkit-appearance: none; appearance: none; background: transparent; cursor: pointer; z-index: 1; }
+.acf #acf-effort input[type=range]::-webkit-slider-runnable-track { height: 32px; border-radius: 16px; background: linear-gradient(to right, var(--acf-accent) var(--p), var(--acf-soft) var(--p)); }
+.acf #acf-effort input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 32px; height: 32px; border-radius: 50%; background: #fff; border: 0; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
+.acf #acf-effort input[type=range]::-moz-range-track { height: 32px; border-radius: 16px; background: var(--acf-soft); }
+.acf #acf-effort input[type=range]::-moz-range-progress { height: 32px; border-radius: 16px; background: var(--acf-accent); }
+.acf #acf-effort input[type=range]::-moz-range-thumb { width: 32px; height: 32px; border-radius: 50%; background: #fff; border: 0; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
+/* 단계 점: 트랙 위에 n 개, 엄지 폭만큼 안쪽으로 */
+.acf #acf-effort .track i { position: absolute; top: 14px; width: 4px; height: 4px; border-radius: 50%; background: var(--acf-muted); opacity: .6; pointer-events: none; z-index: 2; }
+.acf .menu { position: fixed; margin: 0; inset: auto; min-width: 220px; max-height: 70vh; overflow-y: auto; padding: 6px; border: 1px solid var(--acf-line); border-radius: 12px; background: var(--acf-panel); color: var(--acf-fg); box-shadow: 0 8px 24px var(--acf-shadow); font: 14px/1.4 var(--acf-sans); }
+.acf .menu .item { display: flex; justify-content: space-between; align-items: center; width: 100%; text-align: left; border: 0; background: transparent; padding: 7px 10px; border-radius: 8px; }
+.acf .menu .item:hover { background: var(--acf-soft); }
+.acf .menu .item[aria-checked=true]::after { content: "✓"; color: var(--acf-accent); }
+.acf .menu .item.toggle { border-top: 1px solid var(--acf-line); border-radius: 0; margin-top: 4px; padding-top: 10px; color: var(--acf-muted); }
+.acf .menu .item.toggle::after { content: "›"; }
+.acf .menu .more { display: none; } .acf .menu .more.open { display: block; }
+/* 권한 모드 메뉴 (agent-core-claude-finish) — 이름 뒤에 흐린 설명, 체크는 맨 뒤 */
+.acf #acf-mode .item { gap: 12px; }
+.acf #acf-mode .item .desc { flex: 1; color: var(--acf-muted); font-size: 12px; }
+/* 슬래시 명령 자동완성 (agent-core-claude-finish) — 한 항목 한 줄: 이름은 고정폭으로 앞, 설명은 흐리게 뒤에서 잘린다 */
+.acf .menu.slash .item { justify-content: flex-start; gap: 12px; min-width: 0; padding: 5px 10px; }
+.acf .menu.slash .item[aria-selected=true] { background: var(--acf-soft); }
+/* 인자 힌트가 길면 이름 쪽이 먼저 잘린다 — 설명이 화면 밖으로 밀리지 않게 */
+.acf .menu.slash .name { flex: 0 1 auto; min-width: 0; max-width: 60%; font-family: var(--acf-mono); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acf .menu.slash .hint { color: var(--acf-muted); }
+.acf .menu.slash .desc { flex: 1; min-width: 0; color: var(--acf-muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acf .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.acf .chips:empty { display: none; }
+.acf .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 8px; border: 1px solid var(--acf-line); border-radius: 8px; background: var(--acf-soft); max-width: 260px; }
+.acf .chip img { height: 40px; border-radius: 4px; }
+.acf .chip a { cursor: pointer; color: var(--acf-muted); }
+.acf .user .chips { margin-bottom: 6px; }
+.acf .user .chip { flex-direction: column; align-items: flex-start; max-width: 100%; }
+.acf .user .chip img { max-height: 160px; max-width: 100%; }
+.acf .composer .box:focus-within { border-color: var(--acf-accent); }
+.acf .composer textarea { flex: 1; resize: none; border: 0; outline: 0; background: transparent; color: inherit; font: inherit; line-height: 1.5; max-height: 220px; padding: 4px 0; }
+.acf .composer button.send { width: 34px; height: 34px; padding: 0; border-radius: 50%; display: grid; place-items: center; align-self: flex-end; }
+.acf .composer button.send svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.acf .composer button.send:disabled { background: var(--acf-soft); border-color: var(--acf-soft); color: var(--acf-muted); opacity: 1; }
+.acf .composer button.stop { color: var(--acf-err); }
+
+/* 사이드바 — 섹션마다 접히는 카드 (A안, 사용자 2026-09-28). 안쪽 목록 details 는 쉐브론·개수 배지 */
+.acf .side { overflow-y: auto; padding: 14px 12px; font-size: 13px; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+/* 상단 요약 — claude 상태줄과 같은 정보 (폴더·repo/브랜치·플랜 리밋·컨텍스트·모델·비용), 아이콘은 외곽선 SVG (사용자 2026-09-30) */
+.acf .side .top { display: flex; flex-direction: column; gap: 5px; padding: 2px 4px 8px; font-size: 12px; font-family: var(--acf-mono); }
+.acf .side .top .row { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--acf-fg); }
+.acf .side .top .row > svg { width: 15px; height: 15px; flex: none; color: var(--acf-muted); fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.acf .side .top .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.acf .side .top .dim { color: var(--acf-muted); }
+.acf .side .top b.hot { color: var(--acf-err); }
+.acf .side .top .cost { margin-left: auto; color: var(--acf-muted); font-variant-numeric: tabular-nums; }
+.acf .side .top .lims { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+/* 두 막대는 같은 길이 — 오른쪽 칸을 고정 폭으로 */
+.acf .side .top .lim { display: grid; position: relative; grid-template-columns: 20px 1fr 40px; /* 남은 기간은 최대 5자 (4h02m·2d10h) */ align-items: center; gap: 6px; color: var(--acf-muted); font-size: 11px; }
+.acf .side .top .lim .bar { height: 5px; border-radius: 3px; background: var(--acf-soft); overflow: hidden; }
+.acf .side .top .lim .bar i { display: block; height: 100%; background: var(--acf-accent); border-radius: 3px; }
+.acf .side .top .lim.hot .bar i { background: var(--acf-err); }
+/* 사용량 % 는 줄에 두지 않고, 줄에 올리면 막대 위 작은 툴팁으로 (사용자 2026-09-30) */
+.acf .side .top .lim .v { position: absolute; bottom: calc(100% + 3px); left: calc(26px + (100% - 72px) / 2); transform: translateX(-50%); padding: 1px 7px; border: 1px solid var(--acf-line); border-radius: 6px; background: var(--acf-panel); color: var(--acf-fg); box-shadow: 0 2px 8px var(--acf-shadow); font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity .12s; z-index: 1; }
+.acf .side .top .lim:hover .v { opacity: 1; }
+.acf .side .top .lim .r { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 실행 중 서브에이전트 목록 — 있을 때만, 접히지 않는다 (2026-09-30) */
+.acf .side .tasks { display: flex; flex-direction: column; gap: 6px; padding: 4px 4px 8px; font-size: 12px; }
+.acf .side .tasks h4 { margin: 0 0 2px; font-size: 12px; font-weight: 600; color: var(--acf-muted); }
+.acf .side .tasks a { color: inherit; text-decoration: none; display: grid; grid-template-columns: 8px 1fr; column-gap: 8px; align-items: baseline; cursor: pointer; border: 1px solid var(--acf-line); border-radius: 10px; padding: 7px 10px; background: var(--acf-panel); }
+.acf .side .tasks a:hover { background: var(--acf-soft); }
+.acf .side .tasks .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--acf-accent); animation: acf-blink 1s steps(2) infinite; align-self: center; grid-row: 1; }
+.acf .side .tasks .name { font-weight: 600; }
+.acf .side .tasks .desc, .acf .side .tasks .dim, .acf .side .tasks .sum { grid-column: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acf .side .tasks .dim { color: var(--acf-muted); font-family: var(--acf-mono); font-size: 11px; }
+.acf .side .tasks .sum { color: var(--acf-muted); white-space: normal; }
+.acf .side details summary { list-style: none; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 6px; }
+.acf .side details summary::-webkit-details-marker { display: none; }
+.acf .side details.sec { border: 1px solid var(--acf-line); border-radius: 10px; background: var(--acf-panel); }
+.acf .side details.sec > summary { padding: 7px 12px; border-radius: 10px; }
+.acf .side details.sec > summary:hover h4 { color: var(--acf-fg); }
+.acf .side details.sec[open] > summary { border-bottom: 1px solid var(--acf-line); border-radius: 10px 10px 0 0; margin-bottom: 8px; }
+.acf .side details.sec > summary h4 { margin: 0; font-size: 12px; font-weight: 600; color: var(--acf-muted); }
+.acf .side details.sec > summary svg { width: 14px; height: 14px; margin-left: auto; flex: none; color: var(--acf-muted); fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; transform: rotate(-90deg); transition: transform .15s; }
+.acf .side details.sec[open] > summary svg { transform: none; }
+.acf .side details.sec > summary .badge { font-size: 11px; color: var(--acf-warn); border: 1px solid currentColor; border-radius: 999px; padding: 0 6px; line-height: 1.4; }
+.acf .side details.sec > .body { padding: 0 12px 10px; }
+.acf .side .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; }
+.acf .side .kv .k { color: var(--acf-muted); }
+.acf .side .kv .v { font-family: var(--acf-mono); font-size: 12px; overflow-wrap: anywhere; }
+.acf .side details.list summary { padding: 3px 6px; margin: 0 -6px; border-radius: 6px; }
+.acf .side details.list summary:hover { background: var(--acf-soft); }
+.acf .side details.list summary::before { content: ""; width: 12px; height: 12px; flex: none; background: currentColor; opacity: .55; transition: transform .15s;
+  -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>') center/contain no-repeat;
+          mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>') center/contain no-repeat; }
+.acf .side details.list[open] summary::before { transform: rotate(90deg); }
+.acf .side details.list summary .n { margin-left: auto; font-size: 11px; color: var(--acf-muted); background: var(--acf-soft); border-radius: 999px; padding: 0 7px; font-family: var(--acf-mono); }
+.acf .side details.list ul { margin: 2px 0 4px; padding-left: 18px; list-style: none; font-family: var(--acf-mono); font-size: 12px; color: var(--acf-muted); max-height: 160px; overflow: auto; }
+.acf .side details.list li { padding: 1px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acf .side .pend { display: grid; gap: 4px; }
+.acf .side .pend a { cursor: pointer; }
+.acf .side .empty { color: var(--acf-muted); }
+/* 우편 턴 — 왼쪽, 흐릿한 카드. 에이전트 간 통신이라 눈에 띄지 않게: 강조색 없음, 옅은 테두리, 흐린 글자 (사용자 2026-09-27) */
+.acf .mail { align-self: stretch; display: flex; flex-direction: column; gap: 6px; opacity: .7; }
+.acf .mail .envelope { border: 1px dashed var(--acf-line); border-radius: 10px; padding: 7px 12px; color: var(--acf-muted); font-size: 13px; }
+.acf .mail .head { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--acf-muted); margin-bottom: 3px; }
+.acf .mail .head svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.acf .mail .head .from { font-family: var(--acf-mono); }
+.acf .mail .head .kind { padding: 0 6px; border-radius: 6px; border: 1px solid var(--acf-line); }
+.acf .mail .head .at { margin-left: auto; }
+.acf .mail .body { white-space: pre-wrap; word-break: break-word; }
+.acf .mail .acts { margin: 0; }
+
+/* 좁은 화면 (사용자 2026-09-30) — 폭이 줄면 좌우 레일을 잘라 가운데 한 열만 남긴다: 1100px 아래는 왼쪽, 820px 아래는 오른쪽도.
+   기준은 #root 의 컨테이너 폭(container query, 2026-10-04) — 단독 웹이면 창 폭과 같고, superlite 카드 안이면 카드 폭이다.
+   ponytail: 잘린 레일을 여는 버튼은 없다 (마크업 필요) */
+@container (max-width: 1100px) {
+  .acf { grid-template-columns: minmax(0, 1fr) 300px; }
+  .acf .left { display: none; }
+}
+@container (max-width: 820px) {
+  .acf { grid-template-columns: minmax(0, 1fr); min-height: 0; }
+  .acf .side { display: none; }
+  .acf .feed { padding: 12px 10px 6px; }
+  .acf .dock, .acf .composer { padding: 6px 10px calc(10px + env(safe-area-inset-bottom)); }
+  .acf .user { max-width: 92%; }
+  .acf .dock > .card { max-height: 70dvh; overflow-y: auto; }
+  /* iOS 는 16px 미만 입력칸에 초점이 가면 화면을 확대한다 */
+  .acf .composer textarea, .acf .card .q input[type=text] { font-size: 16px; }
+  .acf .menu { max-width: calc(100vw - 20px); }
+}
+/* 모바일 창 자체의 높이 — html·body 는 컨테이너 밖이라 미디어 쿼리로 */
+@media (max-width: 820px) { html, body { height: 100dvh; } }
+/* 터치 화면엔 hover 가 없다 — 말풍선 아래 아이콘 줄을 늘 흐리게 보인다 */
+@media (hover: none) { .acf .acts { opacity: .6; } }

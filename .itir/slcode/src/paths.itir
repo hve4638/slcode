@@ -1,0 +1,22 @@
+import { FILES } from './protocol'
+
+role: 파일 위치 — $SLCODE_DIR(격리·테스트; 옛 $AGENT_CORE_DIR 은 한 버전 폴백) 또는 ~/.local/state/slcode (없고 옛 ~/.local/state/agent-core 가 있으면 그 폴더, 이주 없음 — 2026-10-02 개명). post.sock/lock/pid/log(우체국)·slcode.token(웹을 루프백 밖으로 열 때)·sessions/<cwd 슬러그>/<id>/(meta.json·events.jsonl·sock)·mail/<세션 id>/. cwd 슬러그는 claude 규칙(영숫자·- 밖은 -) — 평탄 구조 기각 (사용자 결정 2026-09-27, 수천 세션 전제). 디렉토리 0700·소켓 0600 이 UDS 의 인증
+
+export fn coreDir() -> Path {
+  role: 기본 디렉토리
+}
+export fn corePaths(dir) -> CorePaths {
+  role: postSock·postLock·postPid·postLog·token·sessionsDir·mailDir 경로 묶음
+}
+export fn cwdSlug(cwd) -> Text {
+  role: /a/b.c_d → -a-b-c-d
+}
+export fn sessionDir(sessionsDir, cwd, id) -> Path {
+  role: sessions/<슬러그>/<id>
+}
+export fn ensureDir(dir) {
+  role: 0700 으로 만든다
+}
+export fn readOrCreateToken(p) -> Text {
+  role: 있으면 재사용(브라우저 localStorage 의 토큰이 재기동 뒤에도 유효), 없으면 24바이트 hex 를 0600 으로
+}

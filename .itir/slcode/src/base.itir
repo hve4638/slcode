@@ -1,0 +1,22 @@
+import { ApprovalRequest, Attachment, CoreEvent, LoggedEvent, SessionInfo } from './protocol'
+import { EventLog } from './eventLog'
+
+role: 벤더 어댑터의 공통 뼈대 (ticket agent-core-codex, 2026-09-30) — 세션 id·EventLog·state·seq·구독자·raw 스위치와 emit/info/onEvent/since 를 들고, 벤더별 동작(send·approve·interrupt·close·models·setModel·setEffort·setMode·commands·limits·context·rewind)은 추상. serve.ts 는 이 표면만 본다 — ClaudeSession(session.ts)·CodexSession(codex.ts) 이 구현한다
+
+type ModelsResult
+type Limits
+type ContextUsage
+type Command
+type ApproveOpts
+export class AgentSession {
+  role: 추상. emit 은 session.state 면 state 를 갱신하고 raw 가 켜져 있으면 벤더 원문을 실어 로그에 남기며 구독자에게 낸다
+  export fn info() -> SessionInfo {
+    role: meta + state + live + seq
+  }
+  export fn onEvent(fn) {
+    role: 구독 — 해지 함수를 돌려준다
+  }
+  export fn since(seq) -> LoggedEvent[] {
+    role: EventLog.since
+  }
+}

@@ -1,0 +1,6 @@
+[project]
+source_root = "."
+
+[target]
+languages = ["typescript"]
+exclude = ["slcode/node_modules/", "slcode/dist/"]
