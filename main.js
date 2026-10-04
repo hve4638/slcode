@@ -12,22 +12,151 @@ const SIDEBAR = 'sessions';
 const SVC = 'session';
 const FAR = Number.MAX_SAFE_INTEGER; // attach since — 이력은 iframe 이 그린다, 여기선 pending 만
 
+// ---- 바이너리 자가 설치 (ticket slcode-plugin-selfinstall) — 순수 함수. export 는 slcode/test/plugin.test.ts 용
+// plugin.json binary {repo, version} 의 version 은 semver 조건: `1.2.3`(고정)·`^1.2.3`·`~1.2.3`(범위, 정식 release 만).
+// release 는 태그 `v<ver>`, 자산 `slcode-<ver>-<platform>.zip` (slcode/README.md "바이너리 배포")
+
+export function parseVersion(s) {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(String(s).trim());
+  return m ? { major: +m[1], minor: +m[2], patch: +m[3], pre: m[4] ?? null } : null;
+}
+function cmpVersion(a, b) {
+  return a.major - b.major || a.minor - b.minor || a.patch - b.patch
+    || (a.pre === b.pre ? 0 : a.pre === null ? 1 : b.pre === null ? -1 : a.pre < b.pre ? -1 : 1);
+}
+/** version 이 조건 cond 를 만족하는가. 읽을 수 없는 조건은 throw */
+export function satisfies(version, cond) {
+  const c = String(cond).trim();
+  const op = c[0] === '^' || c[0] === '~' ? c[0] : '';
+  const b = parseVersion(op ? c.slice(1) : c);
+  if (!b) throw new Error(`binary.version 조건을 읽을 수 없습니다: ${cond}`);
+  const v = parseVersion(version);
+  if (!v) return false;
+  if (!op) return cmpVersion(v, b) === 0;
+  if (v.pre !== null || cmpVersion(v, b) < 0) return false;
+  if (op === '~') return v.major === b.major && v.minor === b.minor;
+  if (b.major > 0) return v.major === b.major; // ^ 는 왼쪽 첫 0 아닌 자리를 고정 (npm 과 같다)
+  if (b.minor > 0) return v.major === 0 && v.minor === b.minor;
+  return v.major === 0 && v.minor === 0 && v.patch === b.patch;
+}
+export const assetName = (version, platform) => `slcode-${version}-${platform}.zip`;
+/** GitHub Releases API(GET /repos/:repo/releases) 응답에서 조건에 맞는 최신 release 의 그 플랫폼 자산 → {version, url} | {error} */
+export function pickRelease(releases, cond, platform) {
+  let best = null, noAsset = null;
+  for (const r of Array.isArray(releases) ? releases : []) {
+    const tag = String(r?.tag_name ?? '');
+    if (r.draft || !tag.startsWith('v')) continue;
+    const ver = tag.slice(1), v = parseVersion(ver);
+    if (!v || !satisfies(ver, cond)) continue;
+    const a = (r.assets ?? []).find((x) => x.name === assetName(ver, platform));
+    if (!a) { noAsset ??= ver; continue; }
+    if (!best || cmpVersion(v, best.v) > 0) best = { v, version: ver, url: a.browser_download_url };
+  }
+  if (best) return { version: best.version, url: best.url };
+  return { error: noAsset ? `slcode ${noAsset} release 에 ${assetName(noAsset, platform)} 가 없습니다` : `조건 ${cond} 에 맞는 slcode release 가 없습니다` };
+}
+/** storage 의 설치 표식(플랫폼 하나의 {version}) → 'none' | 'outdated'(조건 밖) | 'installed' */
+export function installState(marker, cond) {
+  if (!marker || typeof marker.version !== 'string') return 'none';
+  return satisfies(marker.version, cond) ? 'installed' : 'outdated';
+}
+/** 데몬 머신의 `echo %OS% %PROCESSOR_ARCHITECTURE%`(cmd 에서만 치환된다)·`uname -sm` 출력 → 'linux-x64' | 'win-x64'. 그 밖은 throw */
+export function platformOf(winOut, unameOut) {
+  const w = String(winOut ?? '').trim();
+  if (w.startsWith('Windows_NT')) {
+    if (/\bAMD64\b/i.test(w)) return 'win-x64';
+    throw new Error(`지원하지 않는 Windows 아키텍처입니다: ${w}`);
+  }
+  const u = String(unameOut ?? '').trim();
+  if (/^Linux\s+x86_64$/.test(u)) return 'linux-x64';
+  throw new Error(`지원하지 않는 플랫폼입니다: ${u || w || '알 수 없음'} (linux-x64·win-x64 만)`);
+}
+
 /** @param {import('@superlite/plugin').PluginApi} api */
 export function activate(api) {
   api.settings.register({
     title: 'Agent',
     description: 'slcode 세션 카드. 카드 하나 = 세션 하나. 카드를 닫아도 세션은 산다 — 종료는 "Agent: Close session".',
     items: [
-      { key: 'bin', type: 'string', label: 'slcode command', description: 'PATH 의 이름 또는 절대 경로', default: 'slcode' },
+      { key: 'bin', type: 'string', label: 'slcode command', description: '비우면 플러그인이 받은 slcode. 넣으면 그것을 쓴다 (PATH 의 이름 또는 데몬 머신의 절대 경로)', default: '' },
       { key: 'dir', type: 'string', label: 'SLCODE_DIR', description: '비우면 slcode 기본 폴더 (~/.local/state/slcode)', default: '' },
     ],
   });
   const setting = async (k, d) => { const v = await api.settings.get(k); return v === undefined || v === '' ? d : String(v); };
   const shq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
+  // ---- 호스트 연결부 — relay 받기·deploy API(ticket plugin-fetch-deploy, major) 가 오면 여기만 채운다
+  // ponytail: 플러그인 폴더는 로더가 main.js 를 부른 주소(/plugins/file?dir=<폴더>&path=main.js)에서 읽는다. 폴더 API 가 오면 그것으로
+  const self = new URL(import.meta.url);
+  const NO_FETCH_API = '바이너리 자동 받기는 아직 지원되지 않습니다 (superlite relay API 대기). 설정 "slcode command" 에 slcode 경로를 넣으세요';
+  const host = {
+    /** 호스트(사용자 PC)의 플러그인 폴더 절대 경로 */
+    pluginDir: () => self.searchParams.get('dir'),
+    /** 플러그인 폴더의 파일 하나 (텍스트) */
+    readFile: async (rel) => { const u = new URL(self); u.searchParams.set('path', rel); const r = await fetch(u); if (!r.ok) throw new Error(`${rel}: ${r.status}`); return r.text(); },
+    /** url 의 zip 을 호스트 플러그인 폴더의 subdir 에 푼다 (유닉스 모드 유지) */
+    fetchBinary: async (_url, _subdir) => { throw new Error(NO_FETCH_API); },
+    /** 플러그인 폴더의 subdir → 활성 세션의 데몬 머신에서 쓸 절대 경로 (로컬은 호스트 폴더 그대로, 원격은 올린 사본) */
+    deploySubdir: async (_subdir) => { throw new Error(NO_FETCH_API); },
+  };
+
+  /** plugin.json binary {repo, version} */
+  let binarySpec = null;
+  async function spec() {
+    if (!binarySpec) {
+      const b = JSON.parse(await host.readFile('plugin.json')).binary;
+      if (typeof b?.repo !== 'string' || typeof b?.version !== 'string') throw new Error('plugin.json 에 binary {repo, version} 이 없습니다');
+      binarySpec = b;
+    }
+    return binarySpec;
+  }
+  /** 활성 세션의 데몬 머신 플랫폼 — 세션(로컬·원격)마다 다르므로 매번 묻는다 */
+  async function daemonPlatform() {
+    const w = await api.proc.run('echo %OS% %PROCESSOR_ARCHITECTURE%');
+    if (w.stdout.trim().startsWith('Windows_NT')) return platformOf(w.stdout, '');
+    const u = await api.proc.run('uname -sm');
+    return platformOf(w.stdout, u.stdout);
+  }
+  /** 플랫폼별 받기 — 여러 카드가 동시에 열려도 한 번. 실패하면 비워 다음에 다시 시도 */
+  const installing = new Map();
+  function install(plat, note) {
+    let p = installing.get(plat);
+    if (!p) {
+      p = (async () => {
+        const { repo, version: cond } = await spec();
+        const marks = (await api.storage.get('binary')) ?? {};
+        if (installState(marks[plat], cond) === 'installed') return;
+        note('slcode 버전 확인 중…');
+        const r = await fetch(`https://api.github.com/repos/${repo}/releases?per_page=100`);
+        if (!r.ok) throw new Error(`GitHub ${repo} releases 조회 실패 (${r.status})`);
+        const pick = pickRelease(await r.json(), cond, plat);
+        if (pick.error) throw new Error(pick.error);
+        note(`slcode ${pick.version} (${plat}) 받는 중…`);
+        await host.fetchBinary(pick.url, `bin/${plat}`);
+        marks[plat] = { version: pick.version };
+        await api.storage.set('binary', marks);
+      })();
+      installing.set(plat, p);
+      p.catch(() => installing.delete(plat));
+    }
+    return p;
+  }
+  /** 서비스·목록·런처가 쓸 slcode — 설정 bin 이 있으면 그것(셸에 그대로), 없으면 받은 바이너리의 데몬 쪽 경로
+   *  `<플러그인 폴더>/bin/<platform>/bin/slcode`. cmd 는 셸 명령에 넣을 꼴, path 는 따옴표 없는 경로 (설정이면 null) */
+  async function resolveBin(note = () => {}) {
+    const over = await setting('bin', '');
+    if (over) return { cmd: over, path: null };
+    const plat = await daemonPlatform();
+    await install(plat, note);
+    const dir = await host.deploySubdir(`bin/${plat}`);
+    if (plat === 'win-x64') { const path = `${dir}\\bin\\slcode.cmd`; return { cmd: `"${path}"`, path, plat }; }
+    const path = `${dir}/bin/slcode`;
+    return { cmd: shq(path), path, plat };
+  }
+
   /** key → 카드 하나. 뷰가 unmount/mount 를 거듭해도(카드 전환) 연결은 여기 산다 */
   const cards = new Map();
-  const card = (key) => { let c = cards.get(key); if (!c) { c = { key, id: null, url: null, title: null, state: null, conn: null, unsub: null, ctx: null, el: null, nextId: 1, pending: new Map(), waits: new Map(), starting: null }; cards.set(key, c); } return c; };
+  const card = (key) => { let c = cards.get(key); if (!c) { c = { key, id: null, url: null, title: null, state: null, conn: null, unsub: null, ctx: null, el: null, nextId: 1, pending: new Map(), waits: new Map(), starting: null, note: null, error: null }; cards.set(key, c); } return c; };
   const newKey = () => 's' + Math.random().toString(36).slice(2, 8);
   /** 세션 id → 서비스 owner(카드 key). 같은 세션을 다시 열 때 새 서비스를 띄우지 않고 떠 있는 것에 붙기 위해 플러그인 저장소에 남긴다 */
   let owners = null;
@@ -107,7 +236,14 @@ export function activate(api) {
     } else {
       const p = document.createElement('div');
       p.style.cssText = 'margin:auto;font:13px system-ui;opacity:.8';
-      p.textContent = c.state === 'exited' ? '세션이 닫혔습니다 — 목록에서 다시 여세요' : 'slcode 세션을 띄우는 중…';
+      p.textContent = c.error ? `slcode 를 준비하지 못했습니다: ${c.error}` : c.note ?? (c.state === 'exited' ? '세션이 닫혔습니다 — 목록에서 다시 여세요' : 'slcode 세션을 띄우는 중…');
+      if (c.error) { // 받기·기동 실패 — 사유를 보이고 다시 시도 (설정을 고친 뒤 등)
+        p.style.cssText += ';max-width:80%;text-align:center;white-space:pre-wrap';
+        const b = document.createElement('button');
+        b.textContent = '다시 시도'; b.style.cssText = 'display:block;margin:10px auto 0';
+        b.onclick = () => { c.error = null; c.state = null; render(c); void ensure(c); };
+        p.appendChild(b);
+      }
       wrap.appendChild(p);
     }
     el.appendChild(wrap);
@@ -119,10 +255,13 @@ export function activate(api) {
     c.starting = (async () => {
       try {
         if (!c.unsub) c.unsub = api.services.onMessage(SVC, (m) => onMessage(c, m), { owner: c.key });
-        const [bin, dir] = await Promise.all([setting('bin', 'slcode'), setting('dir', '')]);
+        c.error = null;
+        const note = (s) => { c.note = s; render(c); };
+        const [bin, dir] = await Promise.all([resolveBin(note), setting('dir', '')]);
+        c.note = null;
         const verb = c.id ? `resume ${shq(c.id)}` : 'new';
         // --no-web: TCP 웹을 열지 않는다 — 화면은 서비스 웹 소켓(SUPERLITE_SERVICE_WEB)으로만
-        const command = `${bin} ${verb} --stdio --no-web${dir ? ` --dir ${shq(dir)}` : ''}`;
+        const command = `${bin.cmd} ${verb} --stdio --no-web${dir ? ` --dir ${shq(dir)}` : ''}`;
         c.hello = false;
         const conn = await api.services.open(SVC, { owner: c.key, command });
         c.conn = conn;
@@ -139,8 +278,8 @@ export function activate(api) {
         void countLive();
         if (!c.attached) await attach(c); // 연결마다 한 번 — url·id 를 이미 알아도(새로고침 복원) 이벤트 구독은 새 연결에 걸어야 한다
       } catch (e) {
-        c.state = 'exited'; badge(c); render(c);
-        api.notify('error', `agent: ${e?.message ?? e}`);
+        c.state = 'exited'; c.note = null; c.error = String(e?.message ?? e); badge(c); render(c);
+        api.notify('error', `agent: ${c.error}`);
       } finally { c.starting = null; }
     })();
     return c.starting;
@@ -200,8 +339,8 @@ export function activate(api) {
   api.sidebar.register(SIDEBAR, { icon: 'hubot', title: 'Agent', view: SIDEBAR });
   // ponytail: 개수는 활성화·카드 기동/종료·목록 그리기 때만 다시 센다. 터미널에서 띄우거나 끈 세션은 그 다음 계기까지 늦다 — 필요하면 주기 갱신
   async function listLive() {
-    const [bin, dir] = await Promise.all([setting('bin', 'slcode'), setting('dir', '')]);
-    const r = await api.proc.run(`${bin} list${dir ? ` --dir ${shq(dir)}` : ''}`);
+    const [bin, dir] = await Promise.all([resolveBin(), setting('dir', '')]);
+    const r = await api.proc.run(`${bin.cmd} list${dir ? ` --dir ${shq(dir)}` : ''}`);
     if (r.code !== 0) throw new Error(r.stderr.trim() || `exit ${r.code}`);
     const rows = JSON.parse(r.stdout || '[]');
     api.sidebar.setBadge(SIDEBAR, rows.length || null);
@@ -247,6 +386,32 @@ export function activate(api) {
       request(c, 'session.close', { id: c.id }).then(() => api.notify('info', `agent: 세션 ${c.id} 종료`)).catch((e) => api.notify('error', `agent: ${e.message}`));
     },
   });
+
+  // PATH 런처 — 명시적 명령으로만 (자동 실행 없음). Linux ~/.local/bin/slcode 심링크, Windows 는 사용자 PATH 에 기본으로 있는
+  // %LOCALAPPDATA%\Microsoft\WindowsApps 에 slcode.cmd. 런처는 지금 받은 바이너리를 가리킨다 — 새 버전을 받으면 다시 실행한다
+  async function installCommand(force) {
+    const bin = await resolveBin();
+    if (!bin.path) throw new Error('설정 "slcode command" 를 쓰는 중이라 런처를 만들지 않습니다 (설정을 비우면 받은 바이너리로 만든다)');
+    if (bin.plat === 'win-x64') {
+      const r = await api.proc.run(`(echo @"${bin.path}" %*) > "%LOCALAPPDATA%\\Microsoft\\WindowsApps\\slcode.cmd"`);
+      if (r.code !== 0) throw new Error(r.stderr.trim() || `exit ${r.code}`);
+      return '%LOCALAPPDATA%\\Microsoft\\WindowsApps\\slcode.cmd';
+    }
+    const link = '~/.local/bin/slcode';
+    if (!force) { // 우리 것이 아닌 slcode 가 이미 있으면 묻는다
+      const cur = await api.proc.run(`if [ -L ${link} ]; then readlink ${link}; elif [ -e ${link} ]; then echo '(file)'; fi`);
+      const was = cur.stdout.trim();
+      if (was && was !== bin.path) return { conflict: was };
+    }
+    const r = await api.proc.run(`mkdir -p ~/.local/bin && ln -sfn ${shq(bin.path)} ${link}`);
+    if (r.code !== 0) throw new Error(r.stderr.trim() || `exit ${r.code}`);
+    return link;
+  }
+  const runInstallCommand = (force) => installCommand(force).then((r) => {
+    if (typeof r === 'string') api.notify('info', `slcode 런처를 만들었습니다: ${r}`);
+    else api.notify('warning', `이미 slcode 가 있습니다: ~/.local/bin/slcode → ${r.conflict}`, { label: '덮어쓰기', run: () => void runInstallCommand(true) });
+  }).catch((e) => api.notify('error', `slcode: ${e?.message ?? e}`));
+  api.commands.register({ id: 'installCommand', title: 'slcode: Install command', run: () => runInstallCommand(false) });
 
   shutdown = () => { for (const c of cards.values()) detach(c); cards.clear(); };
   return {
