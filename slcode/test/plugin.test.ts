@@ -7,7 +7,7 @@ import * as mod from '../../main.js';
 // repo 루트에 package.json 이 없어 tsx 가 main.js 를 CJS 로 감싼다 — named export 가 default 아래로 온다
 const plugin = mod.default ?? mod;
 
-const { satisfies, pickRelease, installState, platformOf, assetName } = plugin;
+const { satisfies, pickRelease, installState, platformOf, assetName, progressText } = plugin;
 
 test('satisfies: 고정·^·~ 조건', () => {
   assert.equal(satisfies('0.1.0', '0.1.0'), true);
@@ -47,93 +47,112 @@ test('pickRelease: draft·v 없는 태그·이상한 응답은 건너뛴다', ()
   assert.ok(pickRelease({ message: 'Not Found' }, '^0.1.0', 'linux-x64').error);
 });
 
-test('installState: 없음·조건 밖·설치됨', () => {
-  assert.equal(installState(undefined, '^0.1.0'), 'none');
-  assert.equal(installState({}, '^0.1.0'), 'none');
-  assert.equal(installState({ version: '0.0.9' }, '^0.1.0'), 'outdated');
-  assert.equal(installState({ version: '0.1.4' }, '^0.1.0'), 'installed');
+const mf = (version: string, platform = 'linux-x64') => JSON.stringify({ version, platform, node: '24.21.0' });
+
+test('installState: manifest 원문 → 없음·조건 밖·설치됨', () => {
+  assert.equal(installState(null, '^0.1.0', 'linux-x64'), 'none');
+  assert.equal(installState('{broken', '^0.1.0', 'linux-x64'), 'none');
+  assert.equal(installState(mf('0.1.4', 'win-x64'), '^0.1.0', 'linux-x64'), 'none'); // 다른 플랫폼 zip
+  assert.equal(installState(mf('0.0.9'), '^0.1.0', 'linux-x64'), 'outdated');
+  assert.equal(installState(mf('0.1.4'), '^0.1.0', 'linux-x64'), 'installed');
 });
 
-test('platformOf: cmd·uname 출력', () => {
-  assert.equal(platformOf('%OS% %PROCESSOR_ARCHITECTURE%', 'Linux x86_64'), 'linux-x64');
-  assert.equal(platformOf('Windows_NT AMD64', ''), 'win-x64');
-  assert.throws(() => platformOf('Windows_NT ARM64', ''), /Windows 아키텍처/);
-  assert.throws(() => platformOf('%OS%', 'Darwin arm64'), /지원하지 않는 플랫폼/);
-  assert.throws(() => platformOf('%OS%', 'Linux aarch64'), /지원하지 않는 플랫폼/);
+test('platformOf: api.platform 의 Rust 표기 → zip 플랫폼', () => {
+  assert.equal(platformOf({ os: 'linux', arch: 'x86_64' }), 'linux-x64');
+  assert.equal(platformOf({ os: 'windows', arch: 'x86_64' }), 'win-x64');
+  assert.throws(() => platformOf({ os: 'linux', arch: 'aarch64' }), /지원하지 않는 플랫폼입니다: linux\/aarch64/);
+  assert.throws(() => platformOf({ os: 'macos', arch: 'aarch64' }), /지원하지 않는 플랫폼/);
 });
 
-// ---- activate 의 설치 흐름 — 가짜 api·fetch. 받기·deploy 는 아직 relay API 가 없어 거부되는 자리라, 어디까지 갔는지로 상태를 본다
+test('progressText: 받기(전체 크기 있음·없음)·풀기', () => {
+  assert.equal(progressText('0.1.0', 'linux-x64', { phase: 'download', done: 68157440, total: 160346161 }), 'slcode 0.1.0 (linux-x64) 받는 중 42% (65/153MB)');
+  assert.equal(progressText('0.1.0', 'linux-x64', { phase: 'download', done: 68157440, total: null }), 'slcode 0.1.0 (linux-x64) 받는 중 65MB');
+  assert.equal(progressText('0.1.0', 'linux-x64', { phase: 'extract', done: 1200, total: 3400 }), 'slcode 0.1.0 (linux-x64) 푸는 중 1200/3400');
+});
+
+// ---- activate 의 설치 흐름 — 가짜 api(folder·platform)·fetch(GitHub). activate 의 사이드바 목록 갱신이 resolveBin 을 타므로
+// 마지막 `<slcode> list` 호출로 조립된 명령을 본다
 type Call = string;
-function fakeApi(storage: Record<string, unknown>, settings: Record<string, string> = {}) {
+const releases = [rel('v0.1.0', ['linux-x64', 'win-x64']), rel('v0.1.2', ['linux-x64', 'win-x64'])];
+function fakeApi(files: Record<string, string>, opts: { settings?: Record<string, string>; fetched?: unknown; noFolder?: boolean } = {}) {
   const calls: Call[] = [];
   const noop = () => {};
-  const api = {
-    settings: { register: noop, get: async (k: string) => settings[k] },
-    storage: { get: async (k: string) => storage[k], set: async (k: string, v: unknown) => { storage[k] = v; calls.push(`storage.set ${k}`); } },
-    proc: {
-      run: async (cmd: string) => {
-        calls.push(`proc ${cmd}`);
-        if (cmd.startsWith('echo %OS%')) return { code: 0, stdout: '%OS% %PROCESSOR_ARCHITECTURE%\n', stderr: '', truncated: false };
-        if (cmd === 'uname -sm') return { code: 0, stdout: 'Linux x86_64\n', stderr: '', truncated: false };
-        return { code: 0, stdout: '[]', stderr: '', truncated: false };
-      },
-    },
+  const api: Record<string, unknown> = {
+    settings: { register: noop, get: async (k: string) => opts.settings?.[k] },
+    storage: { get: async () => undefined, set: async () => {} },
+    proc: { run: async (cmd: string) => { calls.push(`proc ${cmd}`); return { code: 0, stdout: '[]', stderr: '', truncated: false }; } },
     services: { onMessage: () => noop },
     views: { register: noop, open: noop },
     events: { on: noop },
-    sidebar: { register: noop, setBadge: (_id: string, n: unknown) => calls.push(`badge ${n}`) },
+    sidebar: { register: noop, setBadge: noop },
     commands: { register: noop },
-    notify: noop,
+    notify: (sev: string, msg: string) => calls.push(`notify ${sev} ${msg}`),
+    platform: async () => { calls.push('platform'); return { os: 'linux', arch: 'x86_64' }; },
+    folder: {
+      path: '/host/plugins/slcode',
+      read: async (rel: string) => files[rel] ?? null,
+      fetch: async (url: string, sub: string, o: { onProgress?: (p: unknown) => void }) => {
+        calls.push(`fetch ${url} -> ${sub}`);
+        o.onProgress?.({ phase: 'download', done: 1, total: 2 });
+        const m = opts.fetched ?? { version: '0.1.2', platform: 'linux-x64', node: '24.21.0' };
+        files[`${sub}/manifest.json`] = JSON.stringify(m);
+        return { manifest: m };
+      },
+      deploy: async (sub: string) => { calls.push(`deploy ${sub}`); return `/remote/cache/slcode/abc123`; },
+    },
   };
+  if (opts.noFolder) { delete api.folder; delete api.platform; }
   return { api, calls };
 }
-const releases = [rel('v0.1.0', ['linux-x64', 'win-x64']), rel('v0.1.2', ['linux-x64', 'win-x64'])];
-function stubFetch(calls: Call[]) {
+function stubGithub(calls: Call[]) {
   const real = globalThis.fetch;
   globalThis.fetch = (async (u: string | URL) => {
-    const s = String(u);
-    calls.push(`fetch ${s.startsWith('file:') ? 'plugin.json' : s}`);
-    if (s.startsWith('file:')) return new Response(JSON.stringify({ binary: { repo: 'hve4638/slcode', version: '^0.1.0' } }));
-    if (s.includes('api.github.com')) return new Response(JSON.stringify(releases));
-    return new Response('', { status: 404 });
+    calls.push(`github ${String(u)}`);
+    return new Response(JSON.stringify(releases));
   }) as typeof fetch;
   return () => { globalThis.fetch = real; };
 }
+const PLUGIN_JSON = JSON.stringify({ id: 'slcode', binary: { repo: 'hve4638/slcode', version: '^0.1.0' } });
 const settle = () => new Promise((r) => setTimeout(r, 50));
+async function run(files: Record<string, string>, opts: Parameters<typeof fakeApi>[1] = {}) {
+  const { api, calls } = fakeApi(files, opts);
+  const restore = stubGithub(calls);
+  try { plugin.activate(api); await settle(); } finally { restore(); plugin.deactivate(); }
+  return calls;
+}
+const LIST = "proc '/remote/cache/slcode/abc123/bin/slcode' list";
 
-test('activate: 표식이 없으면 GitHub 에서 고른 release 를 받으러 간다 (받기 API 자리에서 멈춘다)', async () => {
-  const storage: Record<string, unknown> = {};
-  const { api, calls } = fakeApi(storage);
-  const restore = stubFetch(calls);
-  try {
-    plugin.activate(api);
-    await settle();
-    assert.ok(calls.includes('proc uname -sm'));
-    assert.ok(calls.includes('fetch https://api.github.com/repos/hve4638/slcode/releases?per_page=100'));
-    assert.equal(storage.binary, undefined); // 받기가 실패하면 표식을 남기지 않는다
-    assert.ok(!calls.some((c) => c.includes(' list')));
-  } finally { restore(); plugin.deactivate(); }
+test('activate: manifest 가 없으면 조건 안 최신 release 를 받아 deploy 경로의 bin/slcode 를 쓴다', async () => {
+  const files: Record<string, string> = { 'plugin.json': PLUGIN_JSON };
+  const calls = await run(files);
+  assert.ok(calls.includes('github https://api.github.com/repos/hve4638/slcode/releases?per_page=100'));
+  assert.ok(calls.includes('fetch https://dl/v0.1.2/linux-x64.zip -> bin/linux-x64'));
+  assert.ok(calls.includes('deploy bin/linux-x64'));
+  assert.ok(calls.includes(LIST));
 });
 
-test('activate: 조건 안의 표식이 있으면 조회 없이 deploy 로 간다, 조건 밖이면 다시 받는다', async () => {
-  for (const [marker, refetch] of [[{ version: '0.1.0' }, false], [{ version: '0.0.1' }, true]] as const) {
-    const { api, calls } = fakeApi({ binary: { 'linux-x64': marker } });
-    const restore = stubFetch(calls);
-    try {
-      plugin.activate(api);
-      await settle();
-      assert.equal(calls.some((c) => c.includes('api.github.com')), refetch);
-    } finally { restore(); plugin.deactivate(); }
+test('activate: 조건 안 manifest 면 조회·받기 없이 deploy, 조건 밖·다른 플랫폼이면 다시 받는다', async () => {
+  for (const [manifest, refetch] of [[mf('0.1.0'), false], [mf('0.0.1'), true], [mf('0.1.0', 'win-x64'), true]] as const) {
+    const calls = await run({ 'plugin.json': PLUGIN_JSON, 'bin/linux-x64/manifest.json': manifest });
+    assert.equal(calls.some((c) => c.startsWith('github ')), refetch, manifest);
+    assert.equal(calls.some((c) => c.startsWith('fetch ')), refetch, manifest);
+    assert.ok(calls.includes(LIST), manifest);
   }
 });
 
+test('activate: 받은 zip 의 manifest 가 고른 release 와 맞지 않으면 실행하지 않는다', async () => {
+  const calls = await run({ 'plugin.json': PLUGIN_JSON }, { fetched: { version: '0.1.2', platform: 'win-x64' } });
+  assert.ok(calls.some((c) => c.startsWith('fetch ')));
+  assert.ok(!calls.some((c) => c.startsWith('deploy ') || c.includes(' list')));
+});
+
 test('activate: 설정 bin 이 있으면 받지 않고 그 명령을 쓴다', async () => {
-  const { api, calls } = fakeApi({}, { bin: '/opt/slcode/bin/slcode' });
-  const restore = stubFetch(calls);
-  try {
-    plugin.activate(api);
-    await settle();
-    assert.ok(calls.includes('proc /opt/slcode/bin/slcode list'));
-    assert.ok(!calls.some((c) => c.includes('api.github.com') || c.includes('uname')));
-  } finally { restore(); plugin.deactivate(); }
+  const calls = await run({ 'plugin.json': PLUGIN_JSON }, { settings: { bin: '/opt/slcode/bin/slcode' } });
+  assert.ok(calls.includes('proc /opt/slcode/bin/slcode list'));
+  assert.ok(!calls.some((c) => c === 'platform' || c.startsWith('github ') || c.startsWith('fetch ')));
+});
+
+test('activate: api.folder 가 없는 superlite 면 받지 않는다 (카드에 사유)', async () => {
+  const calls = await run({ 'plugin.json': PLUGIN_JSON }, { noFolder: true });
+  assert.ok(!calls.some((c) => c.startsWith('github ') || c.includes(' list')));
 });

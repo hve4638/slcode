@@ -43,6 +43,10 @@ scripts/release.sh win-x64    # 한 플랫폼만
 scripts/release.sh --upload   # gh release create v<버전> (없으면, 태그는 HEAD) + gh release upload --clobber
 ```
 
+gh 로그인이 없는 머신(지금의 개발 머신)에서는 웹으로 올린다. Releases 의 "Draft a new release" 에서 태그 `v<버전>`(target main)을 만들고, 두 zip 을 이름 그대로 첨부해 Publish 한다. draft·pre-release 로 두거나 태그의 `v` 를 빼면 플러그인이 찾지 못한다. 올린 뒤 `curl -s https://api.github.com/repos/hve4638/slcode/releases` 로 태그와 자산 이름을 대조한다.
+
+플러그인은 받은 zip 을 플러그인 폴더의 `bin/<platform>/` 에 풀고, 그 안의 `manifest.json` 으로 설치 여부를 판단한다 (plugin.json `binary.version` 조건과 platform 대조). 원격 세션에서는 superlite 가 그 폴더를 원격에 올린 사본의 `bin/slcode` 를 쓴다.
+
 zip 최상위에는 `manifest.json {version, platform, node}`, `bin/slcode`(sh)·`bin/slcode.cmd`, `runtime/node`(또는 `node.exe`), `dist/`·`web/`·`node_modules/`·`package.json` 이 있다. `bin/` 의 두 런처가 동봉 node 로 `dist/cli.js` 를 띄우므로 사용자 머신에 Node 가 없어도 된다. 의존성은 lockfile 그대로 대상 플랫폼 패키지만 받는다 (pnpm `supportedArchitectures`, hoisted). Node 는 `NODE_VERSION`(기본 현재 LTS)의 공식 배포에서 실행 파일과 LICENSE 만 꺼내고, 받은 파일은 SHASUMS256.txt 로 대조한다. Codex 는 넣지 않는다. Codex 세션은 사용자 PATH 의 `codex` 를 쓴다.
 
 라이선스 조건 (Anthropic 의 Claude Code 법률 안내가 허용하는 동봉 배포):

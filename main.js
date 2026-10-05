@@ -55,21 +55,27 @@ export function pickRelease(releases, cond, platform) {
   if (best) return { version: best.version, url: best.url };
   return { error: noAsset ? `slcode ${noAsset} release 에 ${assetName(noAsset, platform)} 가 없습니다` : `조건 ${cond} 에 맞는 slcode release 가 없습니다` };
 }
-/** storage 의 설치 표식(플랫폼 하나의 {version}) → 'none' | 'outdated'(조건 밖) | 'installed' */
-export function installState(marker, cond) {
-  if (!marker || typeof marker.version !== 'string') return 'none';
-  return satisfies(marker.version, cond) ? 'installed' : 'outdated';
+/** 받아 둔 bin/<platform>/manifest.json 의 원문(없으면 null) → 'none' | 'outdated'(조건 밖) | 'installed'.
+ *  manifest 가 원장이다 — 플러그인 폴더를 다시 받아 bin/ 이 지워져도 거짓 "설치됨" 이 없다 */
+export function installState(manifestText, cond, platform) {
+  let m = null;
+  try { m = manifestText == null ? null : JSON.parse(manifestText); } catch { m = null; }
+  if (typeof m?.version !== 'string' || m.platform !== platform) return 'none';
+  return satisfies(m.version, cond) ? 'installed' : 'outdated';
 }
-/** 데몬 머신의 `echo %OS% %PROCESSOR_ARCHITECTURE%`(cmd 에서만 치환된다)·`uname -sm` 출력 → 'linux-x64' | 'win-x64'. 그 밖은 throw */
-export function platformOf(winOut, unameOut) {
-  const w = String(winOut ?? '').trim();
-  if (w.startsWith('Windows_NT')) {
-    if (/\bAMD64\b/i.test(w)) return 'win-x64';
-    throw new Error(`지원하지 않는 Windows 아키텍처입니다: ${w}`);
-  }
-  const u = String(unameOut ?? '').trim();
-  if (/^Linux\s+x86_64$/.test(u)) return 'linux-x64';
-  throw new Error(`지원하지 않는 플랫폼입니다: ${u || w || '알 수 없음'} (linux-x64·win-x64 만)`);
+/** api.platform() 의 {os, arch}(Rust 표기) → zip 의 플랫폼 이름. 그 밖은 throw */
+export function platformOf({ os, arch } = {}) {
+  if (os === 'linux' && arch === 'x86_64') return 'linux-x64';
+  if (os === 'windows' && arch === 'x86_64') return 'win-x64';
+  throw new Error(`지원하지 않는 플랫폼입니다: ${os ?? '?'}/${arch ?? '?'} (linux-x64·win-x64 만)`);
+}
+const MB = (n) => (n / 1048576).toFixed(0);
+/** api.folder.fetch 의 진행 → 카드 문구 */
+export function progressText(version, platform, p) {
+  const head = `slcode ${version} (${platform})`;
+  if (p?.phase === 'extract') return `${head} 푸는 중 ${p.done}/${p.total}`;
+  if (p?.total) return `${head} 받는 중 ${Math.floor((p.done / p.total) * 100)}% (${MB(p.done)}/${MB(p.total)}MB)`;
+  return `${head} 받는 중 ${MB(p?.done ?? 0)}MB`;
 }
 
 /** @param {import('@superlite/plugin').PluginApi} api */
@@ -85,70 +91,64 @@ export function activate(api) {
   const setting = async (k, d) => { const v = await api.settings.get(k); return v === undefined || v === '' ? d : String(v); };
   const shq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
-  // ---- 호스트 연결부 — relay 받기·deploy API(ticket plugin-fetch-deploy, major) 가 오면 여기만 채운다
-  // ponytail: 플러그인 폴더는 로더가 main.js 를 부른 주소(/plugins/file?dir=<폴더>&path=main.js)에서 읽는다. 폴더 API 가 오면 그것으로
-  const self = new URL(import.meta.url);
-  const NO_FETCH_API = '바이너리 자동 받기는 아직 지원되지 않습니다 (superlite relay API 대기). 설정 "slcode command" 에 slcode 경로를 넣으세요';
-  const host = {
-    /** 호스트(사용자 PC)의 플러그인 폴더 절대 경로 */
-    pluginDir: () => self.searchParams.get('dir'),
-    /** 플러그인 폴더의 파일 하나 (텍스트) */
-    readFile: async (rel) => { const u = new URL(self); u.searchParams.set('path', rel); const r = await fetch(u); if (!r.ok) throw new Error(`${rel}: ${r.status}`); return r.text(); },
-    /** url 의 zip 을 호스트 플러그인 폴더의 subdir 에 푼다 (유닉스 모드 유지) */
-    fetchBinary: async (_url, _subdir) => { throw new Error(NO_FETCH_API); },
-    /** 플러그인 폴더의 subdir → 활성 세션의 데몬 머신에서 쓸 절대 경로 (로컬은 호스트 폴더 그대로, 원격은 올린 사본) */
-    deploySubdir: async (_subdir) => { throw new Error(NO_FETCH_API); },
+  // ---- 바이너리 받기 — api.folder(호스트 플러그인 폴더: read·fetch·deploy)·api.platform (ticket plugin-fetch-deploy, superlite 0.13+)
+  const folder = () => {
+    if (!api.folder || !api.platform) throw new Error('이 superlite 는 플러그인 바이너리 받기를 지원하지 않습니다. 설정 "slcode command" 에 slcode 경로를 넣으세요');
+    return api.folder;
   };
-
   /** plugin.json binary {repo, version} */
   let binarySpec = null;
   async function spec() {
     if (!binarySpec) {
-      const b = JSON.parse(await host.readFile('plugin.json')).binary;
+      const b = JSON.parse((await folder().read('plugin.json')) ?? '{}').binary;
       if (typeof b?.repo !== 'string' || typeof b?.version !== 'string') throw new Error('plugin.json 에 binary {repo, version} 이 없습니다');
       binarySpec = b;
     }
     return binarySpec;
   }
-  /** 활성 세션의 데몬 머신 플랫폼 — 세션(로컬·원격)마다 다르므로 매번 묻는다 */
-  async function daemonPlatform() {
-    const w = await api.proc.run('echo %OS% %PROCESSOR_ARCHITECTURE%');
-    if (w.stdout.trim().startsWith('Windows_NT')) return platformOf(w.stdout, '');
-    const u = await api.proc.run('uname -sm');
-    return platformOf(w.stdout, u.stdout);
-  }
-  /** 플랫폼별 받기 — 여러 카드가 동시에 열려도 한 번. 실패하면 비워 다음에 다시 시도 */
+  /** 플랫폼별 받기 — 여러 카드가 동시에 열려도 한 번. 진행 문구는 합류한 모든 호출(카드)에 보낸다 — activate 의 목록 갱신이 먼저
+   *  시작해도 뒤에 열린 카드가 진행을 본다. 끝나면 비워 다음 기동 때 manifest 를 다시 본다 (읽기 하나라 싸다) */
   const installing = new Map();
   function install(plat, note) {
-    let p = installing.get(plat);
-    if (!p) {
-      p = (async () => {
+    let job = installing.get(plat);
+    if (!job) {
+      job = { notes: new Set(), last: null };
+      const say = (s) => { job.last = s; for (const n of job.notes) n(s); };
+      job.p = (async () => {
         const { repo, version: cond } = await spec();
-        const marks = (await api.storage.get('binary')) ?? {};
-        if (installState(marks[plat], cond) === 'installed') return;
-        note('slcode 버전 확인 중…');
+        const sub = `bin/${plat}`;
+        if (installState(await folder().read(`${sub}/manifest.json`), cond, plat) === 'installed') return;
+        say('slcode 버전 확인 중…');
         const r = await fetch(`https://api.github.com/repos/${repo}/releases?per_page=100`);
         if (!r.ok) throw new Error(`GitHub ${repo} releases 조회 실패 (${r.status})`);
         const pick = pickRelease(await r.json(), cond, plat);
         if (pick.error) throw new Error(pick.error);
-        note(`slcode ${pick.version} (${plat}) 받는 중…`);
-        await host.fetchBinary(pick.url, `bin/${plat}`);
-        marks[plat] = { version: pick.version };
-        await api.storage.set('binary', marks);
+        say(progressText(pick.version, plat, { phase: 'download', done: 0, total: null }));
+        const { manifest } = await folder().fetch(pick.url, sub, { onProgress: (pr) => say(progressText(pick.version, plat, pr)) });
+        if (installState(manifest == null ? null : JSON.stringify(manifest), cond, plat) !== 'installed') {
+          throw new Error(`받은 zip 의 manifest.json 이 맞지 않습니다 (기대 ${pick.version} ${plat}, 받음 ${JSON.stringify(manifest)})`);
+        }
       })();
-      installing.set(plat, p);
-      p.catch(() => installing.delete(plat));
+      installing.set(plat, job);
+      job.p.then(() => installing.delete(plat), () => installing.delete(plat));
     }
-    return p;
+    job.notes.add(note);
+    if (job.last) note(job.last);
+    return job.p;
   }
   /** 서비스·목록·런처가 쓸 slcode — 설정 bin 이 있으면 그것(셸에 그대로), 없으면 받은 바이너리의 데몬 쪽 경로
    *  `<플러그인 폴더>/bin/<platform>/bin/slcode`. cmd 는 셸 명령에 넣을 꼴, path 는 따옴표 없는 경로 (설정이면 null) */
   async function resolveBin(note = () => {}) {
     const over = await setting('bin', '');
     if (over) return { cmd: over, path: null };
-    const plat = await daemonPlatform();
+    folder(); // api.folder·platform 이 없는 superlite 면 여기서 사유를 던진다
+    const plat = platformOf(await api.platform()); // 활성 세션의 데몬 머신 — 세션(로컬·원격)마다 다르다
     await install(plat, note);
-    const dir = await host.deploySubdir(`bin/${plat}`);
+    // 원격이면 올린 사본, 로컬이면 그대로 (해시 캐시는 relay 몫이라 매번 불러도 된다). 첫 업로드는 10초 남짓이라 오래 걸릴 때만 알린다
+    // — 로컬은 바로 끝나 문구가 깜빡이지 않는다
+    const slow = setTimeout(() => note('slcode 를 원격에 올리는 중… (원격마다 처음 한 번)'), 400);
+    let dir;
+    try { dir = await folder().deploy(`bin/${plat}`); } finally { clearTimeout(slow); }
     if (plat === 'win-x64') { const path = `${dir}\\bin\\slcode.cmd`; return { cmd: `"${path}"`, path, plat }; }
     const path = `${dir}/bin/slcode`;
     return { cmd: shq(path), path, plat };
