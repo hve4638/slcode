@@ -1,6 +1,6 @@
 {
   "id": "slcode",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "main": "main.js",
   "binary": { "repo": "hve4638/slcode", "version": "^0.1.0" },
   "services": [
