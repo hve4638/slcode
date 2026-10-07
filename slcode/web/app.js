@@ -81,7 +81,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   function renderMode() {
     const cur = info?.permissionMode ?? ready?.permissionMode ?? 'default';
     modeLbl.textContent = MODES.find(([v]) => v === cur)?.[1] ?? cur;
-    modeMenu.replaceChildren(...MODES.map(([v, label, desc]) => h('button', { class: 'item', 'aria-checked': String(v === cur), onclick: () => { modeMenu.hidePopover(); modeLbl.textContent = label; rpc('session.setMode', { id: current, mode: v }).catch((e) => push(h('div', { class: 'meta err' }, e.message))); } }, h('span', {}, label), h('span', { class: 'desc' }, desc))));
+    modeMenu.replaceChildren(...MODES.map(([v, label, desc]) => h('button', { class: 'item', 'aria-checked': String(v === cur), onclick: () => { modeMenu.hidePopover(); modeLbl.textContent = label; rpc('session.setMode', { id: current, mode: v }).catch((e) => { push(h('div', { class: 'meta err' }, e.message)); renderMode(); }); } }, h('span', {}, label), h('span', { class: 'desc' }, desc))));
   }
   const anchor = (menu, btn) => () => { if (menu.matches(':popover-open')) { const r = btn.getBoundingClientRect(); menu.style.left = `${r.right - menu.offsetWidth}px`; menu.style.bottom = `${innerHeight - r.top + 6}px`; } };
   modelMenu.ontoggle = anchor(modelMenu, modelBtn); effortMenu.ontoggle = anchor(effortMenu, effortBtn); modeMenu.ontoggle = anchor(modeMenu, modeBtn);

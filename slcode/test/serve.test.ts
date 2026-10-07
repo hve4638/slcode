@@ -117,6 +117,22 @@ test('우편 → 턴: 우체국에 온 우편이 다음 idle(첫 프롬프트 �
   await h.close('test');
 });
 
+test('벤더가 첫 턴 전에 죽으면 오류 한 줄 + 종료 한 줄 (serve 의 close 가 종료를 다시 내지 않는다)', { timeout: 30000 }, async () => {
+  const dir = isolated();
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
+  // 없는 모드 — CLI 가 인자 검사에서 exit 1 (API 호출 없음). root 의 skip 플래그 거부와 같은 꼴
+  const h = await serveSession({ dir, cwd: work, web: false, permissionMode: 'bogus' });
+  const c = await connectSession(h.sock);
+  await c.request('session.attach', { id: h.session.id });
+  await c.request('session.send', { id: h.session.id, text: 'x' });
+  await h.done; // 벤더 종료 → serve close
+  c.close();
+  const kinds = EventLog.open(corePaths(dir).sessionsDir, h.session.id)!.all.map((e) => e.ev.kind);
+  assert.equal(kinds.filter((k) => k === 'error').length, 1);
+  assert.equal(kinds.filter((k) => k === 'session.exit').length, 1);
+  assert.equal(kinds.filter((k) => k === 'session.state').length, 1, 'exited 한 번 (starting 에서 보낸 턴이라 running 은 없다)');
+});
+
 test('루프백 밖 호스트는 토큰 필수; --no-web 은 소켓만', async () => {
   const dir = isolated();
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));

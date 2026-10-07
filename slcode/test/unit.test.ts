@@ -66,6 +66,20 @@ test('buildContent: 이미지·PDF 는 블록, 텍스트류는 본문 인라인,
   assert.equal(b[2].text, '<file name="c.txt">\nhello\n</file>\n\nhi');
 });
 
+test('permissionOptions: root 는 IS_SANDBOX=1 일 때만 skip 플래그, 아니면 bypass 요청은 사유와 함께 default 로', async () => {
+  const { permissionOptions } = await import('../src/session.ts');
+  // root·샌드박스 아님 — 플래그가 없어야 CLI 가 뜬다
+  assert.deepEqual(permissionOptions(undefined, {}, 0), { options: {}, refused: null });
+  assert.deepEqual(permissionOptions('default', {}, 0), { options: { permissionMode: 'default' }, refused: null });
+  assert.deepEqual(permissionOptions('acceptEdits', { IS_SANDBOX: 'true' }, 0), { options: { permissionMode: 'acceptEdits' }, refused: null }, "값은 '1' 만");
+  const r = permissionOptions('bypassPermissions', {}, 0);
+  assert.deepEqual(r.options, { permissionMode: 'default' });
+  assert.match(r.refused!, /root 에서는 bypass 모드를 쓸 수 없습니다.*IS_SANDBOX=1/);
+  // root + IS_SANDBOX=1, root 아님 — 늘 플래그 (나중에 setMode 로 bypass 전환)
+  assert.deepEqual(permissionOptions('bypassPermissions', { IS_SANDBOX: '1' }, 0), { options: { permissionMode: 'bypassPermissions', allowDangerouslySkipPermissions: true }, refused: null });
+  assert.deepEqual(permissionOptions('default', {}, 1000), { options: { permissionMode: 'default', allowDangerouslySkipPermissions: true }, refused: null });
+});
+
 test('eventLog.sockPath: 세션 폴더의 sock, cwd 슬러그가 길어 소켓 경로 상한(100바이트)을 넘으면 <dir>/sock/<id>', () => {
   const dir = tmp();
   const short = new EventLog(dir, { id: 'abcd1234', vendor: 'claude', cwd: '/x', title: null, vendorSessionId: null, createdAt: 1, permissionMode: null, raw: false });

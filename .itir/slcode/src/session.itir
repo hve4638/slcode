@@ -22,7 +22,7 @@ export class ClaudeSession {
     role: 플랜 리밋 창(5시간·7일 %·리셋 시각) — SDK usage_EXPERIMENTAL(get_usage, 0.3.282 실험 메서드)의 rate_limits 만 골라 LimitWindow 로. 벤더 미기동·플랜 없음·오류면 null. 한 번에 1.5초쯤이라 폴링하지 않는다
   }
   export fn setMode(mode) {
-    role: SDK setPermissionMode — 즉시. meta.permissionMode 에 남겨 복원 때 options.permissionMode 로 넘긴다. bypassPermissions 로 바꿀 수 있게 query 옵션 allowDangerouslySkipPermissions 를 켠다(그 자체는 우회가 아니다)
+    role: SDK setPermissionMode — 즉시. meta.permissionMode 에 남겨 복원 때 options.permissionMode 로 넘긴다. root(IS_SANDBOX 없음)의 bypassPermissions 는 permissionOptions 의 사유로 거부한다(던짐 — 세션은 그대로)
   }
   export fn commands() {
     role: SDK supportedCommands — 슬래시 명령 이름·설명·인자 힌트. 벤더 미기동이면 빈 배열
@@ -43,7 +43,7 @@ export class ClaudeSession {
     role: 대기 승인 해소 — allow 는 updatedInput(AskUserQuestion 의 answers) + remember 면 세션 한정 규칙(sessionScoped), deny 는 message
   }
   export fn close(reason) {
-    role: 대기 승인 cancel → interrupt → 생성기 반환 → session.exit·exited 이벤트 → 로그 닫기
+    role: 대기 승인 cancel → interrupt → 생성기 반환 → session.exit·exited 이벤트 → 로그 닫기. 벤더가 먼저 끝났으면(run 이 session.exit 를 냈으면) 아무것도 안 한다 — 종료 줄이 한 번만 남는다
   }
   fn emit(ev, raw) {
     role: seq 발급·로그 append·구독자 호출. session.state 는 상태도 갱신
@@ -51,6 +51,9 @@ export class ClaudeSession {
   fn onMessage(m) {
     role: SDK 메시지 → 이벤트 정규화 (system init/session_state_changed/compact_boundary/hook_*, stream_event 델타, assistant tool_use, user tool_result, result). session_id 가 바뀌면 meta 갱신
   }
+}
+export fn permissionOptions(mode, env, uid) {
+  role: query 의 권한 옵션 조립 — permissionMode 와 allowDangerouslySkipPermissions(SDK 가 CLI --allow-dangerously-skip-permissions 로 넘긴다; 켜 두면 나중에 setMode 로 bypass 로 바꿀 수 있고 그 자체는 우회가 아니다). uid 0 이면 CLI 가 IS_SANDBOX=1(값 '1' 만) 없이는 그 플래그나 bypass 모드만으로 첫 턴 전에 exit 1 한다(CLI 2.1.282, 2026-10-08 실측) — 그때는 플래그를 빼고, bypass 요청은 default 로 바꾸고 사람이 읽는 사유(refused)를 돌려준다. run 은 사유를 error 이벤트로 내고 default 로 띄운다(meta 도 default — 비우면 화면 모드 표시가 지난 session.ready 의 bypass 로 폴백한다), setMode 는 던진다. uid·env 는 주입 가능(테스트)
 }
 export fn buildContent(text, attachments) {
   role: 텍스트 + 첨부 → Messages API content — 이미지(png/jpeg/gif/webp)·PDF 는 image/document 블록, 그 밖은 UTF-8 로 풀어 <file name> 인라인. 첨부 없으면 문자열 그대로
