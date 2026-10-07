@@ -4,7 +4,7 @@
 
 ```
 pnpm install && pnpm build
-slcode                                  # 인자 없으면 도움말만
+slcode [--vendor --title --mode …]      # 동사 없으면 slcode new . (옵션만, 폴더는 new <folder>). superlite 터미널 안이면 그 deck 에 카드로 연다 (--web 은 웹 강제)
 cd /path/to/project && slcode new       # 이 프로세스가 이 폴더의 세션 하나 + 웹 서버 하나, URL 이 찍힌다. Ctrl-C 로 닫는다
 slcode resume <s> | continue [folder]   # 닫은 세션을 이어간다 (살아 있으면 attach). continue 는 그 폴더의 최근 세션
 slcode new --host 0.0.0.0 --port 8798   # 밖으로 열면 URL 에 토큰이 붙는다 (기본 127.0.0.1·남는 포트·토큰 없음). --no-web 은 소켓만

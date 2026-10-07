@@ -86,6 +86,7 @@ function fakeApi(files: Record<string, string>, opts: { settings?: Record<string
     events: { on: noop },
     sidebar: { register: noop, setBadge: noop },
     commands: { register: noop },
+    verbs: { register: noop },
     notify: (sev: string, msg: string) => calls.push(`notify ${sev} ${msg}`),
     platform: async () => { calls.push('platform'); return { os: 'linux', arch: 'x86_64' }; },
     folder: {
@@ -155,4 +156,34 @@ test('activate: 설정 bin 이 있으면 받지 않고 그 명령을 쓴다', as
 test('activate: api.folder 가 없는 superlite 면 받지 않는다 (카드에 사유)', async () => {
   const calls = await run({ 'plugin.json': PLUGIN_JSON }, { noFolder: true });
   assert.ok(!calls.some((c) => c.startsWith('github ') || c.includes(' list')));
+});
+
+// ---- 셸 동사 slcode.new (ticket slcode-bare-new) — 가짜 서비스가 hello 를 보내고 session.attach 에 답한다
+test('slcode.new 동사: 요청자 터미널 옆(near)에 카드를 열고, 폴더·옵션으로 서비스를 띄워 세션 id 를 돌려준다', async () => {
+  const verbs: Record<string, any> = {}; const opened: any[] = []; const started: any[] = [];
+  let cb: ((m: unknown) => void) | null = null;
+  const files: Record<string, string> = { 'plugin.json': PLUGIN_JSON, 'bin/linux-x64/manifest.json': mf('0.1.0') };
+  const { api } = fakeApi(files);
+  Object.assign(api, {
+    verbs: { register: (d: any) => { verbs[d.name] = d; } },
+    views: { register: () => {}, open: (...a: any[]) => opened.push(a) },
+    services: {
+      onMessage: (_id: string, f: (m: unknown) => void) => { cb = f; return () => {}; },
+      open: async (_id: string, o: any) => { started.push(o); queueMicrotask(() => cb?.({ url: null, id: 'sess-9', sock: '/s' })); return { onClose: () => () => {}, webUrl: async () => '/svc/x/', close: async () => {} }; },
+      send: async (_id: string, m: any) => { if (m.method === 'session.attach') queueMicrotask(() => cb?.({ id: m.id, result: { info: { state: 'idle', title: null }, pending: [] } })); },
+    },
+  });
+  const restore = stubGithub([]);
+  try {
+    plugin.activate(api);
+    const out = await verbs['slcode.new'].run({ cwd: '/w s', vendor: 'codex', title: 'T' }, { cwd: '/home', tmux: '$3' });
+    assert.equal(out, 'sess-9');
+    assert.equal(opened.length, 1);
+    assert.equal(opened[0][2].as, 'card'); assert.equal(opened[0][2].near, '$3'); assert.equal(opened[0][2].preserve, true);
+    assert.match(started[0].command, /^'\/remote\/cache\/slcode\/abc123\/bin\/slcode' new '\/w s' --vendor 'codex' --title 'T' --stdio --no-web/);
+    const def = await verbs['slcode.new'].run({}, { cwd: '/home/me', tmux: null });
+    assert.equal(def, 'sess-9');
+    assert.equal(opened[1][2].near, undefined, 'tmux 없는 요청자는 near 없이');
+    assert.match(started[1].command, / new '\/home\/me' --stdio/, '폴더 기본값은 요청자 cwd');
+  } finally { restore(); plugin.deactivate(); }
 });

@@ -259,7 +259,9 @@ export function activate(api) {
         const note = (s) => { c.note = s; render(c); };
         const [bin, dir] = await Promise.all([resolveBin(note), setting('dir', '')]);
         c.note = null;
-        const verb = c.id ? `resume ${shq(c.id)}` : 'new';
+        // 새 세션의 폴더·옵션은 slcode.new 동사가 준 것 (없으면 서비스 cwd = 워크스페이스 root)
+        const sp = c.spawn ?? {};
+        const verb = c.id ? `resume ${shq(c.id)}` : `new${sp.cwd ? ` ${shq(sp.cwd)}` : ''}${['vendor', 'title', 'mode'].map((k) => (sp[k] ? ` --${k} ${shq(sp[k])}` : '')).join('')}`;
         // --no-web: TCP 웹을 열지 않는다 — 화면은 서비스 웹 소켓(SUPERLITE_SERVICE_WEB)으로만
         const command = `${bin.cmd} ${verb} --stdio --no-web${dir ? ` --dir ${shq(dir)}` : ''}`;
         c.hello = false;
@@ -312,6 +314,8 @@ export function activate(api) {
       c.ctx = ctx; c.el = el; c.cardId = ctx.card; c.savedId = st.id ?? null;
       el.style.position = 'relative'; el.style.height = '100%';
       render(c); applyTitle(c); badge(c);
+      // 뒤에서 연 카드(slcode.new)는 마운트 전에 세션이 떴다 — 그 id 를 card state 에 남긴다 (새로고침 복원)
+      if (c.id && c.savedId !== c.id) { c.savedId = c.id; ctx.setState({ key: c.key, id: c.id }); }
       void ensure(c);
     },
     unmount(el) { for (const c of cards.values()) if (c.el === el) { c.el = null; } },
@@ -324,6 +328,29 @@ export function activate(api) {
     if (!cards.has(key)) card(key).id = id ?? null;
     api.views.open(VIEW, { key, id: cards.get(key)?.id ?? id ?? null }, { as: 'card', key, title: id ?? 'agent', preserve: true });
   }
+  // 셸 동사 — superlite 터미널 안의 `slcode`·`slcode new` 가 부른다 (ticket slcode-bare-new, 사용자 2026-10-07). 요청자 터미널이 앉은
+  // deck 에 뒤에서 카드를 연다(views.open near — 이 옵션을 모르는 superlite 는 새 deck 으로). 뒤에서 연 카드는 마운트되지 않으므로
+  // 여기서 서비스를 띄워 세션 id 를 받아 돌려준다 (심 stdout 한 줄)
+  api.verbs.register({
+    name: 'slcode.new',
+    help: 'Open a slcode session card in the deck of this terminal; prints the session id',
+    args: [
+      { name: 'cwd', kind: 'option', value: 'dir', help: 'session folder (default: this shell\'s cwd)' },
+      { name: 'vendor', kind: 'option', help: 'claude | codex' },
+      { name: 'title', kind: 'option' },
+      { name: 'mode', kind: 'option', help: 'permission mode' },
+    ],
+    async run(a, ctx) {
+      const key = newKey();
+      const c = card(key);
+      c.spawn = { cwd: a.cwd ?? ctx.cwd, vendor: a.vendor, title: a.title, mode: a.mode };
+      api.views.open(VIEW, { key, id: null }, { as: 'card', key, title: a.title ?? 'slcode', preserve: true, near: ctx.tmux ?? undefined });
+      await ensure(c);
+      if (!c.id) throw new Error(c.error ?? 'slcode 세션을 띄우지 못했습니다');
+      return c.id;
+    },
+  });
+
   // 카드 제거 — 연결만 끊는다. 세션(서비스)은 산다 (사용자 2026-10-04: 닫아도 유지). 서비스 owner 가 card id 가 아니라 key 라 코어가
   // release 하지 않는다. ev.card 는 ctx.card 와 같은 값(보존 card 는 보관소 id)
   api.events.on({ kind: 'card.removed', pred: (ev) => ev.pluginId === 'slcode' }, (ev) => {

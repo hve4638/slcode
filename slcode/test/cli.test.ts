@@ -36,10 +36,10 @@ function fakeStored(dir: string, id: string, title: string | null, cwd = '/x') {
   log.close();
 }
 
-test('인자 없으면 도움말만(종료 0); 모르는 동사·없는 폴더·옛 동사는 오류', async () => {
+test('--help 는 도움말(종료 0); 모르는 동사·없는 폴더·옛 동사는 오류', async () => {
   const dir = tmp('slcode-cli-');
-  const h = await run(dir, []);
-  assert.equal(h.code, 0); assert.match(h.stdout, /^usage: slcode <동사>/); assert.match(h.stdout, /respond <s> <req> allow\|deny/);
+  const h = await run(dir, ['--help']);
+  assert.equal(h.code, 0); assert.match(h.stdout, /^usage: slcode \[옵션\] \| slcode <동사>/); assert.match(h.stdout, /respond <s> <req> allow\|deny/);
   assert.equal((await run(dir, ['bogus'])).code, 2);
   assert.equal((await run(dir, ['send', 'x', 'hi'])).code, 2, '옛 동사에 폴백 별칭 없음');
   assert.equal((await run(dir, ['shutdown'])).code, 2);

@@ -10,6 +10,7 @@
 import { parseArgs } from 'node:util';
 import fs from 'node:fs';
 import net from 'node:net';
+import { spawnSync } from 'node:child_process';
 import http from 'node:http';
 import { WebSocketServer } from 'ws';
 import path from 'node:path';
@@ -19,13 +20,18 @@ import { corePaths, readOrCreateToken } from './paths.js';
 import { serveSession, reachable, staticHandler, listenAddr } from './serve.js';
 import type { ApprovalRequest, LoggedEvent, Methods, SessionInfo } from './protocol.js';
 
-type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; all?: boolean; json?: boolean; remember?: boolean; from?: string; timeout?: string; answer?: string; 'no-web'?: boolean; help?: boolean };
+type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; all?: boolean; json?: boolean; remember?: boolean; from?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; help?: boolean };
 
-const HELP = `usage: slcode <동사> ...   (<s>·<to> 는 세션 id 또는 유일한 제목. * 는 세션 안(SLCODE_SESSION)에서만)
+const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세션 id 또는 유일한 제목. * 는 세션 안(SLCODE_SESSION)에서만)
+
+  slcode [--vendor --title --mode …]
+                                 동사 없이 부르면 slcode new . — 첫 토큰이 옵션이면 전부 new 의 옵션. 폴더·세션 id 는 받지 않는다
+                                 superlite 터미널 안이면 웹 대신 그 터미널의 deck 에 slcode 카드를 열고 끝난다 (--web 은 웹 강제)
 
 세션 수명
-  new [folder] [--port N] [--host H] [--no-web] [--raw] [--mode M] [--title T] [--vendor claude|codex] [--stdio]
+  new [folder] [--port N] [--host H] [--no-web] [--raw] [--mode M] [--title T] [--vendor claude|codex] [--stdio] [--web]
                                  새 세션 (폴더 생략 시 현재 폴더). 이 프로세스가 세션이다 — Ctrl-C 로 닫는다
+                                 superlite 터미널 안이면 카드로 연다 (위와 같음, --web·--stdio 면 이 프로세스가 세션)
                                  --stdio: stdin/stdout 을 프레임 연결로 (첫 줄 {"url","id","sock"}; superlite 서비스용). resume·continue 도 받는다
   resume <s>                     저장된 세션을 다시 띄운다. 이미 살아 있으면 attach
   continue [folder]              그 폴더의 최근 세션을 resume
@@ -66,12 +72,17 @@ try {
       port: { type: 'string' }, host: { type: 'string' }, stdio: { type: 'boolean' }, vendor: { type: 'string' }, mode: { type: 'string' }, title: { type: 'string' },
       since: { type: 'string' }, tail: { type: 'string' }, turn: { type: 'string' }, raw: { type: 'boolean' }, all: { type: 'boolean' }, json: { type: 'boolean' },
       remember: { type: 'boolean' }, from: { type: 'string' }, timeout: { type: 'string' }, answer: { type: 'string' },
-      'no-web': { type: 'boolean' }, dir: { type: 'string' }, help: { type: 'boolean', short: 'h' },
+      'no-web': { type: 'boolean' }, web: { type: 'boolean' }, dir: { type: 'string' }, help: { type: 'boolean', short: 'h' },
     },
   });
 } catch (e) { usage((e as Error).message); }
 const { values: flags, positionals } = parsed as { values: Flags; positionals: string[] };
-const [cmd, ...rest] = positionals;
+// 동사 없는 호출 = new . (ticket slcode-bare-new, 사용자 2026-10-07) — 인자가 없거나 첫 토큰이 옵션이면. 위치 인자는 받지 않는다
+// (폴더·세션 id 를 동사로 잘못 읽지 않게, 다른 폴더는 new <folder>)
+const argv0 = process.argv[2];
+const bare = !flags.help && (argv0 === undefined || argv0.startsWith('-'));
+if (bare && positionals.length) usage(`동사 없는 slcode 는 옵션만 받는다: ${positionals.join(' ')} — 다른 폴더는 slcode new <folder>`);
+const [cmd, ...rest] = bare ? ['new'] : positionals;
 if (!cmd || flags.help) { console.log(HELP); process.exit(0); }
 const print = (o: unknown) => console.log(JSON.stringify(o, null, 2));
 const err = (msg: string) => console.error(`[slcode] ${msg}`);
@@ -174,6 +185,21 @@ async function serve(opts: { cwd: string; resume?: string; continueLast?: boolea
     bye();
   } catch (e) { err((e as Error).message); process.exit(1); }
 }
+/** superlite 터미널 안이면 웹을 열지 않고 플러그인 동사 slcode.new 로 그 터미널의 deck 에 카드를 연 뒤 끝낸다 (ticket slcode-bare-new).
+ *  카드 세션은 플러그인의 card 서비스가 든다. superlite 밖(SUPERLITE_SOCK 없음)·심 없음·연결 불가(exit 3)·동사 없음(플러그인
+ *  미설치·비활성)이면 돌아와 웹 서빙으로. 동사가 있는데 실패하면 그 사유로 끝낸다 */
+function openCardInSuperlite(cwd: string): void {
+  if (!process.env.SUPERLITE_SOCK) return;
+  const args = ['slcode.new', '--cwd', cwd];
+  for (const k of ['vendor', 'title', 'mode'] as const) if (flags[k] !== undefined) args.push(`--${k}`, flags[k]!);
+  const r = spawnSync('superlite', args, { encoding: 'utf8' });
+  if (r.error || r.status === 3 || (r.status !== 0 && /unknown verb/.test(r.stderr))) return;
+  if (r.status !== 0) { process.stderr.write(r.stderr); process.exit(1); }
+  const unused = (['port', 'host', 'no-web', 'raw', 'dir'] as const).filter((k) => flags[k] !== undefined);
+  if (unused.length) err(`카드로 열어 웹 서빙 옵션은 쓰지 않았다: ${unused.map((k) => `--${k}`).join(' ')}`);
+  process.stdout.write(r.stdout);
+  process.exit(0);
+}
 function folderArg(a: string | undefined): string {
   const cwd = path.resolve(a ?? process.cwd());
   if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) { err(`not a folder: ${cwd}`); process.exit(2); }
@@ -247,7 +273,12 @@ async function attach(s: string | undefined) {
 try {
   switch (cmd) {
     // ---- 세션 수명
-    case 'new': await serve({ cwd: folderArg(rest[0]) }); break;
+    case 'new': {
+      const cwd = folderArg(rest[0]);
+      if (!flags.web && !flags.stdio) openCardInSuperlite(cwd); // --stdio 는 카드 서비스 자신 — 다시 카드를 열면 돈다
+      await serve({ cwd });
+      break;
+    }
     case 'continue': await serve({ cwd: folderArg(rest[0]), continueLast: true }); break;
     case 'resume': {
       const log = openLog(rest[0]);
