@@ -38,6 +38,9 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .left .title { cursor: text; }
 .acf .left .name-row button.ico { width: 22px; height: 22px; flex: none; padding: 0; border: 0; background: transparent; color: var(--acf-muted); border-radius: 6px; display: grid; place-items: center; cursor: pointer; }
 .acf .left .name-row button.ico:hover { background: var(--acf-soft); color: var(--acf-fg); }
+/* 연필은 이름 줄에 올렸을 때만 (사용자 2026-10-07) — 키보드 포커스로도 보인다 */
+.acf .left .name-row button.ico { opacity: 0; transition: opacity .15s; }
+.acf .left .name-row:hover button.ico, .acf .left .name-row button.ico:focus-visible { opacity: 1; }
 .acf .left .name-row button.ico svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .acf .left .title-edit { font: inherit; font-weight: 600; width: 100%; min-width: 0; padding: 1px 4px; border: 1px solid var(--acf-line); border-radius: 4px; background: transparent; color: inherit; }
 .acf .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--acf-line); color: var(--acf-muted); white-space: nowrap; }
