@@ -10,6 +10,7 @@
 const VIEW = 'session';
 const SIDEBAR = 'sessions';
 const SVC = 'session';
+const DEFAULT_NAME = 'SLCode'; // 이름 없는 세션의 카드 제목 (slcode 웹의 기본 이름과 같다)
 const FAR = Number.MAX_SAFE_INTEGER; // attach since — 이력은 iframe 이 그린다, 여기선 pending 만
 
 // ---- 바이너리 자가 설치 (ticket slcode-plugin-selfinstall) — 순수 함수. export 는 slcode/test/plugin.test.ts 용
@@ -207,7 +208,7 @@ export function activate(api) {
     const n = c.waits.size;
     c.ctx.setBadge(n ? (n > 1 ? `!${n}` : '!') : c.state === 'running' ? '…' : c.state === 'exited' ? 'off' : null);
   }
-  function applyTitle(c) { if (c.ctx) c.ctx.setTitle(c.title || c.id || 'agent'); }
+  function applyTitle(c) { if (c.ctx) c.ctx.setTitle(c.title || DEFAULT_NAME); } // 카드 제목 = 세션 이름 (slcode 웹 왼쪽 상단에서 고친다), 없으면 SLCode
   function applyUrl(c) {
     // state 는 {key, id} 만 — 보존 card 라 보관소에 적혀 모든 브라우저가 같이 본다. url(/svc 토큰)은 연결마다 새로 받는다
     if (c.ctx && c.savedId !== c.id) { c.savedId = c.id; c.ctx.setState({ key: c.key, id: c.id }); }
@@ -326,7 +327,7 @@ export function activate(api) {
     if (!key && id) key = await ownerOf(id); // 이전에 이 세션을 띄운 서비스의 owner — 있으면 그 서비스에 붙는다 (없으면 resume 으로 새로)
     if (!key) key = newKey();
     if (!cards.has(key)) card(key).id = id ?? null;
-    api.views.open(VIEW, { key, id: cards.get(key)?.id ?? id ?? null }, { as: 'card', key, title: id ?? 'agent', preserve: true });
+    api.views.open(VIEW, { key, id: cards.get(key)?.id ?? id ?? null }, { as: 'card', key, title: DEFAULT_NAME, preserve: true });
   }
   // 셸 동사 — superlite 터미널 안의 `slcode`·`slcode new` 가 부른다 (ticket slcode-bare-new, 사용자 2026-10-07). 요청자 터미널이 앉은
   // deck 에 카드를 붙이고(views.open near — 이 옵션을 모르는 superlite 는 새 deck 으로) 그 카드로 포커스를 옮긴다 (사용자 2026-10-07
@@ -345,7 +346,7 @@ export function activate(api) {
       const key = newKey();
       const c = card(key);
       c.spawn = { cwd: a.cwd ?? ctx.cwd, vendor: a.vendor, title: a.title, mode: a.mode };
-      const at = { as: 'card', key, title: a.title ?? 'slcode', preserve: true };
+      const at = { as: 'card', key, title: a.title ?? DEFAULT_NAME, preserve: true };
       api.views.open(VIEW, { key, id: null }, { ...at, near: ctx.tmux ?? undefined });
       api.views.open(VIEW, undefined, at); // 이미 있는 key — 활성화만
       await ensure(c);

@@ -29,10 +29,12 @@ function toolArg(name, input) {
 export function mountAgentFront(root, transport, opts = {}) {
   root.innerHTML = '';
   const el = h('div', { class: 'acf' });
-  // 왼쪽은 세션 제목만 — id 는 오른쪽 상단 id 줄(복사 버튼)에 둔다 (사용자 2026-10-07). 제목이 없으면 비운다
-  const title = h('span', { class: 'title', hidden: '' });
-  const setTitle = (t) => { title.textContent = t ?? ''; title.hidden = !t; };
-  const cwdEl = h('span', { class: 'cwd' });
+  // 왼쪽 상단은 세션 이름 — 없으면 SLCode, 더블클릭·옆 연필로 고친다(session.rename). superlite 카드 제목도 이 이름을 따른다.
+  // id 는 오른쪽 상단 id 줄, 경로는 오른쪽 폴더 줄의 복사 버튼 (사용자 2026-10-07)
+  const DEFAULT_NAME = 'SLCode';
+  const title = h('span', { class: 'title', title: '더블클릭해 이름 바꾸기' }, DEFAULT_NAME);
+  const setTitle = (t) => { title.textContent = t || DEFAULT_NAME; };
+  const nameRow = h('div', { class: 'name-row' }, title); // 연필 버튼은 iconBtn 정의 뒤에 붙인다
   const pill = h('span', { class: 'pill starting' }, STATE_LABEL.starting);
   const feed = h('div', { class: 'feed' });
   const liveCol = h('div', { class: 'col' });
@@ -134,7 +136,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   } // 승인·질문 카드는 입력창 자리에 뜬다 — 피드에는 호출 표식만 (사용자 2026-09-30)
   // 상단 바 없음 — 세션 이름·cwd·상태는 왼쪽 여백, 세션 정보는 오른쪽 여백 (사용자 2026-09-27). ponytail: 좁은 화면 대응 없음, 모바일이 필요하면 미디어 쿼리로
   el.append(
-    h('aside', { class: 'left' }, title, cwdEl, pill),
+    h('aside', { class: 'left' }, nameRow, pill),
     h('div', { class: 'main' }, feed, dock, composer),
     side,
   );
@@ -176,6 +178,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   function endText(sc = main) { if (sc.textEl) { sc.textEl.classList.remove('streaming'); sc.textEl.append(acts(iconBtn('copy', '복사', copyOf(sc.textBuf)))); } sc.textEl = null; sc.textBuf = ''; sc.thinkEl = null; sc.thinkBuf = ''; }
   // 말풍선 아래 아이콘 줄 (ChatGPT 꼴, 사용자 2026-09-27) — 복사, (사용자 턴엔) 돌아가기 = claude 의 Esc-Esc: 답변만 / 코드만 / 둘 다
   const ICONS = {
+    pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
     copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>',
     up: '<path d="M12 19V5"/><path d="M5 12l7-7 7 7"/>',
     chevron: '<path d="M6 9l6 6 6-6"/>',
@@ -193,6 +196,25 @@ export function mountAgentFront(root, transport, opts = {}) {
   const icon = (name) => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.innerHTML = ICONS[name]; return s; };
   const iconBtn = (name, title, onclick) => h('button', { class: 'ico', title, 'aria-label': title, onclick }, icon(name));
   const acts = (...btns) => h('div', { class: 'acts' }, ...btns);
+  function editName() {
+    if (!current) return;
+    const inp = h('input', { class: 'title-edit', value: info?.title ?? '', placeholder: DEFAULT_NAME });
+    nameRow.replaceChildren(inp); inp.focus(); inp.select();
+    let done = false;
+    const finish = async (save) => {
+      if (done) return; done = true;
+      nameRow.replaceChildren(title, pencil);
+      const v = inp.value.trim() || null;
+      if (!save || v === (info?.title ?? null)) return;
+      setTitle(v);
+      try { await rpc('session.rename', { id: current, title: v }); } catch { setTitle(info?.title); } // 확정은 session.changed 가 준다
+    };
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); void finish(true); } else if (e.key === 'Escape') void finish(false); });
+    inp.addEventListener('blur', () => void finish(true));
+  }
+  const pencil = iconBtn('pencil', '이름 바꾸기', editName);
+  title.addEventListener('dblclick', editName);
+  nameRow.append(pencil);
   sendBtn.append(icon('up')); modelBtn.append(icon('chevron')); effortBtn.append(icon('chevron')); modeBtn.append(icon('chevron'));
   // 보낼 게 없거나(빈 입력·첨부 없음) 세션이 끝났으면 보내기 버튼을 비활성처럼 (사용자 2026-09-27)
   const canSend = () => { sendBtn.disabled = !current || input.disabled || (!input.value.trim() && !pendingFiles.length); };
@@ -312,7 +334,7 @@ export function mountAgentFront(root, transport, opts = {}) {
         break;
       }
       case 'session.state': setState(ev.state); break;
-      case 'session.ready': ready = ev; cwdEl.textContent = ev.cwd; renderMode(); renderSide(); break;
+      case 'session.ready': ready = ev; renderMode(); renderSide(); break;
       case 'context.compacted': endText(); push(h('div', { class: 'notice' }, `컨텍스트 압축${ev.preTokens ? ` · ${fmtTok(ev.preTokens)}` : ''}`)); break;
       case 'hook': if (!replaying) { hooks++; lastHook = `${ev.event} ${ev.phase}`; } break;
       case 'error': endText(); push(h('div', { class: 'meta err' }, ev.message)); break;
@@ -486,7 +508,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     const ctx = status?.context;
     side.append(h('div', { class: 'top' },
       h('div', { class: 'row idrow' }, h('span', { class: 'dim' }, 'id'), h('span', { class: 'name' }, current ?? '—'), current ? iconBtn('copy', '세션 id 복사', copyOf(current)) : ''),
-      row('folder', h('span', { class: 'name', title: cwd }, cwd ? cwd.split('/').filter(Boolean).pop() ?? cwd : '—')),
+      row('folder', h('span', { class: 'name', title: cwd }, cwd ? cwd.split('/').filter(Boolean).pop() ?? cwd : '—'), cwd ? iconBtn('copy', '전체 경로 복사', copyOf(cwd)) : ''),
       row('branch', status?.repo ? h('span', { class: 'name' }, status.repo, status.branch ? h('span', { class: 'dim' }, ` (${status.branch})`) : '') : h('span', { class: 'dim' }, '—')),
       row('hourglass', h('div', { class: 'lims' }, lim('5h', status?.limits?.fiveHour), lim('1w', status?.limits?.sevenDay))),
       row('box', h('span', { title: ctx ? `${fmtTok(ctx.tokens)} / ${fmtTok(ctx.max)}` : null }, 'context ', h('b', { class: ctx?.pct >= 80 ? 'hot' : '' }, ctx ? `${Math.round(ctx.pct)}%` : '—'))),
@@ -563,7 +585,7 @@ export function mountAgentFront(root, transport, opts = {}) {
       if (shown.has(e.seq)) continue;
       if (e.ev.kind === 'turn.end') tally(e.ev);
       else if (e.ev.kind === 'hook') { hooks++; lastHook = `${e.ev.event} ${e.ev.phase}`; }
-      else if (e.ev.kind === 'session.ready') { ready = e.ev; cwdEl.textContent = e.ev.cwd; }
+      else if (e.ev.kind === 'session.ready') { ready = e.ev; }
     }
     for (const e of evs.slice(cut)) render(e);
     lastSeq = Math.max(lastSeq, history.at(-1)?.seq ?? 0);
@@ -598,7 +620,7 @@ export function mountAgentFront(root, transport, opts = {}) {
       else if (e.code === 'no_session') { push(h('div', { class: 'meta err' }, `세션 없음: ${id}`)); setState('exited'); return; }
       else throw e;
     }
-    info = r.info; cwdEl.textContent = info.cwd; setTitle(info.title);
+    info = r.info; setTitle(info.title);
     replayHistory(r.history);
     for (const p of r.pending) renderCard(p);
     setState(info.state);

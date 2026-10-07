@@ -34,7 +34,12 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 /* 왼쪽 레일 — 세션 이름·cwd·상태. 상단 바 대신 (2026-09-27) */
 .acf .left { padding: 18px 14px; display: flex; flex-direction: column; gap: 6px; min-width: 0; align-items: flex-start; }
 .acf .left .title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-.acf .left .cwd { color: var(--acf-muted); font-size: 12px; font-family: var(--acf-mono); overflow-wrap: anywhere; }
+.acf .left .name-row { display: flex; align-items: center; gap: 2px; max-width: 100%; min-width: 0; }
+.acf .left .title { cursor: text; }
+.acf .left .name-row button.ico { width: 22px; height: 22px; flex: none; padding: 0; border: 0; background: transparent; color: var(--acf-muted); border-radius: 6px; display: grid; place-items: center; cursor: pointer; }
+.acf .left .name-row button.ico:hover { background: var(--acf-soft); color: var(--acf-fg); }
+.acf .left .name-row button.ico svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.acf .left .title-edit { font: inherit; font-weight: 600; width: 100%; min-width: 0; padding: 1px 4px; border: 1px solid var(--acf-line); border-radius: 4px; background: transparent; color: inherit; }
 .acf .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--acf-line); color: var(--acf-muted); white-space: nowrap; }
 .acf .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .acf .pill.running { color: var(--acf-accent); }
@@ -250,9 +255,9 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .side .top b.hot { color: var(--acf-err); }
 .acf .side .top .cost { margin-left: auto; color: var(--acf-muted); font-variant-numeric: tabular-nums; }
 .acf .side .top .idrow { margin-bottom: 2px; }
-.acf .side .top .idrow button.ico { margin-left: auto; width: 22px; height: 22px; padding: 0; border: 0; background: transparent; color: var(--acf-muted); border-radius: 6px; display: grid; place-items: center; cursor: pointer; }
-.acf .side .top .idrow button.ico:hover { background: var(--acf-soft); color: var(--acf-fg); }
-.acf .side .top .idrow button.ico svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.acf .side .top .row button.ico { margin-left: auto; width: 22px; height: 22px; flex: none; padding: 0; border: 0; background: transparent; color: var(--acf-muted); border-radius: 6px; display: grid; place-items: center; cursor: pointer; }
+.acf .side .top .row button.ico:hover { background: var(--acf-soft); color: var(--acf-fg); }
+.acf .side .top .row button.ico svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .acf .side .top .lims { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 /* 두 막대는 같은 길이 — 오른쪽 칸을 고정 폭으로 */
 .acf .side .top .lim { display: grid; position: relative; grid-template-columns: 20px 1fr 40px; /* 남은 기간은 최대 5자 (4h02m·2d10h) */ align-items: center; gap: 6px; color: var(--acf-muted); font-size: 11px; }
