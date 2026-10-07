@@ -329,8 +329,9 @@ export function activate(api) {
     api.views.open(VIEW, { key, id: cards.get(key)?.id ?? id ?? null }, { as: 'card', key, title: id ?? 'agent', preserve: true });
   }
   // 셸 동사 — superlite 터미널 안의 `slcode`·`slcode new` 가 부른다 (ticket slcode-bare-new, 사용자 2026-10-07). 요청자 터미널이 앉은
-  // deck 에 뒤에서 카드를 연다(views.open near — 이 옵션을 모르는 superlite 는 새 deck 으로). 뒤에서 연 카드는 마운트되지 않으므로
-  // 여기서 서비스를 띄워 세션 id 를 받아 돌려준다 (심 stdout 한 줄)
+  // deck 에 카드를 붙이고(views.open near — 이 옵션을 모르는 superlite 는 새 deck 으로) 그 카드로 포커스를 옮긴다 (사용자 2026-10-07
+  // 데모 뒤 "바로 그 card 로" — near 는 뒤에서 붙이므로 같은 key 로 한 번 더 열어 활성화). 서비스는 여기서 띄워 세션 id 를 돌려준다
+  // (심 stdout 한 줄)
   api.verbs.register({
     name: 'slcode.new',
     help: 'Open a slcode session card in the deck of this terminal; prints the session id',
@@ -344,7 +345,9 @@ export function activate(api) {
       const key = newKey();
       const c = card(key);
       c.spawn = { cwd: a.cwd ?? ctx.cwd, vendor: a.vendor, title: a.title, mode: a.mode };
-      api.views.open(VIEW, { key, id: null }, { as: 'card', key, title: a.title ?? 'slcode', preserve: true, near: ctx.tmux ?? undefined });
+      const at = { as: 'card', key, title: a.title ?? 'slcode', preserve: true };
+      api.views.open(VIEW, { key, id: null }, { ...at, near: ctx.tmux ?? undefined });
+      api.views.open(VIEW, undefined, at); // 이미 있는 key — 활성화만
       await ensure(c);
       if (!c.id) throw new Error(c.error ?? 'slcode 세션을 띄우지 못했습니다');
       return c.id;

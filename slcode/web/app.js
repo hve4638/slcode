@@ -29,7 +29,9 @@ function toolArg(name, input) {
 export function mountAgentFront(root, transport, opts = {}) {
   root.innerHTML = '';
   const el = h('div', { class: 'acf' });
-  const title = h('span', { class: 'title' }, opts.sessionId ?? '');
+  // 왼쪽은 세션 제목만 — id 는 오른쪽 상단 id 줄(복사 버튼)에 둔다 (사용자 2026-10-07). 제목이 없으면 비운다
+  const title = h('span', { class: 'title', hidden: '' });
+  const setTitle = (t) => { title.textContent = t ?? ''; title.hidden = !t; };
   const cwdEl = h('span', { class: 'cwd' });
   const pill = h('span', { class: 'pill starting' }, STATE_LABEL.starting);
   const feed = h('div', { class: 'feed' });
@@ -483,6 +485,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     const row = (name, ...kids) => h('div', { class: 'row' }, icon(name), ...kids);
     const ctx = status?.context;
     side.append(h('div', { class: 'top' },
+      h('div', { class: 'row idrow' }, h('span', { class: 'dim' }, 'id'), h('span', { class: 'name' }, current ?? '—'), current ? iconBtn('copy', '세션 id 복사', copyOf(current)) : ''),
       row('folder', h('span', { class: 'name', title: cwd }, cwd ? cwd.split('/').filter(Boolean).pop() ?? cwd : '—')),
       row('branch', status?.repo ? h('span', { class: 'name' }, status.repo, status.branch ? h('span', { class: 'dim' }, ` (${status.branch})`) : '') : h('span', { class: 'dim' }, '—')),
       row('hourglass', h('div', { class: 'lims' }, lim('5h', status?.limits?.fiveHour), lim('1w', status?.limits?.sevenDay))),
@@ -587,7 +590,7 @@ export function mountAgentFront(root, transport, opts = {}) {
 
   // ---- attach · 재접속
   async function attach(id) {
-    current = id; title.textContent = id;
+    current = id; renderSide();
     let r;
     try { r = await rpc('session.attach', { id, since: lastSeq }); }
     catch (e) {
@@ -595,7 +598,7 @@ export function mountAgentFront(root, transport, opts = {}) {
       else if (e.code === 'no_session') { push(h('div', { class: 'meta err' }, `세션 없음: ${id}`)); setState('exited'); return; }
       else throw e;
     }
-    info = r.info; cwdEl.textContent = info.cwd; if (info.title) title.textContent = info.title;
+    info = r.info; cwdEl.textContent = info.cwd; setTitle(info.title);
     replayHistory(r.history);
     for (const p of r.pending) renderCard(p);
     setState(info.state);
@@ -604,7 +607,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   }
   transport.onEvent((m) => {
     if (m.event === 'session.event' && m.params.id === current) render(m.params, true);
-    else if (m.event === 'session.changed' && m.params.id === current) { info = m.params; if (info.title) title.textContent = info.title; renderMode(); renderSide(); }
+    else if (m.event === 'session.changed' && m.params.id === current) { info = m.params; setTitle(info.title); renderMode(); renderSide(); }
     else if (m.event === 'session.closed' && m.params.id === current) { /* session.exit 이벤트가 이미 그렸다 */ }
   });
   transport.onStatus(async (s) => {

@@ -178,12 +178,13 @@ test('slcode.new 동사: 요청자 터미널 옆(near)에 카드를 열고, 폴�
     plugin.activate(api);
     const out = await verbs['slcode.new'].run({ cwd: '/w s', vendor: 'codex', title: 'T' }, { cwd: '/home', tmux: '$3' });
     assert.equal(out, 'sess-9');
-    assert.equal(opened.length, 1);
+    assert.equal(opened.length, 2, 'near 로 붙인 뒤 같은 key 로 한 번 더 — 그 카드로 포커스');
     assert.equal(opened[0][2].as, 'card'); assert.equal(opened[0][2].near, '$3'); assert.equal(opened[0][2].preserve, true);
+    assert.equal(opened[1][2].key, opened[0][2].key); assert.equal(opened[1][1], undefined); assert.equal(opened[1][2].near, undefined);
     assert.match(started[0].command, /^'\/remote\/cache\/slcode\/abc123\/bin\/slcode' new '\/w s' --vendor 'codex' --title 'T' --stdio --no-web/);
     const def = await verbs['slcode.new'].run({}, { cwd: '/home/me', tmux: null });
     assert.equal(def, 'sess-9');
-    assert.equal(opened[1][2].near, undefined, 'tmux 없는 요청자는 near 없이');
+    assert.equal(opened[2][2].near, undefined, 'tmux 없는 요청자는 near 없이');
     assert.match(started[1].command, / new '\/home\/me' --stdio/, '폴더 기본값은 요청자 cwd');
   } finally { restore(); plugin.deactivate(); }
 });

@@ -249,6 +249,10 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .side .top .dim { color: var(--acf-muted); }
 .acf .side .top b.hot { color: var(--acf-err); }
 .acf .side .top .cost { margin-left: auto; color: var(--acf-muted); font-variant-numeric: tabular-nums; }
+.acf .side .top .idrow { margin-bottom: 2px; }
+.acf .side .top .idrow button.ico { margin-left: auto; width: 22px; height: 22px; padding: 0; border: 0; background: transparent; color: var(--acf-muted); border-radius: 6px; display: grid; place-items: center; cursor: pointer; }
+.acf .side .top .idrow button.ico:hover { background: var(--acf-soft); color: var(--acf-fg); }
+.acf .side .top .idrow button.ico svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .acf .side .top .lims { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 /* 두 막대는 같은 길이 — 오른쪽 칸을 고정 폭으로 */
 .acf .side .top .lim { display: grid; position: relative; grid-template-columns: 20px 1fr 40px; /* 남은 기간은 최대 5자 (4h02m·2d10h) */ align-items: center; gap: 6px; color: var(--acf-muted); font-size: 11px; }
