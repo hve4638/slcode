@@ -1,5 +1,5 @@
 // 가짜 codex app-server — stdio JSON 줄 프로토콜의 최소 흉내 (테스트용, API 호출 없음).
-// initialize·thread/start·thread/resume·model/list·turn/start·turn/interrupt·thread/compact/start 에 답하고, turn/start 뒤 델타 → 명령 승인 요청 → 완료 알림을 낸다.
+// initialize·thread/start·thread/resume·thread/fork(새 id fork-<원본>)·model/list·turn/start·turn/interrupt·thread/compact/start 에 답하고, turn/start 뒤 델타 → 명령 승인 요청 → 완료 알림을 낸다.
 import readline from 'node:readline';
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 const notify = (method, params) => out({ jsonrpc: '2.0', method, params });
@@ -18,6 +18,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     case 'initialize': return reply({ userAgent: 'fake/0.0.1 (test)', codexHome: '/tmp', platformFamily: 'unix', platformOs: 'linux' });
     case 'initialized': return;
     case 'thread/start': case 'thread/resume': return reply({ thread: { id: m.method === 'thread/resume' ? m.params.threadId : thread.id, turns: [] }, model: m.params.model ?? 'fake-model', modelProvider: 'fake', cwd: m.params.cwd, approvalPolicy: m.params.approvalPolicy, sandbox: {}, reasoningEffort: 'medium' });
+    case 'thread/fork': return reply({ thread: { id: `fork-${m.params.threadId}`, turns: [] }, model: m.params.model ?? 'fake-model', modelProvider: 'fake', cwd: m.params.cwd, approvalPolicy: m.params.approvalPolicy, sandbox: {}, reasoningEffort: 'medium' });
     case 'model/list': return reply({ data: [{ id: 'fake-model', model: 'fake-model', displayName: 'Fake 1.0', description: 'test', hidden: false, isDefault: true, supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }], defaultReasoningEffort: 'medium' }], nextCursor: null });
     case 'account/rateLimits/read': return reply({ rateLimits: { primary: { usedPercent: 3, windowDurationMins: 300, resetsAt: 1800000000 }, secondary: { usedPercent: 40, windowDurationMins: 10080, resetsAt: 1800500000 } } });
     case 'thread/compact/start': {

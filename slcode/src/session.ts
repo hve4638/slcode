@@ -197,7 +197,10 @@ export class ClaudeSession extends AgentSession {
       filesChanged = r.filesChanged ?? [];
     }
     if (conversation) {
-      this.resumeAt = prev?.uuid ?? null;
+      // 가져온 세션(slcode import)의 첫 턴이면 가져올 때의 벤더 마지막 항목으로 — 새 벤더 세션으로 가면 가져온 대화가 사라진다
+      const imported = evs.find((e) => e.ev.kind === 'session.imported')?.ev as Extract<CoreEvent, { kind: 'session.imported' }> | undefined;
+      if (!prev && imported && !imported.uuid) throw new Error('cannot rewind before the imported conversation');
+      this.resumeAt = prev?.uuid ?? imported?.uuid ?? null;
       if (!this.resumeAt) this.log.updateMeta({ vendorSessionId: null });
       this.restarting = true;
       try { (this.q as any)?.return?.(); } catch {}

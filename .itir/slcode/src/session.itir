@@ -34,7 +34,7 @@ export class ClaudeSession {
     role: SDK applyFlagSettings({effortLevel}) — 세션 한정 설정층이라 설정 파일엔 안 쓴다. meta.effort 에 남겨 복원 때 options.effort 로 넘긴다. models() 가 지금 effort 와 모델별 supportedEffortLevels 를 같이 준다
   }
   export fn rewind(seq, conversation, files) -> String[]? {
-    role: idle 일 때만. files 면 SDK rewindFiles(그 턴의 userUuid), conversation 이면 생성기를 닫고(restarting 플래그로 exit 이벤트를 막는다) 앞 턴의 uuid 를 resumeSessionAt 으로 run 재기동(첫 턴이면 새 벤더 세션). turn.rewound 이벤트
+    role: idle 일 때만. files 면 SDK rewindFiles(그 턴의 userUuid), conversation 이면 생성기를 닫고(restarting 플래그로 exit 이벤트를 막는다) 앞 턴의 uuid 를 resumeSessionAt 으로 run 재기동(첫 턴이면 새 벤더 세션; 가져온 세션의 첫 턴이면 session.imported.uuid 로 — 가져온 대화를 지키고, uuid 가 없으면 오류). turn.rewound 이벤트
   }
   export fn interrupt() {
     role: 진행 턴 중단 — 그 턴의 승인 대기는 cancelled

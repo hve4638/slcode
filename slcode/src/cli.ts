@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 단독 실행 진입점 — 동사 하나를 받아 한 번 부르고 끝난다 (attach 만 연결 유지). 인자 없는 slcode 는 도움말만 (ticket slcode-verbs, 사용자 확정 2026-10-02).
-//   세션 수명  new [folder] | resume <s> | continue [folder] | attach <s> | list [--all] | rename <s> <title> | close <s> | delete <s>
+//   세션 수명  new [folder] | resume <s> | continue [folder] | import <벤더 세션 id> | export <s> | attach <s> | list [--all] | rename <s> <title> | close <s> | delete <s>
 //   대화       prompt <s> <text> | interrupt <s>
 //   조회       status <s> | pending <s> | last <s> [--turn N] | log <s> [--since N] [--tail N]      — 평문 기본, --json 이면 같은 내용을 JSON 으로
 //   응답       respond <s> <req> allow|deny [--remember] | respond <s> <req> --answer <text> | respond <s> <req> --json '<updatedInput>'
@@ -18,9 +18,11 @@ import { connectPost, connectSession, type RpcClient } from './client.js';
 import { EventLog } from './eventLog.js';
 import { corePaths, readOrCreateToken } from './paths.js';
 import { serveSession, reachable, staticHandler, listenAddr } from './serve.js';
+import { claudeLastUuid, findVendorSession, forkClaude, vendorResumeCommand } from './vendor.js';
+import { randomUUID } from 'node:crypto';
 import type { ApprovalRequest, LoggedEvent, Methods, SessionInfo } from './protocol.js';
 
-type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; all?: boolean; json?: boolean; remember?: boolean; from?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; help?: boolean };
+type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; fork?: boolean; all?: boolean; json?: boolean; remember?: boolean; from?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; help?: boolean };
 
 const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세션 id 또는 유일한 제목. * 는 세션 안(SLCODE_SESSION)에서만)
 
@@ -35,6 +37,12 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
                                  --stdio: stdin/stdout 을 프레임 연결로 (첫 줄 {"url","id","sock"}; superlite 서비스용). resume·continue 도 받는다
   resume <s>                     저장된 세션을 다시 띄운다. 이미 살아 있으면 attach
   continue [folder]              그 폴더의 최근 세션을 resume
+  import <벤더 세션 id> [--vendor claude|codex] [--title T] [--fork]
+                                 Claude Code·Codex 에서 하던 세션을 slcode 세션으로 이어받아 resume (폴더는 벤더 기록에서).
+                                 같은 벤더 세션을 이어 쓴다 — 벤더 쪽은 먼저 닫는다. 이미 가져온 세션이면 그 slcode 세션을 resume.
+                                 --fork 는 벤더 복제 기능으로 갈라 낸 새 세션으로 (원본은 그대로, 매번 새 slcode 세션).
+                                 이전 대화는 화면에 다시 그리지 않는다
+  export <s>                     그 세션을 벤더 하네스에서 이어 갈 명령을 출력 (cd <폴더> && claude --resume <id> | codex resume <id>)
   attach <s> [--since N]         살아 있는 세션에 터미널로 붙는다 (줄 입력 = 턴, /respond <req> allow|deny, /int, /quit)
   list [--all]                   살아 있는 세션 (--all 은 꺼진 세션까지)
   rename <s> <title> | close <s> | delete <s>
@@ -70,7 +78,7 @@ try {
     allowPositionals: true,
     options: {
       port: { type: 'string' }, host: { type: 'string' }, stdio: { type: 'boolean' }, vendor: { type: 'string' }, mode: { type: 'string' }, title: { type: 'string' },
-      since: { type: 'string' }, tail: { type: 'string' }, turn: { type: 'string' }, raw: { type: 'boolean' }, all: { type: 'boolean' }, json: { type: 'boolean' },
+      since: { type: 'string' }, tail: { type: 'string' }, turn: { type: 'string' }, raw: { type: 'boolean' }, fork: { type: 'boolean' }, all: { type: 'boolean' }, json: { type: 'boolean' },
       remember: { type: 'boolean' }, from: { type: 'string' }, timeout: { type: 'string' }, answer: { type: 'string' },
       'no-web': { type: 'boolean' }, web: { type: 'boolean' }, dir: { type: 'string' }, help: { type: 'boolean', short: 'h' },
     },
@@ -141,6 +149,7 @@ function render(e: LoggedEvent) {
     case 'tool.end': console.log(`  ${ev.ok ? '✓' : '✗'} ${ev.summary.split('\n')[0].slice(0, 120)}`); break;
     case 'approval.requested': console.log(`\n? ${ev.name === 'AskUserQuestion' ? 'question' : 'approval'} ${ev.requestId} ${ev.name} ${JSON.stringify(ev.input).slice(0, 200)}\n  → respond ${ev.requestId} ${ev.name === 'AskUserQuestion' ? '--answer <text>' : 'allow|deny'}`); break;
     case 'approval.resolved': console.log(`  ↳ ${ev.requestId} ${ev.decision}`); break;
+    case 'session.imported': console.log(`\n● ${ev.fork ? 'forked' : 'imported'} ${ev.vendor} session ${ev.vendorSessionId} — earlier conversation is in ${ev.vendor}`); break;
     case 'turn.end': console.log(`\n■ turn ${ev.ok ? 'ok' : ev.interrupted ? 'interrupted' : `error: ${ev.error}`}${ev.costUsd != null ? ` $${ev.costUsd.toFixed(4)}` : ''}`); break;
     default: console.log(`\n[${e.seq}] ${JSON.stringify(ev)}`);
   }
@@ -165,6 +174,14 @@ function turnSlice(history: LoggedEvent[], back: number): LoggedEvent[] | null {
   return history.slice(starts[k], k + 1 < starts.length ? starts[k + 1] : undefined);
 }
 
+/** resume·import — 살아 있으면 붙고(--stdio 면 소켓 중계), 아니면 세션 프로세스가 된다 */
+async function resumeLog(log: EventLog) {
+  let live = false;
+  try { (await connectSession(log.sockPath)).close(); live = true; } catch {}
+  if (live && flags.stdio) await proxyStdio(log); // 살아 있는 세션의 소켓을 stdin/stdout 으로 중계 — superlite 카드가 떠 있는 세션에 붙는 길
+  else if (live) { err(`session ${log.meta.id} is live — attaching`); await attach(log.meta.id); } // tmux new -A 꼴
+  else await serve({ cwd: log.meta.cwd, resume: log.meta.id });
+}
 /** 세션 프로세스가 되어 끝까지 산다 — new·resume·continue */
 async function serve(opts: { cwd: string; resume?: string; continueLast?: boolean }) {
   try {
@@ -280,13 +297,41 @@ try {
       break;
     }
     case 'continue': await serve({ cwd: folderArg(rest[0]), continueLast: true }); break;
-    case 'resume': {
+    case 'resume': await resumeLog(openLog(rest[0])); break;
+    case 'import': {
+      // 벤더 하네스의 세션을 vendorSessionId 로 든 slcode 세션 기록을 만들고 resume (ticket vendor-import, 2026-10-07)
+      const vid = rest[0];
+      if (!vid) usage('import <vendor session id>');
+      if (flags.vendor !== undefined && flags.vendor !== 'claude' && flags.vendor !== 'codex') usage('--vendor claude|codex');
+      const already = flags.fork ? undefined : EventLog.list(P.sessionsDir).find((m) => m.vendorSessionId === vid);
+      if (already) { err(`already imported as ${already.id}`); await resumeLog(openLog(already.id)); break; }
+      const found = findVendorSession(vid, flags.vendor as 'claude' | 'codex' | undefined);
+      if (!found) { err(`no ${flags.vendor ?? 'claude or codex'} session ${vid}`); process.exit(1); }
+      if (!fs.existsSync(found.cwd)) { err(`session folder is gone: ${found.cwd}`); process.exit(1); }
+      // --fork: Claude 는 지금 SDK forkSession 으로 갈라 그 id 로, Codex 는 세션 프로세스의 첫 기동이 thread/fork 로 가른다 (meta.forkFrom)
+      let vsid: string | null = found.id, file: string | null = found.file;
+      if (flags.fork && found.vendor === 'claude') { vsid = await forkClaude(found.id, found.cwd); file = findVendorSession(vsid, 'claude')?.file ?? null; }
+      else if (flags.fork) { vsid = null; file = null; }
+      const log = EventLog.create(P.sessionsDir, {
+        id: randomUUID().slice(0, 8), vendor: found.vendor, cwd: found.cwd, title: flags.title ?? null,
+        vendorSessionId: vsid, createdAt: Date.now(), permissionMode: flags.mode ?? null, raw: flags.raw ?? false,
+        ...(flags.fork ? { forkFrom: found.id } : {}),
+      });
+      const uuid = found.vendor === 'claude' && file ? claudeLastUuid(file) : null;
+      log.append({ seq: 1, at: Date.now(), ev: { kind: 'session.imported', vendor: found.vendor, vendorSessionId: found.id, uuid, ...(flags.fork ? { fork: true } : {}) } });
+      log.close();
+      if (flags.fork) err(`forked ${found.vendor} session ${found.id}${vsid ? ` into ${vsid}` : ''} as ${log.meta.id} (${found.cwd}) — the original is untouched`);
+      else err(`imported ${found.vendor} session ${found.id} as ${log.meta.id} (${found.cwd}) — close it in ${found.vendor} first; both at once fork the conversation`);
+      await resumeLog(log);
+      break;
+    }
+    case 'export': {
       const log = openLog(rest[0]);
+      if (!log.meta.vendorSessionId) { err(`session ${log.meta.id} has no ${log.meta.vendor} session yet (no turn)`); process.exit(1); }
       let live = false;
       try { (await connectSession(log.sockPath)).close(); live = true; } catch {}
-      if (live && flags.stdio) await proxyStdio(log); // 살아 있는 세션의 소켓을 stdin/stdout 으로 중계 — superlite 카드가 떠 있는 세션에 붙는 길
-      else if (live) { err(`session ${log.meta.id} is live — attaching`); await attach(log.meta.id); } // tmux new -A 꼴
-      else await serve({ cwd: log.meta.cwd, resume: log.meta.id });
+      if (live) err(`session ${log.meta.id} is live — close it first (slcode close ${log.meta.id}); both at once fork the conversation`);
+      console.log(vendorResumeCommand(log.meta.vendor, log.meta.cwd, log.meta.vendorSessionId));
       break;
     }
     case 'attach': await attach(rest[0]); break;

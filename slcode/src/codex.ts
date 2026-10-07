@@ -116,6 +116,8 @@ export class CodexSession extends AgentSession {
         try { r = await this.request('thread/resume', { threadId: this.threadId, ...base, excludeTurns: true }); }
         catch (e) { if (!/not found|no rollout/i.test((e as Error).message)) throw e; this.emit({ kind: 'error', message: `codex thread ${this.threadId} not found — starting a new thread` }); }
       }
+      // slcode import --fork — 원본은 두고 갈라 낸 새 thread 로 (원본이 없으면 새 thread 로 대체하지 않고 실패)
+      if (!r && this.log.meta.forkFrom) r = await this.request('thread/fork', { threadId: this.log.meta.forkFrom, ...base, excludeTurns: true });
       r ??= await this.request('thread/start', base);
       this.threadId = r.thread.id;
       this.log.updateMeta({ vendorSessionId: r.thread.id });

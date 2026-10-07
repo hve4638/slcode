@@ -335,6 +335,7 @@ export function mountAgentFront(root, transport, opts = {}) {
       }
       case 'session.state': setState(ev.state); break;
       case 'session.ready': ready = ev; renderMode(); renderSide(); break;
+      case 'session.imported': push(h('div', { class: 'notice' }, `${ev.vendor} ${ev.fork ? `세션 ${ev.vendorSessionId.slice(0, 8)} 에서 복제한` : '에서 가져온'} 세션 · 이전 대화는 ${ev.vendor} 기록에만 있다`)); break;
       case 'context.compacted': endText(); push(h('div', { class: 'notice' }, `컨텍스트 압축${ev.preTokens ? ` · ${fmtTok(ev.preTokens)}` : ''}`)); break;
       case 'hook': if (!replaying) { hooks++; lastHook = `${ev.event} ${ev.phase}`; } break;
       case 'error': endText(); push(h('div', { class: 'meta err' }, ev.message)); break;

@@ -22,6 +22,8 @@ export type SessionMeta = {
   model?: string | null;
   /** session.setEffort 로 고른 effort — 없으면 벤더 기본 */
   effort?: string | null;
+  /** `slcode import --fork` 의 원본 벤더 세션 — Codex 는 첫 기동 때 thread/fork 로 갈라 vendorSessionId 를 얻는다 (Claude 는 import 때 이미 갈랐다) */
+  forkFrom?: string | null;
 };
 
 /** 유닉스 소켓 경로 상한(sun_path 108바이트)에 여유를 둔 값 — 넘으면 listen 이 EADDRINUSE/ENAMETOOLONG 로 실패한다 (2026-10-04 실측: 워크트리 경로 슬러그) */

@@ -95,6 +95,8 @@ export type CoreEventBody =
   | { kind: 'context.compacted'; trigger: string; preTokens: number | null }
   | { kind: 'hook'; event: string; phase: 'started' | 'response'; ok: boolean | null }
   | { kind: 'error'; message: string }
+  /** `slcode import` 가 첫 이벤트로 남긴다 — 그 앞 대화는 벤더 기록에만 있다. vendorSessionId 는 가져온(fork 면 원본) 세션, uuid 는 가져올 때 벤더 쪽 마지막 항목(Claude; 첫 턴 되돌림의 유지 지점) */
+  | { kind: 'session.imported'; vendor: Vendor; vendorSessionId: string; uuid: string | null; fork?: boolean }
   | { kind: 'session.exit'; reason: string };
 
 export type CoreEventKind = CoreEventBody['kind'];

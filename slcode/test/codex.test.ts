@@ -7,6 +7,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serveSession } from '../src/serve.ts';
 import { connectSession } from '../src/client.ts';
+import { EventLog } from '../src/eventLog.ts';
+import { corePaths } from '../src/paths.ts';
 
 const FAKE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-codex.mjs');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -65,4 +67,20 @@ test('codex: initialize→thread/start→turn/start, 델타·도구·승인(acce
   assert.equal(ready.length, 2, '두 번째 기동의 ready 도 로그에');
   c2.close();
   await h2.close('test'); 
+});
+
+test('codex: meta.forkFrom(slcode import --fork) 이면 첫 기동이 thread/fork 로 새 thread 를 받고, 다시 띄우면 그 thread 를 resume', async () => {
+  process.env.SLCODE_GRACE_SECS = '1';
+  process.env.SLCODE_CODEX_BIN = `${process.execPath} ${FAKE}`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-codex-'));
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
+  EventLog.create(corePaths(dir).sessionsDir, { id: 'ffff0001', vendor: 'codex', cwd: work, title: null, vendorSessionId: null, forkFrom: 'thr-orig', createdAt: 1, permissionMode: null, raw: false }).close();
+  const h = await serveSession({ dir, cwd: work, resume: 'ffff0001', web: false });
+  await sleep(300);
+  assert.equal(EventLog.open(corePaths(dir).sessionsDir, 'ffff0001')!.meta.vendorSessionId, 'fork-thr-orig');
+  await h.close('test');
+  const h2 = await serveSession({ dir, cwd: work, resume: 'ffff0001', web: false });
+  await sleep(300);
+  assert.equal(EventLog.open(corePaths(dir).sessionsDir, 'ffff0001')!.meta.vendorSessionId, 'fork-thr-orig', '두 번째 기동은 fork 가 아니라 resume');
+  await h2.close('test');
 });
