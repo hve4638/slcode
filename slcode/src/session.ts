@@ -45,15 +45,6 @@ export type SessionOptions = {
   env?: NodeJS.ProcessEnv;
 };
 
-/** query 의 권한 옵션. allowDangerouslySkipPermissions 는 SDK 가 CLI --allow-dangerously-skip-permissions 로 넘긴다 — 켜 두면 나중에 setMode 로 bypass 로 바꿀 수 있다(그 자체로 우회하지 않는다).
- *  uid 0 이면 CLI 가 IS_SANDBOX=1(값 '1' 만) 없이는 그 플래그나 bypass 모드만으로 첫 턴 전에 exit 1 한다 (CLI 2.1.282, 2026-10-08 실측) — 그때는 플래그를 빼고 bypass 요청은 사유(refused)와 함께 default 로 */
-export function permissionOptions(mode: string | null | undefined, env: NodeJS.ProcessEnv, uid = process.getuid?.()) {
-  const skip = uid !== 0 || env.IS_SANDBOX === '1';
-  const refused = !skip && mode === 'bypassPermissions' ? 'root 에서는 bypass 모드를 쓸 수 없습니다 — IS_SANDBOX=1 을 주거나 default/acceptEdits 를 쓰세요' : null;
-  const permissionMode = refused ? 'default' : mode;
-  return { options: { ...(permissionMode ? { permissionMode: permissionMode as any } : {}), ...(skip ? { allowDangerouslySkipPermissions: true } : {}) }, refused };
-}
-
 function summarize(content: unknown): string {
   if (typeof content === 'string') return content.slice(0, 400);
   if (Array.isArray(content)) return content.map((c: any) => (c?.type === 'text' ? c.text : `[${c?.type}]`)).join('').slice(0, 400);
@@ -126,8 +117,6 @@ export class ClaudeSession extends AgentSession {
 
   /** 권한 모드 — 즉시. meta 에 남겨 복원 때 options.permissionMode 로 넘긴다 */
   async setMode(mode: string) {
-    const { refused } = permissionOptions(mode, this.opts.env ?? process.env);
-    if (refused) throw new Error(refused); // 플래그 없이 뜬 CLI 는 어차피 거부한다 — 세션은 그대로
     await this.q?.setPermissionMode(mode as any);
     this.log.updateMeta({ permissionMode: mode });
   }
@@ -238,13 +227,7 @@ export class ClaudeSession extends AgentSession {
 
   private async run(opts: SessionOptions) {
     const resume = opts.resume ?? this.log.meta.vendorSessionId ?? undefined;
-    const perm = permissionOptions(opts.permissionMode ?? this.log.meta.permissionMode, opts.env ?? process.env);
-    if (perm.refused) {
-      // 세션은 살린다 — 사유를 보이고 default 로 띄운다. meta 도 default 로: 비우면 화면의 모드 표시가 지난 run 의 session.ready(bypass)로 폴백한다 (2026-10-08 실측). rewind 재기동도 다시 거부하지 않는다
-      this.emit({ kind: 'error', message: perm.refused });
-      this.opts.permissionMode = 'default';
-      this.log.updateMeta({ permissionMode: 'default' });
-    }
+    const permissionMode = opts.permissionMode ?? this.log.meta.permissionMode ?? undefined;
     const q = query({
       prompt: this.input,
       options: {
@@ -258,8 +241,11 @@ export class ClaudeSession extends AgentSession {
         systemPrompt: { type: 'preset', preset: 'claude_code' },
         // CLI 와 같은 로드 — user/project/local (스파이크 (a) 실측: 플러그인·스킬·훅·MCP 가 CLI 와 같다)
         settingSources: ['user', 'project', 'local'],
-        ...(opts.env ? { env: opts.env } : {}),
-        ...perm.options,
+        // IS_SANDBOX=1 을 늘 얹는다 — uid 0 이면 CLI 가 이것 없이는 아래 skip 플래그나 bypass 모드만으로 첫 턴 전에 exit 1 한다 (CLI 2.1.282, 2026-10-08 실측, 값은 '1' 만).
+        // root 에서도 bypass 를 쓰게 Claude Code 의 이 안전 장치를 slcode 가 끈다 (사용자 결정 2026-10-09)
+        env: { ...(opts.env ?? process.env), IS_SANDBOX: '1' },
+        ...(permissionMode ? { permissionMode: permissionMode as any } : {}),
+        allowDangerouslySkipPermissions: true, // bypassPermissions 로 바꿀 수 있게 (그 자체로 우회하지 않는다 — 모드는 위 permissionMode)
         ...(this.log.meta.model ? { model: this.log.meta.model } : {}),
         ...(this.log.meta.effort ? { effort: this.log.meta.effort as any } : {}),
         ...(resume ? { resume, ...(this.resumeAt ? { resumeSessionAt: this.resumeAt } : {}) } : {}),

@@ -2,7 +2,7 @@ import { ApprovalRequest, Attachment, CoreEvent, LoggedEvent } from './protocol'
 import { EventLog } from './eventLog'
 import { AgentSession } from './base'
 
-role: Claude 어댑터 — 세션 하나 = SDK query() 하나 (streaming input AsyncQueue, 상시 프로세스, t3code ClaudeAdapter 와 같은 꼴). SDK 메시지를 벤더 중립 CoreEvent 로 정규화해 EventLog 에 남기고 구독자에게 낸다. 옵션: 슬래시 명령의 로컬 출력(/context·/cost 등)은 local_command_output 또는 model '<synthetic>' 인 assistant 메시지(스트림 없음)로 온다 — 둘 다 text.delta 로 내어 답변처럼 보인다. includePartialMessages(델타)·includeHookEvents·forwardSubagentText(서브에이전트 텍스트는 완성 블록으로 와서 델타 하나로 낸다)·agentProgressSummaries(task progress 의 한 줄 요약)·systemPrompt preset claude_code·settingSources user/project/local(CLI 와 같은 로드 — 스파이크 (a) 실측)·resume(벤더 세션 id — 벤더 CLI --resume 과 양방향 호환, 2026-09-26 실측)·resumeSessionAt(rewind 의 유지 지점)·enableFileCheckpointing(rewindFiles 용)·env(CLAUDE_* 를 뺀 것). 사용자 메시지 uuid 는 우리가 정해 보낸다(SDK submitMessage options.uuid 자리) — turn.end 에 userUuid·마지막 uuid 를 싣는다. 상태 파생: turn.start→running, approval.requested→requires_action, 마지막 승인 해소→running, result→idle, 첫 init→idle. 승인은 무기한 대기 (사용자 결정 2026-09-26) — interrupt·close·프로세스 종료만 cancelled 로 푼다. raw 켜면 이벤트마다 SDK 원문을 raw 필드에 싣는다
+role: Claude 어댑터 — 세션 하나 = SDK query() 하나 (streaming input AsyncQueue, 상시 프로세스, t3code ClaudeAdapter 와 같은 꼴). SDK 메시지를 벤더 중립 CoreEvent 로 정규화해 EventLog 에 남기고 구독자에게 낸다. 옵션: 슬래시 명령의 로컬 출력(/context·/cost 등)은 local_command_output 또는 model '<synthetic>' 인 assistant 메시지(스트림 없음)로 온다 — 둘 다 text.delta 로 내어 답변처럼 보인다. includePartialMessages(델타)·includeHookEvents·forwardSubagentText(서브에이전트 텍스트는 완성 블록으로 와서 델타 하나로 낸다)·agentProgressSummaries(task progress 의 한 줄 요약)·systemPrompt preset claude_code·settingSources user/project/local(CLI 와 같은 로드 — 스파이크 (a) 실측)·resume(벤더 세션 id — 벤더 CLI --resume 과 양방향 호환, 2026-09-26 실측)·resumeSessionAt(rewind 의 유지 지점)·enableFileCheckpointing(rewindFiles 용)·env(CLAUDE_* 를 뺀 것에 IS_SANDBOX=1 을 늘 얹는다 — uid 0 이면 CLI 가 IS_SANDBOX=1(값 '1' 만) 없이는 allowDangerouslySkipPermissions 의 --allow-dangerously-skip-permissions 나 bypass 모드만으로 첫 턴 전에 exit 1 한다(CLI 2.1.282, 2026-10-08 실측). root 에서도 bypass 를 쓰게 Claude Code 의 이 안전 장치를 slcode 가 끈다 — 사용자 결정 2026-10-09). 사용자 메시지 uuid 는 우리가 정해 보낸다(SDK submitMessage options.uuid 자리) — turn.end 에 userUuid·마지막 uuid 를 싣는다. 상태 파생: turn.start→running, approval.requested→requires_action, 마지막 승인 해소→running, result→idle, 첫 init→idle. 승인은 무기한 대기 (사용자 결정 2026-09-26) — interrupt·close·프로세스 종료만 cancelled 로 푼다. raw 켜면 이벤트마다 SDK 원문을 raw 필드에 싣는다
 
 export class ClaudeSession {
   role: AgentSession 구현 (공통 뼈대는 base.ts, 2026-09-30) — id 는 EventLog.meta.id, seq 는 로그에서 이어받아 복원 뒤에도 단조
@@ -22,7 +22,7 @@ export class ClaudeSession {
     role: 플랜 리밋 창(5시간·7일 %·리셋 시각) — SDK usage_EXPERIMENTAL(get_usage, 0.3.282 실험 메서드)의 rate_limits 만 골라 LimitWindow 로. 벤더 미기동·플랜 없음·오류면 null. 한 번에 1.5초쯤이라 폴링하지 않는다
   }
   export fn setMode(mode) {
-    role: SDK setPermissionMode — 즉시. meta.permissionMode 에 남겨 복원 때 options.permissionMode 로 넘긴다. root(IS_SANDBOX 없음)의 bypassPermissions 는 permissionOptions 의 사유로 거부한다(던짐 — 세션은 그대로)
+    role: SDK setPermissionMode — 즉시. meta.permissionMode 에 남겨 복원 때 options.permissionMode 로 넘긴다. bypassPermissions 로 바꿀 수 있게 query 옵션 allowDangerouslySkipPermissions 를 켠다(그 자체는 우회가 아니다)
   }
   export fn commands() {
     role: SDK supportedCommands — 슬래시 명령 이름·설명·인자 힌트. 벤더 미기동이면 빈 배열
@@ -51,9 +51,6 @@ export class ClaudeSession {
   fn onMessage(m) {
     role: SDK 메시지 → 이벤트 정규화 (system init/session_state_changed/compact_boundary/hook_*, stream_event 델타, assistant tool_use, user tool_result, result). session_id 가 바뀌면 meta 갱신
   }
-}
-export fn permissionOptions(mode, env, uid) {
-  role: query 의 권한 옵션 조립 — permissionMode 와 allowDangerouslySkipPermissions(SDK 가 CLI --allow-dangerously-skip-permissions 로 넘긴다; 켜 두면 나중에 setMode 로 bypass 로 바꿀 수 있고 그 자체는 우회가 아니다). uid 0 이면 CLI 가 IS_SANDBOX=1(값 '1' 만) 없이는 그 플래그나 bypass 모드만으로 첫 턴 전에 exit 1 한다(CLI 2.1.282, 2026-10-08 실측) — 그때는 플래그를 빼고, bypass 요청은 default 로 바꾸고 사람이 읽는 사유(refused)를 돌려준다. run 은 사유를 error 이벤트로 내고 default 로 띄운다(meta 도 default — 비우면 화면 모드 표시가 지난 session.ready 의 bypass 로 폴백한다), setMode 는 던진다. uid·env 는 주입 가능(테스트)
 }
 export fn buildContent(text, attachments) {
   role: 텍스트 + 첨부 → Messages API content — 이미지(png/jpeg/gif/webp)·PDF 는 image/document 블록, 그 밖은 UTF-8 로 풀어 <file name> 인라인. 첨부 없으면 문자열 그대로

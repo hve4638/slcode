@@ -133,6 +133,19 @@ test('벤더가 첫 턴 전에 죽으면 오류 한 줄 + 종료 한 줄 (serve 
   assert.equal(kinds.filter((k) => k === 'session.state').length, 1, 'exited 한 번 (starting 에서 보낸 턴이라 running 은 없다)');
 });
 
+test('root: env 에 IS_SANDBOX 가 없어도 bypass 세션이 뜬다 (slcode 가 IS_SANDBOX=1 을 얹는다)', { skip: process.getuid?.() !== 0 && 'root 에서만', timeout: 60000 }, async () => {
+  const { ClaudeSession } = await import('../src/session.ts');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-root-'));
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
+  const log = EventLog.create(dir, { id: 'r00t0001', vendor: 'claude', cwd: work, title: null, vendorSessionId: null, createdAt: Date.now(), permissionMode: 'bypassPermissions', raw: false });
+  const s = new ClaudeSession({ log, env: { HOME: process.env.HOME, PATH: process.env.PATH }, permissionMode: 'bypassPermissions' });
+  // models() 가 벤더 프로세스를 띄운다 (프롬프트 없음 — API 호출 없음). root 거부면 exit 1 로 reject
+  const m = await s.models();
+  assert.ok(m.models.length > 0);
+  assert.ok(!log.all.some((e) => e.ev.kind === 'session.exit'), '벤더가 살아 있다');
+  await s.close('test');
+});
+
 test('루프백 밖 호스트는 토큰 필수; --no-web 은 소켓만', async () => {
   const dir = isolated();
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
