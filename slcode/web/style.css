@@ -199,7 +199,8 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .composer .box { max-width: 780px; margin: 0 auto; background: var(--acf-panel); border: 1px solid var(--acf-line); border-radius: 14px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
 .acf .composer .row { display: flex; gap: 8px; align-items: flex-end; }
 .acf .composer .tools { display: flex; justify-content: flex-end; }
-.acf .composer button.add { width: 34px; height: 34px; padding: 0; font-size: 20px; line-height: 1; }
+.acf .composer button.add { width: 34px; height: 34px; padding: 0; display: grid; place-items: center; }
+.acf .composer button.add svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 .acf .composer .tools { gap: 6px; }
 .acf button.pill-btn { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 3px 8px 3px 10px; border-radius: 8px; background: var(--acf-soft); color: var(--acf-fg); }
 .acf button.pill-btn svg { width: 14px; height: 14px; fill: none; stroke: var(--acf-muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
@@ -245,7 +246,8 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .composer button.send { width: 34px; height: 34px; padding: 0; border-radius: 50%; display: grid; place-items: center; align-self: flex-end; }
 .acf .composer button.send svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
 .acf .composer button.send:disabled { background: var(--acf-soft); border-color: var(--acf-soft); color: var(--acf-muted); opacity: 1; }
-.acf .composer button.stop { color: var(--acf-err); }
+.acf .composer button.stop { width: 34px; height: 34px; padding: 0; border-radius: 50%; display: grid; place-items: center; align-self: flex-end; }
+.acf .composer button.stop svg { width: 12px; height: 12px; fill: currentColor; stroke: none; }
 
 /* 사이드바 — 섹션마다 접히는 카드 (A안, 사용자 2026-09-28). 안쪽 목록 details 는 쉐브론·개수 배지 */
 .acf .side { overflow-y: auto; padding: 14px 12px; font-size: 13px; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
@@ -257,7 +259,6 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .side .top .dim { color: var(--acf-muted); }
 .acf .side .top b.hot { color: var(--acf-err); }
 .acf .side .top .cost { margin-left: auto; color: var(--acf-muted); font-variant-numeric: tabular-nums; }
-.acf .side .top .idrow { margin-bottom: 2px; }
 .acf .side .top .row button.ico { margin-left: auto; width: 22px; height: 22px; flex: none; padding: 0; border: 0; background: transparent; color: var(--acf-muted); border-radius: 6px; display: grid; place-items: center; cursor: pointer; }
 .acf .side .top .row button.ico:hover { background: var(--acf-soft); color: var(--acf-fg); }
 .acf .side .top .row button.ico svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
@@ -295,6 +296,12 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .side .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; }
 .acf .side .kv .k { color: var(--acf-muted); }
 .acf .side .kv .v { font-family: var(--acf-mono); font-size: 12px; overflow-wrap: anywhere; }
+/* 세션 id 의 복사 버튼은 id 에 올렸을 때만 (사용자 2026-10-09) */
+.acf .side .kv .idv { display: inline-flex; align-items: center; gap: 4px; }
+.acf .side .kv .idv button.ico { width: 20px; height: 20px; flex: none; padding: 0; border: 0; background: transparent; color: var(--acf-muted); border-radius: 6px; display: grid; place-items: center; opacity: 0; }
+.acf .side .kv .idv:hover button.ico, .acf .side .kv .idv button.ico:focus-visible { opacity: 1; }
+.acf .side .kv .idv button.ico:hover { background: var(--acf-soft); color: var(--acf-fg); }
+.acf .side .kv .idv button.ico svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .acf .side details.list summary { padding: 3px 6px; margin: 0 -6px; border-radius: 6px; }
 .acf .side details.list summary:hover { background: var(--acf-soft); }
 .acf .side details.list summary::before { content: ""; width: 12px; height: 12px; flex: none; background: currentColor; opacity: .55; transition: transform .15s;

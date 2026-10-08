@@ -22,6 +22,7 @@ function toolArg(name, input) {
   if (input.file_path) return input.file_path;
   if (input.pattern) return input.pattern;
   if (input.description) return input.description;
+  if (Array.isArray(input.questions)) return input.questions.map((q) => q?.question).filter(Boolean).join(' · ');
   const keys = Object.keys(input);
   return keys.length ? `${keys[0]}: ${short(JSON.stringify(input[keys[0]]), 80)}` : '';
 }
@@ -30,9 +31,9 @@ export function mountAgentFront(root, transport, opts = {}) {
   root.innerHTML = '';
   const el = h('div', { class: 'acf' });
   // 왼쪽 상단은 세션 이름 — 없으면 SLCode, 더블클릭·옆 연필로 고친다(session.rename). superlite 카드 제목도 이 이름을 따른다.
-  // id 는 오른쪽 상단 id 줄, 경로는 오른쪽 폴더 줄의 복사 버튼 (사용자 2026-10-07)
+  // id 는 오른쪽 '세션' 칸(올리면 복사 버튼, 사용자 2026-10-09), 경로는 오른쪽 폴더 줄의 복사 버튼 (사용자 2026-10-07)
   const DEFAULT_NAME = 'SLCode';
-  const title = h('span', { class: 'title', title: '더블클릭해 이름 바꾸기' }, DEFAULT_NAME);
+  const title = h('span', { class: 'title' }, DEFAULT_NAME);
   const setTitle = (t) => { title.textContent = t || DEFAULT_NAME; };
   const nameRow = h('div', { class: 'name-row' }, title); // 연필 버튼은 iconBtn 정의 뒤에 붙인다
   const pill = h('span', { class: 'pill starting' }, STATE_LABEL.starting);
@@ -43,14 +44,15 @@ export function mountAgentFront(root, transport, opts = {}) {
   feed.append(sentinel, older, liveCol);
   const input = h('textarea', { rows: 1 });
   const sendBtn = h('button', { class: 'send primary', title: '전송', disabled: '', onclick: () => send() });
-  const stopBtn = h('button', { class: 'stop', title: '중단', onclick: () => current && rpc('session.interrupt', { id: current }) }, '■');
+  const stopBtn = h('button', { class: 'stop primary', title: '중단', onclick: () => current && rpc('session.interrupt', { id: current }) });
   stopBtn.style.display = 'none';
+  let busyNow = false; // running·requires_action — 보내기 자리에 중단 (canSend 가 바꾼다)
   // 첨부: 붙여넣기·끌어놓기·+ 버튼 → 칩으로 쌓였다가 전송에 실린다. 이미지·PDF·텍스트류만 (그 밖은 core 가 본문에 UTF-8 로 풀어 넣으므로 막는다)
   const chips = h('div', { class: 'chips' });
   const pendingFiles = [];
   const filePick = h('input', { type: 'file', multiple: '', hidden: '' });
   filePick.onchange = () => { addFiles(filePick.files); filePick.value = ''; };
-  const addBtn = h('button', { class: 'ghost add', title: '파일 첨부', onclick: () => filePick.click() }, '+');
+  const addBtn = h('button', { class: 'ghost add', title: '파일 첨부', onclick: () => filePick.click() });
   async function addFiles(files) {
     for (const f of files) {
       const mediaType = f.type || 'text/plain';
@@ -158,13 +160,13 @@ export function mountAgentFront(root, transport, opts = {}) {
   const tools = new Map(), cards = new Map(), toolParent = new Map(); // toolParent: 서브에이전트 안 도구 → 부모 Agent 도구 (승인 카드 출처)
   const sentFiles = new Map(); // 이름 → dataUrl: 이 화면에서 보낸 이미지의 미리보기 (로그엔 이름만 남는다)
   const usage = { turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
-  let costBase = 0, costLast = 0; // SDK total_cost_usd 는 프로세스 누계 — --resume 뒤 0 부터 다시 시작하므로 줄어드는 경계에서 기준선에 합친다
+  let costBase = 0, costLast = 0, costKnown = false; // SDK total_cost_usd 는 프로세스 누계 — --resume 뒤 0 부터 다시 시작하므로 줄어드는 경계에서 기준선에 합친다
   let hooks = 0, lastHook = '';
   let status = null; // session.status — 브랜치·플랜 리밋. attach 와 turn.end 때 한 번씩 (폴링 없음)
   function tally(ev) { // 사용량 누계 — 옛 턴은 그리기 전에 미리 센다
     usage.turns++;
     if (ev.usage) { usage.input += ev.usage.input; usage.output += ev.usage.output; usage.cacheRead += ev.usage.cacheRead; usage.cacheWrite += ev.usage.cacheWrite; }
-    if (ev.costUsd != null) { if (ev.costUsd < costLast) costBase += costLast; costLast = ev.costUsd; usage.cost = costBase + costLast; }
+    if (ev.costUsd != null) { costKnown = true; if (ev.costUsd < costLast) costBase += costLast; costLast = ev.costUsd; usage.cost = costBase + costLast; }
   }
   async function loadStatus() { if (!current) return; try { status = await rpc('session.status', { id: current }); } catch { status = null; } renderSide(); }
 
@@ -181,6 +183,8 @@ export function mountAgentFront(root, transport, opts = {}) {
     pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
     copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>',
     up: '<path d="M12 19V5"/><path d="M5 12l7-7 7 7"/>',
+    plus: '<path d="M12 5v14"/><path d="M5 12h14"/>',
+    stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
     chevron: '<path d="M6 9l6 6 6-6"/>',
     // 사이드바 상단 요약 아이콘 (claude 상태줄의 📁🌿⌛📦💻 자리, 외곽선만) — lucide 꼴
     folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
@@ -215,9 +219,15 @@ export function mountAgentFront(root, transport, opts = {}) {
   const pencil = iconBtn('pencil', '이름 바꾸기', editName);
   title.addEventListener('dblclick', editName);
   nameRow.append(pencil);
-  sendBtn.append(icon('up')); modelBtn.append(icon('chevron')); effortBtn.append(icon('chevron')); modeBtn.append(icon('chevron'));
+  sendBtn.append(icon('up')); addBtn.append(icon('plus')); stopBtn.append(icon('stop')); modelBtn.append(icon('chevron')); effortBtn.append(icon('chevron')); modeBtn.append(icon('chevron'));
   // 보낼 게 없거나(빈 입력·첨부 없음) 세션이 끝났으면 보내기 버튼을 비활성처럼 (사용자 2026-09-27)
-  const canSend = () => { sendBtn.disabled = !current || input.disabled || (!input.value.trim() && !pendingFiles.length); };
+  // 실행 중엔 보내기 자리에 중단 (사용자 2026-10-09) — 입력이나 첨부가 생기면 다시 보내기, 작업 중에도 보낼 수 있으므로
+  const canSend = () => {
+    const empty = !input.value.trim() && !pendingFiles.length;
+    sendBtn.disabled = !current || input.disabled || empty;
+    const stop = busyNow && empty;
+    stopBtn.style.display = stop ? '' : 'none'; sendBtn.style.display = stop ? 'none' : '';
+  };
   // 클립보드 API 는 https·localhost 에서만 있고 iframe 은 clipboard-write 권한도 필요하다 — 없으면 execCommand 로 (http://IP 로 열 때, 2026-09-27)
   async function copyText(text) {
     try { if (navigator.clipboard) { await navigator.clipboard.writeText(text); return true; } } catch {}
@@ -248,7 +258,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   }
   function setState(state) {
     pill.className = `pill ${state}`; pill.textContent = STATE_LABEL[state] ?? state;
-    stopBtn.style.display = state === 'running' || state === 'requires_action' ? '' : 'none';
+    busyNow = state === 'running' || state === 'requires_action';
     showBusy(state === 'running');
     input.disabled = state === 'exited'; canSend();
     if (opts.onState) opts.onState(state);
@@ -508,12 +518,11 @@ export function mountAgentFront(root, transport, opts = {}) {
     const row = (name, ...kids) => h('div', { class: 'row' }, icon(name), ...kids);
     const ctx = status?.context;
     side.append(h('div', { class: 'top' },
-      h('div', { class: 'row idrow' }, h('span', { class: 'dim' }, 'id'), h('span', { class: 'name' }, current ?? '—'), current ? iconBtn('copy', '세션 id 복사', copyOf(current)) : ''),
       row('folder', h('span', { class: 'name', title: cwd }, cwd ? cwd.split('/').filter(Boolean).pop() ?? cwd : '—'), cwd ? iconBtn('copy', '전체 경로 복사', copyOf(cwd)) : ''),
       row('branch', status?.repo ? h('span', { class: 'name' }, status.repo, status.branch ? h('span', { class: 'dim' }, ` (${status.branch})`) : '') : h('span', { class: 'dim' }, '—')),
       row('hourglass', h('div', { class: 'lims' }, lim('5h', status?.limits?.fiveHour), lim('1w', status?.limits?.sevenDay))),
       row('box', h('span', { title: ctx ? `${fmtTok(ctx.tokens)} / ${fmtTok(ctx.max)}` : null }, 'context ', h('b', { class: ctx?.pct >= 80 ? 'hot' : '' }, ctx ? `${Math.round(ctx.pct)}%` : '—'))),
-      row('cpu', h('span', {}, modelLbl.textContent || ready?.model || '—'), h('span', { class: 'cost' }, usage.cost ? `$${usage.cost.toFixed(2)}` : '$0')),
+      row('cpu', h('span', {}, modelLbl.textContent || ready?.model || '—'), h('span', { class: 'cost' }, usage.turns && !costKnown ? '—' : usage.cost ? `$${usage.cost.toFixed(2)}` : '$0')), // 턴이 있는데 비용을 모르면(가격표에 없는 Codex 모델) —
     ));
     const kv = (rows) => h('div', { class: 'kv' }, ...rows.flatMap(([k, v]) => [h('span', { class: 'k' }, k), h('span', { class: 'v' }, v ?? '—')]));
     const sec = (key, label, body, extra) => {
@@ -529,12 +538,12 @@ export function mountAgentFront(root, transport, opts = {}) {
         ev.summary ? h('span', { class: 'sum' }, ev.summary) : null);
     })));
     side.append(sec('session', '세션', kv([
-      ['상태', STATE_LABEL[info?.state] ?? ''], ['id', current], ['벤더 세션', info?.vendorSessionId ?? ready?.vendorSessionId], ['권한 모드', ready?.permissionMode ?? info?.permissionMode],
+      ['상태', STATE_LABEL[info?.state] ?? ''], ['id', current ? h('span', { class: 'idv' }, current, iconBtn('copy', '세션 id 복사', copyOf(current))) : null],['벤더 세션', info?.vendorSessionId ?? ready?.vendorSessionId], ['권한 모드', ready?.permissionMode ?? info?.permissionMode],
       ['연결', connected ? '연결됨' : '끊김'], ['raw', info?.raw ? '켬' : '끔'],
     ])));
     const pend = [...cards.entries()].filter(([, c]) => !c.classList.contains('resolved'));
     side.append(sec('pending', '대기 중', pend.length
-      ? h('div', { class: 'pend' }, ...pend.map(([id, c]) => h('a', { onclick: () => showDock(c) }, `${c.querySelector('.head').textContent.trim()} · ${id}`)))
+      ? h('div', { class: 'pend' }, ...pend.map(([, c]) => h('a', { onclick: () => showDock(c) }, `${c._mark.querySelector('.kind').textContent} · ${c._mark.querySelector('.what').textContent}`)))
       : h('div', { class: 'empty' }, '없음'), pend.length ? h('span', { class: 'badge' }, String(pend.length)) : ''));
     side.append(sec('usage', '사용량', kv([
       ['턴', String(usage.turns)], ['입력', fmtTok(usage.input)], ['캐시 읽기', fmtTok(usage.cacheRead)], ['캐시 쓰기', fmtTok(usage.cacheWrite)], ['출력', fmtTok(usage.output)],
@@ -641,7 +650,11 @@ export function mountAgentFront(root, transport, opts = {}) {
         await attach(id);
       } catch (e) { push(h('div', { class: 'meta err' }, e.message)); }
     }
-    else { pill.className = 'pill disconnected'; pill.textContent = s.fatal ? `인증 실패` : STATE_LABEL.disconnected; renderSide(); }
+    else {
+      pill.className = 'pill disconnected'; pill.textContent = s.fatal ? `인증 실패` : STATE_LABEL.disconnected; renderSide();
+      // 좁은 화면에선 알약이 숨으므로 피드에도 남긴다 (사용자 2026-10-09). fatal 은 재접속하지 않아 한 번만 온다
+      if (s.fatal) push(h('div', { class: 'meta err' }, '인증 실패: 토큰(?token=)이 붙은 주소로 다시 여세요'));
+    }
   });
 
   // 벤더 목록은 프로세스 시작 때 한 번 고정된다. 때때로 버전 없는 5개짜리 축약 목록이 온다 (SDK 0.3.282 실측, 원인 미상) — 그 꼴도 그대로 보인다

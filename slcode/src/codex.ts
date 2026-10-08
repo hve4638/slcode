@@ -18,6 +18,28 @@ export type CodexOptions = {
   bin?: string;
 };
 
+/** Codex 는 비용을 주지 않는다 — 공식 가격표(USD / 1M 토큰: 입력·캐시 입력·출력, developers.openai.com 2026-10-09)로 추정한다.
+ *  캐시 쓰기는 입력의 1.25배. 272K 넘는 요청의 할증(입력 2배·출력 1.5배)은 요청 단위라 셈하지 않는다. 표에 없는 모델은 null */
+const PRICES: Record<string, [number, number, number]> = {
+  'gpt-5.6-sol': [4, 0.4, 20], // 2026-11-21 까지 할인가
+  'gpt-5.6-terra': [2, 0.2, 12],
+  'gpt-5.6-luna': [0.2, 0.02, 1.2],
+  'gpt-5.5': [5, 0.5, 30],
+};
+type TokenCounts = { inputTokens?: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; outputTokens?: number };
+/** inputTokens 는 캐시 읽기·쓰기를 포함하고 outputTokens 는 reasoning 을 포함한다 (rollout token_count 실측) */
+export function estimateCostUsd(model: string | null, u: TokenCounts): number | null {
+  const p = model ? PRICES[model] : undefined;
+  if (!p) return null;
+  const cached = u.cachedInputTokens ?? 0, write = u.cacheWriteInputTokens ?? 0;
+  const fresh = Math.max(0, (u.inputTokens ?? 0) - cached - write);
+  return (fresh * p[0] + cached * p[1] + write * p[0] * 1.25 + (u.outputTokens ?? 0) * p[2]) / 1e6;
+}
+const tokenDiff = (a: TokenCounts, b: TokenCounts): TokenCounts => ({
+  inputTokens: (a.inputTokens ?? 0) - (b.inputTokens ?? 0), cachedInputTokens: (a.cachedInputTokens ?? 0) - (b.cachedInputTokens ?? 0),
+  cacheWriteInputTokens: (a.cacheWriteInputTokens ?? 0) - (b.cacheWriteInputTokens ?? 0), outputTokens: (a.outputTokens ?? 0) - (b.outputTokens ?? 0),
+});
+
 type Pending = ApprovalRequest & { rpcId: number | string; kind: 'command' | 'file' | 'question' | 'permissions' | 'elicitation' };
 type Waiter = { res: (v: any) => void; rej: (e: Error) => void };
 
@@ -77,6 +99,10 @@ export class CodexSession extends AgentSession {
   private ended = false;
   private mode: string | null;
   private lastUsage: any = null;
+  // 추정 비용 — Claude 의 total_cost_usd 처럼 프로세스 누계. 이번 턴에 값을 매긴 사용량이 없으면 turn.end 는 null
+  private costUsd = 0;
+  private turnPriced = false;
+  private prevTotal: TokenCounts | null = null;
   private lastLimits: any = null;
   private modelList: any[] | null = null; // model/list 는 한 번만 — 목록은 세션 중 바뀌지 않는다
   private streamed = new Set<string>();
@@ -176,16 +202,25 @@ export class CodexSession extends AgentSession {
         else if (it?.type === 'collabAgentToolCall') this.emit({ kind: 'task', phase: 'ended', taskId: it.id, toolUseId: it.id, description: it.prompt ?? '', agentType: it.model ?? null, background: false, summary: null, lastTool: null, status: it.status === 'failed' ? 'failed' : 'completed', usage: null }, r);
         return;
       }
-      case 'thread/tokenUsage/updated': this.lastUsage = p.tokenUsage; return;
+      case 'thread/tokenUsage/updated': {
+        const t = p.tokenUsage; this.lastUsage = t;
+        // 비용은 total 이 늘어난 만큼 — 같은 total 이 다시 와도 0 이다. 처음 받은 것은 last 만 새 것으로 본다 (resume 한 thread 의 total 엔 이전 사용량이 들어 있을 수 있다)
+        if (t?.total) {
+          const c = estimateCostUsd(this.model, tokenDiff(t.total, this.prevTotal ?? tokenDiff(t.total, t.last ?? {})));
+          if (c != null) { this.costUsd += c; this.turnPriced = true; }
+          this.prevTotal = t.total;
+        }
+        return;
+      }
       case 'account/rateLimits/updated': this.lastLimits = p.rateLimits; return;
       case 'thread/compacted': this.emit({ kind: 'context.compacted', trigger: 'manual', preTokens: null }, r); return;
       case 'turn/started': this.turnId = p.turn?.id ?? this.turnId; return;
       case 'turn/completed': {
         const turn = p.turn ?? {};
         const u = this.lastUsage?.last;
-        this.emit({ kind: 'turn.end', ok: turn.status === 'completed', error: turn.status === 'failed' ? turn.error?.message ?? 'failed' : null, interrupted: turn.status === 'interrupted', costUsd: null, durationMs: turn.durationMs ?? null,
+        this.emit({ kind: 'turn.end', ok: turn.status === 'completed', error: turn.status === 'failed' ? turn.error?.message ?? 'failed' : null, interrupted: turn.status === 'interrupted', costUsd: this.turnPriced ? this.costUsd : null, durationMs: turn.durationMs ?? null,
           usage: u ? { input: u.inputTokens ?? 0, output: u.outputTokens ?? 0, cacheRead: u.cachedInputTokens ?? 0, cacheWrite: u.cacheWriteInputTokens ?? 0 } : null }, r);
-        this.turnId = null;
+        this.turnId = null; this.turnPriced = false;
         this.log.updateMeta({ updatedAt: Date.now() });
         if (this.state !== 'exited') this.emit({ kind: 'session.state', state: 'idle' });
         const next = this.queue.shift();

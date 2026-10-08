@@ -9,6 +9,7 @@ import { serveSession } from '../src/serve.ts';
 import { connectSession } from '../src/client.ts';
 import { EventLog } from '../src/eventLog.ts';
 import { corePaths } from '../src/paths.ts';
+import { estimateCostUsd } from '../src/codex.ts';
 
 const FAKE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-codex.mjs');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -83,4 +84,27 @@ test('codex: meta.forkFrom(slcode import --fork) 이면 첫 기동이 thread/for
   await sleep(300);
   assert.equal(EventLog.open(corePaths(dir).sessionsDir, 'ffff0001')!.meta.vendorSessionId, 'fork-thr-orig', '두 번째 기동은 fork 가 아니라 resume');
   await h2.close('test');
+});
+
+test('codex: 비용은 가격표로 추정한 누계 — 표에 없는 모델은 null (사용자 2026-10-09)', async () => {
+  assert.equal(estimateCostUsd('fake-model', { inputTokens: 1000 }), null);
+  assert.equal(estimateCostUsd(null, { inputTokens: 1000 }), null);
+  // terra: 새 입력 50만 × $2 + 캐시 읽기 50만 × $0.2 + 출력 10만 × $12
+  assert.ok(Math.abs(estimateCostUsd('gpt-5.6-terra', { inputTokens: 1_000_000, cachedInputTokens: 500_000, outputTokens: 100_000 })! - 2.3) < 1e-9);
+  process.env.SLCODE_GRACE_SECS = '1';
+  process.env.SLCODE_CODEX_BIN = `${process.execPath} ${FAKE}`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-codex-'));
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
+  const h = await serveSession({ dir, cwd: work, vendor: 'codex', web: false });
+  const c = await connectSession(h.sock);
+  await c.request('session.attach', { id: h.session.id });
+  await sleep(300);
+  await c.request('session.setModel', { id: h.session.id, model: 'gpt-5.6-luna' });
+  const turnEnd = new Promise<any>((r) => c.onEvent((m) => { if (m.event !== 'session.event') return; const ev = (m.params as any).ev; if (ev.kind === 'approval.requested') void c.request('session.approve', { id: h.session.id, requestId: ev.requestId, decision: 'allow' }); if (ev.kind === 'turn.end') r(ev); }));
+  await c.request('session.send', { id: h.session.id, text: 'hi' });
+  const end = await Promise.race([turnEnd, sleep(8000).then(() => { throw new Error('turn timeout'); })]);
+  // 첫 tokenUsage 는 last 만 센다 (total 엔 resume 이전 사용량이 있을 수 있다): 새 입력 400 × 0.2 + 캐시 50 × 0.02 + 출력 50 × 1.2 = 141 (/1M)
+  assert.ok(Math.abs(end.costUsd - 141e-6) < 1e-12, String(end.costUsd));
+  c.close();
+  await h.close('test');
 });

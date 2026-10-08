@@ -21,7 +21,7 @@ const token = localStorage.getItem(`slcode.token.${location.host}`) ?? '';
 const wsUrl = new URL('ws', location.href); wsUrl.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'; wsUrl.search = '';
 const transport = new WsTransport(wsUrl.href, token);
 mountAgentFront(document.getElementById('root'), transport, {
-  onAttach: (id, info) => { document.title = info.title || `agent · ${id}`; },
+  onAttach: (id, info) => { document.title = info.title || `slcode · ${id}`; },
 });
 </script>
 </body>

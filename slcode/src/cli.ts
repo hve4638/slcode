@@ -375,17 +375,17 @@ try {
         s.client.close();
       }
       // turn.end.costUsd 는 벤더 프로세스 누계 — resume 뒤 0 부터 다시 시작하므로 줄어드는 경계에서 기준선에 합친다 (web/app.js 와 같은 셈)
-      let costBase = 0, costLast = 0;
-      for (const e of s.history) if (e.ev.kind === 'turn.end' && e.ev.costUsd != null) { if (e.ev.costUsd < costLast) costBase += costLast; costLast = e.ev.costUsd; }
-      const costUsd = costBase + costLast;
+      let costBase = 0, costLast = 0, costKnown = false;
+      for (const e of s.history) if (e.ev.kind === 'turn.end' && e.ev.costUsd != null) { costKnown = true; if (e.ev.costUsd < costLast) costBase += costLast; costLast = e.ev.costUsd; }
       const turns = s.history.filter((e) => e.ev.kind === 'turn.start').length;
+      const costUsd = costKnown || !turns ? costBase + costLast : null; // 턴이 있는데 비용을 하나도 모르면(가격표에 없는 Codex 모델) null
       const out = { id: s.id, title: s.info.title, vendor: s.info.vendor, cwd: s.info.cwd, live: s.live, state: s.info.state, model, effort, permissionMode: s.info.permissionMode, turns, costUsd, context, pending: s.pending.length, seq: s.info.seq, updatedAt: s.info.updatedAt ?? s.info.createdAt };
       if (flags.json) { print(out); break; }
       console.log([
         `id        ${out.id}${out.title ? ` (${out.title})` : ''}`, `vendor    ${out.vendor}`, `cwd       ${out.cwd}`,
         `state     ${out.state}${out.live ? '' : '  (not live — slcode resume ' + out.id + ')'}`,
         `model     ${out.model ?? '-'}${out.effort ? `  effort ${out.effort}` : ''}`, `mode      ${out.permissionMode ?? 'default'}`,
-        `turns     ${out.turns}  cost $${out.costUsd.toFixed(4)}${out.context ? `  context ${Math.round(out.context.pct)}%` : ''}`,
+        `turns     ${out.turns}  cost ${out.costUsd != null ? `$${out.costUsd.toFixed(4)}` : '-'}${out.context ? `  context ${Math.round(out.context.pct)}%` : ''}`,
         `pending   ${out.pending}${out.pending ? `  (slcode pending ${out.id})` : ''}`,
       ].join('\n'));
       break;

@@ -1,11 +1,11 @@
 // slcode 플러그인 (옛 id agent, ticket agent-plugin-card, 사용자 확정 2026-10-04) — 카드 하나 = slcode 세션 하나.
 //
 // 세 층: (1) 기동 — 카드가 열리면 card 단위 백그라운드 서비스로 `slcode new --stdio --no-web` 을 띄운다 (lifetime persistent:
-// 카드를 제거해도 세션은 산다, 종료는 팔레트 "Agent: Close session" 또는 터미널 `slcode close`). (2) 화면 — slcode 가 stdout 첫 줄로
+// 카드를 제거해도 세션은 산다, 종료는 팔레트 "slcode: Close session" 또는 터미널 `slcode close`). (2) 화면 — slcode 가 stdout 첫 줄로
 // 보내는 hello {id,sock} 로 세션을 알고, 화면은 서비스 웹(매니페스트 web — slcode 가 SUPERLITE_SERVICE_WEB 에 연다)을 conn.webUrl() 의
 // superlite /svc 주소로 iframe 에 넣는다 — 포트를 따로 열지 않아 웹 모드·원격에서도 열린다 (ticket plugin-service-web). (3) 상태 — 같은 stdio 통로가 UDS 와 같은
 // 프레임 연결이라 session.attach 로 이벤트를 받아 배지·알림 센터에 반영한다. 선구독 api.services.onMessage 를 start 전에 걸어 첫 줄을
-// 놓치지 않는다. 세션 목록은 액티비티바 "Agent" 뷰릿(`slcode list`, 살아 있는 세션만). superlite 등록부·동사 연동은 없다(후속).
+// 놓치지 않는다. 세션 목록은 액티비티바 "slcode" 뷰릿(`slcode list`, 살아 있는 세션만). superlite 등록부·동사 연동은 없다(후속).
 
 const VIEW = 'session';
 const SIDEBAR = 'sessions';
@@ -82,8 +82,8 @@ export function progressText(version, platform, p) {
 /** @param {import('@superlite/plugin').PluginApi} api */
 export function activate(api) {
   api.settings.register({
-    title: 'Agent',
-    description: 'slcode 세션 카드. 카드 하나 = 세션 하나. 카드를 닫아도 세션은 산다 — 종료는 "Agent: Close session".',
+    title: 'slcode',
+    description: 'slcode 세션 카드. 카드를 닫아도 세션은 산다. 종료는 팔레트의 "slcode: Close session".',
     items: [
       { key: 'bin', type: 'string', label: 'slcode command', description: '비우면 플러그인이 받은 slcode. 넣으면 그것을 쓴다 (PATH 의 이름 또는 데몬 머신의 절대 경로)', default: '' },
       { key: 'dir', type: 'string', label: 'SLCODE_DIR', description: '비우면 slcode 기본 폴더 (~/.local/state/slcode)', default: '' },
@@ -200,7 +200,8 @@ export function activate(api) {
     } else if (ev.kind === 'approval.resolved') { c.waits.delete(ev.requestId); badge(c); }
     else if (ev.kind === 'session.state') { c.state = ev.state; badge(c); }
   }
-  const summary = (input) => { try { const s = JSON.stringify(input ?? {}); return s.length > 80 ? s.slice(0, 80) + '…' : s; } catch { return ''; } };
+  // 웹 화면(toolArg)과 같은 한 줄 — Bash 는 명령, 파일 도구는 경로. 그 밖은 JSON
+  const summary = (input) => { try { const v = input?.command ?? input?.file_path ?? input?.pattern ?? input?.description; const s = typeof v === 'string' ? v : JSON.stringify(input ?? {}); return s.length > 80 ? s.slice(0, 80) + '…' : s; } catch { return ''; } };
 
   // ---- 카드 표면
   function badge(c) {
@@ -237,7 +238,7 @@ export function activate(api) {
     } else {
       const p = document.createElement('div');
       p.style.cssText = 'margin:auto;font:13px system-ui;opacity:.8';
-      p.textContent = c.error ? `slcode 를 준비하지 못했습니다: ${c.error}` : c.note ?? (c.state === 'exited' ? '세션이 닫혔습니다 — 목록에서 다시 여세요' : 'slcode 세션을 띄우는 중…');
+      p.textContent = c.error ? `slcode 를 준비하지 못했습니다: ${c.error}` : c.note ?? (c.state === 'exited' ? '세션이 닫혔습니다' :'slcode 세션을 띄우는 중…');
       if (c.error) { // 받기·기동 실패 — 사유를 보이고 다시 시도 (설정을 고친 뒤 등)
         p.style.cssText += ';max-width:80%;text-align:center;white-space:pre-wrap';
         const b = document.createElement('button');
@@ -282,7 +283,7 @@ export function activate(api) {
         if (!c.attached) await attach(c); // 연결마다 한 번 — url·id 를 이미 알아도(새로고침 복원) 이벤트 구독은 새 연결에 걸어야 한다
       } catch (e) {
         c.state = 'exited'; c.note = null; c.error = String(e?.message ?? e); badge(c); render(c);
-        api.notify('error', `agent: ${c.error}`);
+        api.notify('error', `slcode: ${c.error}`);
       } finally { c.starting = null; }
     })();
     return c.starting;
@@ -306,10 +307,10 @@ export function activate(api) {
 
   // ---- 뷰: 카드 (state {key, id?})
   api.views.register(VIEW, {
-    title: 'Agent', icon: 'hubot',
+    title: 'slcode', icon: 'hubot',
     mount(el, ctx) {
       const st = ctx.state && typeof ctx.state === 'object' ? ctx.state : {};
-      if (!st.key) { el.textContent = 'agent: 카드 전용 뷰'; return; }
+      if (!st.key) { el.textContent = 'slcode: 카드 전용 뷰'; return; }
       const c = card(st.key);
       c.id = c.id ?? st.id ?? null;
       c.ctx = ctx; c.el = el; c.cardId = ctx.card; c.savedId = st.id ?? null;
@@ -340,7 +341,7 @@ export function activate(api) {
       { name: 'cwd', kind: 'option', value: 'dir', help: 'session folder (default: this shell\'s cwd)' },
       { name: 'vendor', kind: 'option', help: 'claude | codex' },
       { name: 'title', kind: 'option' },
-      { name: 'mode', kind: 'option', help: 'permission mode' },
+      { name: 'mode', kind: 'option', help: 'default | acceptEdits | plan | bypassPermissions' },
     ],
     async run(a, ctx) {
       const key = newKey();
@@ -364,10 +365,10 @@ export function activate(api) {
 
   // ---- 사이드바: 세션 목록 (slcode list — 살아 있는 세션만. 꺼짐과 끝남을 구분할 근거가 없어 꺼진 세션은 보이지 않는다, 사용자 2026-10-04)
   api.views.register(SIDEBAR, {
-    title: 'Agent sessions', icon: 'hubot',
+    title: 'slcode sessions', icon: 'hubot',
     mount(el) { void renderList(el); },
   });
-  api.sidebar.register(SIDEBAR, { icon: 'hubot', title: 'Agent', view: SIDEBAR });
+  api.sidebar.register(SIDEBAR, { icon: 'hubot', title: 'slcode', view: SIDEBAR });
   // ponytail: 개수는 활성화·카드 기동/종료·목록 그리기 때만 다시 센다. 터미널에서 띄우거나 끈 세션은 그 다음 계기까지 늦다 — 필요하면 주기 갱신
   async function listLive() {
     const [bin, dir] = await Promise.all([resolveBin(), setting('dir', '')]);
@@ -382,7 +383,7 @@ export function activate(api) {
   async function renderList(el) {
     el.innerHTML = '';
     const style = document.createElement('style');
-    style.textContent = `.l{font:12px system-ui;padding:6px}.l button{display:block;width:100%;text-align:left;border:0;background:none;color:inherit;padding:4px 6px;border-radius:4px;cursor:pointer}.l button:hover{background:var(--vscode-list-hoverBackground,#2a2d2e)}.l .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:#2ea043}.l .meta{opacity:.6;margin-left:14px;font-size:11px}.l .top{display:flex;gap:6px;margin-bottom:6px}.l .top button{width:auto;border:1px solid var(--vscode-widget-border,#444)}`;
+    style.textContent = `.l{font:12px system-ui;padding:6px}.l button{display:block;width:100%;text-align:left;border:0;background:none;color:inherit;padding:4px 6px;border-radius:4px;cursor:pointer}.l button:hover{background:var(--vscode-list-hoverBackground,#2a2d2e)}.l .meta{opacity:.6;font-size:11px}.l .top{display:flex;gap:6px;margin-bottom:6px}.l .top button{width:auto;border:1px solid var(--vscode-widget-border,#444)}`;
     el.appendChild(style);
     const root = document.createElement('div'); root.className = 'l'; el.appendChild(root);
     const top = document.createElement('div'); top.className = 'top';
@@ -397,24 +398,22 @@ export function activate(api) {
       if (!rows.length) list.textContent = '(no sessions)';
       for (const s of rows.reverse()) {
         const b = document.createElement('button');
-        const dot = document.createElement('span'); dot.className = 'dot';
-        b.append(dot, document.createTextNode(`${s.title ?? s.id} `));
+        b.append(document.createTextNode(s.title ?? s.id));
         const meta = document.createElement('div'); meta.className = 'meta'; meta.textContent = `${s.id} · ${s.vendor} · ${s.cwd}`;
         b.appendChild(meta);
-        b.title = '카드로 열기';
         b.onclick = () => openCard(undefined, s.id);
         list.appendChild(b);
       }
-    } catch (e) { list.textContent = `목록 실패: ${e?.message ?? e}`; }
+    } catch (e) { list.textContent = `Failed to list sessions: ${e?.message ?? e}`; }
   }
 
   // ---- 팔레트
-  api.commands.register({ id: 'new', title: 'Agent: New session (card)', run: () => openCard() });
+  api.commands.register({ id: 'new', title: 'slcode: New session (card)', run: () => openCard() });
   api.commands.register({
-    id: 'close', title: 'Agent: Close session (active card)', run: () => {
+    id: 'close', title: 'slcode: Close session (active card)', run: () => {
       const c = [...cards.values()].find((x) => x.el); // 플러그인 뷰는 활성 카드일 때만 mount 되어 있다
-      if (!c || !c.id) { api.notify('info', 'agent: 열린 에이전트 카드가 없습니다'); return; }
-      request(c, 'session.close', { id: c.id }).then(() => api.notify('info', `agent: 세션 ${c.id} 종료`)).catch((e) => api.notify('error', `agent: ${e.message}`));
+      if (!c || !c.id) { api.notify('info', 'slcode: 열린 세션 카드가 없습니다'); return; }
+      request(c, 'session.close', { id: c.id }).catch((e) => api.notify('error', `slcode: ${e.message}`));
     },
   });
 
