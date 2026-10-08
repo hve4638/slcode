@@ -1,8 +1,8 @@
 {
   "id": "slcode",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "main": "main.js",
-  "binary": { "repo": "hve4638/slcode", "version": "^0.1.0" },
+  "binary": { "repo": "hve4638/slcode", "version": "^0.1.3" },
   "services": [
     { "id": "session", "command": "slcode new --stdio --no-web", "unit": "card", "lifetime": "persistent", "channel": "stdio", "web": true }
   ]
