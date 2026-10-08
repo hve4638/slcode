@@ -73,7 +73,7 @@ export type TaskEvent = {
   usage: { tokens: number; toolUses: number; durationMs: number } | null;
 };
 
-/** 이벤트 16종 — 벤더 중립. Codex 어댑터도 같은 kind 를 낸다. parent 는 서브에이전트 안에서 난 이벤트의 부모 tool_use id (없으면 본문) */
+/** 이벤트 18종 — 벤더 중립. Codex 어댑터도 같은 kind 를 낸다. parent 는 서브에이전트 안에서 난 이벤트의 부모 tool_use id (없으면 본문) */
 export type CoreEventBody =
   | { kind: 'session.ready'; vendor: Vendor; model: string; cwd: string; vendorSessionId: string; permissionMode: string;
       tools: string[]; skills: string[]; plugins: { name: string; path: string }[]; mcp: { name: string; status: string }[];
@@ -95,6 +95,8 @@ export type CoreEventBody =
   | { kind: 'context.compacted'; trigger: string; preTokens: number | null }
   | { kind: 'hook'; event: string; phase: 'started' | 'response'; ok: boolean | null }
   | { kind: 'error'; message: string }
+  /** auto 모드에서 승인 요청을 사람 대신 모델이 판단한 결과 (지금은 Codex auto_review). action 은 대상의 사람이 읽는 한 줄, risk 는 low|medium|high|critical */
+  | { kind: 'review'; toolUseId: string | null; decision: 'approved' | 'denied' | 'timedOut' | 'aborted'; risk: string | null; action: string; rationale: string | null }
   /** `slcode import` 가 첫 이벤트로 남긴다 — 그 앞 대화는 벤더 기록에만 있다. vendorSessionId 는 가져온(fork 면 원본) 세션, uuid 는 가져올 때 벤더 쪽 마지막 항목(Claude; 첫 턴 되돌림의 유지 지점) */
   | { kind: 'session.imported'; vendor: Vendor; vendorSessionId: string; uuid: string | null; fork?: boolean }
   | { kind: 'session.exit'; reason: string };
@@ -130,7 +132,7 @@ export type Methods = {
   'session.setEffort': { params: { id: string; effort: string }; result: { ok: true } };
   'session.interrupt': { params: { id: string }; result: { ok: true } };
   /** 권한 모드 전환 — 즉시 적용, meta 에 남아 --resume 뒤에도 유지. 현재 값은 SessionInfo.permissionMode (session.changed 로 갱신) */
-  'session.setMode': { params: { id: string; mode: 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions' }; result: { ok: true } };
+  'session.setMode': { params: { id: string; mode: 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions' | 'auto' }; result: { ok: true } };
   /** 벤더 슬래시 명령 목록 — 입력창 `/` 자동완성. session.ready 전에도 답한다 */
   'session.commands': { params: { id: string }; result: { name: string; description: string; argumentHint: string }[] };
   /** 사이드바 상단(claude 상태줄과 같은 정보) — cwd 의 git repo 이름·브랜치, 벤더 플랜 리밋 창(5시간·7일, 0-100 %), 컨텍스트 창 사용량. 플랜이 없거나 벤더가 답을 못 주면 그 항목은 null. 폴링 없이 attach·turn.end 때 한 번씩 (사용자 2026-09-29) */

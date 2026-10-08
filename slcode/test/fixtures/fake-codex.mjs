@@ -35,7 +35,9 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       notify('turn/started', { threadId: thread.id, turn: { id: 't-1' } });
       notify('item/reasoning/summaryTextDelta', { threadId: thread.id, turnId: 't-1', itemId: 'rs-1', delta: 'thinking', summaryIndex: 0 });
       notify('item/agentMessage/delta', { threadId: thread.id, turnId: 't-1', itemId: 'msg-1', delta: `echo:${text.slice(0, 20)}` });
+      notify('item/agentMessage/delta', { threadId: thread.id, turnId: 't-1', itemId: 'msg-1', delta: `policy=${m.params.approvalPolicy} reviewer=${m.params.approvalsReviewer} sandbox=${m.params.sandboxPolicy?.type}` });
       notify('item/started', { threadId: thread.id, turnId: 't-1', item: { type: 'commandExecution', id: 'exec-1', command: 'touch x', cwd: thread.cwd, status: 'inProgress' } });
+      if (m.params.approvalsReviewer === 'auto_review') notify('item/autoApprovalReview/completed', { threadId: thread.id, turnId: 't-1', reviewId: 'rv-1', targetItemId: 'exec-1', decisionSource: 'agent', review: { status: 'denied', riskLevel: 'high', userAuthorization: 'low', rationale: 'too risky' }, action: { type: 'command', source: 'unifiedExec', command: 'touch x', cwd: thread.cwd } });
       out({ jsonrpc: '2.0', id: reqId, method: 'item/commandExecution/requestApproval', params: { kind: 'command', threadId: thread.id, turnId: 't-1', itemId: 'exec-1', command: 'touch x', cwd: thread.cwd, reason: 'outside sandbox', approvalPolicy: m.params.approvalPolicy, sandboxPolicy: m.params.sandboxPolicy } });
       return;
     }

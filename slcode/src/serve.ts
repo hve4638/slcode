@@ -168,7 +168,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
     'session.setModel': async (_c, p) => { if (typeof p?.model !== 'string' || !p.model) throw new CoreError(ERR.badRequest, 'model required'); await mine(p.id).setModel(p.model); return { ok: true }; },
     'session.setEffort': async (_c, p) => { if (typeof p?.effort !== 'string' || !p.effort) throw new CoreError(ERR.badRequest, 'effort required'); await mine(p.id).setEffort(p.effort); return { ok: true }; },
     'session.interrupt': async (_c, p) => { await mine(p?.id).interrupt(); return { ok: true }; },
-    'session.setMode': async (_c, p) => { const s = mine(p?.id); if (!['default', 'acceptEdits', 'plan', 'bypassPermissions'].includes(p.mode)) throw new CoreError(ERR.badRequest, 'mode default|acceptEdits|plan|bypassPermissions'); await s.setMode(p.mode); broadcast('session.changed', s.info()); return { ok: true }; },
+    'session.setMode': async (_c, p) => { const s = mine(p?.id); if (!['default', 'acceptEdits', 'plan', 'bypassPermissions', 'auto'].includes(p.mode)) throw new CoreError(ERR.badRequest, 'mode default|acceptEdits|plan|bypassPermissions|auto'); await s.setMode(p.mode); broadcast('session.changed', s.info()); return { ok: true }; },
     'session.commands': (_c, p) => mine(p?.id).commands(),
     'session.status': async (_c, p) => {
       const s = mine(p?.id);

@@ -76,14 +76,18 @@ export function mountAgentFront(root, transport, opts = {}) {
   const effortBtn = h('button', { class: 'ghost pill-btn effort', popovertarget: 'acf-effort', style: 'display:none' }, effortLbl);
   const effortMenu = h('div', { class: 'menu', id: 'acf-effort', popover: '' });
   // 권한 모드 — effort 옆 알약 + 메뉴 (session.setMode, 즉시). 현재 값은 info.permissionMode (session.changed 로 갱신)
-  const MODES = [['default', 'default', '도구마다 승인'], ['acceptEdits', 'acceptEdits', '파일 수정은 승인 없이'], ['plan', 'plan', '읽기만, 계획 뒤 승인'], ['bypassPermissions', 'bypass', '승인 없음']];
+  const REVIEW = { approved: '허용', denied: '거부', timedOut: '시간 초과', aborted: '중단' };
+  const RISK = { low: '낮음', medium: '보통', high: '높음', critical: '심각' };
+  const MODES = [['default', 'default', '도구마다 승인'], ['acceptEdits', 'acceptEdits', '파일 수정은 승인 없이'], ['auto', 'auto', 'AI 가 대신 승인'], ['bypassPermissions', 'bypass', '승인 없음']];
   const modeLbl = h('span', {}, '');
   const modeBtn = h('button', { class: 'ghost pill-btn mode', popovertarget: 'acf-mode' }, modeLbl);
   const modeMenu = h('div', { class: 'menu', id: 'acf-mode', popover: '' });
+  // auto 는 노랑, bypass 는 빨강 — Claude Code 의 상태 줄 색 (사용자 2026-10-09). plan 은 메뉴에서 뺐다(쓸 일이 없다) — 와이어는 옛 세션을 위해 계속 받는다
+  const paintMode = (v) => { modeLbl.textContent = MODES.find(([m]) => m === v)?.[1] ?? v; modeBtn.classList.toggle('auto', v === 'auto'); modeBtn.classList.toggle('bypass', v === 'bypassPermissions'); };
   function renderMode() {
     const cur = info?.permissionMode ?? ready?.permissionMode ?? 'default';
-    modeLbl.textContent = MODES.find(([v]) => v === cur)?.[1] ?? cur;
-    modeMenu.replaceChildren(...MODES.map(([v, label, desc]) => h('button', { class: 'item', 'aria-checked': String(v === cur), onclick: () => { modeMenu.hidePopover(); modeLbl.textContent = label; rpc('session.setMode', { id: current, mode: v }).catch((e) => { push(h('div', { class: 'meta err' }, e.message)); renderMode(); }); } }, h('span', {}, label), h('span', { class: 'desc' }, desc))));
+    paintMode(cur);
+    modeMenu.replaceChildren(...MODES.map(([v, label, desc]) => h('button', { class: 'item', 'aria-checked': String(v === cur), onclick: () => { modeMenu.hidePopover(); paintMode(v); rpc('session.setMode', { id: current, mode: v }).catch((e) => { push(h('div', { class: 'meta err' }, e.message)); renderMode(); }); } }, h('span', { class: `m-${v}` }, label), h('span', { class: 'desc' }, desc))));
   }
   const anchor = (menu, btn) => () => { if (menu.matches(':popover-open')) { const r = btn.getBoundingClientRect(); menu.style.left = `${r.right - menu.offsetWidth}px`; menu.style.bottom = `${innerHeight - r.top + 6}px`; } };
   modelMenu.ontoggle = anchor(modelMenu, modelBtn); effortMenu.ontoggle = anchor(effortMenu, effortBtn); modeMenu.ontoggle = anchor(modeMenu, modeBtn);
@@ -349,6 +353,12 @@ export function mountAgentFront(root, transport, opts = {}) {
       case 'context.compacted': endText(); push(h('div', { class: 'notice' }, `컨텍스트 압축${ev.preTokens ? ` · ${fmtTok(ev.preTokens)}` : ''}`)); break;
       case 'hook': if (!replaying) { hooks++; lastHook = `${ev.event} ${ev.phase}`; } break;
       case 'error': endText(); push(h('div', { class: 'meta err' }, ev.message)); break;
+      case 'review': {
+        endText();
+        const what = [`AI 검토 ${REVIEW[ev.decision] ?? ev.decision}`, ev.risk && `위험 ${RISK[ev.risk] ?? ev.risk}`, ev.action, ev.rationale].filter(Boolean).join(' · ');
+        push(h('div', { class: ev.decision === 'approved' ? 'notice' : 'meta err' }, what));
+        break;
+      }
       case 'session.exit': endText(); push(h('div', { class: 'meta' }, `세션 종료: ${ev.reason}`)); break;
       case 'turn.rewound': {
         endText();

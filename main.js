@@ -341,7 +341,7 @@ export function activate(api) {
       { name: 'cwd', kind: 'option', value: 'dir', help: 'session folder (default: this shell\'s cwd)' },
       { name: 'vendor', kind: 'option', help: 'claude | codex' },
       { name: 'title', kind: 'option' },
-      { name: 'mode', kind: 'option', help: 'default | acceptEdits | plan | bypassPermissions' },
+      { name: 'mode', kind: 'option', help: 'default | acceptEdits | auto | bypassPermissions' },
     ],
     async run(a, ctx) {
       const key = newKey();

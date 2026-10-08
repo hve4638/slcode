@@ -149,6 +149,7 @@ function render(e: LoggedEvent) {
     case 'tool.end': console.log(`  ${ev.ok ? '✓' : '✗'} ${ev.summary.split('\n')[0].slice(0, 120)}`); break;
     case 'approval.requested': console.log(`\n? ${ev.name === 'AskUserQuestion' ? 'question' : 'approval'} ${ev.requestId} ${ev.name} ${JSON.stringify(ev.input).slice(0, 200)}\n  → respond ${ev.requestId} ${ev.name === 'AskUserQuestion' ? '--answer <text>' : 'allow|deny'}`); break;
     case 'approval.resolved': console.log(`  ↳ ${ev.requestId} ${ev.decision}`); break;
+    case 'review': console.log(`  ⚖ auto review ${ev.decision}${ev.risk ? ` (risk ${ev.risk})` : ''}: ${ev.action}${ev.rationale ? ` — ${ev.rationale}` : ''}`); break;
     case 'session.imported': console.log(`\n● ${ev.fork ? 'forked' : 'imported'} ${ev.vendor} session ${ev.vendorSessionId} — earlier conversation is in ${ev.vendor}`); break;
     case 'turn.end': console.log(`\n■ turn ${ev.ok ? 'ok' : ev.interrupted ? 'interrupted' : `error: ${ev.error}`}${ev.costUsd != null ? ` $${ev.costUsd.toFixed(4)}` : ''}`); break;
     default: console.log(`\n[${e.seq}] ${JSON.stringify(ev)}`);

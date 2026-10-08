@@ -45,18 +45,21 @@ type Waiter = { res: (v: any) => void; rej: (e: Error) => void };
 
 /** 우리 권한 모드 → Codex 의 턴 파라미터 (t3code 의 runtimeMode 매핑 안에서, codex-ref 보고 §7):
  *  default = untrusted + readOnly(명령·편집 모두 묻는다, t3code approval-required), acceptEdits = on-request + workspaceWrite(t3code auto-accept-edits),
- *  plan = on-request + readOnly(쓰려면 묻는다), bypassPermissions = never + dangerFullAccess(t3code full-access). approvalsReviewer 는 늘 user 로 명시한다 — resume 에서 생략하면 이전 값이 남는다 */
-function policyOf(mode: string | null | undefined): { approvalPolicy: unknown; sandboxPolicy: unknown; approvalsReviewer: 'user' } {
+ *  plan = on-request + readOnly(쓰려면 묻는다), bypassPermissions = never + dangerFullAccess(t3code full-access),
+ *  auto = acceptEdits 의 규칙 + approvalsReviewer auto_review(승인 요청을 사용자 대신 Codex 의 검토 서브에이전트가 판단 — Claude 의 auto 에 대응, 사용자 결정 2026-10-09).
+ *  approvalsReviewer 는 늘 명시한다 — resume 에서 생략하면 이전 값이 남는다 */
+function policyOf(mode: string | null | undefined): { approvalPolicy: unknown; sandboxPolicy: unknown; approvalsReviewer: 'user' | 'auto_review' } {
   const ro = { type: 'readOnly', networkAccess: false };
   const ww = { type: 'workspaceWrite', writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false };
   switch (mode) {
     case 'acceptEdits': return { approvalPolicy: 'on-request', sandboxPolicy: ww, approvalsReviewer: 'user' };
+    case 'auto': return { approvalPolicy: 'on-request', sandboxPolicy: ww, approvalsReviewer: 'auto_review' };
     case 'plan': return { approvalPolicy: 'on-request', sandboxPolicy: ro, approvalsReviewer: 'user' };
     case 'bypassPermissions': return { approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' }, approvalsReviewer: 'user' };
     default: return { approvalPolicy: 'untrusted', sandboxPolicy: ro, approvalsReviewer: 'user' };
   }
 }
-const sandboxModeOf = (mode: string | null | undefined) => (mode === 'acceptEdits' ? 'workspace-write' : mode === 'bypassPermissions' ? 'danger-full-access' : 'read-only');
+const sandboxModeOf = (mode: string | null | undefined) => (mode === 'acceptEdits' || mode === 'auto' ? 'workspace-write' : mode === 'bypassPermissions' ? 'danger-full-access' : 'read-only');
 
 /** ThreadItem → 도구 이름·입력 (Claude 어휘에 가깝게: 명령은 Bash, 패치는 Edit) */
 function toolOf(item: any): { name: string; input: unknown } | null {
@@ -228,6 +231,13 @@ export class CodexSession extends AgentSession {
         return;
       }
       case 'error': this.emit({ kind: 'error', message: p.error?.message ?? 'error' }, r); return;
+      // auto(auto_review) 의 검토 결과 — started 와 guardianWarning 은 같은 내용의 앞뒤라 버린다 (codex-cli 0.159 실측 2026-10-09)
+      case 'item/autoApprovalReview/completed': {
+        const a = p.action ?? {};
+        const action = a.command ?? a.argv?.join(' ') ?? a.files?.join(', ') ?? a.target ?? (a.toolName ? `mcp:${a.server}/${a.toolName}` : a.reason ?? a.type ?? '');
+        this.emit({ kind: 'review', toolUseId: p.targetItemId ?? null, decision: p.review?.status, risk: p.review?.riskLevel ?? null, action, rationale: p.review?.rationale ?? null }, r);
+        return;
+      }
       default: return;
     }
   }

@@ -86,6 +86,31 @@ test('codex: meta.forkFrom(slcode import --fork) 이면 첫 기동이 thread/for
   await h2.close('test');
 });
 
+test('codex: auto 모드 = on-request + workspaceWrite + approvalsReviewer auto_review, 다른 모드로 돌리면 reviewer 는 user (사용자 2026-10-09)', async () => {
+  process.env.SLCODE_GRACE_SECS = '1';
+  process.env.SLCODE_CODEX_BIN = `${process.execPath} ${FAKE}`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-codex-'));
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
+  const h = await serveSession({ dir, cwd: work, vendor: 'codex', web: false });
+  const c = await connectSession(h.sock);
+  await c.request('session.attach', { id: h.session.id });
+  await sleep(300);
+  const deltas: string[] = [];
+  let ended: (() => void) | null = null;
+  c.onEvent((m) => { if (m.event !== 'session.event') return; const ev = (m.params as any).ev; if (ev.kind === 'text.delta') deltas.push(ev.text); if (ev.kind === 'approval.requested') void c.request('session.approve', { id: h.session.id, requestId: ev.requestId, decision: 'allow' }); if (ev.kind === 'turn.end') ended?.(); });
+  const turn = async (text: string) => { const done = new Promise<void>((r) => (ended = r)); await c.request('session.send', { id: h.session.id, text }); await Promise.race([done, sleep(8000).then(() => { throw new Error('turn timeout'); })]); };
+  await c.request('session.setMode', { id: h.session.id, mode: 'auto' });
+  await turn('a');
+  assert.ok(deltas.includes('policy=on-request reviewer=auto_review sandbox=workspaceWrite'), deltas.join(' | '));
+  const rv = (await c.request('session.attach', { id: h.session.id })).history.map((e: any) => e.ev).find((e: any) => e.kind === 'review');
+  assert.deepEqual(rv, { kind: 'review', toolUseId: 'exec-1', decision: 'denied', risk: 'high', action: 'touch x', rationale: 'too risky' });
+  await c.request('session.setMode', { id: h.session.id, mode: 'acceptEdits' });
+  await turn('b');
+  assert.ok(deltas.includes('policy=on-request reviewer=user sandbox=workspaceWrite'), 'resume·다음 턴에 이전 reviewer 가 남지 않게 늘 명시');
+  c.close();
+  await h.close('test');
+});
+
 test('codex: 비용은 가격표로 추정한 누계 — 표에 없는 모델은 null (사용자 2026-10-09)', async () => {
   assert.equal(estimateCostUsd('fake-model', { inputTokens: 1000 }), null);
   assert.equal(estimateCostUsd(null, { inputTokens: 1000 }), null);
