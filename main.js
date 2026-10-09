@@ -261,6 +261,7 @@ export function activate(api) {
         const note = (s) => { c.note = s; render(c); };
         const [bin, dir] = await Promise.all([resolveBin(note), setting('dir', '')]);
         c.note = null;
+        if (c.lost && !shown(c)) return; // 받는 사이 카드가 가려졌다(다른 세션으로) — 보이게 되면 resume 이 다시 부른다
         // 새 세션의 폴더·옵션은 slcode.new 동사가 준 것 (없으면 서비스 cwd = 워크스페이스 root)
         const sp = c.spawn ?? {};
         const verb = c.id ? `resume ${shq(c.id)}` : `new${sp.cwd ? ` ${shq(sp.cwd)}` : ''}${['vendor', 'title', 'mode'].map((k) => (sp[k] ? ` --${k} ${shq(sp[k])}` : '')).join('')}`;
@@ -268,11 +269,12 @@ export function activate(api) {
         const command = `${bin.cmd} ${verb} --stdio --no-web${dir ? ` --dir ${shq(dir)}` : ''}`;
         c.hello = false;
         const conn = await api.services.open(SVC, { owner: c.key, command });
-        c.conn = conn;
+        c.conn = conn; c.lost = false;
         conn.onClose(() => {
-          c.conn = null; c.attached = false; badge(c);
-          // 연결이 끊기면 /svc 토큰도 폐기된다 — 보이는 카드면 다시 붙어 새 주소를 받는다 (세션 재접속·서비스 재기동)
-          if (c.el && c.state !== 'exited') setTimeout(() => { if (c.el && !c.conn) void ensure(c); }, 1000);
+          // 연결이 끊기면 /svc 토큰도 폐기된다 — 다시 붙어 새 주소를 받는다 (세션 재접속·서비스 재기동). url 은 비운다: 그 사이 다시
+          // 그리면 죽은 토큰 주소로 iframe 을 만들어 relay 의 404 본문이 보였다
+          c.conn = null; c.attached = false; c.url = null; c.lost = true; badge(c);
+          setTimeout(() => resume(c), 1000);
         });
         if (!c.hello) { // 떠 있던 서비스에 붙었다 — hello 는 지나갔다. 세션 id 는 server.info 로
           const info = await request(c, 'server.info', {});
@@ -288,6 +290,12 @@ export function activate(api) {
     })();
     return c.starting;
   }
+  /** 카드가 화면에 보이는가 — 배경 세션의 카드는 에디터 영역째 숨겨져(v-show) 박스가 없다 */
+  const shown = (c) => !!c.el && c.el.getClientRects().length > 0;
+  /** 끊긴 카드 다시 붙기 — 보일 때(= 카드의 세션이 활성일 때)만. api.services 는 활성 세션으로 가서, 배경 세션의 카드가 붙으면 다른
+   *  세션의 연결로 붙어 server.info 응답을 못 받고 멈추거나(응답은 카드 세션으로 온다) 다른 데몬이면 "실행 중이 아니다" 로 끝났다
+   *  (ticket slcode-card-dies-background). 숨은 카드는 mount 의 관찰자가 보이게 될 때 다시 부른다 */
+  function resume(c) { if (c.lost && !c.conn && c.state !== 'exited' && shown(c)) void ensure(c); }
   async function attach(c) {
     if (!c.id || c.attached) return;
     c.attached = true;
@@ -318,9 +326,12 @@ export function activate(api) {
       render(c); applyTitle(c); badge(c);
       // 뒤에서 연 카드(slcode.new)는 마운트 전에 세션이 떴다 — 그 id 를 card state 에 남긴다 (새로고침 복원)
       if (c.id && c.savedId !== c.id) { c.savedId = c.id; ctx.setState({ key: c.key, id: c.id }); }
+      c.vis?.disconnect();
+      c.vis = new IntersectionObserver((es) => { if (es[0].isIntersecting) resume(c); });
+      c.vis.observe(el);
       void ensure(c);
     },
-    unmount(el) { for (const c of cards.values()) if (c.el === el) { c.el = null; } },
+    unmount(el) { for (const c of cards.values()) if (c.el === el) { c.el = null; c.vis?.disconnect(); } },
   });
   /** 카드 열기 — 있는 세션이면 그 카드를 활성화, 없으면 새 카드(새 세션 또는 저장 세션 resume) */
   async function openCard(key, id) {
