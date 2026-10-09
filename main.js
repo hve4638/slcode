@@ -4,8 +4,10 @@
 // 카드를 제거해도 세션은 산다, 종료는 팔레트 "slcode: Close session" 또는 터미널 `slcode close`). (2) 화면 — slcode 가 stdout 첫 줄로
 // 보내는 hello {id,sock} 로 세션을 알고, 화면은 서비스 웹(매니페스트 web — slcode 가 SUPERLITE_SERVICE_WEB 에 연다)을 conn.webUrl() 의
 // superlite /svc 주소로 iframe 에 넣는다 — 포트를 따로 열지 않아 웹 모드·원격에서도 열린다 (ticket plugin-service-web). (3) 상태 — 같은 stdio 통로가 UDS 와 같은
-// 프레임 연결이라 session.attach 로 이벤트를 받아 배지·알림 센터에 반영한다. 선구독 api.services.onMessage 를 start 전에 걸어 첫 줄을
-// 놓치지 않는다. 세션 목록은 액티비티바 "slcode" 뷰릿(`slcode list`, 살아 있는 세션만). superlite 등록부·동사 연동은 없다(후속).
+// 프레임 연결이라 session.attach 로 이벤트를 받아 배지·알림 센터에 반영한다. 선구독 services.onMessage 를 start 전에 걸어 첫 줄을
+// 놓치지 않는다. 카드의 서비스·플랫폼·deploy 는 카드 ctx 의 것(카드 세션에 묶인다 — superlite ticket plugin-api-card-session)이라
+// 사용자가 다른 세션 탭을 보는 동안에도 카드가 자기 세션의 데몬과 주고받는다. ctx 에 services 가 없는 옛 superlite 는 api 의 것(활성 세션).
+// 세션 목록은 액티비티바 "slcode" 뷰릿(`slcode list`, 살아 있는 세션만). superlite 등록부·동사 연동은 없다(후속).
 
 const VIEW = 'session';
 const SIDEBAR = 'sessions';
@@ -139,17 +141,17 @@ export function activate(api) {
   }
   /** 서비스·목록·런처가 쓸 slcode — 설정 bin 이 있으면 그것(셸에 그대로), 없으면 받은 바이너리의 데몬 쪽 경로
    *  `<플러그인 폴더>/bin/<platform>/bin/slcode`. cmd 는 셸 명령에 넣을 꼴, path 는 따옴표 없는 경로 (설정이면 null) */
-  async function resolveBin(note = () => {}) {
+  async function resolveBin(note = () => {}, at = api) {
     const over = await setting('bin', '');
     if (over) return { cmd: over, path: null };
     folder(); // api.folder·platform 이 없는 superlite 면 여기서 사유를 던진다
-    const plat = platformOf(await api.platform()); // 활성 세션의 데몬 머신 — 세션(로컬·원격)마다 다르다
+    const plat = platformOf(await at.platform()); // at 의 데몬 머신(카드면 카드 세션) — 세션(로컬·원격)마다 다르다
     await install(plat, note);
     // 원격이면 올린 사본, 로컬이면 그대로 (해시 캐시는 relay 몫이라 매번 불러도 된다). 첫 업로드는 10초 남짓이라 오래 걸릴 때만 알린다
     // — 로컬은 바로 끝나 문구가 깜빡이지 않는다
     const slow = setTimeout(() => note('slcode 를 원격에 올리는 중… (원격마다 처음 한 번)'), 400);
     let dir;
-    try { dir = await folder().deploy(`bin/${plat}`); } finally { clearTimeout(slow); }
+    try { dir = await at.folder.deploy(`bin/${plat}`); } finally { clearTimeout(slow); }
     if (plat === 'win-x64') { const path = `${dir}\\bin\\slcode.cmd`; return { cmd: `"${path}"`, path, plat }; }
     const path = `${dir}/bin/slcode`;
     return { cmd: shq(path), path, plat };
@@ -159,6 +161,8 @@ export function activate(api) {
   const cards = new Map();
   const card = (key) => { let c = cards.get(key); if (!c) { c = { key, id: null, url: null, title: null, state: null, conn: null, unsub: null, ctx: null, el: null, nextId: 1, pending: new Map(), waits: new Map(), starting: null, note: null, error: null }; cards.set(key, c); } return c; };
   const newKey = () => 's' + Math.random().toString(36).slice(2, 8);
+  /** 카드가 쓸 api 묶음 — 카드 ctx 가 세션 묶음(services 등)을 실어 오면 그것(카드 세션의 데몬), 아니면 api(활성 세션 — 옛 superlite) */
+  const apiOf = (c) => (c.ctx?.services ? c.ctx : api);
   /** 세션 id → 서비스 owner(카드 key). 같은 세션을 다시 열 때 새 서비스를 띄우지 않고 떠 있는 것에 붙기 위해 플러그인 저장소에 남긴다 */
   let owners = null;
   const ownerMap = async () => (owners ??= (await api.storage.get('owners')) ?? {});
@@ -171,7 +175,7 @@ export function activate(api) {
     const id = c.nextId++;
     return new Promise((resolve, reject) => {
       c.pending.set(id, { resolve, reject });
-      api.services.send(SVC, { id, method, params }, { owner: c.key }).catch((e) => { c.pending.delete(id); reject(e); });
+      apiOf(c).services.send(SVC, { id, method, params }, { owner: c.key }).catch((e) => { c.pending.delete(id); reject(e); });
     });
   }
   function onMessage(c, m) {
@@ -255,25 +259,29 @@ export function activate(api) {
   async function ensure(c) {
     if (c.conn || c.starting) return c.starting;
     c.starting = (async () => {
+      let dropped = false; // 이 시도에서 연 연결이 끊겼다
       try {
-        if (!c.unsub) c.unsub = api.services.onMessage(SVC, (m) => onMessage(c, m), { owner: c.key });
+        if (!c.unsub) c.unsub = apiOf(c).services.onMessage(SVC, (m) => onMessage(c, m), { owner: c.key });
         c.error = null;
         const note = (s) => { c.note = s; render(c); };
-        const [bin, dir] = await Promise.all([resolveBin(note), setting('dir', '')]);
+        const [bin, dir] = await Promise.all([resolveBin(note, apiOf(c)), setting('dir', '')]);
         c.note = null;
-        if (c.lost && !shown(c)) return; // 받는 사이 카드가 가려졌다(다른 세션으로) — 보이게 되면 resume 이 다시 부른다
+        if (c.lost && !canResume(c)) return; // 받는 사이 카드가 가려졌다(옛 superlite, 다른 세션으로) — 보이게 되면 resume 이 다시 부른다
         // 새 세션의 폴더·옵션은 slcode.new 동사가 준 것 (없으면 서비스 cwd = 워크스페이스 root)
         const sp = c.spawn ?? {};
         const verb = c.id ? `resume ${shq(c.id)}` : `new${sp.cwd ? ` ${shq(sp.cwd)}` : ''}${['vendor', 'title', 'mode'].map((k) => (sp[k] ? ` --${k} ${shq(sp[k])}` : '')).join('')}`;
         // --no-web: TCP 웹을 열지 않는다 — 화면은 서비스 웹 소켓(SUPERLITE_SERVICE_WEB)으로만
         const command = `${bin.cmd} ${verb} --stdio --no-web${dir ? ` --dir ${shq(dir)}` : ''}`;
         c.hello = false;
-        const conn = await api.services.open(SVC, { owner: c.key, command });
+        const conn = await apiOf(c).services.open(SVC, { owner: c.key, command });
         c.conn = conn; c.lost = false;
         conn.onClose(() => {
           // 연결이 끊기면 /svc 토큰도 폐기된다 — 다시 붙어 새 주소를 받는다 (세션 재접속·서비스 재기동). url 은 비운다: 그 사이 다시
           // 그리면 죽은 토큰 주소로 iframe 을 만들어 relay 의 404 본문이 보였다
-          c.conn = null; c.attached = false; c.url = null; c.lost = true; badge(c);
+          c.conn = null; c.attached = false; c.url = null; c.lost = true; dropped = true; badge(c);
+          // 기다리던 응답(server.info·session.attach)은 이 연결로 오지 않는다 — 풀지 않으면 ensure 가 끝나지 않아 다시 붙지 못했다
+          for (const p of c.pending.values()) p.reject(new Error('연결이 끊겼습니다'));
+          c.pending.clear();
           setTimeout(() => resume(c), 1000);
         });
         if (!c.hello) { // 떠 있던 서비스에 붙었다 — hello 는 지나갔다. 세션 id 는 server.info 로
@@ -284,6 +292,7 @@ export function activate(api) {
         void countLive();
         if (!c.attached) await attach(c); // 연결마다 한 번 — url·id 를 이미 알아도(새로고침 복원) 이벤트 구독은 새 연결에 걸어야 한다
       } catch (e) {
+        if (dropped) return; // 붙는 도중 연결이 끊겼다 — 오류 화면 대신 onClose 의 resume 이 다시 붙는다
         c.state = 'exited'; c.note = null; c.error = String(e?.message ?? e); badge(c); render(c);
         api.notify('error', `slcode: ${c.error}`);
       } finally { c.starting = null; }
@@ -292,10 +301,13 @@ export function activate(api) {
   }
   /** 카드가 화면에 보이는가 — 배경 세션의 카드는 에디터 영역째 숨겨져(v-show) 박스가 없다 */
   const shown = (c) => !!c.el && c.el.getClientRects().length > 0;
-  /** 끊긴 카드 다시 붙기 — 보일 때(= 카드의 세션이 활성일 때)만. api.services 는 활성 세션으로 가서, 배경 세션의 카드가 붙으면 다른
-   *  세션의 연결로 붙어 server.info 응답을 못 받고 멈추거나(응답은 카드 세션으로 온다) 다른 데몬이면 "실행 중이 아니다" 로 끝났다
-   *  (ticket slcode-card-dies-background). 숨은 카드는 mount 의 관찰자가 보이게 될 때 다시 부른다 */
-  function resume(c) { if (c.lost && !c.conn && c.state !== 'exited' && shown(c)) void ensure(c); }
+  /** 끊긴 카드가 지금 다시 붙어도 되는가 — 카드 ctx 가 세션 묶음을 실어 오면 마운트돼 있는 한 늘 (배경 세션이어도
+   *  카드 세션의 연결로 붙는다). 옛 superlite 는 보일 때(= 카드의 세션이 활성일 때)만: api.services 는 활성 세션으로 가서, 배경 세션의
+   *  카드가 붙으면 다른 세션의 연결로 붙어 server.info 응답을 못 받고 멈추거나 다른 데몬이면 "실행 중이 아니다" 로 끝났다
+   *  (ticket slcode-card-dies-background) */
+  const canResume = (c) => !!c.el && (!!c.ctx?.services || shown(c));
+  /** 끊긴 카드 다시 붙기 — 지금 못 붙는 숨은 카드(옛 superlite)는 mount 의 관찰자가 보이게 될 때 다시 부른다 */
+  function resume(c) { if (c.lost && !c.conn && c.state !== 'exited' && canResume(c)) void ensure(c); }
   async function attach(c) {
     if (!c.id || c.attached) return;
     c.attached = true;
@@ -322,9 +334,10 @@ export function activate(api) {
       const c = card(st.key);
       c.id = c.id ?? st.id ?? null;
       c.ctx = ctx; c.el = el; c.cardId = ctx.card; c.savedId = st.id ?? null;
+      c.onMount?.(); c.onMount = null;
       el.style.position = 'relative'; el.style.height = '100%';
       render(c); applyTitle(c); badge(c);
-      // 뒤에서 연 카드(slcode.new)는 마운트 전에 세션이 떴다 — 그 id 를 card state 에 남긴다 (새로고침 복원)
+      // 마운트되지 않은 사이에 세션 id 가 바뀌었으면 card state 에 남긴다 (새로고침 복원)
       if (c.id && c.savedId !== c.id) { c.savedId = c.id; ctx.setState({ key: c.key, id: c.id }); }
       c.vis?.disconnect();
       c.vis = new IntersectionObserver((es) => { if (es[0].isIntersecting) resume(c); });
@@ -359,8 +372,10 @@ export function activate(api) {
       const c = card(key);
       c.spawn = { cwd: a.cwd ?? ctx.cwd, vendor: a.vendor, title: a.title, mode: a.mode };
       const at = { as: 'card', key, title: a.title ?? DEFAULT_NAME, preserve: true };
+      const mounted = new Promise((r) => { c.onMount = r; });
       api.views.open(VIEW, { key, id: null }, { ...at, near: ctx.tmux ?? undefined });
       api.views.open(VIEW, undefined, at); // 이미 있는 key — 활성화만
+      await mounted; // 카드 ctx(카드 세션)가 온 뒤에 띄운다 — mount 가 부른 ensure 에 합친다
       await ensure(c);
       if (!c.id) throw new Error(c.error ?? 'slcode 세션을 띄우지 못했습니다');
       return c.id;
