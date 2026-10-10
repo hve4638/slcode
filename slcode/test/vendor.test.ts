@@ -2,9 +2,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { execFile, spawn } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { EventLog } from '../src/eventLog.ts';
 import { corePaths } from '../src/paths.ts';
 import { claudeLastUuid, findVendorSession, vendorResumeCommand } from '../src/vendor.ts';
@@ -12,6 +13,8 @@ import { claudeLastUuid, findVendorSession, vendorResumeCommand } from '../src/v
 const CLI = path.resolve(import.meta.dirname, '..', 'src', 'cli.ts');
 const tmp = (p: string) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** 끝났으면 바로, 아니면 exit 까지. 가짜 기록은 claude CLI 가 이어 받지 못해(No conversation found) import 한 세션이 곧 스스로 닫히므로 kill 전에 이미 끝났을 수 있다 */
+const ended = (c: ChildProcess) => (c.exitCode !== null || c.signalCode !== null ? Promise.resolve() : new Promise((r) => c.once('exit', r)));
 const CID = 'c1a2b3c4-0000-4000-8000-000000000001';
 const XID = '019f0000-0000-7000-8000-000000000002';
 
@@ -80,13 +83,17 @@ test('import: claude 세션을 slcode 세션으로 띄우고 첫 이벤트에 �
   const first = EventLog.open(corePaths(dir).sessionsDir, meta.id)!.since(0)[0];
   assert.deepEqual(first.ev, { kind: 'session.imported', vendor: 'claude', vendorSessionId: CID, uuid: 'a1' });
 
-  const live = await run(dir, env, ['export', meta.id]);
-  assert.equal(live.code, 0); assert.match(live.stderr, /is live — close it first/);
-  assert.equal(live.stdout.trim(), `cd '${work}' && claude --resume ${CID}`);
-
-  child.kill('SIGINT'); await new Promise((r) => child.once('exit', r));
+  child.kill('SIGINT'); await ended(child);
   const off = await run(dir, env, ['export', 'imp']);
   assert.equal(off.stderr, ''); assert.equal(off.stdout.trim(), `cd '${work}' && claude --resume ${CID}`);
+
+  // 살아 있는 세션: export 는 세션 소켓에 붙어 보기만 하므로 그 자리에 소켓을 연다. 가져온 세션은 위처럼 스스로 닫혀
+  // 그 세션으로 재면 export 가 붙기 전에 끝날 수 있다 (GitHub Actions runner 에서 실제로 졌다)
+  const srv = net.createServer((s) => s.end());
+  await new Promise<void>((r) => srv.listen(EventLog.open(corePaths(dir).sessionsDir, meta.id)!.sockPath, r));
+  const live = await run(dir, env, ['export', meta.id]).finally(() => srv.close());
+  assert.equal(live.code, 0); assert.match(live.stderr, /is live — close it first/);
+  assert.equal(live.stdout.trim(), `cd '${work}' && claude --resume ${CID}`);
 
   // 다시 import — 새 기록을 만들지 않고 같은 세션을 resume (띄웠다 바로 닫는다)
   const again = spawn(process.execPath, ['--import', 'tsx', CLI, 'import', CID, '--no-web'], { env: { ...process.env, ...env, SLCODE_DIR: dir, SLCODE_GRACE_SECS: '1', SLCODE_SESSION: undefined }, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -95,7 +102,7 @@ test('import: claude 세션을 slcode 세션으로 띄우고 첫 이벤트에 �
   again.stderr!.on('data', (d) => (aerr += d)); again.stdout!.on('data', (d) => (aout += d));
   const t1 = Date.now(); while (!aout.includes('\n') && Date.now() - t1 < 15000) await sleep(50);
   assert.match(aerr, new RegExp(`already imported as ${meta.id}`));
-  again.kill('SIGINT'); await new Promise((r) => again.once('exit', r));
+  again.kill('SIGINT'); await ended(again);
   assert.equal(EventLog.list(corePaths(dir).sessionsDir).length, 1);
 });
 
@@ -121,7 +128,7 @@ test('import --fork (claude): SDK forkSession 으로 갈라 새 id 로 띄운다
     let out = '', err = '';
     child.stdout!.on('data', (d) => (out += d)); child.stderr!.on('data', (d) => (err += d));
     const t0 = Date.now(); while (!out.includes('\n') && Date.now() - t0 < 15000) await sleep(50);
-    child.kill('SIGINT'); await new Promise((r) => child.once('exit', r));
+    child.kill('SIGINT'); await ended(child);
     return err;
   };
   assert.match(await forkOnce(), new RegExp(`forked claude session ${CID} into [0-9a-f-]{36} as \\w+ \\(${work}\\) — the original is untouched`));
