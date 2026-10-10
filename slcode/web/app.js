@@ -641,6 +641,7 @@ export function mountAgentFront(root, transport, opts = {}) {
       else throw e;
     }
     info = r.info; setTitle(info.title);
+    if (r.draft && !input.value) { input.value = r.draft; input.oninput(); } // 다시 로드된 화면 — 쓰던 글을 되살린다 (치던 중이면 그대로)
     replayHistory(r.history);
     for (const p of r.pending) renderCard(p);
     setState(info.state);
@@ -706,12 +707,21 @@ export function mountAgentFront(root, transport, opts = {}) {
   }
 
   // ---- 작성창
+  // 입력 초안은 slcode 서버에 맡긴다 — 카드 iframe 이 다시 로드돼도(연결 끊김·relay 재기동) attach 의 draft 로 돌아온다
+  // (ticket slcode-card-periodic-reload, 사용자 2026-10-10). 옛 서버는 메서드가 없어 실패한다 — 무시
+  let draftTimer = null;
+  function saveDraft(now = false) {
+    clearTimeout(draftTimer);
+    const go = () => { if (current) rpc('session.setDraft', { id: current, text: input.value }).catch(() => {}); };
+    if (now) go(); else draftTimer = setTimeout(go, 300);
+  }
   function send() {
     const t = resolveSlash(input.value.trim()); if ((!t && !pendingFiles.length) || !current) return;
     const attachments = pendingFiles.splice(0).map(({ dataUrl, ...a }) => { if (a.mediaType.startsWith('image/')) sentFiles.set(a.name, dataUrl); return a; });
     chips.innerHTML = '';
     input.value = ''; input.style.height = ''; canSend();
     rpc('session.send', { id: current, text: t, ...(attachments.length ? { attachments } : {}) }).catch((e) => push(h('div', { class: 'meta err' }, e.message)));
+    saveDraft(true);
     toBottom();
   }
   // 바깥(superlite 카드)이 탭을 다시 보일 때 입력창으로 — focus() 는 직전 커서·선택을 그대로 둔다 (사용자 2026-10-04)
@@ -729,7 +739,7 @@ export function mountAgentFront(root, transport, opts = {}) {
       if (e.key === 'Escape') { e.preventDefault(); slashMenu.hidePopover(); return; }
     }
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (slashMenu.matches(':popover-open')) slashMenu.hidePopover(); send(); } else if (e.key === 'Escape' && !busy.hidden && current) { e.preventDefault(); rpc('session.interrupt', { id: current }); } };
-  input.oninput = () => { input.style.height = ''; input.style.height = Math.min(input.scrollHeight, 220) + 'px'; canSend(); slashSel = 0; slashDraw(); };
+  input.oninput = () => { input.style.height = ''; input.style.height = Math.min(input.scrollHeight, 220) + 'px'; canSend(); slashSel = 0; slashDraw(); saveDraft(); };
   renderSide();
   return { rpc, get sessionId() { return current; } };
 }

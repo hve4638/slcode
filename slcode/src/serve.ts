@@ -140,6 +140,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
   const token = web && !isLoopback(host) ? readOrCreateToken(P) : null;
   let port: number | null = null;
   let url: string | null = null;
+  let draft = ''; // 웹 입력창 초안 (session.setDraft) — 메모리만
   const mine = (id: unknown) => { if (id !== sid) throw new CoreError(ERR.badRequest, `this process serves session ${sid} only`); return session; };
   type Handler<K extends MethodName> = (conn: Conn, params: Methods[K]['params']) => Promise<Methods[K]['result']> | Methods[K]['result'];
   const handlers: { [K in MethodName]: Handler<K> } = {
@@ -153,7 +154,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
       conn.detach?.();
       const history = s.since(Number(p.since ?? 0));
       conn.detach = s.onEvent((e: LoggedEvent) => conn.send({ event: 'session.event', params: { id: sid, ...e } }));
-      return { info: s.info(), history, pending: s.pendingApprovals() as ApprovalRequest[] };
+      return { info: s.info(), history, pending: s.pendingApprovals() as ApprovalRequest[], draft };
     },
     'session.detach': (conn, p) => { mine(p?.id); conn.detach?.(); conn.detach = null; return { ok: true }; },
     'session.send': (_c, p) => {
@@ -189,6 +190,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
     },
     'session.close': (_c, p) => { mine(p?.id); setImmediate(() => void close('closed by client')); return { ok: true }; },
     'session.rename': (_c, p) => { const s = mine(p?.id); s.log.updateMeta({ title: p.title ?? null }); broadcast('session.changed', s.info()); return { ok: true }; },
+    'session.setDraft': (_c, p) => { mine(p?.id); if (typeof p.text !== 'string') throw new CoreError(ERR.badRequest, 'text required'); draft = p.text; return { ok: true }; },
     // ---- 메시징 (스탠드얼론, 2026-10-02)
     'session.check': async (_c, p) => {
       mine(p?.id);

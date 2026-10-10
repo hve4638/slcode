@@ -120,7 +120,8 @@ export type Methods = {
   /** url 은 접속 가능한 웹 주소(토큰 포함, 0.0.0.0 은 IPv4 로 바꾼 것) — superlite 카드가 iframe 에 넣는다. --no-web 이면 null (2026-10-04) */
   'server.info': { params: Record<string, never>; result: { session: string; cwd: string; host: string | null; port: number | null; url: string | null; version: string } };
   /** 이 연결에 세션의 이벤트 스트림을 켠다. since 뒤의 로그를 history 로, 대기 승인을 pending 으로 */
-  'session.attach': { params: { id: string; since?: number }; result: { info: SessionInfo; history: LoggedEvent[]; pending: ApprovalRequest[] } };
+  /** draft 는 웹 입력창 초안 (session.setDraft 로 맡긴 것, 없으면 '') — 다시 붙은 웹이 비어 있는 입력창을 채운다 */
+  'session.attach': { params: { id: string; since?: number }; result: { info: SessionInfo; history: LoggedEvent[]; pending: ApprovalRequest[]; draft: string } };
   'session.detach': { params: { id: string }; result: { ok: true } };
   /** idle·running 가리지 않고 큐에 넣는다 — 한 호출. origin 은 발신자 표식 (우편으로 들어온 턴은 'mail') */
   'session.send': { params: { id: string; text: string; origin?: string; attachments?: Attachment[] }; result: { ok: true; state: SessionState } };
@@ -144,6 +145,9 @@ export type Methods = {
   /** 대기 승인 cancel 뒤 벤더 프로세스 종료 — 프로세스도 내려간다 (Ctrl-C 와 같다). 로그는 남는다 */
   'session.close': { params: { id: string }; result: { ok: true } };
   'session.rename': { params: { id: string; title: string | null }; result: { ok: true } };
+  /** 웹 입력창 초안을 맡긴다 — 프로세스 메모리에 하나(마지막 쓴 것), 디스크·방송 없음. 카드 iframe 이 다시 로드돼도 쓰던 글이 남게
+   *  (ticket slcode-card-periodic-reload, 사용자 결정 2026-10-10) */
+  'session.setDraft': { params: { id: string; text: string }; result: { ok: true } };
   // ---- 메시징 (ticket superlite-agent-messaging, 사용자 확정 2026-10-02: 스탠드얼론, superlite 등록부 매핑 없음). 세션 안의 `slcode check/ask/reply` 가 자기 세션 소켓으로 부른다
   /** 밀린 우편을 지금 꺼낸다 (우체국에서 가져온 뒤 inbox 전부 ack) — 진행 중 턴 안에서 읽는 용도. 꺼낸 우편은 턴으로 다시 오지 않는다. text 는 mail.ts formatMail 꼴 */
   'session.check': { params: { id: string }; result: { count: number; text: string } };

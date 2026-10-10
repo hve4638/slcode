@@ -167,6 +167,23 @@ test('루프백 밖 호스트는 토큰 필수; --no-web 은 소켓만', async (
   await h2.close('test');
 });
 
+test('입력 초안: setDraft 의 글을 다음 attach 가 draft 로 돌려준다 — 다른 연결에서 붙어도 (ticket slcode-card-periodic-reload)', async () => {
+  const dir = isolated();
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
+  const h = await serveSession({ dir, cwd: work, web: false });
+  const a = await connectSession(h.sock);
+  assert.equal((await a.request('session.attach', { id: h.session.id })).draft, '');
+  await a.request('session.setDraft', { id: h.session.id, text: '쓰던 글\n둘째 줄' });
+  a.close(); // 카드 iframe 이 다시 로드되면 연결이 바뀐다
+  const b = await connectSession(h.sock);
+  assert.equal((await b.request('session.attach', { id: h.session.id })).draft, '쓰던 글\n둘째 줄');
+  await assert.rejects(b.request('session.setDraft', { id: h.session.id, text: 1 as unknown as string }), /text required/);
+  await b.request('session.setDraft', { id: h.session.id, text: '' }); // 보내면 비운다
+  assert.equal((await b.request('session.attach', { id: h.session.id })).draft, '');
+  b.close();
+  await h.close('test');
+});
+
 test('평탄 구조 이주: sessions/<id>/ 가 sessions/<슬러그>/<id>/ 로 옮겨지고 list 가 본다', async () => {
   const dir = isolated();
   const p = corePaths(dir);
