@@ -1,0 +1,99 @@
+# 태그 v<버전> 을 push 하면 slcode 바이너리 zip 을 만들어 GitHub release 로 공개한다 (slcode/README.md "바이너리 배포").
+# 플러그인(main.js)은 release 태그 v<ver> 와 자산 slcode-<ver>-<platform>.zip 만 안다 — 바꾸면 그쪽도 바꾼다.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # install·테스트가 남의 코드를 돌리므로 토큰을 .git/config 에 남기지 않는다
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10.30.3
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: 태그와 버전 대조
+        run: |
+          node --input-type=module <<'EOF'
+          import fs from 'node:fs';
+          import { satisfies } from './main.js';
+          const tag = process.env.TAG, ver = tag.slice(1);
+          const plugin = JSON.parse(fs.readFileSync('plugin.json', 'utf8'));
+          const pkg = JSON.parse(fs.readFileSync('slcode/package.json', 'utf8'));
+          const errs = [];
+          if (plugin.version !== ver) errs.push(`plugin.json version ${plugin.version} 이 태그 ${tag} 와 다르다`);
+          if (pkg.version !== ver) errs.push(`slcode/package.json version ${pkg.version} 이 태그 ${tag} 와 다르다`);
+          if (!satisfies(ver, plugin.binary.version)) errs.push(`plugin.json binary.version ${plugin.binary.version} 이 ${ver} 를 만족하지 않는다`);
+          for (const e of errs) console.error(`::error::${e}`);
+          if (errs.length) process.exit(1);
+          console.log(`버전 ${ver} 일치`);
+          EOF
+
+      - name: 빌드
+        working-directory: slcode
+        run: pnpm install --frozen-lockfile && pnpm build
+
+      - name: 테스트
+        working-directory: slcode
+        timeout-minutes: 10
+        # slcode.new 동사 테스트 하나는 건너뛴다. 동사가 카드 mount 를 기다리는데 테스트의 가짜 views.open 은 mount 하지 않아
+        # 끝나지 않고 취소된다 (앱에서는 카드가 열리며 mount 된다). major 쪽이 테스트를 고치면 --test-skip-pattern 을 지운다.
+        run: node --import tsx --test --test-skip-pattern='^slcode\.new 동사:' test/*.test.ts
+
+      - name: zip
+        run: slcode/scripts/release.sh
+
+      - name: 연기 검사 (Linux zip)
+        timeout-minutes: 5
+        # 빈 환경(env -i)에서 동봉 node 로 뜨는지 본다. 세션·우체국은 격리 --dir 에 둔다
+        run: |
+          d=$(mktemp -d)
+          unzip -q "slcode/release/slcode-${TAG#v}-linux-x64.zip" -d "$d/app"
+          slc() { env -i "$d/app/bin/slcode" "$@"; }
+          slc --help
+          mkdir "$d/state" "$d/work"
+          slc new "$d/work" --no-web --dir "$d/state" > "$d/new.log" 2>&1 &
+          pid=$!
+          id=
+          for _ in $(seq 60); do
+            id=$(slc list --dir "$d/state" | grep -o '"id": "[^"]*"' | cut -d'"' -f4 || true)
+            [ -n "$id" ] && break
+            sleep 0.5
+          done
+          if [ -z "$id" ]; then cat "$d/new.log"; kill "$pid"; echo "::error::세션이 뜨지 않았다"; exit 1; fi
+          slc close "$id" --dir "$d/state"
+          wait "$pid"
+          slc post restart --dir "$d/state"
+          cat "$d/new.log"
+
+      - name: SHA256SUMS.txt
+        working-directory: slcode/release
+        run: sha256sum "slcode-${TAG#v}-linux-x64.zip" "slcode-${TAG#v}-win-x64.zip" | tee SHA256SUMS.txt
+
+      - name: release 공개
+        working-directory: slcode/release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        # 태그에 release 가 이미 있으면 자산만 덮어쓴다
+        run: |
+          files=("slcode-${TAG#v}-linux-x64.zip" "slcode-${TAG#v}-win-x64.zip" SHA256SUMS.txt)
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" "${files[@]}" --clobber
+          else
+            gh release create "$TAG" "${files[@]}" --verify-tag --title "slcode $TAG" --notes "slcode $TAG 바이너리 (linux-x64, win-x64)"
+          fi
