@@ -1,3 +1,4 @@
 .vite/
 /bin/
 /.fetch/
+/.agent-memory/
