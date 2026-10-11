@@ -1,5 +1,6 @@
 // 가짜 codex app-server — stdio JSON 줄 프로토콜의 최소 흉내 (테스트용, API 호출 없음).
 // initialize·thread/start·thread/resume·thread/fork(새 id fork-<원본>)·model/list·turn/start·turn/interrupt·thread/compact/start 에 답하고, turn/start 뒤 델타 → 명령 승인 요청 → 완료 알림을 낸다.
+// FAKE_CODEX_IGNORE_INTERRUPT 면 turn/interrupt 에 답하지 않는다 (느린 종료 — slcode 는 2초 기다린다)
 import readline from 'node:readline';
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 const notify = (method, params) => out({ jsonrpc: '2.0', method, params });
@@ -41,7 +42,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       out({ jsonrpc: '2.0', id: reqId, method: 'item/commandExecution/requestApproval', params: { kind: 'command', threadId: thread.id, turnId: 't-1', itemId: 'exec-1', command: 'touch x', cwd: thread.cwd, reason: 'outside sandbox', approvalPolicy: m.params.approvalPolicy, sandboxPolicy: m.params.sandboxPolicy } });
       return;
     }
-    case 'turn/interrupt': reply({}); notify('turn/completed', { threadId: thread.id, turn: { id: 't-1', status: 'interrupted', error: null, durationMs: 1, items: [] } }); return;
+    case 'turn/interrupt': if (process.env.FAKE_CODEX_IGNORE_INTERRUPT) return; reply({}); notify('turn/completed', { threadId: thread.id, turn: { id: 't-1', status: 'interrupted', error: null, durationMs: 1, items: [] } }); return;
     default: return out({ jsonrpc: '2.0', id: m.id, error: { code: -32601, message: `unknown ${m.method}` } });
   }
 });

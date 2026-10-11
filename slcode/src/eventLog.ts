@@ -14,8 +14,10 @@ export type SessionMeta = {
   title: string | null;
   vendorSessionId: string | null;
   createdAt: number;
-  /** 마지막 턴이 끝난 시각 — --continue 의 최근 기준 */
+  /** 마지막 턴이 끝난 시각 */
   updatedAt?: number;
+  /** 세션 프로세스가 닫힌 시각 — continue·resume 목록의 꺼진 순서 (없는 옛 세션·비정상 종료는 updatedAt 으로 대신) */
+  closedAt?: number;
   permissionMode: string | null;
   raw: boolean;
   /** session.setModel 로 고른 모델 — 없으면 벤더 기본 */

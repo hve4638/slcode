@@ -43,7 +43,7 @@ export type ServeOptions = {
   cwd: string;
   /** 이어받을 세션 id (저장 세션) */
   resume?: string;
-  /** 이 cwd 의 마지막 세션(updatedAt)을 이어받는다 */
+  /** 이 cwd 에서 가장 최근에 꺼진 세션을 이어받는다 (살아 있는 세션은 빼고, 없으면 새 세션) */
   continueLast?: boolean;
   title?: string;
   raw?: boolean;
@@ -65,14 +65,23 @@ export type ServeOptions = {
 
 export type ServeHandle = { url: string | null; sock: string; session: SessionInfo; close: (reason?: string) => Promise<void>; done: Promise<void> };
 
-/** 소켓 파일이 살아 있는 프로세스 것인지 — 붙어 보면 안다 */
-function sockAlive(p: string): Promise<boolean> {
+/** 소켓 파일이 살아 있는 프로세스 것인지 — 붙어 보면 안다 (cli close --force 도 쓴다) */
+export function sockAlive(p: string): Promise<boolean> {
   return new Promise((resolve) => {
     if (!fs.existsSync(p)) return resolve(false);
     const s = net.createConnection(p);
     s.once('connect', () => { s.destroy(); resolve(true); });
     s.once('error', () => resolve(false));
   });
+}
+
+/** 꺼진 시각 — closedAt, 없으면(옛 세션) updatedAt. 다시 띄운 뒤 비정상 종료해 closedAt 이 옛 값이면 더 늦은 updatedAt 이 맞다 */
+export const closedTime = (m: SessionMeta) => Math.max(m.closedAt ?? 0, m.updatedAt ?? m.createdAt);
+/** 그 cwd 의 꺼진 세션 — 꺼진 순서(최근 먼저). 소켓이 살아 있는 세션은 뺀다 (continue·id 없는 resume). 슬러그가 같은 다른 폴더(/a-b·/a/b)는 cwd 로 거른다 */
+export async function closedSessions(sessionsDir: string, cwd: string): Promise<SessionMeta[]> {
+  const out: SessionMeta[] = [];
+  for (const m of EventLog.list(sessionsDir, cwd)) if (m.cwd === cwd && !(await sockAlive(new EventLog(sessionsDir, m).sockPath))) out.push(m);
+  return out.sort((a, b) => closedTime(b) - closedTime(a));
 }
 
 /** 웹 정적 파일 (web/) — 세션 웹과 resume --stdio 프록시의 서비스 웹이 같이 쓴다. 경로는 상대(경로 접두사 아래에서도 — relay /svc) */
@@ -109,9 +118,8 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
   let logFile: EventLog | null = null;
   let resumeId = opts.resume;
   if (!resumeId && opts.continueLast) {
-    const mine = EventLog.list(P.sessionsDir, opts.cwd).sort((a, b) => (a.updatedAt ?? a.createdAt) - (b.updatedAt ?? b.createdAt));
-    resumeId = mine.at(-1)?.id;
-    if (!resumeId) log(`no previous session in ${opts.cwd} — starting a new one`);
+    resumeId = (await closedSessions(P.sessionsDir, opts.cwd))[0]?.id;
+    if (!resumeId) log(`no closed session in ${opts.cwd} — starting a new one`);
   }
   if (resumeId) {
     logFile = EventLog.open(P.sessionsDir, resumeId);
@@ -355,9 +363,14 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
   // ---- 수명
   let resolveDone!: () => void;
   const done = new Promise<void>((r) => (resolveDone = r));
-  const close = async (reason = 'closed') => {
-    if (closed) return; closed = true;
+  // 닫는 중에 다시 부르면(시그널 두 번 — superlite 서비스 중지는 SIGTERM 뒤 tmux 정리에서 한 번 더 온다) 같은 종료를 기다린다. 바로
+  // 돌아오면 호출자의 process.exit 이 종료를 끊어 closedAt·session.exit 가 남지 않았다 (2026-10-11 실측)
+  let closing: Promise<void> | null = null;
+  const close = (reason = 'closed'): Promise<void> => (closing ??= (async () => {
+    closed = true;
     log(`closing: ${reason}`);
+    // 꺼진 시각은 먼저 — 벤더 종료가 길어 SIGKILL(superlite 는 SIGTERM 3초 뒤)을 맞아도 남는다
+    try { logFile!.updateMeta({ closedAt: Date.now() }); } catch { /* delete 가 세션 폴더를 먼저 지웠다 */ }
     for (const [id, w] of asks) { asks.delete(id); w.reject(new CoreError('closed', `session closed: ${reason}`)); }
     await session.close(reason);
     for (const c of [...(wss?.clients ?? []), ...(svcWss?.clients ?? [])]) c.close();
@@ -365,7 +378,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
     try { fs.unlinkSync(sockPath); } catch {}
     post?.close();
     resolveDone();
-  };
+  })());
   closeFn = close;
   if (earlyExit) { await close(earlyExit); throw new CoreError('vendor_exit', earlyExit); }
   return { url, sock: sockPath, session: session.info(), close, done };

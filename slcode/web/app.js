@@ -37,6 +37,8 @@ export function mountAgentFront(root, transport, opts = {}) {
   const setTitle = (t) => { title.textContent = t || DEFAULT_NAME; };
   const nameRow = h('div', { class: 'name-row' }, title); // 연필 버튼은 iconBtn 정의 뒤에 붙인다
   const pill = h('span', { class: 'pill starting' }, STATE_LABEL.starting);
+  // 세션 종료 (사용자 2026-10-11) — 카드는 두고 세션만 끈다(카드를 제거하면 세션도 끝난다). 꺼진 세션은 resume 으로 다시 띄운다
+  const endBtn = h('button', { class: 'ghost end', onclick: () => current && rpc('session.close', { id: current }).catch((e) => push(h('div', { class: 'meta err' }, e.message))) }, '세션 종료');
   const feed = h('div', { class: 'feed' });
   const liveCol = h('div', { class: 'col' });
   let col = liveCol; // 옛 턴을 그릴 땐 임시 div 로 바꿨다가 앞에 붙인다
@@ -142,14 +144,14 @@ export function mountAgentFront(root, transport, opts = {}) {
   } // 승인·질문 카드는 입력창 자리에 뜬다 — 피드에는 호출 표식만 (사용자 2026-09-30)
   // 상단 바 없음 — 세션 이름·cwd·상태는 왼쪽 여백, 세션 정보는 오른쪽 여백 (사용자 2026-09-27). ponytail: 좁은 화면 대응 없음, 모바일이 필요하면 미디어 쿼리로
   el.append(
-    h('aside', { class: 'left' }, nameRow, pill),
+    h('aside', { class: 'left' }, nameRow, pill, endBtn),
     h('div', { class: 'main' }, feed, dock, composer),
     side,
   );
   root.append(el);
 
   const rpc = (m, p) => transport.request(m, p);
-  let current = null, lastSeq = 0, curSeq = 0, replaying = false, info = null, ready = null, connected = false;
+  let current = null, lastSeq = 0, curSeq = 0, replaying = false, info = null, ready = null, connected = false, exitNote = null;
   // 스트리밍 상태는 범위마다 — 본문(main)과 서브에이전트(부모 tool_use id)마다 따로 (2026-09-30, 작업 카드)
   let main = { col: null, textEl: null, textBuf: '', thinkEl: null, thinkBuf: '' };
   const subs = new Map(); // parent toolUseId → scope
@@ -264,7 +266,8 @@ export function mountAgentFront(root, transport, opts = {}) {
     pill.className = `pill ${state}`; pill.textContent = STATE_LABEL[state] ?? state;
     busyNow = state === 'running' || state === 'requires_action';
     showBusy(state === 'running');
-    input.disabled = state === 'exited'; canSend();
+    input.disabled = state === 'exited'; endBtn.hidden = state === 'exited'; canSend();
+    if (state !== 'exited' && exitNote) { exitNote.remove(); exitNote = null; }
     if (opts.onState) opts.onState(state);
     renderSide();
   }
@@ -359,7 +362,8 @@ export function mountAgentFront(root, transport, opts = {}) {
         push(h('div', { class: ev.decision === 'approved' ? 'notice' : 'meta err' }, what));
         break;
       }
-      case 'session.exit': endText(); push(h('div', { class: 'meta' }, `세션 종료: ${ev.reason}`)); break;
+      // 종료 줄은 꺼진 동안만 — 기록을 다시 그릴 땐 빼고, 세션이 다시 살아나면(setState) 지운다 (사용자 2026-10-11)
+      case 'session.exit': endText(); if (live) exitNote = push(h('div', { class: 'meta' }, `세션 종료: ${ev.reason}`)); break;
       case 'turn.rewound': {
         endText();
         for (const n of [...col.children, ...(replaying ? [] : older.children)]) if (Number(n.dataset.seq) >= ev.seq) n.remove();
@@ -582,8 +586,11 @@ export function mountAgentFront(root, transport, opts = {}) {
   const cuts = new Set(); // 자를 수 있는 turn.start 의 seq — 열린 도구·승인·서브에이전트가 없을 때만 (작업 중에 보낸 메시지는 앞 턴 카드를 이어 쓴다)
   function replayHistory(history) {
     const evs = [];
+    let exited = false; // 종료 뒤의 오류는 같이 죽은 벤더의 종료 코드(exit 143) — 옛 기록에 남아 있어 뺀다 (사용자 2026-10-11)
     for (const e of history) {
       const k = e.ev.kind, last = evs[evs.length - 1];
+      if (k === 'session.exit') exited = true; else if (k !== 'session.state' && k !== 'error') exited = false;
+      if (k === 'error' && exited) continue;
       // 되돌린 턴은 미리 뺀다. 끝 이벤트는 화면을 안 만들고 앞 카드를 갱신하므로 남긴다 (되살아난 승인 카드가 대기로 남았다)
       if (k === 'turn.rewound') { const keep = evs.filter((x) => x.seq < e.ev.seq || x.ev.kind === 'tool.end' || x.ev.kind === 'approval.resolved'); evs.length = 0; evs.push(...keep); }
       if ((k === 'text.delta' || k === 'thinking.delta') && last?.ev.kind === k && last.ev.parent === e.ev.parent) { evs[evs.length - 1] = { ...e, ev: { ...e.ev, text: last.ev.text + e.ev.text } }; continue; }

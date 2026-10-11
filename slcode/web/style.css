@@ -45,6 +45,7 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .left .name-row button.ico:hover { background: var(--acf-soft); color: var(--acf-muted); }
 .acf .left .name-row button.ico svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .acf .left .title-edit { font: inherit; font-weight: 600; width: 100%; min-width: 0; padding: 1px 4px; border: 1px solid var(--acf-line); border-radius: 4px; background: transparent; color: inherit; }
+.acf .left button.end { font-size: 12px; padding: 2px 9px; margin-top: 4px; }
 .acf .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--acf-line); color: var(--acf-muted); white-space: nowrap; }
 .acf .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .acf .pill.running { color: var(--acf-accent); }

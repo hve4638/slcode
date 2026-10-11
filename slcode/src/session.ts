@@ -267,6 +267,8 @@ export class ClaudeSession extends AgentSession {
       if (!this.ended && !this.restarting) { this.ended = true; this.emit({ kind: 'session.exit', reason: 'vendor process ended' }); }
     } catch (err) {
       if (this.restarting) return; // rewind 가 생성기를 닫은 것 — finally 가 처리
+      // close() 뒤에 죽은 벤더 — superlite 서비스 중지·터미널 Ctrl-C 는 프로세스 그룹에 시그널을 보내 claude 도 같이 죽는다(exit 143). 종료는 close 가 이미 남겼다 (사용자 2026-10-11)
+      if (this.ended) return;
       this.emit({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
       if (!this.ended) { this.ended = true; this.emit({ kind: 'session.exit', reason: 'vendor process error' }); }
     } finally {

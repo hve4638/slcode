@@ -4,13 +4,13 @@
 
 ```
 pnpm install && pnpm build
-slcode [--vendor --title --mode …]      # 동사 없으면 slcode new . (옵션만, 폴더는 new <folder>). superlite 터미널 안이면 그 deck 에 카드로 연다 (--web 은 웹 강제)
+slcode [--vendor --title --mode …]      # 동사 없으면 slcode new . (옵션만, 폴더는 new <folder>)
 cd /path/to/project && slcode new       # 이 프로세스가 이 폴더의 세션 하나 + 웹 서버 하나, URL 이 찍힌다. Ctrl-C 로 닫는다
-slcode resume <s> | continue [folder]   # 닫은 세션을 이어간다 (살아 있으면 attach). continue 는 그 폴더의 최근 세션
+slcode resume [<s>] | continue [folder] # 닫은 세션을 이어간다. <s> 가 없으면 이 폴더의 꺼진 세션 목록, continue 는 그 폴더에서 최근에 꺼진 세션
 slcode import <벤더 세션 id> [--fork]    # Claude Code·Codex 에서 하던 세션을 이어받는다 (폴더는 벤더 기록에서, 이전 대화는 화면에 없다). --fork 는 원본을 두고 복제본으로
 slcode export <s>                       # 그 세션을 벤더에서 이어 갈 명령을 찍는다 (cd <폴더> && claude --resume <id> | codex resume <id>)
-slcode new --host 0.0.0.0 --port 8798   # 밖으로 열면 URL 에 토큰이 붙는다 (기본 127.0.0.1·남는 포트·토큰 없음). --no-web 은 소켓만
-slcode list [--all] | attach <s> | rename <s> <title> | close <s> | delete <s>
+slcode new --host 0.0.0.0 --port 8798   # 밖으로 열면 URL 에 토큰이 붙는다 (기본 127.0.0.1·남는 포트·토큰 없음). --no-web 은 소켓만 (--host·--port 와 같이 못 쓴다)
+slcode list [--all] | rename <s> <title> | close <s> [--force] | delete <s>
 slcode prompt <s> <text> | interrupt <s>
 slcode status <s> | pending <s> | last <s> [--turn N] | log <s> [--since N] [--tail N]   # 조회: 평문 기본, --json
 slcode respond <s> <req> allow|deny [--remember] | respond <s> <req> --answer <text> | respond <s> <req> --json '<updatedInput>'
@@ -20,7 +20,9 @@ slcode post status | post restart
 pnpm test                               # 잠금·로그·우체국·세션 프로세스·CLI 동사 테스트
 ```
 
-`<s>`·`<to>` 는 세션 id 또는 유일한 제목이다. 동사는 attach 만 빼고 한 번 부르고 끝난다 — 다른 에이전트·스크립트·superlite 카드가 세션을 조종하는 표면이다. 승인·질문은 `pending` 으로 요청 id 를 보고 `respond` 로 답한다. 열려 있지 않은 id 면 오류와 함께 지금 대기 중인 id 를 보여 준다 (미리 보관하지 않는다). `status`·`last`·`log` 는 꺼진 세션도 로그 파일에서 답한다.
+new·resume·continue 는 superlite 터미널 안이면 그 터미널의 deck 에 카드로 연다. superlite 밖이거나 `--web` 이면 그 프로세스가 세션이 되어 웹을 연다. 이미 살아 있는 세션이면 그 카드로 가거나 웹 주소를 출력한다. superlite 안에서 `--host`·`--port` 는 `--web` 과 함께 쓴다.
+
+`<s>`·`<to>` 는 세션 id 또는 유일한 제목이다. 세션이 되는 동사(new·resume·continue·import)를 빼면 동사는 한 번 부르고 끝난다 — 다른 에이전트·스크립트·superlite 카드가 세션을 조종하는 표면이다. 승인·질문은 `pending` 으로 요청 id 를 보고 `respond` 로 답한다. 열려 있지 않은 id 면 오류와 함께 지금 대기 중인 id 를 보여 준다 (미리 보관하지 않는다). `status`·`last`·`log` 는 꺼진 세션도 로그 파일에서 답한다.
 
 
 세션마다 프로세스가 따로라 패키지를 갱신해도 떠 있는 세션은 옛 코드로 그대로 돌고, 새로 띄운 세션만 새 코드다. 프로세스를 내리면 세션의 벤더 프로세스도 닫히고 로그는 남는다. slcode 는 tmux 를 모른다 — 터미널을 닫아도 살려 두고 싶으면 바깥에서 tmux 에 띄운다 (superlite 카드가 그렇게 한다).

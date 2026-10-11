@@ -1,7 +1,9 @@
 // slcode 플러그인 (옛 id agent, ticket agent-plugin-card, 사용자 확정 2026-10-04) — 카드 하나 = slcode 세션 하나.
 //
-// 세 층: (1) 기동 — 카드가 열리면 card 단위 백그라운드 서비스로 `slcode new --stdio --no-web` 을 띄운다 (lifetime persistent:
-// 카드를 제거해도 세션은 산다, 종료는 팔레트 "slcode: Close session" 또는 터미널 `slcode close`). (2) 화면 — slcode 가 stdout 첫 줄로
+// 세 층: (1) 기동 — 카드가 열리면 card 단위 백그라운드 서비스로 `slcode new --stdio --no-web` 을 띄운다 (lifetime owned, owner 는
+// card id: 터미널 카드처럼 카드를 제거하면 세션도 끝나고 deck 을 닫는 것으로는 끝나지 않는다 — 사용자 2026-10-11, 2026-10-04 의 "카드를
+// 제거해도 세션은 산다" 를 바꿈. 카드를 두고 세션만 끄는 길은 slcode 웹의 "세션 종료"·사이드바 우클릭 "Force close"·팔레트
+// "slcode: Close session"·터미널 `slcode close`). (2) 화면 — slcode 가 stdout 첫 줄로
 // 보내는 hello {id,sock} 로 세션을 알고, 화면은 서비스 웹(매니페스트 web — slcode 가 SUPERLITE_SERVICE_WEB 에 연다)을 conn.webUrl() 의
 // superlite /svc 주소로 iframe 에 넣는다 — 포트를 따로 열지 않아 웹 모드·원격에서도 열린다 (ticket plugin-service-web). (3) 상태 — 같은 stdio 통로가 UDS 와 같은
 // 프레임 연결이라 session.attach 로 이벤트를 받아 배지·알림 센터에 반영한다. 선구독 services.onMessage 를 start 전에 걸어 첫 줄을
@@ -13,6 +15,7 @@ const VIEW = 'session';
 const SIDEBAR = 'sessions';
 const SVC = 'session';
 const DEFAULT_NAME = 'SLCode'; // 이름 없는 세션의 카드 제목 (slcode 웹의 기본 이름과 같다)
+const PICK_NAME = 'Resume'; // 고르기 전 resume 카드의 제목 — deck 에서 이름 없는 세션 카드와 갈리게
 const FAR = Number.MAX_SAFE_INTEGER; // attach since — 이력은 iframe 이 그린다, 여기선 pending 만
 
 // ---- 바이너리 자가 설치 (ticket slcode-plugin-selfinstall) — 순수 함수. export 는 slcode/test/plugin.test.ts 용
@@ -43,6 +46,15 @@ export function satisfies(version, cond) {
   return v.major === 0 && v.minor === 0 && v.patch === b.patch;
 }
 export const assetName = (version, platform) => `slcode-${version}-${platform}.zip`;
+/** id 없는 resume 카드의 목록 — `slcode list --all` 행에서 그 폴더의 꺼진 세션을 꺼진 순서(최근 먼저)로. 꺼진 시각은 slcode
+ *  serve.closedTime 과 같은 셈 (closedAt 과 updatedAt 중 늦은 쪽 — 옛 세션·옛 바이너리는 closedAt 이 없다) */
+export const closedTime = (s) => Math.max(s.closedAt ?? 0, s.updatedAt);
+export const closedRows = (rows, cwd) => rows.filter((s) => !s.live && s.cwd === cwd).sort((a, b) => closedTime(b) - closedTime(a));
+/** 꺼진 시각 표기 — CLI 의 id 없는 resume 목록과 같은 YYYY-MM-DD HH:MM */
+export function stamp(t) {
+  const d = new Date(t), p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
 /** GitHub Releases API(GET /repos/:repo/releases) 응답에서 조건에 맞는 최신 release 의 그 플랫폼 자산 → {version, url} | {error} */
 export function pickRelease(releases, cond, platform) {
   let best = null, noAsset = null;
@@ -159,23 +171,25 @@ export function activate(api) {
 
   /** key → 카드 하나. 뷰가 unmount/mount 를 거듭해도(카드 전환) 연결은 여기 산다 */
   const cards = new Map();
-  const card = (key) => { let c = cards.get(key); if (!c) { c = { key, id: null, url: null, title: null, state: null, conn: null, unsub: null, ctx: null, el: null, nextId: 1, pending: new Map(), waits: new Map(), starting: null, note: null, error: null }; cards.set(key, c); } return c; };
+  const card = (key) => { let c = cards.get(key); if (!c) { c = { key, id: null, url: null, title: null, state: null, conn: null, unsub: null, ctx: null, el: null, nextId: 1, pending: new Map(), waits: new Map(), starting: null, note: null, error: null, pick: null, closing: false }; cards.set(key, c); } return c; };
   const newKey = () => 's' + Math.random().toString(36).slice(2, 8);
   /** 카드가 쓸 api 묶음 — 카드 ctx 가 세션 묶음(services 등)을 실어 오면 그것(카드 세션의 데몬), 아니면 api(활성 세션 — 옛 superlite) */
   const apiOf = (c) => (c.ctx?.services ? c.ctx : api);
-  /** 세션 id → 서비스 owner(카드 key). 같은 세션을 다시 열 때 새 서비스를 띄우지 않고 떠 있는 것에 붙기 위해 플러그인 저장소에 남긴다 */
+  /** 서비스 owner — card id (ctx.card, 보존 card 는 보관소 id). 코어가 카드 제거 때 이 값으로 owned 서비스를 끝낸다. 없으면(옛 superlite) key */
+  const ownerOf = (c) => c.cardId ?? c.key;
+  /** 세션 id → 그 세션을 띄운 카드의 key. 같은 세션을 다시 열 때 다른 브라우저가 연 그 카드를 활성화하기 위해 플러그인 저장소에 남긴다 */
   let owners = null;
   const ownerMap = async () => (owners ??= (await api.storage.get('owners')) ?? {});
-  // 세션 id → 서비스 owner. url 은 두지 않는다 — 브라우저마다 접속 호스트가 달라 고쳐 쓴 url 을 공유하면 안 된다 (다시 붙을 땐 server.info 가 준다)
+  // 세션 id → 카드 key. url 은 두지 않는다 — 브라우저마다 접속 호스트가 달라 고쳐 쓴 url 을 공유하면 안 된다 (다시 붙을 땐 server.info 가 준다)
   const remember = async (c) => { const m = await ownerMap(); if (m[c.id] !== c.key) { m[c.id] = c.key; await api.storage.set('owners', m); } };
-  const ownerOf = async (id) => { const o = (await ownerMap())[id]; return typeof o === 'string' ? o : o?.key ?? null; }; // 객체 꼴은 잠시 쓰던 형식
+  const keyOf = async (id) => { const o = (await ownerMap())[id]; return typeof o === 'string' ? o : o?.key ?? null; }; // 객체 꼴은 잠시 쓰던 형식
 
   // ---- 프레임 (slcode 프로토콜과 같은 꼴)
   function request(c, method, params) {
     const id = c.nextId++;
     return new Promise((resolve, reject) => {
       c.pending.set(id, { resolve, reject });
-      apiOf(c).services.send(SVC, { id, method, params }, { owner: c.key }).catch((e) => { c.pending.delete(id); reject(e); });
+      apiOf(c).services.send(SVC, { id, method, params }, { owner: ownerOf(c) }).catch((e) => { c.pending.delete(id); reject(e); });
     });
   }
   function onMessage(c, m) {
@@ -213,7 +227,7 @@ export function activate(api) {
     const n = c.waits.size;
     c.ctx.setBadge(n ? (n > 1 ? `!${n}` : '!') : c.state === 'running' ? '…' : c.state === 'exited' ? 'off' : null);
   }
-  function applyTitle(c) { if (c.ctx) c.ctx.setTitle(c.title || DEFAULT_NAME); } // 카드 제목 = 세션 이름 (slcode 웹 왼쪽 상단에서 고친다), 없으면 SLCode
+  function applyTitle(c) { if (c.ctx) c.ctx.setTitle(c.title || (c.pick && !c.id ? PICK_NAME : DEFAULT_NAME)); } // 카드 제목 = 세션 이름 (slcode 웹 왼쪽 상단에서 고친다), 없으면 SLCode
   function applyUrl(c) {
     // state 는 {key, id} 만 — 보존 card 라 보관소에 적혀 모든 브라우저가 같이 본다. url(/svc 토큰)은 연결마다 새로 받는다
     if (c.ctx && c.savedId !== c.id) { c.savedId = c.id; c.ctx.setState({ key: c.key, id: c.id }); }
@@ -226,7 +240,8 @@ export function activate(api) {
     el.innerHTML = '';
     const wrap = document.createElement('div');
     wrap.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;background:var(--vscode-editor-background,#1e1e1e);color:var(--vscode-foreground,#ccc)';
-    if (c.url) {
+    if (c.pick && !c.id) renderPicker(c, wrap);
+    else if (c.url) {
       const f = document.createElement('iframe');
       f.src = c.url; f.title = 'slcode';
       f.allow = 'clipboard-read; clipboard-write';
@@ -255,13 +270,31 @@ export function activate(api) {
     el.appendChild(wrap);
   }
 
+  /** id 없는 `slcode resume` 의 카드 (ticket slcode-resume-like-new) — c.pick 폴더의 꺼진 세션을 꺼진 순서(최근 먼저)로 보이고, 고르면 이 카드가
+   *  그 세션을 resume 해 대화 화면이 된다. 목록은 `slcode list --all` 에서 그 폴더·live 아닌 것 */
+  function renderPicker(c, wrap) {
+    wrap.style.overflow = 'auto';
+    const { root, list } = listFrame(wrap);
+    const head = document.createElement('div'); head.className = 'meta'; head.textContent = `Closed sessions in ${c.pick}`;
+    root.insertBefore(head, list);
+    listSessions(apiOf(c), true, (note) => { list.textContent = note; }).then((rows) => { // 받기·원격 올리기 진행은 목록 자리에
+      sessionButtons(list, closedRows(rows, c.pick), (s) => `${s.id} · ${s.vendor} · ${stamp(closedTime(s))}`, (s) => pickSession(c, s.id), { empty: '(no closed sessions)' });
+    }, (e) => { list.textContent = `Failed to list sessions: ${e?.message ?? e}`; });
+  }
+  function pickSession(c, id) {
+    c.pick = null; c.id = id;
+    applyUrl(c); // card state {key, id} — pick 을 지운다 (새로고침 복원이 그 세션으로)
+    render(c);
+    void ensure(c);
+  }
+
   // ---- 기동·연결 (attach-or-start). 선구독 → open(start+connect) → 이미 돌고 있었으면 hello 가 없으니 server.info 로 url·id
   async function ensure(c) {
     if (c.conn || c.starting) return c.starting;
     c.starting = (async () => {
       let dropped = false; // 이 시도에서 연 연결이 끊겼다
       try {
-        if (!c.unsub) c.unsub = apiOf(c).services.onMessage(SVC, (m) => onMessage(c, m), { owner: c.key });
+        if (!c.unsub) c.unsub = apiOf(c).services.onMessage(SVC, (m) => onMessage(c, m), { owner: ownerOf(c) });
         c.error = null;
         const note = (s) => { c.note = s; render(c); };
         const [bin, dir] = await Promise.all([resolveBin(note, apiOf(c)), setting('dir', '')]);
@@ -273,7 +306,7 @@ export function activate(api) {
         // --no-web: TCP 웹을 열지 않는다 — 화면은 서비스 웹 소켓(SUPERLITE_SERVICE_WEB)으로만
         const command = `${bin.cmd} ${verb} --stdio --no-web${dir ? ` --dir ${shq(dir)}` : ''}`;
         c.hello = false;
-        const conn = await apiOf(c).services.open(SVC, { owner: c.key, command });
+        const conn = await apiOf(c).services.open(SVC, { owner: ownerOf(c), command });
         c.conn = conn; c.lost = false;
         conn.onClose(() => {
           // 연결이 끊기면 /svc 토큰도 폐기된다 — 다시 붙어 새 주소를 받는다 (세션 재접속·서비스 재기동). url 은 비운다: 그 사이 다시
@@ -307,7 +340,7 @@ export function activate(api) {
    *  (ticket slcode-card-dies-background) */
   const canResume = (c) => !!c.el && (!!c.ctx?.services || shown(c));
   /** 끊긴 카드 다시 붙기 — 지금 못 붙는 숨은 카드(옛 superlite)는 mount 의 관찰자가 보이게 될 때 다시 부른다 */
-  function resume(c) { if (c.lost && !c.conn && c.state !== 'exited' && canResume(c)) void ensure(c); }
+  function resume(c) { if (c.lost && !c.conn && c.state !== 'exited' && !c.closing && canResume(c)) void ensure(c); }
   async function attach(c) {
     if (!c.id || c.attached) return;
     c.attached = true;
@@ -333,6 +366,7 @@ export function activate(api) {
       if (!st.key) { el.textContent = 'slcode: 카드 전용 뷰'; return; }
       const c = card(st.key);
       c.id = c.id ?? st.id ?? null;
+      if (!c.id && typeof st.pick === 'string') c.pick = st.pick; // 고르기 전 resume 카드 — 서비스를 띄우지 않는다
       c.ctx = ctx; c.el = el; c.cardId = ctx.card; c.savedId = st.id ?? null;
       c.onMount?.(); c.onMount = null;
       el.style.position = 'relative'; el.style.height = '100%';
@@ -342,17 +376,28 @@ export function activate(api) {
       c.vis?.disconnect();
       c.vis = new IntersectionObserver((es) => { if (es[0].isIntersecting) resume(c); });
       c.vis.observe(el);
-      void ensure(c);
+      if (!c.pick) void ensure(c);
     },
     unmount(el) { for (const c of cards.values()) if (c.el === el) { c.el = null; c.vis?.disconnect(); } },
   });
-  /** 카드 열기 — 있는 세션이면 그 카드를 활성화, 없으면 새 카드(새 세션 또는 저장 세션 resume) */
-  async function openCard(key, id) {
-    if (!key && id) for (const c of cards.values()) if (c.id === id) { key = c.key; break; }
-    if (!key && id) key = await ownerOf(id); // 이전에 이 세션을 띄운 서비스의 owner — 있으면 그 서비스에 붙는다 (없으면 resume 으로 새로)
+  /** 카드 열기 — 있는 세션이면 그 카드를 활성화, 없으면 새 카드(새 세션 또는 저장 세션 resume). near 면 새 카드를 요청자 터미널의
+   *  deck 에 붙인다 (slcode.resume) */
+  async function openCard(key, id, near) {
+    if (!key && id) { // 같은 세션의 카드가 여럿이면(닫힌 뒤 고르기 카드로 다시 연 경우) 꺼지지 않은 쪽
+      const mine = [...cards.values()].filter((c) => c.id === id);
+      key = (mine.find((c) => c.state !== 'exited') ?? mine[0])?.key;
+    }
+    if (!key && id) key = await keyOf(id); // 이 세션을 띄운 카드 — 다른 브라우저가 연 카드가 남아 있으면 그것을 활성화 (없으면 resume 으로 새로)
     if (!key) key = newKey();
     if (!cards.has(key)) card(key).id = id ?? null;
-    api.views.open(VIEW, { key, id: cards.get(key)?.id ?? id ?? null }, { as: 'card', key, title: DEFAULT_NAME, preserve: true });
+    const c = cards.get(key);
+    if (id && c.state === 'exited' && !c.conn && !c.starting) { // 닫힌 세션의 카드가 남아 있다 — 활성화만 하면 "세션이 닫혔습니다" 그대로라 다시 띄운다
+      c.state = null; c.error = null; badge(c);
+      if (c.el) { render(c); void ensure(c); } // 마운트 전이면 mount 가 띄운다
+    }
+    const at = { as: 'card', key, title: DEFAULT_NAME, preserve: true };
+    api.views.open(VIEW, { key, id: cards.get(key)?.id ?? id ?? null }, near ? { ...at, near } : at);
+    if (near) api.views.open(VIEW, undefined, at); // near 는 뒤에서 붙인다 — 같은 key 로 한 번 더 열어 활성화 (있던 카드면 둘 다 활성화만)
   }
   // 셸 동사 — superlite 터미널 안의 `slcode`·`slcode new` 가 부른다 (ticket slcode-bare-new, 사용자 2026-10-07). 요청자 터미널이 앉은
   // deck 에 카드를 붙이고(views.open near — 이 옵션을 모르는 superlite 는 새 deck 으로) 그 카드로 포커스를 옮긴다 (사용자 2026-10-07
@@ -381,56 +426,124 @@ export function activate(api) {
       return c.id;
     },
   });
+  // 셸 동사 — superlite 터미널 안의 `slcode resume`·`continue` 가 부른다 (ticket slcode-resume-like-new). --id 면 그 세션의 카드를
+  // 활성화하고 없으면 요청자 deck 에 resume 카드로 (살아 있는 세션이면 카드 서비스의 `resume --stdio` 가 소켓 중계로 붙는다). --id 가
+  // 없으면 그 폴더의 꺼진 세션을 고르는 카드. 세션 id 를 이미 알거나 고르기 전이라 기동을 기다리지 않는다
+  api.verbs.register({
+    name: 'slcode.resume',
+    help: 'Open a saved slcode session as a card in the deck of this terminal; without --id, pick a closed session of --cwd',
+    args: [
+      { name: 'id', kind: 'option', help: 'session id' },
+      { name: 'cwd', kind: 'option', value: 'dir', help: 'folder whose closed sessions to pick from (default: this shell\'s cwd)' },
+    ],
+    async run(a, ctx) {
+      const near = ctx.tmux ?? undefined;
+      if (a.id) { await openCard(undefined, a.id, near); return a.id; }
+      const key = newKey();
+      const pick = card(key).pick = a.cwd ?? ctx.cwd;
+      const at = { as: 'card', key, title: PICK_NAME, preserve: true };
+      api.views.open(VIEW, { key, id: null, pick }, { ...at, near });
+      api.views.open(VIEW, undefined, at);
+    },
+  });
 
-  // 카드 제거 — 연결만 끊는다. 세션(서비스)은 산다 (사용자 2026-10-04: 닫아도 유지). 서비스 owner 가 card id 가 아니라 key 라 코어가
-  // release 하지 않는다. ev.card 는 ctx.card 와 같은 값(보존 card 는 보관소 id)
+  // 카드 제거 — 코어가 owned 서비스를 끝낸다(세션 또는 중계). 여기서는 연결을 끊고 카드를 잊는다. ev.card 는 ctx.card 와 같은
+  // 값(보존 card 는 보관소 id). 제거된 카드에 el 이 남아 있으면 끊긴 연결의 resume 이 서비스를 다시 띄워 세션이 되살아났다
+  // (2026-10-11 실측) — 마운트돼 있지 않은 것으로 돌린다
   api.events.on({ kind: 'card.removed', pred: (ev) => ev.pluginId === 'slcode' }, (ev) => {
     const c = [...cards.values()].find((x) => x.cardId === ev.card); if (!c) return;
+    c.el = null; c.vis?.disconnect(); c.io?.disconnect();
     detach(c); cards.delete(c.key);
+    // 끝나는 세션은 프로세스가 내려가야(superlite 는 SIGTERM 3초 뒤 SIGKILL) 목록에서 빠진다 — 그 뒤에 다시 센다
+    for (const ms of [1000, 4000]) setTimeout(countLive, ms);
   });
 
   // ---- 사이드바: 세션 목록 (slcode list — 살아 있는 세션만. 꺼짐과 끝남을 구분할 근거가 없어 꺼진 세션은 보이지 않는다, 사용자 2026-10-04)
+  let listEl = null; // 열려 있는 사이드바 — 다시 셀 때 목록도 다시 그린다
   api.views.register(SIDEBAR, {
     title: 'slcode sessions', icon: 'hubot',
-    mount(el) { void renderList(el); },
+    mount(el) { listEl = el; void renderList(el); },
+    unmount() { listEl = null; },
   });
   api.sidebar.register(SIDEBAR, { icon: 'hubot', title: 'slcode', view: SIDEBAR });
-  // ponytail: 개수는 활성화·카드 기동/종료·목록 그리기 때만 다시 센다. 터미널에서 띄우거나 끈 세션은 그 다음 계기까지 늦다 — 필요하면 주기 갱신
-  async function listLive() {
-    const [bin, dir] = await Promise.all([resolveBin(), setting('dir', '')]);
-    const r = await api.proc.run(`${bin.cmd} list${dir ? ` --dir ${shq(dir)}` : ''}`);
+  // ponytail: 개수·목록은 활성화·카드 기동/종료·카드 제거·목록 그리기 때만 다시 센다. 터미널에서 띄우거나 끈 세션은 그 다음 계기까지 늦다 — 필요하면 주기 갱신
+  /** `slcode list` 행 — at 의 데몬 머신에서 (카드면 카드 세션). all 이면 꺼진 세션까지 */
+  async function listSessions(at = api, all = false, note = () => {}) {
+    const [bin, dir] = await Promise.all([resolveBin(note, at), setting('dir', '')]);
+    const r = await at.proc.run(`${bin.cmd} list${all ? ' --all' : ''}${dir ? ` --dir ${shq(dir)}` : ''}`);
     if (r.code !== 0) throw new Error(r.stderr.trim() || `exit ${r.code}`);
-    const rows = JSON.parse(r.stdout || '[]');
+    return JSON.parse(r.stdout || '[]');
+  }
+  async function listLive() {
+    const rows = await listSessions();
     api.sidebar.setBadge(SIDEBAR, rows.length || null);
     return rows;
   }
-  const countLive = () => listLive().catch(() => {});
+  const countLive = () => (listEl ? renderList(listEl) : listLive()).catch(() => {});
   void countLive();
-  async function renderList(el) {
-    el.innerHTML = '';
+  /** 세션 목록의 틀 — 사이드바와 resume 카드가 같이 쓴다. root 에 머리를 더하고 list 를 sessionButtons 로 채운다 */
+  function listFrame(el) {
     const style = document.createElement('style');
-    style.textContent = `.l{font:12px system-ui;padding:6px}.l button{display:block;width:100%;text-align:left;border:0;background:none;color:inherit;padding:4px 6px;border-radius:4px;cursor:pointer}.l button:hover{background:var(--vscode-list-hoverBackground,#2a2d2e)}.l .meta{opacity:.6;font-size:11px}.l .top{display:flex;gap:6px;margin-bottom:6px}.l .top button{width:auto;border:1px solid var(--vscode-widget-border,#444)}`;
+    style.textContent = `.l{font:12px system-ui;padding:6px;position:relative}.l button{display:block;width:100%;text-align:left;border:0;background:none;color:inherit;padding:4px 6px;border-radius:4px;cursor:pointer}.l button:hover{background:var(--vscode-list-hoverBackground,#2a2d2e)}.l .meta{opacity:.6;font-size:11px}.l .top{display:flex;gap:6px;margin-bottom:6px}.l .top button{width:auto;border:1px solid var(--vscode-widget-border,#444)}.l .menu{position:absolute;z-index:10;min-width:120px;padding:4px;background:var(--vscode-menu-background,#252526);border:1px solid var(--vscode-menu-border,#454545);border-radius:4px;box-shadow:0 2px 8px #0008}`;
     el.appendChild(style);
     const root = document.createElement('div'); root.className = 'l'; el.appendChild(root);
+    const list = document.createElement('div'); root.appendChild(list);
+    list.textContent = '…';
+    return { root, list };
+  }
+  function sessionButtons(list, rows, meta, onPick, { empty = '(no sessions)', onMenu } = {}) {
+    list.innerHTML = '';
+    if (!rows.length) list.textContent = empty;
+    for (const s of rows) {
+      const b = document.createElement('button');
+      b.append(document.createTextNode(s.title ?? s.id));
+      const m = document.createElement('div'); m.className = 'meta'; m.textContent = meta(s);
+      b.appendChild(m);
+      b.onclick = () => onPick(s);
+      if (onMenu) b.oncontextmenu = (e) => { e.preventDefault(); onMenu(s, e); };
+      list.appendChild(b);
+    }
+  }
+  async function renderList(el) {
+    el.innerHTML = '';
+    const { root, list } = listFrame(el);
     const top = document.createElement('div'); top.className = 'top';
     const bNew = document.createElement('button'); bNew.textContent = '+ New session'; bNew.onclick = () => openCard();
     const bRef = document.createElement('button'); bRef.textContent = 'Refresh'; bRef.onclick = () => void renderList(el);
-    top.append(bNew, bRef); root.appendChild(top);
-    const list = document.createElement('div'); root.appendChild(list);
-    list.textContent = '…';
+    top.append(bNew, bRef); root.insertBefore(top, list);
     try {
       const rows = await listLive();
-      list.innerHTML = '';
-      if (!rows.length) list.textContent = '(no sessions)';
-      for (const s of rows.reverse()) {
-        const b = document.createElement('button');
-        b.append(document.createTextNode(s.title ?? s.id));
-        const meta = document.createElement('div'); meta.className = 'meta'; meta.textContent = `${s.id} · ${s.vendor} · ${s.cwd}`;
-        b.appendChild(meta);
-        b.onclick = () => openCard(undefined, s.id);
-        list.appendChild(b);
-      }
+      sessionButtons(list, rows.reverse(), (s) => `${s.id} · ${s.vendor} · ${s.cwd}`, (s) => openCard(undefined, s.id),
+        { onMenu: (s, e) => rowMenu(root, e, 'Force close', () => void forceClose(s.id, el)) });
     } catch (e) { list.textContent = `Failed to list sessions: ${e?.message ?? e}`; }
+  }
+  /** 행 우클릭 메뉴 — 플러그인 API 에 메뉴가 없어 뷰 안에 그린다. 바깥을 누르거나 Esc 면 닫는다 */
+  function rowMenu(root, e, label, run) {
+    root.querySelector('.menu')?.remove();
+    const m = document.createElement('div'); m.className = 'menu';
+    const away = (ev) => { if (!ev.composedPath().includes(m)) close(); }; // 뷰는 shadow DOM 안 — document 에서 본 target 은 호스트로 바뀐다
+    const esc = (ev) => { if (ev.key === 'Escape') close(); };
+    const close = () => { m.remove(); document.removeEventListener('mousedown', away, true); document.removeEventListener('keydown', esc, true); };
+    const b = document.createElement('button'); b.textContent = label; b.onclick = () => { close(); run(); };
+    m.appendChild(b); root.appendChild(m);
+    // root 기준 좌표 — 사이드바 칸이 fixed 의 기준이 되어 창 좌표가 칸 원점만큼 밀렸다. 오른쪽 끝은 넘지 않게
+    const r = root.getBoundingClientRect();
+    m.style.left = `${Math.max(0, Math.min(e.clientX - r.left, root.clientWidth - m.offsetWidth))}px`; m.style.top = `${e.clientY - r.top}px`;
+    document.addEventListener('mousedown', away, true); document.addEventListener('keydown', esc, true);
+  }
+  /** 사이드바 강제 종료 (사용자 2026-10-11) — `slcode close --force`: 정상 종료, 3초 안에 안 닫히면 kill. kill 로 끊긴 카드는 session.closed 를
+   *  못 받아 resume 이 persistent 서비스를 다시 띄우면 세션이 되살아난다 — 그동안 closing 으로 막고, 끝나면 닫힌 카드로 둔다 */
+  async function forceClose(id, el) {
+    const mine = [...cards.values()].filter((c) => c.id === id);
+    for (const c of mine) c.closing = true;
+    try {
+      const [bin, dir] = await Promise.all([resolveBin(), setting('dir', '')]);
+      const r = await api.proc.run(`${bin.cmd} close ${shq(id)} --force${dir ? ` --dir ${shq(dir)}` : ''}`);
+      if (r.code !== 0) throw new Error(r.stderr.trim() || `exit ${r.code}`);
+      for (const c of mine) { c.state = 'exited'; c.url = null; c.waits.clear(); badge(c); render(c); }
+    } catch (e) { api.notify('error', `slcode: ${e?.message ?? e}`); }
+    finally { for (const c of mine) c.closing = false; }
+    void renderList(el);
   }
 
   // ---- 팔레트

@@ -7,7 +7,7 @@ import * as mod from '../../main.js';
 // repo 루트에 package.json 이 없어 tsx 가 main.js 를 CJS 로 감싼다 — named export 가 default 아래로 온다
 const plugin = mod.default ?? mod;
 
-const { satisfies, pickRelease, installState, platformOf, assetName, progressText } = plugin;
+const { satisfies, pickRelease, installState, platformOf, assetName, progressText, closedRows, stamp } = plugin;
 
 test('satisfies: 고정·^·~ 조건', () => {
   assert.equal(satisfies('0.1.0', '0.1.0'), true);
@@ -158,6 +158,42 @@ test('activate: api.folder 가 없는 superlite 면 받지 않는다 (카드에 
   assert.ok(!calls.some((c) => c.startsWith('github ') || c.includes(' list')));
 });
 
+test('closedRows: resume 카드 목록 — 그 폴더의 꺼진 세션만, closedAt·updatedAt 중 늦은 쪽 내림차순', () => {
+  const row = (id: string, o: object) => ({ id, cwd: '/w', live: false, updatedAt: 0, closedAt: null, ...o });
+  const rows = [
+    row('a', { closedAt: 300, updatedAt: 100 }), row('b', { updatedAt: 500 }), // 옛 세션(closedAt 없음)은 updatedAt
+    row('c', { closedAt: 100, updatedAt: 400 }), // 다시 띄운 뒤 비정상 종료 — 더 늦은 updatedAt
+    row('d', { updatedAt: 900, live: true }), row('e', { updatedAt: 900, cwd: '/w/x' }),
+  ];
+  assert.deepEqual(closedRows(rows, '/w').map((r: any) => r.id), ['b', 'c', 'a']);
+  assert.equal(stamp(new Date(2026, 9, 11, 1, 2, 59).getTime()), '2026-10-11 01:02', 'CLI 목록과 같은 표기');
+});
+
+// ---- 셸 동사 slcode.resume (ticket slcode-resume-like-new) — 카드를 열기만 하고 기동은 기다리지 않는다
+test('slcode.resume 동사: --id 는 그 세션 카드를 요청자 deck 에 열어 활성화하고 id 를 돌려준다, 없으면 그 폴더의 꺼진 세션을 고르는 카드', async () => {
+  const verbs: Record<string, any> = {}; const opened: any[] = [];
+  const { api } = fakeApi({ 'plugin.json': PLUGIN_JSON, 'bin/linux-x64/manifest.json': mf('0.1.0') });
+  Object.assign(api, { verbs: { register: (d: any) => { verbs[d.name] = d; } }, views: { register: () => {}, open: (...a: any[]) => opened.push(a) } });
+  const restore = stubGithub([]);
+  try {
+    plugin.activate(api);
+    assert.equal(await verbs['slcode.resume'].run({ id: 'sess-1' }, { cwd: '/home', tmux: '$3' }), 'sess-1');
+    assert.equal(opened.length, 2, 'near 로 붙인 뒤 같은 key 로 한 번 더 — 그 카드로 포커스');
+    const key = opened[0][2].key;
+    assert.deepEqual(opened[0][1], { key, id: 'sess-1' }); assert.equal(opened[0][2].near, '$3'); assert.equal(opened[0][2].preserve, true);
+    assert.equal(opened[1][2].key, key); assert.equal(opened[1][1], undefined); assert.equal(opened[1][2].near, undefined);
+    // 같은 세션을 다시 — 이미 연 카드(같은 key)를 활성화
+    await verbs['slcode.resume'].run({ id: 'sess-1' }, { cwd: '/home', tmux: '$4' });
+    assert.equal(opened[2][2].key, key);
+    // --id 없음 — 고르기 카드 (state 에 폴더, 세션은 아직 없다)
+    assert.equal(await verbs['slcode.resume'].run({ cwd: '/w s' }, { cwd: '/home', tmux: null }), undefined);
+    assert.notEqual(opened[4][2].key, key);
+    assert.deepEqual(opened[4][1], { key: opened[4][2].key, id: null, pick: '/w s' }); assert.equal(opened[4][2].near, undefined);
+    await verbs['slcode.resume'].run({}, { cwd: '/home/me', tmux: '$3' });
+    assert.equal(opened[6][1].pick, '/home/me', '폴더 기본값은 요청자 cwd'); assert.equal(opened[6][2].near, '$3');
+  } finally { restore(); plugin.deactivate(); }
+});
+
 // ---- 셸 동사 slcode.new (ticket slcode-bare-new) — 가짜 서비스가 hello 를 보내고 session.attach 에 답한다
 test('slcode.new 동사: 요청자 터미널 옆(near)에 카드를 열고, 폴더·옵션으로 서비스를 띄워 세션 id 를 돌려준다', async () => {
   const verbs: Record<string, any> = {}; const opened: any[] = []; const started: any[] = [];
@@ -188,3 +224,4 @@ test('slcode.new 동사: 요청자 터미널 옆(near)에 카드를 열고, 폴�
     assert.match(started[1].command, / new '\/home\/me' --stdio/, '폴더 기본값은 요청자 cwd');
   } finally { restore(); plugin.deactivate(); }
 });
+

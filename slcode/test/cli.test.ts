@@ -11,18 +11,19 @@ import { corePaths } from '../src/paths.ts';
 const CLI = path.resolve(import.meta.dirname, '..', 'src', 'cli.ts');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 type Out = { code: number; stdout: string; stderr: string };
-function run(dir: string, args: string[], env: NodeJS.ProcessEnv = {}): Promise<Out> {
-  return new Promise((resolve) => execFile(process.execPath, ['--import', 'tsx', CLI, ...args], { env: { ...process.env, SLCODE_DIR: dir, SLCODE_GRACE_SECS: '1', SLCODE_SESSION: undefined, ...env } }, (e, stdout, stderr) => resolve({ code: (e as { code?: number } | null)?.code ?? 0, stdout, stderr })));
+const TSX = import.meta.resolve('tsx'); // 자식의 cwd 를 바꿔도 tsx 를 찾게
+function run(dir: string, args: string[], env: NodeJS.ProcessEnv = {}, cwd?: string): Promise<Out> {
+  return new Promise((resolve) => execFile(process.execPath, ['--import', TSX, CLI, ...args], { cwd, env: { ...process.env, SLCODE_DIR: dir, SLCODE_GRACE_SECS: '1', SLCODE_SESSION: undefined, SUPERLITE_SOCK: undefined, ...env } }, (e, stdout, stderr) => resolve({ code: (e as { code?: number } | null)?.code ?? 0, stdout, stderr })));
 }
 function start(dir: string, args: string[]): { child: ChildProcess; out: Promise<string>; line: (n: number) => Promise<string>; err: string[]; exit: Promise<number | null> } {
-  const child = spawn(process.execPath, ['--import', 'tsx', CLI, ...args], { env: { ...process.env, SLCODE_DIR: dir, SLCODE_GRACE_SECS: '1', SLCODE_SESSION: undefined }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['--import', 'tsx', CLI, ...args], { env: { ...process.env, SLCODE_DIR: dir, SLCODE_GRACE_SECS: '1', SLCODE_SESSION: undefined, SUPERLITE_SOCK: undefined }, stdio: ['pipe', 'pipe', 'pipe'] });
   const err: string[] = [];
   child.stderr!.setEncoding('utf8'); child.stderr!.on('data', (d: string) => err.push(d));
   const lines: string[] = []; let buf = '';
   child.stdout!.setEncoding('utf8'); child.stdout!.on('data', (d: string) => { buf += d; let i; while ((i = buf.indexOf('\n')) >= 0) { lines.push(buf.slice(0, i)); buf = buf.slice(i + 1); } });
   const line = async (n: number) => { const t0 = Date.now(); while (lines.length <= n && Date.now() - t0 < 15000) await sleep(50); if (lines.length <= n) throw new Error(`no stdout line ${n}`); return lines[n]; };
   const exit = new Promise<number | null>((resolve) => child.on('exit', (c) => resolve(c)));
-  return { child, get out() { return line(0); }, line, err, exit }; // out 은 게으르게 — attach 처럼 stdout 이 없는 자식에서 거부가 남지 않게
+  return { child, get out() { return line(0); }, line, err, exit }; // out 은 게으르게 — stdout 이 없는 자식에서 거부가 남지 않게
 }
 const tmp = (p: string) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 
@@ -48,6 +49,7 @@ test('--help 는 도움말(종료 0); 모르는 동사·없는 폴더·옛 동�
   assert.equal(nf.code, 2); assert.match(nf.stderr, /not a folder/);
   assert.equal((await run(dir, ['status', 'nope'])).code, 1);
   const c = await run(dir, ['check']); assert.equal(c.code, 2); assert.match(c.stderr, /inside a slcode session/);
+  assert.equal((await run(dir, ['attach', 'x'])).code, 2, 'attach 동사는 없다'); assert.doesNotMatch(h.stdout, /attach/);
 });
 
 test('꺼진 세션: status·pending·last --turn·log --tail 은 로그 파일에서, --json 은 같은 내용; respond 는 대기 목록과 함께 거절; 제목으로도 지목', async () => {
@@ -89,7 +91,7 @@ test('꺼진 세션: status·pending·last --turn·log --tail 은 로그 파일�
   assert.equal((await run(dir, ['status', 'alpha'])).code, 0, '이제 유일하다');
 });
 
-test('살아 있는 세션: new 는 동사 이름 폴더도 폴더로, resume 은 attach 로, status 는 live, 닫은 뒤 resume 은 다시 띄운다', async (t) => {
+test('살아 있는 세션: new 는 동사 이름 폴더도 폴더로, resume 은 웹 주소(--no-web 이면 안내), status 는 live, 닫은 뒤 resume 은 다시 띄운다', async (t) => {
   const dir = tmp('slcode-cli-');
   const work = path.join(tmp('slcode-work-'), 'list'); fs.mkdirSync(work); // 동사와 같은 이름의 폴더
   const a = start(dir, ['new', work, '--no-web', '--title', 'live1']);
@@ -104,12 +106,9 @@ test('살아 있는 세션: new 는 동사 이름 폴더도 폴더로, resume �
   assert.deepEqual(JSON.parse((await run(dir, ['list'])).stdout).map((r: any) => [r.id, r.live]), [[meta.id, true]]);
   const rs = await run(dir, ['respond', meta.id, 'zzz', 'deny']); assert.equal(rs.code, 1); assert.match(rs.stderr, /not open .* nothing pending/);
   const bad = await run(dir, ['respond', meta.id, 'zzz', 'maybe']); assert.equal(bad.code, 2, 'allow|deny 외는 usage');
-  // resume 이 살아 있는 세션이면 attach — /quit 로 나온다
-  const at = start(dir, ['resume', 'live1']);
-  const t0 = Date.now(); while (!at.err.join('').includes('[attach]') && Date.now() - t0 < 8000) await sleep(100);
-  assert.match(at.err.join(''), /is live — attaching[\s\S]*\[attach\] .* starting history=\d+ pending=0/);
-  at.child.stdin!.write('/quit\n');
-  assert.equal(await at.exit, 0);
+  // resume 이 살아 있는 세션이면 웹 주소를 찍고 끝난다 — --no-web 세션은 웹이 없다는 안내 한 줄
+  const rl = await run(dir, ['resume', 'live1']);
+  assert.equal(rl.code, 1); assert.equal(rl.stdout, ''); assert.match(rl.stderr, new RegExp(`session ${meta.id} is live but has no web address`));
   // resume --stdio 가 살아 있는 세션이면 프록시 — hello 뒤 프레임 중계 (superlite 카드가 떠 있는 세션에 붙는 길)
   const px = start(dir, ['resume', meta.id, '--stdio']);
   const hello = JSON.parse(await px.out);
@@ -122,6 +121,9 @@ test('살아 있는 세션: new 는 동사 이름 폴더도 폴더로, resume �
   assert.equal(await a.exit, 0);
   assert.match(a.err.join(''), new RegExp(`To continue: slcode resume ${meta.id}`));
   assert.deepEqual(JSON.parse((await run(dir, ['list'])).stdout), [], '닫힌 세션은 list 에서 빠진다');
+  const closedAt = EventLog.open(corePaths(dir).sessionsDir, meta.id)!.meta.closedAt;
+  assert.ok(closedAt && Date.now() - closedAt < 10000, '닫힌 시각을 남긴다');
+  assert.equal(JSON.parse((await run(dir, ['list', '--all'])).stdout)[0].closedAt, closedAt);
   // 꺼진 세션의 resume 은 다시 띄운다
   const b = start(dir, ['resume', meta.id, '--no-web']);
   assert.equal(await b.out, sock);
@@ -149,4 +151,93 @@ test('--stdio: 첫 줄은 hello JSON, 그 뒤 stdin 의 JSON 줄은 요청·stdo
   a.child.kill('SIGINT');
   assert.equal(await a.exit, 0);
   await sleep(1500);
+});
+
+test('resume·continue (superlite 밖): 살아 있는 세션은 웹 주소, continue 는 살아 있는 세션을 빼고 최근 꺼진 세션, id 없는 resume 은 꺼진 순서 목록', async (t) => {
+  const dir = tmp('slcode-cli-');
+  const work = fs.realpathSync(tmp('slcode-work-'));
+  fakeStored(dir, 'aaaa0001', 'alpha', work); EventLog.open(corePaths(dir).sessionsDir, 'aaaa0001')!.updateMeta({ closedAt: 300 });
+  fakeStored(dir, 'bbbb0002', null, work); // 옛 세션 — closedAt 없이 updatedAt 9
+  fakeStored(dir, 'cccc0003', 'other', '/elsewhere');
+  const a = start(dir, ['new', work, '--title', 'web1']); // 가장 최근 세션이지만 살아 있다
+  t.after(() => { if (a.child.exitCode === null) a.child.kill('SIGINT'); });
+  const url = await a.out;
+  assert.match(url, /^http:\/\/127\.0\.0\.1:\d+\/$/);
+  const live = EventLog.list(corePaths(dir).sessionsDir).find((m) => m.title === 'web1')!;
+  const r = await run(dir, ['resume', live.id]);
+  assert.equal(r.code, 0, r.stderr); assert.equal(r.stdout.trim(), url, '살아 있는 세션의 웹 주소'); assert.match(r.stderr, /already live/);
+  // id 없는 resume — 이 폴더의 꺼진 세션만, 꺼진 순서(최근 먼저)
+  const ls = await run(dir, ['resume'], {}, work);
+  assert.equal(ls.code, 0, ls.stderr);
+  const rows = ls.stdout.trim().split('\n');
+  assert.equal(rows.length, 2); assert.match(rows[0], /^aaaa0001  \d{4}-\d\d-\d\d \d\d:\d\d  alpha$/); assert.match(rows[1], /^bbbb0002  .*  -$/);
+  assert.match(ls.stderr, /resume one with: slcode resume <id>/);
+  const none = await run(dir, ['resume'], {}, fs.realpathSync(tmp('slcode-work-')));
+  assert.equal(none.code, 1); assert.match(none.stderr, /no closed session in /);
+  assert.equal((await run(dir, ['resume', '--stdio'])).code, 2, 'resume --stdio 는 세션이 있어야 한다');
+  // continue — 살아 있는 web1 을 빼고 최근 꺼진 aaaa0001
+  const c = start(dir, ['continue', work, '--no-web']);
+  assert.match(await c.out, /aaaa0001/);
+  c.child.kill('SIGINT'); assert.equal(await c.exit, 0);
+  a.child.kill('SIGINT'); assert.equal(await a.exit, 0);
+  await sleep(1500); // 우체국 grace
+});
+
+test('close --force: 응답하는 세션은 정상 종료, 멈춘 세션(SIGSTOP)은 3초 뒤 kill 하고 closedAt 을 남긴다, 꺼진 세션은 exit 1', async (t) => {
+  const dir = tmp('slcode-cli-');
+  const work = tmp('slcode-work-');
+  const a = start(dir, ['new', work, '--no-web', '--title', 'force1']);
+  const b = start(dir, ['new', work, '--no-web', '--title', 'force2']);
+  t.after(() => { for (const x of [a, b]) if (x.child.exitCode === null && x.child.signalCode === null) x.child.kill('SIGKILL'); });
+  await a.out; await b.out; await sleep(500);
+  const ok = await run(dir, ['close', 'force1', '--force']);
+  assert.equal(ok.code, 0, ok.stderr); assert.deepEqual(JSON.parse(ok.stdout), { ok: true, killed: false });
+  assert.equal(await a.exit, 0);
+  b.child.kill('SIGSTOP'); // 소켓은 커널이 받아 주지만 응답이 없다
+  const t0 = Date.now();
+  const k = await run(dir, ['close', 'force2', '--force']);
+  assert.equal(k.code, 0, k.stderr); assert.deepEqual(JSON.parse(k.stdout), { ok: true, killed: true });
+  assert.ok(Date.now() - t0 >= 3000, '정상 종료를 3초 기다린 뒤');
+  assert.equal(await b.exit, null); assert.equal(b.child.signalCode, 'SIGKILL');
+  const m = EventLog.list(corePaths(dir).sessionsDir).find((x) => x.title === 'force2')!;
+  assert.ok(m.closedAt && Date.now() - m.closedAt < 10000, 'kill 한 세션도 꺼진 시각을 남긴다');
+  const off = await run(dir, ['close', 'force2', '--force']);
+  assert.equal(off.code, 1); assert.match(off.stderr, /is not live/);
+  await sleep(1500); // 우체국 grace
+});
+
+test('닫는 중에 온 두 번째 시그널은 같은 종료를 기다린다 — closedAt·session.exit 가 남는다 (superlite 서비스 중지는 SIGTERM 뒤 SIGHUP 이 한 번 더 온다)', async (t) => {
+  // 종료가 느린 세션 — 진행 중인 codex 턴이 interrupt 에 답하지 않으면 slcode 는 2초 기다린다
+  process.env.SLCODE_CODEX_BIN = `${process.execPath} ${path.resolve(import.meta.dirname, 'fixtures', 'fake-codex.mjs')}`;
+  process.env.FAKE_CODEX_IGNORE_INTERRUPT = '1';
+  t.after(() => { delete process.env.SLCODE_CODEX_BIN; delete process.env.FAKE_CODEX_IGNORE_INTERRUPT; });
+  const dir = tmp('slcode-cli-');
+  const a = start(dir, ['new', tmp('slcode-work-'), '--no-web', '--vendor', 'codex']);
+  t.after(() => { if (a.child.exitCode === null && a.child.signalCode === null) a.child.kill('SIGKILL'); });
+  await a.out;
+  const [m] = EventLog.list(corePaths(dir).sessionsDir);
+  assert.equal((await run(dir, ['prompt', m.id, 'hi'])).code, 0);
+  await sleep(500); // 턴이 승인 대기로 열려 있다
+  a.child.kill('SIGTERM'); await sleep(50); a.child.kill('SIGHUP');
+  assert.equal(await a.exit, 0);
+  const log = EventLog.open(corePaths(dir).sessionsDir, m.id)!;
+  assert.ok(log.meta.closedAt, '꺼진 시각');
+  assert.ok(log.all.some((e) => e.ev.kind === 'session.exit'), '종료 이벤트');
+  await sleep(1500); // 우체국 grace
+});
+
+test('프로세스 그룹 SIGTERM 으로 닫힌 claude 세션은 종료만 남기고 오류(exit 143)를 남기지 않는다 — superlite 서비스 중지·터미널 Ctrl-C 의 꼴', async (t) => {
+  const dir = tmp('slcode-cli-');
+  const child = spawn(process.execPath, ['--import', 'tsx', CLI, 'new', tmp('slcode-work-'), '--no-web'], { detached: true, env: { ...process.env, SLCODE_DIR: dir, SLCODE_GRACE_SECS: '1', SLCODE_SESSION: undefined, SUPERLITE_SOCK: undefined }, stdio: ['ignore', 'pipe', 'ignore'] });
+  t.after(() => { try { process.kill(-child.pid!, 'SIGKILL'); } catch {} });
+  const exit = new Promise<number | null>((resolve) => child.on('exit', (c) => resolve(c)));
+  await new Promise((r) => child.stdout!.once('data', r));
+  await sleep(3000); // claude 프로세스가 뜰 때까지 (프롬프트 없이도 뜬다)
+  process.kill(-child.pid!, 'SIGTERM');
+  assert.equal(await exit, 0);
+  const [m] = EventLog.list(corePaths(dir).sessionsDir);
+  const kinds = EventLog.open(corePaths(dir).sessionsDir, m.id)!.all.map((e) => e.ev.kind);
+  assert.equal(kinds.filter((k) => k === 'session.exit').length, 1);
+  assert.equal(kinds.filter((k) => k === 'error').length, 0);
+  await sleep(1500); // 우체국 grace
 });

@@ -43,7 +43,7 @@ export class ClaudeSession {
     role: 대기 승인 해소 — allow 는 updatedInput(AskUserQuestion 의 answers) + remember 면 세션 한정 규칙(sessionScoped), deny 는 message
   }
   export fn close(reason) {
-    role: 대기 승인 cancel → interrupt → 생성기 반환 → session.exit·exited 이벤트 → 로그 닫기. 벤더가 먼저 끝났으면(run 이 session.exit 를 냈으면) 아무것도 안 한다 — 종료 줄이 한 번만 남는다
+    role: 대기 승인 cancel → interrupt → 생성기 반환 → session.exit·exited 이벤트 → 로그 닫기. 벤더가 먼저 끝났으면(run 이 session.exit 를 냈으면) 아무것도 안 한다 — 종료 줄이 한 번만 남는다. close 뒤에 벤더가 오류로 끝나면(프로세스 그룹 시그널로 claude 도 같이 죽는다, exit 143) error 이벤트를 내지 않는다 (사용자 2026-10-11)
   }
   fn emit(ev, raw) {
     role: seq 발급·로그 append·구독자 호출. session.state 는 상태도 갱신
