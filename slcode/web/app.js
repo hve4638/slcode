@@ -30,15 +30,28 @@ function toolArg(name, input) {
 export function mountAgentFront(root, transport, opts = {}) {
   root.innerHTML = '';
   const el = h('div', { class: 'acf' });
-  // 왼쪽 상단은 세션 이름 — 없으면 SLCode, 더블클릭·옆 연필로 고친다(session.rename). superlite 카드 제목도 이 이름을 따른다.
-  // id 는 오른쪽 '세션' 칸(올리면 복사 버튼, 사용자 2026-10-09), 경로는 오른쪽 폴더 줄의 복사 버튼 (사용자 2026-10-07)
+  // 헤더 왼쪽은 세션 이름 — 없으면 SLCode, 더블클릭·옆 연필로 고친다(session.rename). superlite 카드 제목도 이 이름을 따른다.
+  // id 는 오른쪽 '세션' 칸(올리면 복사 버튼, 사용자 2026-10-09), 경로는 작성창 위 폴더의 복사 버튼 (사용자 2026-10-07, 자리는 2026-10-13)
   const DEFAULT_NAME = 'SLCode';
   const title = h('span', { class: 'title' }, DEFAULT_NAME);
   const setTitle = (t) => { title.textContent = t || DEFAULT_NAME; };
   const nameRow = h('div', { class: 'name-row' }, title); // 연필 버튼은 iconBtn 정의 뒤에 붙인다
   const pill = h('span', { class: 'pill starting' }, STATE_LABEL.starting);
   // 세션 종료 (사용자 2026-10-11) — 카드는 두고 세션만 끈다(카드를 제거하면 세션도 끝난다). 꺼진 세션은 resume 으로 다시 띄운다
-  const endBtn = h('button', { class: 'ghost end', onclick: () => current && rpc('session.close', { id: current }).catch((e) => push(h('div', { class: 'meta err' }, e.message))) }, '세션 종료');
+  // 사이드바 버튼 바로 옆이라 누르면 아래에 확인을 한 번 띄운다 (사용자 2026-10-13). 바깥 클릭·Esc 는 취소
+  const endBtn = h('button', { class: 'ghost end', popovertarget: 'acf-end' }, '세션 종료');
+  const endMenu = h('div', { class: 'menu', id: 'acf-end', popover: '' }, '세션을 종료할까요?', h('div', { class: 'btns' },
+    h('button', { onclick: () => endMenu.hidePopover() }, '취소'),
+    h('button', { class: 'danger', onclick: () => { endMenu.hidePopover(); if (current) rpc('session.close', { id: current }).catch((e) => push(h('div', { class: 'meta err' }, e.message))); } }, '종료')));
+  endMenu.ontoggle = () => { if (endMenu.matches(':popover-open')) { const r = endBtn.getBoundingClientRect(); endMenu.style.left = `${Math.max(8, r.right - endMenu.offsetWidth)}px`; endMenu.style.top = `${r.bottom + 6}px`; } };
+  // 오른쪽 사이드바는 기본으로 닫혀 있고 헤더 오른쪽 끝 버튼으로 연다. 연 상태는 브라우저에 기억한다 (사용자 2026-10-13).
+  // 좁으면(820px 이하) 본문 위에 겹쳐 여는데 이건 기억하지 않는다 — 카드가 다시 로드될 때마다 피드를 덮지 않게. 본문을 누르면 닫힌다
+  const SIDE_KEY = 'slcode.side';
+  const sideBtn = h('button', { class: 'ico side-tg', title: '사이드바', 'aria-label': '사이드바', onclick: () => {
+    if (root.clientWidth <= 820) el.classList.toggle('peek');
+    else localStorage.setItem(SIDE_KEY, el.classList.toggle('side-open') ? 'open' : 'closed');
+  } });
+  if (localStorage.getItem(SIDE_KEY) === 'open') el.classList.add('side-open');
   const feed = h('div', { class: 'feed' });
   const liveCol = h('div', { class: 'col' });
   let col = liveCol; // 옛 턴을 그릴 땐 임시 div 로 바꿨다가 앞에 붙인다
@@ -84,15 +97,16 @@ export function mountAgentFront(root, transport, opts = {}) {
   const modeLbl = h('span', {}, '');
   const modeBtn = h('button', { class: 'ghost pill-btn mode', popovertarget: 'acf-mode' }, modeLbl);
   const modeMenu = h('div', { class: 'menu', id: 'acf-mode', popover: '' });
-  // auto 는 노랑, bypass 는 빨강 — Claude Code 의 상태 줄 색 (사용자 2026-10-09). plan 은 메뉴에서 뺐다(쓸 일이 없다) — 와이어는 옛 세션을 위해 계속 받는다
-  const paintMode = (v) => { modeLbl.textContent = MODES.find(([m]) => m === v)?.[1] ?? v; modeBtn.classList.toggle('auto', v === 'auto'); modeBtn.classList.toggle('bypass', v === 'bypassPermissions'); };
+  // 모드별 색(auto 노랑·bypass 빨강, 2026-10-09)은 뺐다 (사용자 2026-10-13). plan 은 메뉴에서 뺐다(쓸 일이 없다) — 와이어는 옛 세션을 위해 계속 받는다
+  const paintMode = (v) => { modeLbl.textContent = MODES.find(([m]) => m === v)?.[1] ?? v; };
   function renderMode() {
     const cur = info?.permissionMode ?? ready?.permissionMode ?? 'default';
     paintMode(cur);
-    modeMenu.replaceChildren(...MODES.map(([v, label, desc]) => h('button', { class: 'item', 'aria-checked': String(v === cur), onclick: () => { modeMenu.hidePopover(); paintMode(v); rpc('session.setMode', { id: current, mode: v }).catch((e) => { push(h('div', { class: 'meta err' }, e.message)); renderMode(); }); } }, h('span', { class: `m-${v}` }, label), h('span', { class: 'desc' }, desc))));
+    modeMenu.replaceChildren(...MODES.map(([v, label, desc]) => h('button', { class: 'item', 'aria-checked': String(v === cur), onclick: () => { modeMenu.hidePopover(); paintMode(v); rpc('session.setMode', { id: current, mode: v }).catch((e) => { push(h('div', { class: 'meta err' }, e.message)); renderMode(); }); } }, h('span', {}, label), h('span', { class: 'desc' }, desc))));
   }
-  const anchor = (menu, btn) => () => { if (menu.matches(':popover-open')) { const r = btn.getBoundingClientRect(); menu.style.left = `${r.right - menu.offsetWidth}px`; menu.style.bottom = `${innerHeight - r.top + 6}px`; } };
-  modelMenu.ontoggle = anchor(modelMenu, modelBtn); effortMenu.ontoggle = anchor(effortMenu, effortBtn); modeMenu.ontoggle = anchor(modeMenu, modeBtn);
+  // start: 버튼 왼쪽 끝에 맞춘다 — 왼쪽 아래 권한 모드 메뉴가 오른쪽 끝에 맞추면 화면 왼쪽 밖으로 나간다
+  const anchor = (menu, btn, start = false) => () => { if (menu.matches(':popover-open')) { const r = btn.getBoundingClientRect(); menu.style.left = `${start ? r.left : r.right - menu.offsetWidth}px`; menu.style.bottom = `${innerHeight - r.top + 6}px`; } };
+  modelMenu.ontoggle = anchor(modelMenu, modelBtn); effortMenu.ontoggle = anchor(effortMenu, effortBtn); modeMenu.ontoggle = anchor(modeMenu, modeBtn, true);
   // 슬래시 명령 자동완성 — 입력이 `/` 로 시작하면 입력창 위에 목록. ↑↓ 고르고 Tab·Enter 로 넣는다. 목록은 session.commands (2026-09-30)
   let commands = [], slashSel = 0;
   const slashMenu = h('div', { class: 'menu slash', id: 'acf-slash', popover: 'manual' });
@@ -123,7 +137,9 @@ export function mountAgentFront(root, transport, opts = {}) {
   }
   function slashPick(c) { input.value = `/${c.name} `; input.focus(); slashDraw(); }
   async function loadCommands() { try { commands = await rpc('session.commands', { id: current }); } catch { commands = []; } }
-  const composer = h('div', { class: 'composer' }, h('div', { class: 'box' }, chips, h('div', { class: 'row' }, addBtn, input, stopBtn, sendBtn), h('div', { class: 'tools' }, modeBtn, modeMenu, effortBtn, effortMenu, modelBtn, modelMenu), slashMenu, filePick));
+  // 작성창 = 입력칸 위, 아래 한 줄: 왼쪽 끝 첨부·권한 모드, 오른쪽 모델·effort·보내기 (Codex Desktop 꼴, 사용자 2026-10-13). 상자 밖 아래에 폴더·repo·리밋·context·비용 한 줄(stat)
+  const stat = h('div', { class: 'stat' });
+  const composer = h('div', { class: 'composer' }, h('div', { class: 'box' }, chips, input, h('div', { class: 'row' }, addBtn, modeBtn, modeMenu, h('span', { class: 'gap' }), modelBtn, modelMenu, effortBtn, effortMenu, stopBtn, sendBtn), slashMenu, filePick), stat);
   const side = h('aside', { class: 'side' });
   const dock = h('div', { class: 'dock' });
   // 실행 중 표시 — 피드 맨 끝(내 요청 바로 아래)에 한 줄: 맥동 점 · 지금 하는 일 · 경과. state 가 running 일 때만, 새 항목이 와도 늘 마지막 (사용자 2026-09-30)
@@ -142,10 +158,12 @@ export function mountAgentFront(root, transport, opts = {}) {
     if (on && !busyTimer) { busySince = busySince || Date.now(); busyRefresh(); busyTimer = setInterval(busyRefresh, 200); }
     if (!on && busyTimer) { clearInterval(busyTimer); busyTimer = null; busySince = 0; }
   } // 승인·질문 카드는 입력창 자리에 뜬다 — 피드에는 호출 표식만 (사용자 2026-09-30)
-  // 상단 바 없음 — 세션 이름·cwd·상태는 왼쪽 여백, 세션 정보는 오른쪽 여백 (사용자 2026-09-27). ponytail: 좁은 화면 대응 없음, 모바일이 필요하면 미디어 쿼리로
+  // 맨 위 헤더 = 세션 이름·상태 … 세션 종료·사이드바 버튼, 폭이 좁아도 늘 보인다 (사용자 2026-10-13). 전엔 왼쪽 레일이라 1100px 아래에서 숨었다
+  const center = h('div', { class: 'main' }, feed, dock, composer);
+  center.addEventListener('pointerdown', () => el.classList.remove('peek'));
   el.append(
-    h('aside', { class: 'left' }, nameRow, pill, endBtn),
-    h('div', { class: 'main' }, feed, dock, composer),
+    h('header', { class: 'hdr' }, nameRow, pill, h('span', { class: 'gap' }), endBtn, endMenu, sideBtn),
+    center,
     side,
   );
   root.append(el);
@@ -192,7 +210,9 @@ export function mountAgentFront(root, transport, opts = {}) {
     plus: '<path d="M12 5v14"/><path d="M5 12h14"/>',
     stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
     chevron: '<path d="M6 9l6 6 6-6"/>',
-    // 사이드바 상단 요약 아이콘 (claude 상태줄의 📁🌿⌛📦💻 자리, 외곽선만) — lucide 꼴
+    panel: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/>',
+    shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
+    // 상태 아이콘 — claude 상태줄의 📁🌿⌛📦·비용(작성창 아래)·💻(사이드바 위) 자리, 외곽선만 — lucide 꼴
     folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
     branch: '<line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
     hourglass: '<path d="M5 22h14"/><path d="M5 2h14"/><path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22"/><path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2"/>',
@@ -225,7 +245,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   const pencil = iconBtn('pencil', '이름 바꾸기', editName);
   title.addEventListener('dblclick', editName);
   nameRow.append(pencil);
-  sendBtn.append(icon('up')); addBtn.append(icon('plus')); stopBtn.append(icon('stop')); modelBtn.append(icon('chevron')); effortBtn.append(icon('chevron')); modeBtn.append(icon('chevron'));
+  sendBtn.append(icon('up')); addBtn.append(icon('plus')); stopBtn.append(icon('stop')); modelBtn.append(icon('chevron')); effortBtn.append(icon('chevron')); modeBtn.prepend(icon('shield')); modeBtn.append(icon('chevron')); sideBtn.append(icon('panel'));
   // 보낼 게 없거나(빈 입력·첨부 없음) 세션이 끝났으면 보내기 버튼을 비활성처럼 (사용자 2026-09-27)
   // 실행 중엔 보내기 자리에 중단 (사용자 2026-10-09) — 입력이나 첨부가 생기면 다시 보내기, 작업 중에도 보낼 수 있으므로
   const canSend = () => {
@@ -522,21 +542,38 @@ export function mountAgentFront(root, transport, opts = {}) {
     const m = Math.max(0, Math.round((new Date(iso) - Date.now()) / 6e4));
     return m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m` : `${Math.floor(m / 1440)}d${Math.floor((m % 1440) / 60)}h`;
   };
-  function renderSide() {
-    side.innerHTML = '';
-    const lim = (label, w) => h('div', { class: 'lim' + (w?.pct >= 90 ? ' hot' : '') }, h('span', { class: 'k' }, label),
-      h('div', { class: 'bar' }, h('i', { style: `width:${Math.min(100, w?.pct ?? 0)}%` })),
-      h('span', { class: 'v' }, w?.pct != null ? `${Math.round(w.pct)}%` : '—'), h('span', { class: 'r' }, fmtReset(w?.resetsAt)));
-    // claude 상태줄과 같은 줄거리: 📁폴더 · 🌿repo(브랜치) · ⌛5h·1w · 📦context · 💻모델 · 비용. 값은 SDK 가 주는 때(attach·turn.end)만 갱신 (사용자 2026-09-30)
+  // 작성창 아래 한 줄 — 📁폴더 🌿repo(브랜치) ⌛플랜 리밋(5h·1w 막대·남은 시간) 📦ctx 누적 비용, 묶음 사이는 · 없이 간격만. 사이드바 위에서 옮겼다 (사용자 2026-10-13, 짧은 꼴은 2026-10-14).
+  // 폴더는 올리면 전체 경로 복사, repo 는 git 안일 때만. 모르는 리밋·context 는 뺀다. 리밋 막대는 세로 기둥으로 쓴 양을 채우고, % 는 올리면 작은 툴팁으로 (사용자 2026-09-30, 세로는 2026-10-14)
+  function renderStat() {
     const cwd = info?.cwd ?? ready?.cwd ?? '';
-    const row = (name, ...kids) => h('div', { class: 'row' }, icon(name), ...kids);
+    const lim = (label, w) => w && h('span', { class: 'lim' + (w.pct >= 90 ? ' hot' : '') }, h('span', {}, label),
+      h('span', { class: 'track' }, h('span', { class: 'bar' }, h('i', { style: `height:${Math.min(100, w.pct ?? 0)}%` })), h('span', { class: 'v' }, w.pct != null ? `${Math.round(w.pct)}%` : '—')),
+      h('span', {}, fmtReset(w.resetsAt)));
+    const grp = (name, ...kids) => h('span', { class: 'grp' }, icon(name), ...kids);
+    const lims = [lim('5h', status?.limits?.fiveHour), lim('1w', status?.limits?.sevenDay)].filter(Boolean);
     const ctx = status?.context;
+    // 비용에 올리면 총 소모 토큰 — 리밋처럼 작은 툴팁 (사용자 2026-10-13). 입력 = 캐시 읽기 + 캐시 쓰기 + 그 외.
+    // Codex 의 input 은 캐시 읽기를 이미 포함한다 (OpenAI 계열 usage), Claude 의 input 은 캐시를 뺀 나머지다
+    const other = (info?.vendor ?? ready?.vendor) === 'codex' ? Math.max(0, usage.input - usage.cacheRead) : usage.input;
+    const kv = (k, n, sub) => [h('span', { class: sub ? 'sub' : '' }, k), h('span', {}, fmtTok(n))];
+    const tok = h('span', { class: 'v tok' }, kv('입력', other + usage.cacheRead + usage.cacheWrite), kv('캐시 읽기', usage.cacheRead, true), kv('캐시 쓰기', usage.cacheWrite, true), kv('그 외', other, true), kv('출력', usage.output));
+    // 줄 끝에 있으면 툴팁이 화면 오른쪽 밖으로 나간다 — 올릴 때 재서 안쪽으로 민다
+    const fit = () => { tok.style.left = ''; const over = tok.getBoundingClientRect().right - (document.documentElement.clientWidth - 8); if (over > 0) tok.style.left = `${-over}px`; };
+    stat.replaceChildren(...[
+      cwd && h('span', { class: 'grp where' }, icon('folder'), h('span', { class: 'name', title: cwd }, cwd.split('/').filter(Boolean).pop() ?? cwd), iconBtn('copy', '전체 경로 복사', copyOf(cwd))),
+      status?.repo && h('span', { class: 'grp where' }, icon('branch'), h('span', { class: 'name' }, status.repo, status.branch ? h('span', { class: 'dim' }, ` (${status.branch})`) : '')),
+      lims.length && grp('hourglass', ...lims),
+      ctx && grp('box', h('span', { title: `${fmtTok(ctx.tokens)} / ${fmtTok(ctx.max)}` }, 'ctx ', h('b', { class: ctx.pct >= 80 ? 'hot' : '' }, `${Math.round(ctx.pct)}%`))),
+      h('span', { class: 'grp cost', onmouseenter: fit }, icon('coin'), h('span', {}, usage.turns && !costKnown ? '—' : usage.cost ? `$${usage.cost.toFixed(2)}` : '$0'), tok), // 턴이 있는데 비용을 모르면(가격표에 없는 Codex 모델) —
+    ].filter(Boolean));
+  }
+  function renderSide() {
+    renderStat(); // 남은 시간도 사이드바를 다시 그릴 때 같이 다시 잰다
+    side.innerHTML = '';
+    // claude 상태줄과 같은 줄거리 중 💻모델 (폴더·repo·리밋·context·비용은 작성창 아래). 값은 SDK 가 주는 때(attach·turn.end)만 갱신 (사용자 2026-09-30)
+    const row = (name, ...kids) => h('div', { class: 'row' }, icon(name), ...kids);
     side.append(h('div', { class: 'top' },
-      row('folder', h('span', { class: 'name', title: cwd }, cwd ? cwd.split('/').filter(Boolean).pop() ?? cwd : '—'), cwd ? iconBtn('copy', '전체 경로 복사', copyOf(cwd)) : ''),
-      row('branch', status?.repo ? h('span', { class: 'name' }, status.repo, status.branch ? h('span', { class: 'dim' }, ` (${status.branch})`) : '') : h('span', { class: 'dim' }, '—')),
-      row('hourglass', h('div', { class: 'lims' }, lim('5h', status?.limits?.fiveHour), lim('1w', status?.limits?.sevenDay))),
-      row('box', h('span', { title: ctx ? `${fmtTok(ctx.tokens)} / ${fmtTok(ctx.max)}` : null }, 'context ', h('b', { class: ctx?.pct >= 80 ? 'hot' : '' }, ctx ? `${Math.round(ctx.pct)}%` : '—'))),
-      row('cpu', h('span', {}, modelLbl.textContent || ready?.model || '—'), h('span', { class: 'cost' }, usage.turns && !costKnown ? '—' : usage.cost ? `$${usage.cost.toFixed(2)}` : '$0')), // 턴이 있는데 비용을 모르면(가격표에 없는 Codex 모델) —
+      row('cpu', h('span', {}, modelLbl.textContent || ready?.model || '—')),
     ));
     const kv = (rows) => h('div', { class: 'kv' }, ...rows.flatMap(([k, v]) => [h('span', { class: 'k' }, k), h('span', { class: 'v' }, v ?? '—')]));
     const sec = (key, label, body, extra) => {
@@ -670,7 +707,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     }
     else {
       pill.className = 'pill disconnected'; pill.textContent = s.fatal ? `인증 실패` : STATE_LABEL.disconnected; renderSide();
-      // 좁은 화면에선 알약이 숨으므로 피드에도 남긴다 (사용자 2026-10-09). fatal 은 재접속하지 않아 한 번만 온다
+      // 알약엔 '인증 실패' 한마디뿐이라 고칠 길은 피드에 남긴다 (사용자 2026-10-09, 그땐 좁은 화면에서 알약이 숨었다). fatal 은 재접속하지 않아 한 번만 온다
       if (s.fatal) push(h('div', { class: 'meta err' }, '인증 실패: 토큰(?token=)이 붙은 주소로 다시 여세요'));
     }
   });

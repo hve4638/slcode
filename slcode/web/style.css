@@ -3,7 +3,6 @@
 :root {
   --acf-bg: #f7f7f8; --acf-panel: #ffffff; --acf-fg: #1f1f23; --acf-muted: #6b6f76; --acf-line: #e2e3e8; --acf-soft: #ececef;
   --acf-accent: #2f6fed; --acf-ok: #17834a; --acf-warn: #b45f06; --acf-err: #c93a3a; --acf-user: #eaecf1; --acf-shadow: rgba(0,0,0,.12);
-  --acf-auto: #8a6700; --acf-auto-bg: #ffef9e; --acf-bypass: #d6336c; --acf-bypass-bg: #ffe0ea;
   --acf-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --acf-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, "Noto Sans KR", Roboto, sans-serif;
 }
@@ -11,13 +10,14 @@
   :root {
     --acf-bg: #18181b; --acf-panel: #1f1f23; --acf-fg: #ececef; --acf-muted: #9a9ca3; --acf-line: #2c2c31; --acf-soft: #26262b;
     --acf-accent: #6b9cff; --acf-ok: #3ec27a; --acf-warn: #f0a23a; --acf-err: #ef6b6b; --acf-user: #26262b; --acf-shadow: rgba(0,0,0,.4);
-    --acf-auto: #ffd700; --acf-auto-bg: rgba(255,215,0,.14); --acf-bypass: #ff87af; --acf-bypass-bg: rgba(255,135,175,.14); /* Claude Code 상태 줄 색 */
   }
 }
 html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 #root { height: 100%; container-type: inline-size; } /* 좁은 화면 기준은 창이 아니라 이 컨테이너 폭 — superlite 카드 안에서는 카드 폭 (ticket agent-plugin-card) */
 
-.acf { font: 15px/1.55 var(--acf-sans); color: var(--acf-fg); background: var(--acf-bg); height: 100%; display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr) 300px; min-height: 320px; }
+/* 헤더 한 줄 + 본문, 사이드바는 열었을 때만 오른쪽 칸 (사용자 2026-10-13) */
+.acf { font: 15px/1.55 var(--acf-sans); color: var(--acf-fg); background: var(--acf-bg); height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); grid-template-columns: minmax(0, 1fr); min-height: 320px; }
+.acf.side-open { grid-template-columns: minmax(0, 1fr) 300px; }
 .acf * { box-sizing: border-box; }
 .acf, .acf * { scrollbar-width: thin; scrollbar-color: var(--acf-line) transparent; }
 .acf button { font: inherit; color: inherit; background: var(--acf-panel); border: 1px solid var(--acf-line); border-radius: 8px; padding: 5px 11px; cursor: pointer; }
@@ -33,19 +33,29 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf pre { line-height: 1.5; tab-size: 2; }
 .acf a { color: var(--acf-accent); }
 
-/* 왼쪽 레일 — 세션 이름·cwd·상태. 상단 바 대신 (2026-09-27) */
-.acf .left { padding: 18px 14px; display: flex; flex-direction: column; gap: 6px; min-width: 0; align-items: flex-start; }
-.acf .left .title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-.acf .left .name-row { display: flex; align-items: center; gap: 2px; max-width: 100%; min-width: 0; }
-.acf .left .title { cursor: text; }
-.acf .left .name-row button.ico { width: 22px; height: 22px; flex: none; padding: 0; border: 0; background: transparent; color: var(--acf-muted); border-radius: 6px; display: grid; place-items: center; cursor: pointer; }
+/* 헤더 — 세션 이름·상태 … 세션 종료·사이드바 버튼. 왼쪽 레일(2026-09-27)에서 옮겼고 폭이 좁아도 숨지 않는다, 이름만 잘린다 (사용자 2026-10-13) */
+.acf > .hdr { grid-row: 1; grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; padding: 6px 10px 6px 16px; border-bottom: 1px solid var(--acf-line); min-width: 0; }
+.acf .hdr .gap { flex: 1; }
+.acf .hdr .pill, .acf .hdr button.end { flex: none; }
+.acf .hdr .title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.acf .hdr .name-row { display: flex; align-items: center; gap: 2px; max-width: 100%; min-width: 0; }
+.acf .hdr .title { cursor: text; }
+.acf .hdr .name-row button.ico { width: 22px; height: 22px; flex: none; padding: 0; border: 0; background: transparent; color: var(--acf-muted); border-radius: 6px; display: grid; place-items: center; cursor: pointer; }
 /* 연필은 이름 줄에 올렸을 때만 (사용자 2026-10-07) — 키보드 포커스로도 보인다 */
-.acf .left .name-row button.ico { opacity: 0; color: color-mix(in srgb, var(--acf-muted) 55%, transparent); } /* 전환 효과 없이, 평소 회색보다 옅게 (사용자 2026-10-07) */
-.acf .left .name-row:hover button.ico, .acf .left .name-row button.ico:focus-visible { opacity: 1; }
-.acf .left .name-row button.ico:hover { background: var(--acf-soft); color: var(--acf-muted); }
-.acf .left .name-row button.ico svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.acf .left .title-edit { font: inherit; font-weight: 600; width: 100%; min-width: 0; padding: 1px 4px; border: 1px solid var(--acf-line); border-radius: 4px; background: transparent; color: inherit; }
-.acf .left button.end { font-size: 12px; padding: 2px 9px; margin-top: 4px; }
+.acf .hdr .name-row button.ico { opacity: 0; color: color-mix(in srgb, var(--acf-muted) 55%, transparent); } /* 전환 효과 없이, 평소 회색보다 옅게 (사용자 2026-10-07) */
+.acf .hdr .name-row:hover button.ico, .acf .hdr .name-row button.ico:focus-visible { opacity: 1; }
+.acf .hdr .name-row button.ico:hover { background: var(--acf-soft); color: var(--acf-muted); }
+.acf .hdr .name-row button.ico svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.acf .hdr .title-edit { font: inherit; font-weight: 600; width: 100%; min-width: 0; padding: 1px 4px; border: 1px solid var(--acf-line); border-radius: 4px; background: transparent; color: inherit; }
+.acf .hdr button.end { font-size: 12px; padding: 2px 9px; }
+/* 세션 종료 확인 — 버튼 오른쪽 끝 아래 (사용자 2026-10-13) */
+.acf #acf-end { min-width: 0; padding: 12px 14px; }
+.acf #acf-end .btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+/* 사이드바 버튼 — 열려 있으면 눌린 꼴 */
+.acf .hdr button.side-tg { width: 30px; height: 30px; flex: none; padding: 0; border: 0; background: transparent; color: var(--acf-muted); border-radius: 8px; display: grid; place-items: center; }
+.acf .hdr button.side-tg:hover { background: var(--acf-soft); color: var(--acf-fg); }
+.acf.side-open .hdr button.side-tg { background: var(--acf-soft); color: var(--acf-fg); }
+.acf .hdr button.side-tg svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .acf .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--acf-line); color: var(--acf-muted); white-space: nowrap; }
 .acf .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .acf .pill.running { color: var(--acf-accent); }
@@ -55,7 +65,7 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .pill.starting, .acf .pill.stored { color: var(--acf-muted); }
 
 /* 가운데 = 피드 + 작성창 */
-.acf .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.acf .main { grid-row: 2; grid-column: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .acf .feed { flex: 1; overflow-y: auto; padding: 20px 16px 8px; scroll-behavior: smooth; }
 .acf .col { max-width: 780px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
 .acf .older:not(:empty) { margin-bottom: 14px; } /* 앞 턴 붙이기 — 위치 보정은 app.js 가 직접 한다, 브라우저 scroll anchoring 과 겹치면 두 번 밀린다 */
@@ -200,16 +210,52 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .card details.in[open] > summary { margin-bottom: 6px; }
 .acf .composer { padding: 8px 16px 14px; }
 .acf .composer .box { max-width: 780px; margin: 0 auto; background: var(--acf-panel); border: 1px solid var(--acf-line); border-radius: 14px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
-.acf .composer .row { display: flex; gap: 8px; align-items: flex-end; }
-.acf .composer .tools { display: flex; justify-content: flex-end; }
+/* 아래 줄: 왼쪽 첨부·권한 모드, 오른쪽 모델·effort·보내기 (사용자 2026-10-13). 좁으면 모델 이름만 잘린다 — 권한 모드·effort 는 짧아서 그대로 */
+.acf .composer .row { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.acf .composer .row .gap { flex: 1; }
+.acf .composer .row > button { flex: none; }
+.acf .composer .row > button.model { flex: 0 1 auto; min-width: 0; }
+.acf .composer .row > button.model span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acf .composer .row > button.model svg { flex: none; }
+/* 상자 밖 아래 한 줄 — 📁폴더 🌿repo(브랜치) ⌛리밋 막대·남은 시간 📦ctx 비용, 글자는 상자 안 입력칸에 맞춘다 (사용자 2026-10-13).
+   묶음 사이는 · 없이 간격만 — 아이콘이 구분하고, 좁아서 줄이 바뀌어도 · 로 시작하는 줄이 없다 (사용자 2026-10-14).
+   좁으면 묶음 단위로 줄을 바꾸고, 한 줄에도 안 들어가는 폴더·repo 이름은 잘린다 */
+.acf .composer .stat { max-width: 780px; margin: 6px auto 0; padding: 0 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 5px 16px; font: 11px/1.5 var(--acf-mono); color: var(--acf-muted); font-variant-numeric: tabular-nums; -webkit-user-select: none; user-select: none; }
+/* 글자를 아이콘·막대와 세로로 맞춘다 — 글자 상자를 대문자 높이~기준선으로 깎아(text-box) 가운데 정렬이 숫자·대문자 한가운데에 오게 (사용자 2026-10-14).
+   그냥 두면 글꼴의 ascent·descent 를 다 품은 상자가 가운데라 숫자가 아이콘보다 높게 뜬다. 지원하지 않는 브라우저(Firefox)는 전처럼 */
+.acf .composer .stat .grp > span:not(.lim, .v), .acf .composer .stat .lim > span:not(.track) { text-box: trim-both cap alphabetic; }
+.acf .composer .stat > .grp { position: relative; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.acf .composer .stat .grp > svg { width: 13px; height: 13px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.acf .composer .stat > .grp.where { min-width: 0; }
+.acf .composer .stat .where .name { overflow-x: clip; overflow-y: visible; text-overflow: ellipsis; min-width: 0; color: var(--acf-fg); } /* 세로로도 자르면 깎인 글자 상자 밖의 g·p·y 꼬리가 잘린다 */
+.acf .composer .stat .where .dim { color: var(--acf-muted); }
+/* 전체 경로 복사는 폴더에 올렸을 때만 (세션 id 복사와 같은 꼴, 2026-10-09). 한 줄에 빈자리를 남기지 않게 폴더 아이콘 위에 겹친다 */
+.acf .composer .stat .where button.ico { position: absolute; left: -4px; top: 50%; transform: translateY(-50%); width: 21px; height: 21px; padding: 0; border: 0; background: var(--acf-bg); color: var(--acf-muted); border-radius: 6px; display: grid; place-items: center; opacity: 0; }
+.acf .composer .stat .where:hover button.ico, .acf .composer .stat .where button.ico:focus-visible { opacity: 1; }
+.acf .composer .stat .where button.ico:hover { background: var(--acf-soft); color: var(--acf-fg); }
+.acf .composer .stat .where button.ico svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.acf .composer .stat .lim + .lim { margin-left: 4px; }
+.acf .composer .stat .lim { display: inline-flex; align-items: center; gap: 6px; }
+.acf .composer .stat .track { position: relative; display: inline-flex; }
+/* 세로 기둥 — 가로 막대를 세운 꼴, 아래부터 채운다 (사용자 2026-10-14) */
+/* 기둥이 작아 --acf-soft 로는 빈 칸이 안 보인다 — 흐린 글자색을 옅게 깐다. 채운 부분은 위를 평평하게 (둥글면 점처럼 보인다) */
+.acf .composer .stat .bar { width: 6px; height: 12px; border-radius: 2px; background: color-mix(in srgb, var(--acf-muted) 30%, transparent); overflow: hidden; display: flex; align-items: flex-end; }
+.acf .composer .stat .bar i { display: block; width: 100%; background: var(--acf-accent); }
+.acf .composer .stat .lim.hot .bar i { background: var(--acf-err); }
+.acf .composer .stat .v { position: absolute; bottom: calc(100% + 4px); left: 50%; transform: translateX(-50%); padding: 1px 7px; border: 1px solid var(--acf-line); border-radius: 6px; background: var(--acf-panel); color: var(--acf-fg); box-shadow: 0 2px 8px var(--acf-shadow); white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity .12s; z-index: 1; }
+.acf .composer .stat .lim:hover .v, .acf .composer .stat .cost:hover .v { opacity: 1; }
+/* 비용 툴팁 — 총 소모 토큰 표, 비용 왼쪽 끝에 맞춰 연다 (넘치면 app.js 가 안쪽으로 민다) */
+.acf .composer .stat .cost { position: relative; }
+.acf .composer .stat .v.tok { left: 0; transform: none; display: grid; grid-template-columns: auto auto; column-gap: 16px; padding: 5px 10px; }
+.acf .composer .stat .tok > :nth-child(odd) { font-family: var(--acf-sans); } /* 한글 라벨은 고정폭 글꼴에서 자간이 벌어진다 */
+.acf .composer .stat .tok > :nth-child(even) { text-align: right; }
+.acf .composer .stat .tok .sub { padding-left: 10px; color: var(--acf-muted); }
+.acf .composer .stat b { font-weight: 500; color: var(--acf-fg); }
+.acf .composer .stat b.hot { color: var(--acf-err); }
 .acf .composer button.add { width: 34px; height: 34px; padding: 0; display: grid; place-items: center; }
 .acf .composer button.add svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
-.acf .composer .tools { gap: 6px; }
 .acf button.pill-btn { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 3px 8px 3px 10px; border-radius: 8px; background: var(--acf-soft); color: var(--acf-fg); }
 .acf button.pill-btn svg { width: 14px; height: 14px; fill: none; stroke: var(--acf-muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.acf button.pill-btn.auto, .acf .menu .m-auto { color: var(--acf-auto); } .acf button.pill-btn.bypass, .acf .menu .m-bypassPermissions { color: var(--acf-bypass); }
-.acf button.pill-btn.auto { background: var(--acf-auto-bg); } .acf button.pill-btn.bypass { background: var(--acf-bypass-bg); }
-.acf button.pill-btn.auto svg { stroke: var(--acf-auto); } .acf button.pill-btn.bypass svg { stroke: var(--acf-bypass); }
 .acf button.effort { text-transform: capitalize; }
 .acf #acf-effort { min-width: 260px; padding: 10px 14px 14px; }
 .acf #acf-effort .lbl { text-align: center; text-transform: capitalize; font-size: 15px; margin-bottom: 10px; }
@@ -248,7 +294,7 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .user .chip { flex-direction: column; align-items: flex-start; max-width: 100%; }
 .acf .user .chip img { max-height: 160px; max-width: 100%; }
 .acf .composer .box:focus-within { border-color: var(--acf-accent); }
-.acf .composer textarea { flex: 1; resize: none; border: 0; outline: 0; background: transparent; color: inherit; font: inherit; line-height: 1.5; max-height: 220px; padding: 4px 0; }
+.acf .composer textarea { resize: none; border: 0; outline: 0; background: transparent; color: inherit; font: inherit; line-height: 1.5; max-height: 220px; padding: 4px 6px; }
 .acf .composer button.send { width: 34px; height: 34px; padding: 0; border-radius: 50%; display: grid; place-items: center; align-self: flex-end; }
 .acf .composer button.send svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
 .acf .composer button.send:disabled { background: var(--acf-soft); border-color: var(--acf-soft); color: var(--acf-muted); opacity: 1; }
@@ -256,28 +302,13 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .composer button.stop svg { width: 12px; height: 12px; fill: currentColor; stroke: none; }
 
 /* 사이드바 — 섹션마다 접히는 카드 (A안, 사용자 2026-09-28). 안쪽 목록 details 는 쉐브론·개수 배지 */
-.acf .side { overflow-y: auto; padding: 14px 12px; font-size: 13px; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+/* 기본은 닫힘, 헤더 버튼으로 연다 (사용자 2026-10-13) */
+.acf .side { grid-row: 2; grid-column: 2; overflow-y: auto; padding: 14px 12px; font-size: 13px; display: flex; flex-direction: column; gap: 8px; min-height: 0; border-left: 1px solid var(--acf-line); }
+.acf:not(.side-open) .side { display: none; }
 /* 상단 요약 — claude 상태줄과 같은 정보 (폴더·repo/브랜치·플랜 리밋·컨텍스트·모델·비용), 아이콘은 외곽선 SVG (사용자 2026-09-30) */
 .acf .side .top { display: flex; flex-direction: column; gap: 5px; padding: 2px 4px 8px; font-size: 12px; font-family: var(--acf-mono); }
 .acf .side .top .row { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--acf-fg); }
 .acf .side .top .row > svg { width: 15px; height: 15px; flex: none; color: var(--acf-muted); fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.acf .side .top .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.acf .side .top .dim { color: var(--acf-muted); }
-.acf .side .top b.hot { color: var(--acf-err); }
-.acf .side .top .cost { margin-left: auto; color: var(--acf-muted); font-variant-numeric: tabular-nums; }
-.acf .side .top .row button.ico { margin-left: auto; width: 22px; height: 22px; flex: none; padding: 0; border: 0; background: transparent; color: var(--acf-muted); border-radius: 6px; display: grid; place-items: center; cursor: pointer; }
-.acf .side .top .row button.ico:hover { background: var(--acf-soft); color: var(--acf-fg); }
-.acf .side .top .row button.ico svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.acf .side .top .lims { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-/* 두 막대는 같은 길이 — 오른쪽 칸을 고정 폭으로 */
-.acf .side .top .lim { display: grid; position: relative; grid-template-columns: 20px 1fr 40px; /* 남은 기간은 최대 5자 (4h02m·2d10h) */ align-items: center; gap: 6px; color: var(--acf-muted); font-size: 11px; }
-.acf .side .top .lim .bar { height: 5px; border-radius: 3px; background: var(--acf-soft); overflow: hidden; }
-.acf .side .top .lim .bar i { display: block; height: 100%; background: var(--acf-accent); border-radius: 3px; }
-.acf .side .top .lim.hot .bar i { background: var(--acf-err); }
-/* 사용량 % 는 줄에 두지 않고, 줄에 올리면 막대 위 작은 툴팁으로 (사용자 2026-09-30) */
-.acf .side .top .lim .v { position: absolute; bottom: calc(100% + 3px); left: calc(26px + (100% - 72px) / 2); transform: translateX(-50%); padding: 1px 7px; border: 1px solid var(--acf-line); border-radius: 6px; background: var(--acf-panel); color: var(--acf-fg); box-shadow: 0 2px 8px var(--acf-shadow); font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity .12s; z-index: 1; }
-.acf .side .top .lim:hover .v { opacity: 1; }
-.acf .side .top .lim .r { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* 실행 중 서브에이전트 목록 — 있을 때만, 접히지 않는다 (2026-09-30) */
 .acf .side .tasks { display: flex; flex-direction: column; gap: 6px; padding: 4px 4px 8px; font-size: 12px; }
 .acf .side .tasks h4 { margin: 0 0 2px; font-size: 12px; font-weight: 600; color: var(--acf-muted); }
@@ -331,16 +362,15 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .mail .body { white-space: pre-wrap; word-break: break-word; }
 .acf .mail .acts { margin: 0; }
 
-/* 좁은 화면 (사용자 2026-09-30) — 폭이 줄면 좌우 레일을 잘라 가운데 한 열만 남긴다: 1100px 아래는 왼쪽, 820px 아래는 오른쪽도.
-   기준은 #root 의 컨테이너 폭(container query, 2026-10-04) — 단독 웹이면 창 폭과 같고, superlite 카드 안이면 카드 폭이다.
-   ponytail: 잘린 레일을 여는 버튼은 없다 (마크업 필요) */
-@container (max-width: 1100px) {
-  .acf { grid-template-columns: minmax(0, 1fr) 300px; }
-  .acf .left { display: none; }
-}
+/* 좁은 화면 (사용자 2026-09-30) — 820px 아래는 가운데 한 열만. 사이드바는 옆 칸 대신 본문 위에 겹쳐 연다(.peek, 기억하지 않음, 2026-10-13).
+   기준은 #root 의 컨테이너 폭(container query, 2026-10-04) — 단독 웹이면 창 폭과 같고, superlite 카드 안이면 카드 폭이다 */
 @container (max-width: 820px) {
-  .acf { grid-template-columns: minmax(0, 1fr); min-height: 0; }
+  .acf, .acf.side-open { grid-template-columns: minmax(0, 1fr); min-height: 0; }
   .acf .side { display: none; }
+  .acf.peek .side { display: flex; grid-column: 1; justify-self: end; width: min(300px, 100%); z-index: 2; background: var(--acf-bg); box-shadow: -6px 0 18px var(--acf-shadow); }
+  .acf.side-open .hdr button.side-tg:not(:hover) { background: transparent; color: var(--acf-muted); }
+  .acf.peek .hdr button.side-tg { background: var(--acf-soft); color: var(--acf-fg); }
+  .acf > .hdr { padding-left: 12px; }
   .acf .feed { padding: 12px 10px 6px; }
   .acf .dock, .acf .composer { padding: 6px 10px calc(10px + env(safe-area-inset-bottom)); }
   .acf .user { max-width: 92%; }
@@ -348,6 +378,12 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
   /* iOS 는 16px 미만 입력칸에 초점이 가면 화면을 확대한다 */
   .acf .composer textarea, .acf .card .q input[type=text] { font-size: 16px; }
   .acf .menu { max-width: calc(100vw - 20px); }
+}
+/* 아주 좁으면 (카드·휴대폰) 작성창 알약의 꺾쇠를 빼서 글자 자리를 남긴다 — 눌러서 여는 것은 같다 */
+@container (max-width: 480px) {
+  .acf .composer .row { gap: 4px; }
+  .acf .composer .row > button.pill-btn svg:last-child { display: none; }
+  .acf .composer .row > button.pill-btn { padding-right: 10px; }
 }
 /* 모바일 창 자체의 높이 — html·body 는 컨테이너 밖이라 미디어 쿼리로 */
 @media (max-width: 820px) { html, body { height: 100dvh; } }
