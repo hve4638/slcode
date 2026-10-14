@@ -22,14 +22,17 @@ test('codex: initialize→thread/start→turn/start, 델타·도구·승인(acce
   const h = await serveSession({ dir, cwd: work, vendor: 'codex', web: false });
   assert.equal(h.session.vendor, 'codex');
   const c = await connectSession(h.sock);
-  await c.request('session.attach', { id: h.session.id });
+  const att = await c.request('session.attach', { id: h.session.id });
   const evs: any[] = [];
-  const turnEnd = new Promise<void>((r) => c.onEvent((m) => { if (m.event !== 'session.event') return; const ev = (m.params as any).ev; evs.push(ev); if (ev.kind === 'approval.requested') void c.request('session.approve', { id: h.session.id, requestId: ev.requestId, decision: 'allow', remember: true }); if (ev.kind === 'turn.end') r(); }));
+  // core 는 다른 프로세스 — turn.end 와 뒤따르는 session.state 가 따로 도착할 수 있어 state 까지 기다린다
+  let ended = false;
+  const turnEnd = new Promise<void>((r) => c.onEvent((m) => { if (m.event !== 'session.event') return; const ev = (m.params as any).ev; evs.push(ev); if (ev.kind === 'approval.requested') void c.request('session.approve', { id: h.session.id, requestId: ev.requestId, decision: 'allow', remember: true }); if (ev.kind === 'turn.end') ended = true; if (ended && ev.kind === 'session.state') r(); }));
   await c.request('session.send', { id: h.session.id, text: 'hello codex' });
   await Promise.race([turnEnd, sleep(8000).then(() => { throw new Error('turn timeout'); })]);
   const kinds = evs.map((e) => e.kind);
   assert.equal(kinds[0], 'turn.start');
-  assert.ok(kinds.includes('session.ready') && evs.find((e) => e.kind === 'session.ready').vendor === 'codex');
+  // core 는 다른 프로세스라 attach 전에 기동을 마쳤으면 ready 는 기록(history) 쪽에 있다
+  assert.ok([...att.history.map((e) => e.ev), ...evs].some((e: any) => e.kind === 'session.ready' && e.vendor === 'codex'));
   assert.ok(kinds.includes('thinking.delta'));
   assert.ok(evs.some((e) => e.kind === 'text.delta' && e.text === 'echo:hello codex'));
   const ts = evs.find((e) => e.kind === 'tool.start'); assert.equal(ts.name, 'Bash'); assert.equal(ts.toolUseId, 'exec-1'); assert.equal(ts.input.command, 'touch x');

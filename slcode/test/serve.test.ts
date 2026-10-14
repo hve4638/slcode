@@ -222,3 +222,57 @@ test('superlite 서비스 웹 소켓(webSock): 인증 없이 정적 파일·WS, 
   assert.equal(r.result.session, h.session.id, '토큰 없이 (core.auth 생략) 바로 요청');
   await h.close('test');
 });
+
+test('중계: 큰 프레임의 한글이 청크 경계에서 깨지지 않는다 (웹 → serve → core 소켓, ticket slcode-core-serve-split)', async () => {
+  const dir = isolated();
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
+  const h = await serveSession({ dir, cwd: work });
+  const text = '가'.repeat(100000); // 약 300KB — 소켓 청크 여러 개
+  const r = await wsCalls(h.url!, [{ method: 'session.setDraft', params: { id: h.session.id, text } }, { method: 'session.attach', params: { id: h.session.id } }]);
+  assert.equal(r[0].result.ok, true);
+  assert.equal(r[1].result.draft, text);
+  await h.close('test');
+});
+
+test('화면 연결은 제어 메서드(core.own·serve.register)를 부를 수 없다; 루프백 밖 웹은 auth 응답 전에 온 요청을 잡아 두었다가 통과하면 보낸다', async () => {
+  const dir = isolated();
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
+  const h = await serveSession({ dir, cwd: work, host: '0.0.0.0' });
+  const token = new URL(h.url!).searchParams.get('token')!;
+  const u = new URL(h.url!.replace('0.0.0.0', '127.0.0.1')); u.protocol = 'ws:'; u.pathname = '/ws'; u.search = '';
+  // auth 응답을 기다리지 않고 한꺼번에 보낸다
+  const out = await new Promise<any[]>((resolve, reject) => {
+    const ws = new WebSocket(u.toString()); const got: any[] = [];
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ id: 1, method: 'core.auth', params: { token } }));
+      ws.send(JSON.stringify({ id: 2, method: 'server.info' }));
+      ws.send(JSON.stringify({ id: 3, method: 'serve.register', params: { host: '0.0.0.0', port: 1, version: 'x' } }));
+      ws.send(JSON.stringify({ id: 4, method: 'core.own', params: { takeover: true } }));
+    };
+    ws.onmessage = (e) => { const m = JSON.parse(String(e.data)); if (m.id === undefined) return; got.push(m); if (got.length === 4) { ws.close(); resolve(got); } };
+    ws.onerror = () => reject(new Error('ws error'));
+  });
+  const by = Object.fromEntries(out.map((m) => [m.id, m]));
+  assert.equal(by[1].result.ok, true);
+  assert.equal(by[2].result.session, h.session.id, 'auth 응답 전에 온 요청도 통과 뒤 처리된다');
+  assert.match(by[3].error.message, /not allowed on a screen connection/, '토큰이 붙은 url 을 받아 가지 못한다');
+  assert.match(by[4].error.message, /not allowed on a screen connection/, '소유권을 빼앗지 못한다');
+  const c = await connectSession(h.sock);
+  const info = await c.request('server.info');
+  assert.equal(info.owner, process.pid, '소유자는 그대로 serve');
+  assert.equal(info.serves?.length, 1, '가짜 웹 등록이 없다');
+  c.close();
+  await h.close('test');
+});
+
+test('UDS 클라이언트(RpcClient)도 큰 응답의 한글이 청크 경계에서 깨지지 않는다 — CLI 의 log·last·status 가 긴 기록을 읽는 길', async () => {
+  const dir = isolated();
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
+  const h = await serveSession({ dir, cwd: work, web: false });
+  const text = '가'.repeat(100000); // 약 300KB — 소켓 청크 여러 개
+  const c = await connectSession(h.sock);
+  await c.request('session.setDraft', { id: h.session.id, text });
+  assert.equal((await c.request('session.attach', { id: h.session.id })).draft, text);
+  c.close();
+  await h.close('test');
+});

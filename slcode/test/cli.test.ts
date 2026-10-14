@@ -183,7 +183,7 @@ test('resume·continue (superlite 밖): 살아 있는 세션은 웹 주소, cont
   await sleep(1500); // 우체국 grace
 });
 
-test('close --force: 응답하는 세션은 정상 종료, 멈춘 세션(SIGSTOP)은 3초 뒤 kill 하고 closedAt 을 남긴다, 꺼진 세션은 exit 1', async (t) => {
+test('close --force: 응답하는 세션은 정상 종료, 멈춘 세션(core 를 SIGSTOP)은 3초 뒤 core 를 kill 하고 closedAt 을 남긴다, 꺼진 세션은 exit 1', async (t) => {
   const dir = tmp('slcode-cli-');
   const work = tmp('slcode-work-');
   const a = start(dir, ['new', work, '--no-web', '--title', 'force1']);
@@ -193,12 +193,16 @@ test('close --force: 응답하는 세션은 정상 종료, 멈춘 세션(SIGSTOP
   const ok = await run(dir, ['close', 'force1', '--force']);
   assert.equal(ok.code, 0, ok.stderr); assert.deepEqual(JSON.parse(ok.stdout), { ok: true, killed: false });
   assert.equal(await a.exit, 0);
-  b.child.kill('SIGSTOP'); // 소켓은 커널이 받아 주지만 응답이 없다
+  // 세션은 core 가 쥔다 — 우체국이 아는 pid 가 core 다 (serve 와 다른 프로세스)
+  const corePid = JSON.parse((await run(dir, ['list'])).stdout).find((r: any) => r.title === 'force2').pid;
+  assert.ok(corePid && corePid !== b.child.pid, 'core 는 serve 와 다른 프로세스');
+  t.after(() => { try { process.kill(corePid, 'SIGKILL'); } catch {} });
+  process.kill(corePid, 'SIGSTOP'); // 소켓은 커널이 받아 주지만 응답이 없다
   const t0 = Date.now();
   const k = await run(dir, ['close', 'force2', '--force']);
   assert.equal(k.code, 0, k.stderr); assert.deepEqual(JSON.parse(k.stdout), { ok: true, killed: true });
   assert.ok(Date.now() - t0 >= 3000, '정상 종료를 3초 기다린 뒤');
-  assert.equal(await b.exit, null); assert.equal(b.child.signalCode, 'SIGKILL');
+  assert.equal(await b.exit, 0, 'core 가 끝나면 serve 도 끝난다');
   const m = EventLog.list(corePaths(dir).sessionsDir).find((x) => x.title === 'force2')!;
   assert.ok(m.closedAt && Date.now() - m.closedAt < 10000, 'kill 한 세션도 꺼진 시각을 남긴다');
   const off = await run(dir, ['close', 'force2', '--force']);

@@ -1,0 +1,17 @@
+import { EventLog } from './eventLog'
+
+role: 세션이 살아 있는지·어느 세션을 이을지·웹 주소 — core·serve·cli 공용 (ticket slcode-core-serve-split). Agent SDK 를 싣지 않는 가벼운 모듈이라 중계만 하는 serve 가 벤더 어댑터(session·codex)까지 불러오지 않는다.
+
+export fn isLoopback(host) -> Bool
+export fn reachable(url) -> url {
+  role: 0.0.0.0 바인드 주소를 첫 비내부 IPv4 로 바꾼다 (없으면 localhost) — CLI·hello·server.info.url 이 같은 값
+}
+export fn sockAlive(p) -> Bool {
+  role: 소켓 파일에 붙어 본다 — 살아 있는 프로세스 것인지 (cli close --force 도 쓴다)
+}
+export fn closedTime(meta) -> Int {
+  role: 꺼진 시각 — closedAt 과 updatedAt(없으면 createdAt) 중 늦은 쪽. closedAt 없는 옛 세션은 updatedAt, 다시 띄운 뒤 비정상 종료해 closedAt 이 옛 값이면 더 늦은 updatedAt (ticket slcode-resume-like-new)
+}
+export fn closedSessions(sessionsDir, cwd) -> SessionMeta[] {
+  role: 그 cwd 슬러그 폴더의 저장 세션 중 meta.cwd 가 그 cwd 와 같고(슬러그가 같은 다른 폴더 제외) 소켓이 살아 있지 않은 것을 closedTime 내림차순으로 — continue 대상과 id 없는 resume 목록
+}

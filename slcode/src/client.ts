@@ -1,5 +1,5 @@
 // JSON 줄 RPC 클라이언트 — 세션 소켓(sessions/<슬러그>/<id>/sock)과 우체국(post.sock)에 같은 꼴로 붙는다.
-// 우체국은 없으면 detached 로 띄운다 (tmux 의 "클라이언트가 서버를 불러온다"). 세션 소켓은 띄우지 않는다 — 세션은 `slcode` 명령이 본체다.
+// 우체국은 없으면 detached 로 띄운다 (tmux 의 "클라이언트가 서버를 불러온다"). 세션 소켓은 띄우지 않는다 — core 는 serve 가 띄운다 (serve.ts spawnCore).
 import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -31,7 +31,8 @@ export class RpcClient<M extends Record<string, { params: unknown; result: unkno
   constructor(readonly sock: net.Socket) {
     let buf = '';
     this.done = new Promise((resolveDone) => {
-      sock.on('data', (d) => { buf += d.toString(); let i; while ((i = buf.indexOf('\n')) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 1); if (l.trim()) this.onLine(l); } });
+      sock.setEncoding('utf8'); // 청크 경계에 걸린 한글이 깨지지 않게 — 긴 기록(attach)·초안이 여러 청크로 온다
+      sock.on('data', (d: string) => { buf += d; let i; while ((i = buf.indexOf('\n')) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 1); if (l.trim()) this.onLine(l); } });
       sock.on('close', () => {
         this.closed = true;
         for (const p of this.pending.values()) p.reject(new CoreError('closed', 'connection closed'));

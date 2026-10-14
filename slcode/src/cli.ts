@@ -9,15 +9,13 @@
 // <s>·<to> 는 모든 동사에서 세션 id 또는 유일한 제목. 옛 동사(send·approve·shutdown·post 단독·폴더 위치 인자)는 폐기, 폴백 별칭 없음.
 import { parseArgs } from 'node:util';
 import fs from 'node:fs';
-import net from 'node:net';
 import { spawnSync } from 'node:child_process';
-import http from 'node:http';
-import { WebSocketServer } from 'ws';
 import path from 'node:path';
 import { connectPost, connectSession, type RpcClient } from './client.js';
 import { EventLog } from './eventLog.js';
 import { corePaths, readOrCreateToken } from './paths.js';
-import { serveSession, reachable, staticHandler, listenAddr, closedSessions, closedTime, sockAlive } from './serve.js';
+import { serveSession } from './serve.js';
+import { reachable, closedSessions, closedTime, sockAlive } from './live.js';
 import { claudeLastUuid, findVendorSession, forkClaude, vendorResumeCommand } from './vendor.js';
 import { randomUUID } from 'node:crypto';
 import type { ApprovalRequest, LoggedEvent, Methods, SessionInfo } from './protocol.js';
@@ -30,8 +28,8 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
                                  동사 없이 부르면 slcode new . — 첫 토큰이 옵션이면 전부 new 의 옵션. 폴더·세션 id 는 받지 않는다
 
 세션 수명
-  new·resume·continue 는 superlite 터미널 안이면 그 터미널의 deck 에 카드로 연다. superlite 밖이거나 --web 이면 이 프로세스가
-  세션이 되어 웹을 연다 (Ctrl-C 로 닫는다). 이미 살아 있는 세션이면 그 카드로 가거나 웹 주소를 출력한다.
+  new·resume·continue 는 superlite 터미널 안이면 그 터미널의 deck 에 카드로 연다. superlite 밖이거나 --web 이면 세션(core)을
+  띄우고 이 프로세스가 웹을 연다 (Ctrl-C 로 닫는다). 이미 살아 있는 세션이면 그 카드로 가거나 웹 주소를 출력한다.
   --host H·--port N 은 웹으로 열 때 쓴다. --no-web 과는 함께 쓸 수 없고, superlite 안에서는 --web 과 함께 쓴다
   new [folder] [--web] [--host H] [--port N] [--no-web] [--raw] [--mode M] [--title T] [--vendor claude|codex] [--stdio]
                                  새 세션 (폴더 생략 시 현재 폴더)
@@ -191,12 +189,12 @@ function turnSlice(history: LoggedEvent[], back: number): LoggedEvent[] | null {
   return history.slice(starts[k], k + 1 < starts.length ? starts[k + 1] : undefined);
 }
 
-/** resume·continue·import — 꺼진 세션은 카드(superlite 안) 또는 이 프로세스가 세션이 되어 웹 서빙, 살아 있는 세션은 그 카드를
- *  활성화(superlite 안) 또는 웹 주소를 찍고 끝난다. --stdio 는 카드 서비스 자신 — 살아 있으면 소켓 중계, 아니면 세션 프로세스 */
+/** resume·continue·import — 꺼진 세션은 카드(superlite 안) 또는 core 를 띄우고 이 프로세스가 웹 서빙, 살아 있는 세션은 그 카드를
+ *  활성화(superlite 안) 또는 웹 주소를 찍고 끝난다. --stdio 는 카드 서비스 자신 — 살아 있으면 소켓 중계(attach), 아니면 core 를 띄운 소유자 serve */
 async function resumeLog(log: EventLog, skip: (keyof Flags)[] = ['title', 'mode', 'raw', 'no-web', 'dir']) {
   let live = false;
   try { (await connectSession(log.sockPath)).close(); live = true; } catch {}
-  if (live && flags.stdio) return proxyStdio(log); // 살아 있는 세션의 소켓을 stdin/stdout 으로 중계 — superlite 카드가 떠 있는 세션에 붙는 길
+  if (live && flags.stdio) return attachStdio(log); // 살아 있는 세션의 소켓을 stdin/stdout 으로 중계 — superlite 카드가 떠 있는 세션에 붙는 길
   if (toCard()) openCard(['slcode.resume', '--id', log.meta.id], skip);
   if (live) return printWeb(log);
   await serve({ cwd: log.meta.cwd, resume: log.meta.id });
@@ -211,7 +209,7 @@ async function printWeb(log: EventLog) {
   console.log(url);
   err(`session ${log.meta.id} is already live`);
 }
-/** 세션 프로세스가 되어 끝까지 산다 — new·resume·continue */
+/** core 를 띄우고 그 소유자 serve 가 되어 끝까지 산다 — new·resume·continue */
 async function serve(opts: { cwd: string; resume?: string }) {
   try {
     const h = await serveSession({
@@ -286,45 +284,18 @@ function folderArg(a: string | undefined): string {
 function webUrl(info: { host: string | null; port: number | null; url?: string | null }): string | null {
   return info.url ?? (info.port ? reachable(`http://${info.host}:${info.port}/${info.host && !['127.0.0.1', 'localhost', '::1'].includes(info.host) ? `?token=${readOrCreateToken(P)}` : ''}`) : null);
 }
-/** `resume --stdio` 가 살아 있는 세션을 만나면: 첫 줄 hello 뒤 stdin↔소켓을 바이트 그대로 중계한다. 세션 프로세스는 그대로 (new --stdio 와 같은 모양을 카드에 준다, 2026-10-04) */
-async function proxyStdio(log: EventLog) {
-  const sock = net.createConnection(log.sockPath);
-  await new Promise<void>((resolve, reject) => { sock.once('connect', resolve); sock.once('error', reject); });
-  sock.write(JSON.stringify({ id: 0, method: 'server.info', params: {} }) + '\n');
-  const first = await new Promise<string>((resolve) => { let buf = ''; const on = (d: Buffer) => { buf += d.toString(); const i = buf.indexOf('\n'); if (i >= 0) { sock.off('data', on); resolve(buf.slice(0, i)); if (buf.length > i + 1) process.stdout.write(buf.slice(i + 1)); } }; sock.on('data', on); });
-  const url = webUrl(JSON.parse(first).result);
+/** `resume --stdio` 가 살아 있는 세션을 만나면: hello 를 낸 뒤 stdio·서비스 웹을 그 세션 소켓에 중계한다. 소유자가 아니라 세션은 그대로
+ *  (new --stdio 와 같은 모양을 카드에 준다, 2026-10-04). 중계는 serve 의 attach — core 를 띄우지 않는다 */
+async function attachStdio(log: EventLog) {
+  const client = await connectSession(log.sockPath);
+  const url = webUrl(await client.request('server.info', {}));
+  client.close();
+  const h = await serveSession({
+    dir: flags.dir, cwd: log.meta.cwd, web: false, stdio: true, attach: { id: log.meta.id, sock: log.sockPath, url }, log: err,
+    webSock: process.env.SUPERLITE_SERVICE_WEB || undefined,
+  });
   console.log(JSON.stringify({ url, id: log.meta.id, sock: log.sockPath }));
-  // 다시 붙는 쪽은 hello 를 못 본다 — server.info 로 url 을 묻는데 옛 빌드 세션은 url 이 없으므로 여기서 채운다
-  const asked = new Set<unknown>();
-  const lines = (src: NodeJS.ReadableStream, f: (l: string) => string, dst: NodeJS.WritableStream) => {
-    let buf = '';
-    src.on('data', (d: Buffer) => { buf += d.toString(); let i; while ((i = buf.indexOf('\n')) >= 0) { dst.write(f(buf.slice(0, i)) + '\n'); buf = buf.slice(i + 1); } });
-  };
-  lines(process.stdin, (l) => { try { const m = JSON.parse(l); if (m.method === 'server.info') asked.add(m.id); } catch { /* 그대로 */ } return l; }, sock);
-  lines(sock, (l) => {
-    if (!asked.size) return l;
-    try { const m = JSON.parse(l); if (asked.delete(m.id) && m.result && !m.result.url) { m.result.url = url; return JSON.stringify(m); } } catch { /* 그대로 */ }
-    return l;
-  }, process.stdout);
-  process.stdin.on('end', () => sock.end());
-  // superlite 서비스 웹 (ticket plugin-service-web) — 정적 파일은 여기서, WebSocket 마다 세션 소켓 연결 하나를 잇는다 (WS 메시지 하나 =
-  // 프레임 한 줄). 떠 있던 세션이 TCP 웹을 안 열었거나 다른 주소여도 카드 화면이 열린다
-  const webAddr = process.env.SUPERLITE_SERVICE_WEB;
-  if (webAddr) {
-    const srv = http.createServer(staticHandler);
-    new WebSocketServer({ server: srv, path: '/ws' }).on('connection', (ws) => {
-      const s = net.createConnection(log.sockPath);
-      let buf = '';
-      s.on('data', (d) => { buf += d.toString(); let i; while ((i = buf.indexOf('\n')) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 1); if (ws.readyState === ws.OPEN) ws.send(l); } });
-      ws.on('message', (d) => s.write(d.toString() + '\n'));
-      ws.on('close', () => s.end());
-      s.on('close', () => ws.close());
-      s.on('error', () => ws.close());
-      ws.on('error', () => s.destroy());
-    });
-    await listenAddr(srv, webAddr).catch((e) => console.error(`service web: ${(e as Error).message}`));
-  }
-  await new Promise<void>((resolve) => sock.on('close', resolve));
+  await h.done;
   process.exit(0);
 }
 try {

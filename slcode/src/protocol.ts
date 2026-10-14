@@ -3,13 +3,14 @@
 //   요청   {id, method, params}
 //   응답   {id, result} | {id, error: {code?, message}}
 //   이벤트 {event, params}
-// 구조 (사용자 결정 2026-09-27, ticket agent-core-split): 세션 하나 = `slcode` 프로세스 하나가 자기 안에서 쥔다.
-//   세션 소켓 sessions/<cwd 슬러그>/<id>/sock (Methods 의 session.*) — 웹 서버는 같은 메서드를 WebSocket 으로 낸다.
+// 구조 (사용자 결정 2026-09-27, ticket agent-core-split): 세션 하나 = core 프로세스 하나가 자기 안에서 쥔다.
+//   세션 소켓 sessions/<cwd 슬러그>/<id>/sock (Methods 의 session.*) — serve 가 웹·stdio 연결마다 이 소켓에 하나씩 붙어 같은 메서드를 중계한다
+//   (ticket slcode-core-serve-split, 2026-10-15). 세션의 수명은 소유자(core.own 을 보낸 연결 하나)가 정한다.
 //   우체국 post.sock 은 머신에 하나 — 세션 등록(연결 유지 = 살아 있음)·우편 보관·시그널만. 본문은 세션이 mail.fetch 로 가져간다 (폴링 없음).
 //   버전 공존: 옛 세션 프로세스와 새 세션 프로세스가 같이 뜬다. 우체국과의 계약(PostMethods·시그널)은 최소로 고정한다.
 // 이벤트 어휘는 벤더 중립 15종. 각 이벤트는 선택 필드 raw 에 벤더 원문(SDK 메시지)을 같은 봉투로 싣는다 (raw:true 일 때만).
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 /** 파일 위치 — $SLCODE_DIR, 없으면 ~/.local/state/slcode */
 export const FILES = {
@@ -17,6 +18,7 @@ export const FILES = {
   postLock: 'post.lock',
   postPid: 'post.pid',
   postLog: 'post.log',
+  coreLog: 'core.log',
   token: 'slcode.token',
   sessionsDir: 'sessions',
   mailDir: 'mail',
@@ -114,11 +116,18 @@ export type LoggedEvent = { seq: number; at: number; ev: CoreEvent };
 export type LimitWindow = { pct: number | null; resetsAt: string | null };
 
 export type Methods = {
-  /** 첫 요청. UDS 는 소켓 권한(0600)이 곧 인증이라 토큰을 보지 않는다. 웹 서버는 루프백 밖 호스트일 때 이 메서드를 자기 토큰으로 검사한다 */
-  'core.auth': { params: { token: string }; result: { ok: true; pid: number; protocol: number; session: string } };
-  /** 이 프로세스가 쥔 세션과 웹 주소 */
-  /** url 은 접속 가능한 웹 주소(토큰 포함, 0.0.0.0 은 IPv4 로 바꾼 것) — superlite 카드가 iframe 에 넣는다. --no-web 이면 null (2026-10-04) */
-  'server.info': { params: Record<string, never>; result: { session: string; cwd: string; host: string | null; port: number | null; url: string | null; version: string } };
+  /** 첫 요청. UDS 는 소켓 권한(0600)이 곧 인증이라 토큰을 보지 않는다. 루프백 밖 호스트의 웹은 serve 가 remote 를 붙여 넘기고 core 가 토큰을 검사한다.
+   *  그 전까지 serve 는 다른 요청을 막고 core 의 프레임을 넘기지 않는다 */
+  'core.auth': { params: { token?: string; remote?: boolean }; result: { ok: true; pid: number; protocol: number; session: string } };
+  /** 이 연결이 세션 소유자가 된다 (protocol 3). 살아 있는 소유자가 따로 있으면 owned, takeover 면 빼앗고 옛 소유자에게 core.owner 를 보낸다.
+   *  소유자가 session.close 없이 끊기면 core 는 SLCODE_OWNER_GRACE_SECS(기본 10초) 동안 새 소유자를 기다리고, 없으면 닫는다 (기동 직후도 같다) */
+  'core.own': { params: { pid?: number; takeover?: boolean }; result: { ok: true } };
+  /** serve 가 자기 TCP 웹 주소를 알린다 (protocol 3). 이 연결이 끊기면 지운다. url 은 core 가 토큰을 붙여 만든다 */
+  'serve.register': { params: { host: string; port: number; version: string }; result: { url: string } };
+  /** 이 core 가 쥔 세션과 웹 주소. host·port·url 은 처음 등록된 웹 serve 의 것, 없으면 null */
+  /** url 은 접속 가능한 웹 주소(토큰 포함, 0.0.0.0 은 IPv4 로 바꾼 것) — superlite 카드가 iframe 에 넣는다. --no-web 이면 null (2026-10-04).
+   *  owner 는 소유자 연결이 알린 pid, serves 는 등록된 웹 serve 들 (protocol 3) */
+  'server.info': { params: Record<string, never>; result: { session: string; cwd: string; host: string | null; port: number | null; url: string | null; version: string; owner?: number | null; serves?: { host: string; port: number; url: string; version: string }[] } };
   /** 이 연결에 세션의 이벤트 스트림을 켠다. since 뒤의 로그를 history 로, 대기 승인을 pending 으로 */
   /** draft 는 웹 입력창 초안 (session.setDraft 로 맡긴 것, 없으면 '') — 다시 붙은 웹이 비어 있는 입력창을 채운다 */
   'session.attach': { params: { id: string; since?: number }; result: { info: SessionInfo; history: LoggedEvent[]; pending: ApprovalRequest[]; draft: string } };
@@ -164,6 +173,8 @@ export type Broadcasts = {
   'session.event': { id: string } & LoggedEvent;
   'session.changed': SessionInfo;
   'session.closed': { id: string; reason: string };
+  /** 소유권을 빼앗긴 연결에만 — 새 소유자의 pid (protocol 3) */
+  'core.owner': { pid: number | null };
 };
 
 export type EventName = keyof Broadcasts;
@@ -205,6 +216,7 @@ export const ERR = {
   noSession: 'no_session',
   notLive: 'not_live',
   badRequest: 'bad_request',
+  owned: 'owned',
 } as const;
 
 export class CoreError extends Error {
