@@ -296,7 +296,7 @@ export function activate(api) {
       try {
         if (!c.unsub) c.unsub = apiOf(c).services.onMessage(SVC, (m) => onMessage(c, m), { owner: ownerOf(c) });
         c.error = null;
-        const note = (s) => { c.note = s; render(c); };
+        const note = (s) => { c.note = s; if (!c.shown) render(c); }; // 다시 붙는 중(iframe 이 떠 있다)엔 문구로 덮지 않는다 — 덮으면 iframe 이 다시 로드된다 (ticket slcode-card-occasional-reload)
         const [bin, dir] = await Promise.all([resolveBin(note, apiOf(c)), setting('dir', '')]);
         c.note = null;
         if (c.lost && !canResume(c)) return; // 받는 사이 카드가 가려졌다(옛 superlite, 다른 세션으로) — 보이게 되면 resume 이 다시 부른다
