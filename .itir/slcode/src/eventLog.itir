@@ -36,4 +36,7 @@ export class EventLog {
     role: 저장만 된 세션의 SessionInfo — state exited·live false
   }
 }
+export fn unrewound(events) -> LoggedEvent[] {
+  role: turn.rewound 가 버린 턴(그 seq 부터)을 뺀 이벤트 — 대화 되돌리기의 유지 지점과 다시 import 의 기준을 찾을 때
+}
 type SessionMeta

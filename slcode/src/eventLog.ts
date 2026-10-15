@@ -28,6 +28,13 @@ export type SessionMeta = {
   forkFrom?: string | null;
 };
 
+/** turn.rewound 가 버린 턴(그 seq 부터)을 뺀 이벤트 — 버린 턴은 벤더 쪽에도 없으므로 대화 되돌리기의 유지 지점·다시 import 의 기준에서 뺀다 */
+export function unrewound(events: readonly LoggedEvent[]): LoggedEvent[] {
+  const out: LoggedEvent[] = [];
+  for (const e of events) { if (e.ev.kind === 'turn.rewound') { const cut = e.ev.seq; while (out.length && out[out.length - 1].seq >= cut) out.pop(); } else out.push(e); }
+  return out;
+}
+
 /** 유닉스 소켓 경로 상한(sun_path 108바이트)에 여유를 둔 값 — 넘으면 listen 이 EADDRINUSE/ENAMETOOLONG 로 실패한다 (2026-10-04 실측: 워크트리 경로 슬러그) */
 const SOCK_PATH_MAX = 100;
 

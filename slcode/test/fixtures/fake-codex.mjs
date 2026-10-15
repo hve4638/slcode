@@ -1,6 +1,8 @@
 // 가짜 codex app-server — stdio JSON 줄 프로토콜의 최소 흉내 (테스트용, API 호출 없음).
-// initialize·thread/start·thread/resume·thread/fork(새 id fork-<원본>)·model/list·turn/start·turn/interrupt·thread/compact/start 에 답하고, turn/start 뒤 델타 → 명령 승인 요청 → 완료 알림을 낸다.
+// initialize·thread/start·thread/resume·thread/fork(새 id fork-<원본>)·thread/read(turns 는 FAKE_CODEX_TURNS 파일, 없으면 빈 배열)·model/list·turn/start·turn/interrupt·thread/compact/start 에 답하고,
+// turn/start 뒤 델타 → 명령 승인 요청 → 완료 알림을 낸다.
 // 본문이 auth-fail 이면 인증 실패 턴을 흉내 낸다. FAKE_CODEX_IGNORE_INTERRUPT 면 turn/interrupt 에 답하지 않는다 (느린 종료 — slcode 는 2초 기다린다)
+import fs from 'node:fs';
 import readline from 'node:readline';
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 const notify = (method, params) => out({ jsonrpc: '2.0', method, params });
@@ -20,6 +22,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     case 'initialized': return;
     case 'thread/start': case 'thread/resume': return reply({ thread: { id: m.method === 'thread/resume' ? m.params.threadId : thread.id, turns: [] }, model: m.params.model ?? 'fake-model', modelProvider: 'fake', cwd: m.params.cwd, approvalPolicy: m.params.approvalPolicy, sandbox: {}, reasoningEffort: 'medium' });
     case 'thread/fork': return reply({ thread: { id: `fork-${m.params.threadId}`, turns: [] }, model: m.params.model ?? 'fake-model', modelProvider: 'fake', cwd: m.params.cwd, approvalPolicy: m.params.approvalPolicy, sandbox: {}, reasoningEffort: 'medium' });
+    case 'thread/read': return reply({ thread: { id: m.params.threadId, turns: process.env.FAKE_CODEX_TURNS ? JSON.parse(fs.readFileSync(process.env.FAKE_CODEX_TURNS, 'utf8')) : [] } });
     case 'model/list': return reply({ data: [{ id: 'fake-model', model: 'fake-model', displayName: 'Fake 1.0', description: 'test', hidden: false, isDefault: true, supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }], defaultReasoningEffort: 'medium' }], nextCursor: null });
     case 'account/rateLimits/read': return reply({ rateLimits: { primary: { usedPercent: 3, windowDurationMins: 300, resetsAt: 1800000000 }, secondary: { usedPercent: 40, windowDurationMins: 10080, resetsAt: 1800500000 } } });
     case 'thread/compact/start': {

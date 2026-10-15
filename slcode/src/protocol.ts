@@ -92,7 +92,7 @@ export type CoreEventBody =
   | { kind: 'turn.end'; ok: boolean; error: string | null; interrupted: boolean; costUsd: number | null; durationMs: number | null; usage: Usage | null;
       /** 실패의 벤더 중립 분류 — 'auth' 는 그 머신에 로그인이 없거나 풀린 것 (웹이 로그인 안내를 붙인다). 그 밖의 실패·옛 세션은 null 또는 없음 */
       errorKind?: 'auth' | null;
-      /** 벤더 쪽 이 턴의 사용자 메시지 uuid(파일 되돌리기 기준)와 마지막 항목 uuid(대화 되돌리기의 유지 지점) */
+      /** 벤더 쪽 이 턴의 사용자 메시지 uuid(파일 되돌리기 기준)와 마지막 항목 uuid(대화 되돌리기의 유지 지점). Codex 의 uuid 는 turn id (다시 import 할 때 이어 붙일 기준) */
       userUuid?: string | null; uuid?: string | null }
   /** 되돌리기 — seq(turn.start) 부터의 턴을 버렸다. 화면은 그 seq 이후를 지운다. 로그는 그대로 쌓인다 */
   | { kind: 'turn.rewound'; seq: number; conversation: boolean; files: boolean; filesChanged: string[] | null }
@@ -101,7 +101,9 @@ export type CoreEventBody =
   | { kind: 'error'; message: string }
   /** auto 모드에서 승인 요청을 사람 대신 모델이 판단한 결과 (지금은 Codex auto_review). action 은 대상의 사람이 읽는 한 줄, risk 는 low|medium|high|critical */
   | { kind: 'review'; toolUseId: string | null; decision: 'approved' | 'denied' | 'timedOut' | 'aborted'; risk: string | null; action: string; rationale: string | null }
-  /** `slcode import` 가 첫 이벤트로 남긴다 — 그 앞 대화는 벤더 기록에만 있다. vendorSessionId 는 가져온(fork 면 원본) 세션, uuid 는 가져올 때 벤더 쪽 마지막 항목(Claude; 첫 턴 되돌림의 유지 지점) */
+  /** `slcode import` 가 벤더 기록에서 옮겨 쓴 이벤트들(모양은 실시간 것과 같다) 뒤에 남긴다. 다시 import 해서 늘어난 턴을 붙이면 또 남긴다.
+   *  vendorSessionId 는 읽어 온 세션(처음 import 면 원본이고 fork true), uuid 는 그때 벤더 쪽 마지막 지점(Claude 메시지 uuid, Codex turn id).
+   *  옛 import(2026-10-15 이전)는 seq 1 의 이것 하나뿐이고 앞 대화는 벤더 기록에만 있다 */
   | { kind: 'session.imported'; vendor: Vendor; vendorSessionId: string; uuid: string | null; fork?: boolean }
   | { kind: 'session.exit'; reason: string };
 

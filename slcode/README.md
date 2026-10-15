@@ -7,7 +7,7 @@ pnpm install && pnpm build
 slcode [--vendor --title --mode …]      # 동사 없으면 slcode new . (옵션만, 폴더는 new <folder>)
 cd /path/to/project && slcode new       # 이 프로세스가 이 폴더의 세션 하나 + 웹 서버 하나, URL 이 찍힌다. Ctrl-C 로 닫는다
 slcode resume [<s>] | continue [folder] # 닫은 세션을 이어간다. <s> 가 없으면 이 폴더의 꺼진 세션 목록, continue 는 그 폴더에서 최근에 꺼진 세션
-slcode import <벤더 세션 id> [--fork]    # Claude Code·Codex 에서 하던 세션을 이어받는다 (폴더는 벤더 기록에서, 이전 대화는 화면에 없다). --fork 는 원본을 두고 복제본으로
+slcode import <벤더 세션 id>             # Claude Code·Codex 세션을 복제해 이어받는다 (원본은 그대로, 이전 대화도 보인다). export 뒤 벤더에서 이어 간 세션이면 늘어난 턴을 붙인다
 slcode export <s>                       # 그 세션을 벤더에서 이어 갈 명령을 찍는다 (cd <폴더> && claude --resume <id> | codex resume <id>)
 slcode new --host 0.0.0.0 --port 8798   # 밖으로 열면 URL 에 토큰이 붙는다 (기본 127.0.0.1·남는 포트·토큰 없음). --no-web 은 소켓만 (--host·--port 와 같이 못 쓴다)
 slcode list [--all] | rename <s> <title> | close <s> [--force] | delete <s>

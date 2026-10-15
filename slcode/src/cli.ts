@@ -16,11 +16,12 @@ import { EventLog } from './eventLog.js';
 import { corePaths, readOrCreateToken } from './paths.js';
 import { serveSession } from './serve.js';
 import { reachable, closedSessions, closedTime, sockAlive } from './live.js';
-import { claudeLastUuid, findVendorSession, forkClaude, vendorResumeCommand } from './vendor.js';
+import { findVendorSession, forkClaude, vendorResumeCommand } from './vendor.js';
+import { pullHistory } from './history.js';
 import { randomUUID } from 'node:crypto';
 import type { ApprovalRequest, LoggedEvent, Methods, SessionInfo } from './protocol.js';
 
-type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; fork?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; help?: boolean };
+type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; help?: boolean };
 
 const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세션 id 또는 유일한 제목. * 는 세션 안(SLCODE_SESSION)에서만)
 
@@ -36,11 +37,10 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
                                  --stdio: stdin/stdout 을 프레임 연결로 (첫 줄 {"url","id","sock"}; superlite 서비스용). resume·continue 도 받는다
   resume [<s>]                   저장된 세션을 다시 띄운다. <s> 가 없으면 현재 폴더의 꺼진 세션 목록 (superlite 안이면 카드에서 고른다)
   continue [folder]              그 폴더에서 가장 최근에 꺼진 세션을 resume (없으면 새 세션)
-  import <벤더 세션 id> [--vendor claude|codex] [--title T] [--fork]
-                                 Claude Code·Codex 에서 하던 세션을 slcode 세션으로 이어받아 resume (폴더는 벤더 기록에서).
-                                 같은 벤더 세션을 이어 쓴다 — 벤더 쪽은 먼저 닫는다. 이미 가져온 세션이면 그 slcode 세션을 resume.
-                                 --fork 는 벤더 복제 기능으로 갈라 낸 새 세션으로 (원본은 그대로, 매번 새 slcode 세션).
-                                 이전 대화는 화면에 다시 그리지 않는다
+  import <벤더 세션 id> [--vendor claude|codex] [--title T]
+                                 Claude Code·Codex 세션을 복제해 slcode 세션으로 만들고 resume (원본은 그대로, 폴더는 벤더 기록에서).
+                                 이전 대화도 옮겨 보인다 (Claude 는 마지막 compact 뒤부터). 같은 원본을 다시 import 하면 또 새 복제본.
+                                 slcode 세션이 이어 쓰는 벤더 세션 id(export 뒤 벤더에서 이어 간 것)면 늘어난 턴을 그 세션에 붙인다
   export <s>                     그 세션을 벤더 하네스에서 이어 갈 명령을 출력 (cd <폴더> && claude --resume <id> | codex resume <id>)
   list [--all]                   살아 있는 세션 (--all 은 꺼진 세션까지)
   rename <s> <title> | close <s> [--force] | delete <s>
@@ -77,7 +77,7 @@ try {
     allowPositionals: true,
     options: {
       port: { type: 'string' }, host: { type: 'string' }, stdio: { type: 'boolean' }, vendor: { type: 'string' }, mode: { type: 'string' }, title: { type: 'string' },
-      since: { type: 'string' }, tail: { type: 'string' }, turn: { type: 'string' }, raw: { type: 'boolean' }, fork: { type: 'boolean' }, all: { type: 'boolean' }, force: { type: 'boolean' }, json: { type: 'boolean' },
+      since: { type: 'string' }, tail: { type: 'string' }, turn: { type: 'string' }, raw: { type: 'boolean' }, all: { type: 'boolean' }, force: { type: 'boolean' }, json: { type: 'boolean' },
       remember: { type: 'boolean' }, from: { type: 'string' }, timeout: { type: 'string' }, answer: { type: 'string' },
       'no-web': { type: 'boolean' }, web: { type: 'boolean' }, dir: { type: 'string' }, help: { type: 'boolean', short: 'h' },
     },
@@ -164,7 +164,7 @@ function render(e: LoggedEvent) {
     case 'approval.requested': console.log(`\n? ${ev.name === 'AskUserQuestion' ? 'question' : 'approval'} ${ev.requestId} ${ev.name} ${JSON.stringify(ev.input).slice(0, 200)}\n  → respond ${ev.requestId} ${ev.name === 'AskUserQuestion' ? '--answer <text>' : 'allow|deny'}`); break;
     case 'approval.resolved': console.log(`  ↳ ${ev.requestId} ${ev.decision}`); break;
     case 'review': console.log(`  ⚖ auto review ${ev.decision}${ev.risk ? ` (risk ${ev.risk})` : ''}: ${ev.action}${ev.rationale ? ` — ${ev.rationale}` : ''}`); break;
-    case 'session.imported': console.log(`\n● ${ev.fork ? 'forked' : 'imported'} ${ev.vendor} session ${ev.vendorSessionId} — earlier conversation is in ${ev.vendor}`); break;
+    case 'session.imported': console.log(`\n● imported from ${ev.vendor} session ${ev.vendorSessionId}`); break;
     case 'turn.end': console.log(`\n■ turn ${ev.ok ? 'ok' : ev.interrupted ? 'interrupted' : `error: ${ev.error}`}${ev.costUsd != null ? ` $${ev.costUsd.toFixed(4)}` : ''}`); break;
     default: console.log(`\n[${e.seq}] ${JSON.stringify(ev)}`);
   }
@@ -323,29 +323,39 @@ try {
       else await pickClosed(folderArg(undefined));
       break;
     case 'import': {
-      // 벤더 하네스의 세션을 vendorSessionId 로 든 slcode 세션 기록을 만들고 resume (ticket vendor-import, 2026-10-07)
+      // 벤더 하네스의 세션을 복제해 slcode 세션으로 (ticket vendor-import 2026-10-07 → slcode-import-history 사용자 결정 2026-10-15: 원본은 벤더에 그대로)
       const vid = rest[0];
       if (!vid) usage('import <vendor session id>');
       if (flags.vendor !== undefined && flags.vendor !== 'claude' && flags.vendor !== 'codex') usage('--vendor claude|codex');
-      const already = flags.fork ? undefined : EventLog.list(P.sessionsDir).find((m) => m.vendorSessionId === vid);
-      if (already) { err(`already imported as ${already.id}`); await resumeLog(openLog(already.id)); break; }
+      // slcode 세션이 이어 쓰는 벤더 세션(export 뒤 벤더에서 이어 간 복제본, 옛 import 의 원본)이면 복제하지 않고 늘어난 턴을 그 세션에 붙인다
+      const own = EventLog.list(P.sessionsDir).find((m) => m.vendorSessionId === vid);
+      if (own) {
+        const log = openLog(own.id);
+        if (await sockAlive(log.sockPath)) err(`session ${own.id} is live — close it, then import again to pull new ${own.vendor} turns`);
+        else {
+          const r = await pullHistory(log, vid).catch((e: Error) => { err(`warning: could not read ${own.vendor} session ${vid}: ${e.message}`); return undefined; });
+          log.close();
+          if (r === null) err(`warning: cannot tell which ${own.vendor} turns session ${own.id} already has — nothing pulled`);
+          else if (r) err(`pulled ${r.turns} turn${r.turns === 1 ? '' : 's'} from ${own.vendor} into ${own.id}${r.rewound ? ` (turns rewound in ${own.vendor} are dropped)` : ''}`);
+        }
+        await resumeLog(log);
+        break;
+      }
       const found = findVendorSession(vid, flags.vendor as 'claude' | 'codex' | undefined);
       if (!found) { err(`no ${flags.vendor ?? 'claude or codex'} session ${vid}`); process.exit(1); }
       if (!fs.existsSync(found.cwd)) { err(`session folder is gone: ${found.cwd}`); process.exit(1); }
-      // --fork: Claude 는 지금 SDK forkSession 으로 갈라 그 id 로, Codex 는 세션 프로세스의 첫 기동이 thread/fork 로 가른다 (meta.forkFrom)
-      let vsid: string | null = found.id, file: string | null = found.file;
-      if (flags.fork && found.vendor === 'claude') { vsid = await forkClaude(found.id, found.cwd); file = findVendorSession(vsid, 'claude')?.file ?? null; }
-      else if (flags.fork) { vsid = null; file = null; }
+      const prior = EventLog.list(P.sessionsDir).filter((m) => m.forkFrom === found.id).map((m) => m.id);
+      if (prior.length) err(`${found.id} was already imported as ${prior.join(', ')} — making another copy`);
+      // 복제: Claude 는 지금 SDK forkSession 으로 갈라 그 id 로, Codex 는 세션 프로세스의 첫 기동이 thread/fork 로 가른다 (meta.forkFrom, turn id 는 그대로 남는다)
+      const vsid = found.vendor === 'claude' ? await forkClaude(found.id, found.cwd) : null;
       const log = EventLog.create(P.sessionsDir, {
         id: randomUUID().slice(0, 8), vendor: found.vendor, cwd: found.cwd, title: flags.title ?? null,
-        vendorSessionId: vsid, createdAt: Date.now(), permissionMode: flags.mode ?? null, raw: flags.raw ?? false,
-        ...(flags.fork ? { forkFrom: found.id } : {}),
+        vendorSessionId: vsid, createdAt: Date.now(), permissionMode: flags.mode ?? null, raw: flags.raw ?? false, forkFrom: found.id,
       });
-      const uuid = found.vendor === 'claude' && file ? claudeLastUuid(file) : null;
-      log.append({ seq: 1, at: Date.now(), ev: { kind: 'session.imported', vendor: found.vendor, vendorSessionId: found.id, uuid, ...(flags.fork ? { fork: true } : {}) } });
+      // 이전 대화를 옮겨 쓰고 그 뒤에 표지 — 읽지 못하면 반쯤 만든 세션을 남기지 않는다
+      const r = await pullHistory(log, vsid ?? found.id, { vendorSessionId: found.id, fork: true }).catch((e: Error) => { log.close(); EventLog.remove(P.sessionsDir, log.meta.id); err(`could not read ${found.vendor} session ${found.id}: ${e.message}`); process.exit(1); });
       log.close();
-      if (flags.fork) err(`forked ${found.vendor} session ${found.id}${vsid ? ` into ${vsid}` : ''} as ${log.meta.id} (${found.cwd}) — the original is untouched`);
-      else err(`imported ${found.vendor} session ${found.id} as ${log.meta.id} (${found.cwd}) — close it in ${found.vendor} first; both at once fork the conversation`);
+      err(`imported ${found.vendor} session ${found.id} as ${log.meta.id} (${found.cwd}, ${r?.turns ?? 0} earlier turns) — a copy${vsid ? ` (${vsid})` : ''}, the original is untouched`);
       await resumeLog(log, ['raw', 'no-web', 'dir']); // --title·--mode 는 위 기록(meta)에 들어가 카드 세션에도 간다
       break;
     }

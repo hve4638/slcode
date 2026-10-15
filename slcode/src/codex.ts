@@ -5,7 +5,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import readline from 'node:readline';
 import { randomUUID } from 'node:crypto';
-import type { ApprovalDecision, ApprovalRequest, Attachment, LimitWindow } from './protocol.js';
+import type { ApprovalDecision, ApprovalRequest, Attachment, LimitWindow, TaskEvent } from './protocol.js';
 import { AgentSession, type ApproveOpts, type Command, type ContextUsage, type Limits, type ModelsResult } from './base.js';
 import type { EventLog } from './eventLog.js';
 
@@ -61,8 +61,8 @@ function policyOf(mode: string | null | undefined): { approvalPolicy: unknown; s
 }
 const sandboxModeOf = (mode: string | null | undefined) => (mode === 'acceptEdits' || mode === 'auto' ? 'workspace-write' : mode === 'bypassPermissions' ? 'danger-full-access' : 'read-only');
 
-/** ThreadItem → 도구 이름·입력 (Claude 어휘에 가깝게: 명령은 Bash, 패치는 Edit) */
-function toolOf(item: any): { name: string; input: unknown } | null {
+/** ThreadItem → 도구 이름·입력 (Claude 어휘에 가깝게: 명령은 Bash, 패치는 Edit). 실시간 알림과 가져온 기록(history.ts)이 같이 쓴다 */
+export function toolOf(item: any): { name: string; input: unknown } | null {
   switch (item?.type) {
     case 'commandExecution': return { name: 'Bash', input: { command: item.command, cwd: item.cwd } };
     case 'fileChange': return { name: 'Edit', input: { changes: (item.changes ?? []).map((c: any) => ({ path: c.path, kind: c.kind })) } };
@@ -74,7 +74,7 @@ function toolOf(item: any): { name: string; input: unknown } | null {
   }
 }
 
-function toolResult(item: any): { ok: boolean; summary: string } {
+export function toolResult(item: any): { ok: boolean; summary: string } {
   const status: string = item.status ?? 'completed';
   const ok = status === 'completed' && (item.exitCode == null || item.exitCode === 0) && item.error == null && item.success !== false;
   let summary = '';
@@ -87,13 +87,48 @@ function toolResult(item: any): { ok: boolean; summary: string } {
   return { ok, summary: String(summary ?? '').slice(0, 400) };
 }
 
+/** collabAgentToolCall(부모 쪽 서브에이전트 항목) → task 이벤트 — 끝난 알림엔 status 만 실린다 */
+export function collabTask(it: any, phase: 'started' | 'ended'): TaskEvent {
+  return { kind: 'task', phase, taskId: it.id, toolUseId: it.id, description: it.prompt ?? '', agentType: it.model ?? null, background: false, summary: null, lastTool: null, status: phase === 'ended' ? (it.status === 'failed' ? 'failed' : 'completed') : null, usage: null };
+}
+
 /** codexErrorInfo 가 인증 실패인가 — unauthorized 이거나 HTTP 401 을 실은 변형 (httpConnectionFailed 등, codex-cli 0.159 스키마) */
-function isAuthError(info: unknown): boolean {
+export function isAuthError(info: unknown): boolean {
   if (info === 'unauthorized') return true;
   return !!info && typeof info === 'object' && Object.values(info).some((v: any) => v?.httpStatusCode === 401);
 }
 
 const isoOf = (secs: number | null | undefined) => (secs ? new Date(secs * 1000).toISOString() : null);
+const INIT = { clientInfo: { name: 'slcode', title: null, version: '0' }, capabilities: { experimentalApi: true, requestAttestation: false } };
+
+/** app-server 자식 — 실행 파일은 옵션 → SLCODE_CODEX_BIN(테스트의 가짜 서버, 공백으로 인자 분리) → PATH 의 codex */
+function spawnAppServer(spec: string | undefined, cwd: string, env: NodeJS.ProcessEnv): ChildProcess {
+  const [bin, ...pre] = (spec ?? process.env.SLCODE_CODEX_BIN ?? 'codex').split(' ');
+  return spawn(bin, [...pre, ...(pre.length ? [] : ['app-server'])], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+}
+
+/** app-server 를 잠깐 띄워 thread/read(includeTurns) 로 그 thread 의 턴들을 받고 내린다 — `slcode import` 가 이전 대화를 옮길 때 (세션 프로세스와 따로) */
+export async function readThread(id: string, cwd: string): Promise<any[]> {
+  const proc = spawnAppServer(undefined, cwd, process.env);
+  const waits = new Map<number, Waiter>();
+  let n = 0;
+  const fail = (e: Error) => { for (const w of waits.values()) w.rej(e); waits.clear(); };
+  proc.on('error', fail); // PATH 에 codex 가 없다 (ENOENT)
+  proc.stdin?.on('error', () => {}); // 그때 쓴 줄의 EPIPE — 실패는 위 fail 이 알린다
+  proc.on('exit', () => fail(new Error('codex exited')));
+  proc.stderr?.resume();
+  readline.createInterface({ input: proc.stdout! }).on('line', (line) => {
+    let m: any; try { m = JSON.parse(line); } catch { return; }
+    const w = m.method === undefined ? waits.get(m.id) : undefined;
+    if (w) { waits.delete(m.id); m.error ? w.rej(new Error(m.error.message ?? JSON.stringify(m.error))) : w.res(m.result); }
+  });
+  const request = (method: string, params: unknown) => new Promise<any>((res, rej) => { waits.set(++n, { res, rej }); proc.stdin!.write(JSON.stringify({ jsonrpc: '2.0', id: n, method, params }) + '\n'); });
+  try {
+    await request('initialize', INIT);
+    proc.stdin!.write(JSON.stringify({ jsonrpc: '2.0', method: 'initialized', params: {} }) + '\n');
+    return (await request('thread/read', { threadId: id, includeTurns: true }))?.thread?.turns ?? [];
+  } finally { proc.removeAllListeners('exit'); proc.stdin?.end(); proc.kill(); }
+}
 
 export class CodexSession extends AgentSession {
   private proc: ChildProcess | null = null;
@@ -134,16 +169,13 @@ export class CodexSession extends AgentSession {
 
   // ---- 프로세스·RPC
   private async start() {
-    // 실행 파일: 옵션 → SLCODE_CODEX_BIN(테스트의 가짜 서버, 공백으로 인자 분리) → PATH 의 codex
-    const spec = this.opts.bin ?? process.env.SLCODE_CODEX_BIN ?? 'codex';
-    const [bin, ...pre] = spec.split(' ');
-    const proc = spawn(bin, [...pre, ...(pre.length ? [] : ['app-server'])], { cwd: this.cwd, env: this.opts.env ?? process.env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const proc = spawnAppServer(this.opts.bin, this.cwd, this.opts.env ?? process.env);
     this.proc = proc;
     proc.stderr?.on('data', () => {}); // 진단 출력은 버린다 (ponytail: 필요하면 파일로)
     readline.createInterface({ input: proc.stdout! }).on('line', (line) => this.onLine(line));
     proc.on('exit', (code) => { for (const w of this.waits.values()) w.rej(new Error('codex exited')); this.waits.clear(); if (!this.ended) { this.emit({ kind: 'session.exit', reason: `codex exited (${code})` }); this.emit({ kind: 'session.state', state: 'exited' }); } });
     try {
-      const init = await this.request('initialize', { clientInfo: { name: 'slcode', title: null, version: '0' }, capabilities: { experimentalApi: true, requestAttestation: false } });
+      const init = await this.request('initialize', INIT);
       this.notify('initialized', {});
       const pol = policyOf(this.mode);
       const base = { cwd: this.cwd, approvalPolicy: pol.approvalPolicy, approvalsReviewer: pol.approvalsReviewer, sandbox: sandboxModeOf(this.mode), ...(this.model ? { model: this.model } : {}) };
@@ -202,7 +234,7 @@ export class CodexSession extends AgentSession {
       case 'item/started': {
         const it = p.item; const t = toolOf(it);
         if (t) this.emit({ kind: 'tool.start', toolUseId: it.id, name: t.name, input: t.input }, r);
-        else if (it?.type === 'collabAgentToolCall') this.emit({ kind: 'task', phase: 'started', taskId: it.id, toolUseId: it.id, description: it.prompt ?? '', agentType: it.model ?? null, background: false, summary: null, lastTool: null, status: null, usage: null }, r);
+        else if (it?.type === 'collabAgentToolCall') this.emit(collabTask(it, 'started'), r);
         return;
       }
       case 'item/completed': {
@@ -210,7 +242,7 @@ export class CodexSession extends AgentSession {
         if (t) { const res = toolResult(it); this.emit({ kind: 'tool.end', toolUseId: it.id, ok: res.ok, summary: res.summary }, r); }
         else if (it?.type === 'agentMessage' && it.text && !this.streamed.has(it.id)) this.emit({ kind: 'text.delta', text: it.text }, r); // 델타 없이 완성본만 온 경우
         else if (it?.type === 'contextCompaction') { this.emit({ kind: 'context.compacted', trigger: this.compacting ? 'manual' : 'auto', preTokens: null }, r); this.compacting = false; }
-        else if (it?.type === 'collabAgentToolCall') this.emit({ kind: 'task', phase: 'ended', taskId: it.id, toolUseId: it.id, description: it.prompt ?? '', agentType: it.model ?? null, background: false, summary: null, lastTool: null, status: it.status === 'failed' ? 'failed' : 'completed', usage: null }, r);
+        else if (it?.type === 'collabAgentToolCall') this.emit(collabTask(it, 'ended'), r);
         return;
       }
       case 'thread/tokenUsage/updated': {
@@ -232,7 +264,8 @@ export class CodexSession extends AgentSession {
         const err = turn.status === 'failed' ? turn.error ?? this.turnError : null;
         this.emit({ kind: 'turn.end', ok: turn.status === 'completed', error: err ? err.message ?? 'failed' : turn.status === 'failed' ? 'failed' : null, ...(err ? { errorKind: isAuthError(err.codexErrorInfo) ? 'auth' : null } : {}),
           interrupted: turn.status === 'interrupted', costUsd: this.turnPriced ? this.costUsd : null, durationMs: turn.durationMs ?? null,
-          usage: u ? { input: u.inputTokens ?? 0, output: u.outputTokens ?? 0, cacheRead: u.cachedInputTokens ?? 0, cacheWrite: u.cacheWriteInputTokens ?? 0 } : null }, r);
+          usage: u ? { input: u.inputTokens ?? 0, output: u.outputTokens ?? 0, cacheRead: u.cachedInputTokens ?? 0, cacheWrite: u.cacheWriteInputTokens ?? 0 } : null,
+          uuid: turn.id ?? this.turnId }, r); // turn id — 다시 import 할 때 이어 붙일 기준 (history.ts)
         this.turnId = null; this.turnPriced = false; this.turnError = null;
         this.log.updateMeta({ updatedAt: Date.now() });
         if (this.state !== 'exited') this.emit({ kind: 'session.state', state: 'idle' });

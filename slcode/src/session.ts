@@ -3,8 +3,8 @@
 // 승인(canUseTool)은 Deferred 로 무기한 기다린다 — interrupt·close·프로세스 종료만 cancelled 로 푼다 (사용자 결정 2026-09-26).
 import { query, type Query, type SDKMessage, type SDKUserMessage, type PermissionResult, type PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
 import { randomUUID } from 'node:crypto';
-import type { ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, LoggedEvent, Usage, LimitWindow } from './protocol.js';
-import { EventLog } from './eventLog.js';
+import type { ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, Usage, LimitWindow } from './protocol.js';
+import { EventLog, unrewound } from './eventLog.js';
 import { AgentSession } from './base.js';
 
 /** push 와 비동기 순회를 잇는 무한 큐 — streaming input 의 프롬프트 공급원 */
@@ -45,7 +45,7 @@ export type SessionOptions = {
   env?: NodeJS.ProcessEnv;
 };
 
-function summarize(content: unknown): string {
+export function summarize(content: unknown): string {
   if (typeof content === 'string') return content.slice(0, 400);
   if (Array.isArray(content)) return content.map((c: any) => (c?.type === 'text' ? c.text : `[${c?.type}]`)).join('').slice(0, 400);
   return '';
@@ -185,12 +185,12 @@ export class ClaudeSession extends AgentSession {
   async rewind(seq: number, conversation: boolean, files: boolean): Promise<string[] | null> {
     if (this.state !== 'idle') throw new Error('rewind needs an idle session');
     // 되돌림을 반영한 로그 — 앞선 turn.rewound 가 버린 턴은 벤더 쪽에도 없으므로 유지 지점 후보에서 뺀다 (2026-09-27 실측: 버린 턴의 uuid 로 다시 열면 No message found)
-    const evs: LoggedEvent[] = [];
-    for (const e of this.log.since(0)) { if (e.ev.kind === 'turn.rewound') { const cut = e.ev.seq; while (evs.length && evs[evs.length - 1].seq >= cut) evs.pop(); } else evs.push(e); }
+    const evs = unrewound(this.log.since(0));
     const i = evs.findIndex((e) => e.seq === seq && e.ev.kind === 'turn.start');
     if (i < 0) throw new Error(`no turn at seq ${seq}`);
     const end = evs.slice(i).find((e) => e.ev.kind === 'turn.end')?.ev as Extract<CoreEvent, { kind: 'turn.end' }> | undefined;
-    const prev = evs.slice(0, i).reverse().find((e) => e.ev.kind === 'turn.end')?.ev as Extract<CoreEvent, { kind: 'turn.end' }> | undefined;
+    // 유지 지점: 앞 턴의 끝, 또는 가져온 표지(slcode import) — 표지는 가져온 턴들 뒤에 서고 uuid 는 그때 벤더 쪽 마지막 항목이다. 대상보다 앞의 것만 본다
+    const prev = evs.slice(0, i).reverse().find((e) => e.ev.kind === 'turn.end' || e.ev.kind === 'session.imported')?.ev as Extract<CoreEvent, { kind: 'turn.end' | 'session.imported' }> | undefined;
     let filesChanged: string[] | null = null;
     if (files) {
       if (!end?.userUuid || !this.q) throw new Error('no checkpoint for that turn');
@@ -199,10 +199,9 @@ export class ClaudeSession extends AgentSession {
       filesChanged = r.filesChanged ?? [];
     }
     if (conversation) {
-      // 가져온 세션(slcode import)의 첫 턴이면 가져올 때의 벤더 마지막 항목으로 — 새 벤더 세션으로 가면 가져온 대화가 사라진다
-      const imported = evs.find((e) => e.ev.kind === 'session.imported')?.ev as Extract<CoreEvent, { kind: 'session.imported' }> | undefined;
-      if (!prev && imported && !imported.uuid) throw new Error('cannot rewind before the imported conversation');
-      this.resumeAt = prev?.uuid ?? imported?.uuid ?? null;
+      // 표지에 uuid 가 없으면 새 벤더 세션으로 갈 수밖에 없다 — 가져온 대화가 사라진다
+      if (prev?.kind === 'session.imported' && !prev.uuid) throw new Error('cannot rewind before the imported conversation');
+      this.resumeAt = prev?.uuid ?? null;
       if (!this.resumeAt) this.log.updateMeta({ vendorSessionId: null });
       this.restarting = true;
       try { (this.q as any)?.return?.(); } catch {}

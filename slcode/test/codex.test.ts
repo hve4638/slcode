@@ -40,6 +40,7 @@ test('codex: initialize→thread/start→turn/start, 델타·도구·승인(acce
   assert.ok(evs.some((e) => e.kind === 'text.delta' && e.text === 'decision=acceptForSession'), 'remember → acceptForSession');
   const te = evs.find((e) => e.kind === 'tool.end'); assert.equal(te.ok, true); assert.equal(te.summary, 'ok');
   const end = evs.find((e) => e.kind === 'turn.end'); assert.equal(end.ok, true); assert.equal(end.costUsd, null); assert.equal(end.usage.output, 50);
+  assert.equal(end.uuid, 't-1', 'turn id — 다시 import 할 때 이어 붙일 기준');
   assert.equal(kinds.at(-1), 'session.state');
   const models = await c.request('session.models', { id: h.session.id });
   assert.deepEqual(models.models.map((m) => [m.value, m.displayName, m.efforts]), [['fake-model', 'Fake 1.0', ['low', 'high']]]);

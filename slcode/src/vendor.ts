@@ -56,21 +56,6 @@ function findCodex(id: string): VendorSession | null {
   return null;
 }
 
-/** Claude 기록의 마지막 대화 항목 uuid (서브에이전트 곁가지 제외) — 가져온 세션의 첫 턴 되돌림 지점. 뒤쪽 1MB 만 본다 */
-export function claudeLastUuid(file: string, max = 1 << 20): string | null {
-  const fd = fs.openSync(file, 'r');
-  try {
-    const size = fs.fstatSync(fd).size, len = Math.min(max, size);
-    const buf = Buffer.alloc(len);
-    fs.readSync(fd, buf, 0, len, size - len);
-    const lines = buf.toString('utf8').split('\n');
-    for (let i = lines.length - 1; i >= 0; i--) {
-      try { const o = JSON.parse(lines[i]); if ((o.type === 'user' || o.type === 'assistant') && !o.isSidechain && typeof o.uuid === 'string') return o.uuid; } catch {}
-    }
-    return null;
-  } finally { fs.closeSync(fd); }
-}
-
 /** 벤더 세션 id 로 기록 파일을 찾는다. vendor 를 주면 그쪽만 */
 export function findVendorSession(id: string, vendor?: Vendor): VendorSession | null {
   if (!/^[A-Za-z0-9-]+$/.test(id)) return null; // 경로 조각이 될 수 없는 id
