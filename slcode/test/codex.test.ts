@@ -73,6 +73,26 @@ test('codex: initialize→thread/start→turn/start, 델타·도구·승인(acce
   await h2.close('test'); 
 });
 
+test('codex: 인증 실패 턴 — 재시도 알림은 오류 줄로 남기지 않고, 마지막 오류는 turn.end(ok false, errorKind auth) 하나로 (ticket slcode-auth-error-shown-as-answer)', async () => {
+  process.env.SLCODE_GRACE_SECS = '1';
+  process.env.SLCODE_CODEX_BIN = `${process.execPath} ${FAKE}`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-codex-'));
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
+  const h = await serveSession({ dir, cwd: work, vendor: 'codex', web: false });
+  const c = await connectSession(h.sock);
+  try {
+    await c.request('session.attach', { id: h.session.id });
+    const evs: any[] = [];
+    const turnEnd = new Promise<void>((r) => c.onEvent((m) => { if (m.event !== 'session.event') return; const ev = (m.params as any).ev; evs.push(ev); if (ev.kind === 'turn.end') r(); }));
+    await c.request('session.send', { id: h.session.id, text: 'auth-fail' });
+    await Promise.race([turnEnd, sleep(8000).then(() => { throw new Error('turn timeout'); })]);
+    assert.deepEqual(evs.filter((e) => e.kind === 'error'), []);
+    const end = evs.find((e) => e.kind === 'turn.end');
+    assert.equal(end.ok, false); assert.equal(end.interrupted, false);
+    assert.equal(end.error, 'unexpected status 401 Unauthorized'); assert.equal(end.errorKind, 'auth');
+  } finally { c.close(); await h.close('test'); }
+});
+
 test('codex: meta.forkFrom(slcode import --fork) 이면 첫 기동이 thread/fork 로 새 thread 를 받고, 다시 띄우면 그 thread 를 resume', async () => {
   process.env.SLCODE_GRACE_SECS = '1';
   process.env.SLCODE_CODEX_BIN = `${process.execPath} ${FAKE}`;

@@ -176,6 +176,10 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 
 .acf .meta { color: var(--acf-muted); font-size: 12px; text-align: center; }
 .acf .meta.err { color: var(--acf-err); }
+/* 실패한 턴 — 피드 호출 표식(.mark.pending)과 같은 꼴, 띠만 오류색 */
+.acf .errblock { font-size: 13px; background: var(--acf-panel); border: 1px solid var(--acf-line); border-left: 3px solid var(--acf-err); border-radius: 10px; padding: 7px 12px; }
+.acf .errblock .msg { word-break: break-word; } .acf .errblock .msg b { font-weight: 600; color: var(--acf-err); }
+.acf .errblock .hint { margin-top: 4px; }
 .acf .notice { color: var(--acf-muted); font-size: 12px; border: 1px dashed var(--acf-line); border-radius: 10px; padding: 6px 12px; text-align: center; }
 
 /* 작성창 */

@@ -90,6 +90,8 @@ export type CoreEventBody =
   | ({ kind: 'approval.requested' } & ApprovalRequest)
   | { kind: 'approval.resolved'; requestId: string; decision: ResolvedDecision }
   | { kind: 'turn.end'; ok: boolean; error: string | null; interrupted: boolean; costUsd: number | null; durationMs: number | null; usage: Usage | null;
+      /** 실패의 벤더 중립 분류 — 'auth' 는 그 머신에 로그인이 없거나 풀린 것 (웹이 로그인 안내를 붙인다). 그 밖의 실패·옛 세션은 null 또는 없음 */
+      errorKind?: 'auth' | null;
       /** 벤더 쪽 이 턴의 사용자 메시지 uuid(파일 되돌리기 기준)와 마지막 항목 uuid(대화 되돌리기의 유지 지점) */
       userUuid?: string | null; uuid?: string | null }
   /** 되돌리기 — seq(turn.start) 부터의 턴을 버렸다. 화면은 그 seq 이후를 지운다. 로그는 그대로 쌓인다 */

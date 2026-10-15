@@ -72,6 +72,8 @@ export class ClaudeSession extends AgentSession {
   /** 보낸 순서대로의 사용자 메시지 uuid (우리가 정해 보낸다 — SDK 의 submitMessage options.uuid 와 같은 자리). 턴이 끝날 때 하나씩 꺼낸다 */
   private turnUuids: string[] = [];
   private lastUuid: string | null = null;
+  /** 이 턴의 벤더 오류 — 본문 assistant 메시지의 error 칸(SDKAssistantMessageError)과 그 synthetic 문구. result 때 turn.end 로 옮기고 비운다 */
+  private turnError: { code: string; text: string | null } | null = null;
 
   constructor(opts: SessionOptions) {
     super(opts.log, opts.raw);
@@ -325,6 +327,12 @@ export class ClaudeSession extends AgentSession {
         if (typeof (m as any).uuid === 'string') this.lastUuid = (m as any).uuid;
         if (typeof (m as any).user_message_uuid === 'string') this.turnUuids[0] = (m as any).user_message_uuid; // 벤더가 확정한 값이 우선
         const synthetic = (m as any).message?.model === '<synthetic>';
+        // 인증 실패·API 오류는 error 칸이 붙은 synthetic 메시지로 온다 ("Not logged in · Please run /login", 2026-10-15 실측) — 답변이 아니라 이 턴의 실패 사유다
+        if (typeof (m as any).error === 'string' && !parentOf(m).parent) {
+          const text = synthetic ? ((m as any).message.content as any[]).filter((b) => b.type === 'text').map((b) => b.text).join('') || null : null;
+          this.turnError = { code: (m as any).error, text };
+          if (synthetic) return;
+        }
         for (const b of (m as any).message.content as any[]) {
           const parent = parentOf(m);
           if (b.type === 'tool_use') this.emit({ kind: 'tool.start', toolUseId: b.id, name: b.name, input: b.input, ...parent }, raw);
@@ -343,9 +351,15 @@ export class ClaudeSession extends AgentSession {
       case 'result': {
         const r: any = m;
         const base = { costUsd: r.total_cost_usd ?? null, durationMs: r.duration_ms ?? null, usage: usageOf(r.usage), userUuid: this.turnUuids.shift() ?? null, uuid: this.lastUuid };
-        if (r.subtype === 'success') this.emit({ kind: 'turn.end', ok: true, error: null, interrupted: false, ...base }, raw);
+        const te = this.turnError; this.turnError = null;
+        // subtype 은 인증 실패에도 success 다 (is_error true, 2026-10-15 실측) — 성공은 is_error·error 칸이 둘 다 없을 때만
+        if (r.subtype === 'success' && !r.is_error && !te) this.emit({ kind: 'turn.end', ok: true, error: null, interrupted: false, ...base }, raw);
         else if (r.terminal_reason === 'aborted_streaming' || r.terminal_reason === 'aborted_tools') this.emit({ kind: 'turn.end', ok: false, error: null, interrupted: true, ...base }, raw);
-        else this.emit({ kind: 'turn.end', ok: false, error: (r.errors?.join('; ') || r.subtype) ?? 'error', interrupted: false, ...base }, raw);
+        else {
+          const error = te?.text || r.errors?.join('; ') || (typeof r.result === 'string' && r.result) || te?.code || r.subtype || 'error';
+          const errorKind = te?.code === 'authentication_failed' || r.api_error_status === 401 ? 'auth' : null;
+          this.emit({ kind: 'turn.end', ok: false, error, errorKind, interrupted: false, ...base }, raw);
+        }
         this.log.updateMeta({ updatedAt: Date.now() }); // --continue 의 최근 기준
         // 다음 턴이 큐에 있으면 CLI 가 곧 집어간다 — 그래도 경계는 idle 로 보인다
         if (this.state !== 'exited') this.emit({ kind: 'session.state', state: 'idle' });

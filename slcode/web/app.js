@@ -362,11 +362,19 @@ export function mountAgentFront(root, transport, opts = {}) {
       case 'turn.end': {
         endText();
         if (!replaying) { tally(ev); loadStatus(); }
+        // 실패한 턴은 빨간 오류 블록 — 벤더 문구, 인증 실패면 로그인 안내 한 줄. API 를 쓰지 못한 턴(통계 0)은 통계 줄을 뺀다 (ticket slcode-auth-error-shown-as-answer)
+        const failed = !ev.ok && !ev.interrupted;
+        if (failed) push(h('div', { class: 'errblock' }, h('div', { class: 'msg' }, h('b', {}, '오류'), ` · ${ev.error ?? ''}`),
+          ev.errorKind === 'auth' ? h('div', { class: 'hint' }, 'CLI 에서 로그인하세요.') : null));
+        const u = ev.usage;
         const parts = [];
-        if (ev.interrupted) parts.push('중단됨'); else if (!ev.ok) parts.push(`오류: ${ev.error}`);
-        if (ev.durationMs != null) parts.push(`${(ev.durationMs / 1000).toFixed(1)}s`);
-        if (ev.usage) parts.push(`↑${fmtTok(ev.usage.input + ev.usage.cacheRead + ev.usage.cacheWrite)} ↓${fmtTok(ev.usage.output)}`);
-        push(h('div', { class: `meta${ev.ok ? '' : ' err'}` }, parts.join(' · ')));
+        if (ev.interrupted) parts.push('중단됨');
+        if (!failed || (u && u.input + u.output + u.cacheRead + u.cacheWrite > 0)) {
+          if (ev.durationMs != null) parts.push(`${(ev.durationMs / 1000).toFixed(1)}s`);
+          if (u) parts.push(`↑${fmtTok(u.input + u.cacheRead + u.cacheWrite)} ↓${fmtTok(u.output)}`);
+          if (e.at) parts.push(new Date(e.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })); // 끝난 시각 — claude 의 "done 오후 9:14" 자리 (사용자 2026-10-15)
+        }
+        if (parts.length) push(h('div', { class: `meta${ev.interrupted ? ' err' : ''}` }, parts.join(' · ')));
         if (!replaying) renderSide();
         break;
       }

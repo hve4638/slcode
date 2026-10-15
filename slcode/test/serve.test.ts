@@ -146,6 +146,23 @@ test('root: env 에 IS_SANDBOX 가 없어도 bypass 세션이 뜬다 (slcode 가
   await s.close('test');
 });
 
+test('claude 인증 실패: 로그인 없는 HOME 의 턴은 답변(text.delta) 없이 turn.end ok false·errorKind auth 로 끝난다 — result 는 subtype success 에 is_error (ticket slcode-auth-error-shown-as-answer)', { timeout: 60000 }, async () => {
+  const { ClaudeSession } = await import('../src/session.ts');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-auth-'));
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-home-')); // 로그인 정보 없음 — API 를 부르기 전에 벤더가 실패한다
+  const log = EventLog.create(dir, { id: 'auth0001', vendor: 'claude', cwd: work, title: null, vendorSessionId: null, createdAt: Date.now(), permissionMode: null, raw: false });
+  const s = new ClaudeSession({ log, env: { HOME: home, PATH: process.env.PATH } });
+  try {
+    const ended = new Promise<any>((r) => s.onEvent((e) => { if (e.ev.kind === 'turn.end') r(e.ev); }));
+    s.send('hi');
+    const end = await ended;
+    assert.equal(end.ok, false); assert.equal(end.interrupted, false);
+    assert.match(end.error, /Not logged in/); assert.equal(end.errorKind, 'auth');
+    assert.ok(!log.all.some((e) => e.ev.kind === 'text.delta'), '오류 문구는 답변으로 내지 않는다');
+  } finally { await s.close('test'); } // 실패해도 벤더 프로세스를 내린다 — 남으면 테스트 러너가 끝나지 않는다
+});
+
 test('루프백 밖 호스트는 토큰 필수; --no-web 은 소켓만', async () => {
   const dir = isolated();
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));

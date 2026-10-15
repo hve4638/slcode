@@ -1,6 +1,6 @@
 // 가짜 codex app-server — stdio JSON 줄 프로토콜의 최소 흉내 (테스트용, API 호출 없음).
 // initialize·thread/start·thread/resume·thread/fork(새 id fork-<원본>)·model/list·turn/start·turn/interrupt·thread/compact/start 에 답하고, turn/start 뒤 델타 → 명령 승인 요청 → 완료 알림을 낸다.
-// FAKE_CODEX_IGNORE_INTERRUPT 면 turn/interrupt 에 답하지 않는다 (느린 종료 — slcode 는 2초 기다린다)
+// 본문이 auth-fail 이면 인증 실패 턴을 흉내 낸다. FAKE_CODEX_IGNORE_INTERRUPT 면 turn/interrupt 에 답하지 않는다 (느린 종료 — slcode 는 2초 기다린다)
 import readline from 'node:readline';
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 const notify = (method, params) => out({ jsonrpc: '2.0', method, params });
@@ -34,6 +34,13 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       reply({ turn: { id: 't-1', status: 'inProgress' } });
       const text = m.params.input.find((i) => i.type === 'text')?.text ?? '';
       notify('turn/started', { threadId: thread.id, turn: { id: 't-1' } });
+      if (text === 'auth-fail') { // 로그인 없는 codex 의 꼴 (codex-cli 0.159 실측 2026-10-15): 재시도 알림들 → 마지막 오류 → turn/completed failed
+        const error = (message) => ({ message, codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 401 } }, additionalDetails: null });
+        for (const n of [1, 2]) notify('error', { threadId: thread.id, turnId: 't-1', willRetry: true, error: error(`Reconnecting... ${n}/5`) });
+        notify('error', { threadId: thread.id, turnId: 't-1', willRetry: false, error: error('unexpected status 401 Unauthorized') });
+        notify('turn/completed', { threadId: thread.id, turn: { id: 't-1', status: 'failed', error: error('unexpected status 401 Unauthorized'), durationMs: 5, items: [] } });
+        return;
+      }
       notify('item/reasoning/summaryTextDelta', { threadId: thread.id, turnId: 't-1', itemId: 'rs-1', delta: 'thinking', summaryIndex: 0 });
       notify('item/agentMessage/delta', { threadId: thread.id, turnId: 't-1', itemId: 'msg-1', delta: `echo:${text.slice(0, 20)}` });
       notify('item/agentMessage/delta', { threadId: thread.id, turnId: 't-1', itemId: 'msg-1', delta: `policy=${m.params.approvalPolicy} reviewer=${m.params.approvalsReviewer} sandbox=${m.params.sandboxPolicy?.type}` });

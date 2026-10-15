@@ -87,6 +87,12 @@ function toolResult(item: any): { ok: boolean; summary: string } {
   return { ok, summary: String(summary ?? '').slice(0, 400) };
 }
 
+/** codexErrorInfo 가 인증 실패인가 — unauthorized 이거나 HTTP 401 을 실은 변형 (httpConnectionFailed 등, codex-cli 0.159 스키마) */
+function isAuthError(info: unknown): boolean {
+  if (info === 'unauthorized') return true;
+  return !!info && typeof info === 'object' && Object.values(info).some((v: any) => v?.httpStatusCode === 401);
+}
+
 const isoOf = (secs: number | null | undefined) => (secs ? new Date(secs * 1000).toISOString() : null);
 
 export class CodexSession extends AgentSession {
@@ -105,6 +111,8 @@ export class CodexSession extends AgentSession {
   // 추정 비용 — Claude 의 total_cost_usd 처럼 프로세스 누계. 이번 턴에 값을 매긴 사용량이 없으면 turn.end 는 null
   private costUsd = 0;
   private turnPriced = false;
+  /** 진행 중 턴의 마지막 error 알림(willRetry false) — turn/completed 의 turn.error 가 비었을 때의 대체 */
+  private turnError: any = null;
   private prevTotal: TokenCounts | null = null;
   private lastLimits: any = null;
   private modelList: any[] | null = null; // model/list 는 한 번만 — 목록은 세션 중 바뀌지 않는다
@@ -221,16 +229,23 @@ export class CodexSession extends AgentSession {
       case 'turn/completed': {
         const turn = p.turn ?? {};
         const u = this.lastUsage?.last;
-        this.emit({ kind: 'turn.end', ok: turn.status === 'completed', error: turn.status === 'failed' ? turn.error?.message ?? 'failed' : null, interrupted: turn.status === 'interrupted', costUsd: this.turnPriced ? this.costUsd : null, durationMs: turn.durationMs ?? null,
+        const err = turn.status === 'failed' ? turn.error ?? this.turnError : null;
+        this.emit({ kind: 'turn.end', ok: turn.status === 'completed', error: err ? err.message ?? 'failed' : turn.status === 'failed' ? 'failed' : null, ...(err ? { errorKind: isAuthError(err.codexErrorInfo) ? 'auth' : null } : {}),
+          interrupted: turn.status === 'interrupted', costUsd: this.turnPriced ? this.costUsd : null, durationMs: turn.durationMs ?? null,
           usage: u ? { input: u.inputTokens ?? 0, output: u.outputTokens ?? 0, cacheRead: u.cachedInputTokens ?? 0, cacheWrite: u.cacheWriteInputTokens ?? 0 } : null }, r);
-        this.turnId = null; this.turnPriced = false;
+        this.turnId = null; this.turnPriced = false; this.turnError = null;
         this.log.updateMeta({ updatedAt: Date.now() });
         if (this.state !== 'exited') this.emit({ kind: 'session.state', state: 'idle' });
         const next = this.queue.shift();
         if (next) void this.startTurn(next.text, next.attachments);
         return;
       }
-      case 'error': this.emit({ kind: 'error', message: p.error?.message ?? 'error' }, r); return;
+      case 'error':
+        // 재시도 중(willRetry) 알림은 오류 줄로 남기지 않는다 — 인증 실패면 "Reconnecting... N/5" 가 10줄 쌓였다 (codex-cli 0.159 실측 2026-10-15).
+        // 진행 중 턴의 마지막 오류는 turn/completed 가 같은 문구를 turn.error 로 실어 오므로 turn.end 로만 낸다
+        if (p.willRetry) return;
+        if (p.turnId && p.turnId === this.turnId) { this.turnError = p.error ?? null; return; }
+        this.emit({ kind: 'error', message: p.error?.message ?? 'error' }, r); return;
       // auto(auto_review) 의 검토 결과 — started 와 guardianWarning 은 같은 내용의 앞뒤라 버린다 (codex-cli 0.159 실측 2026-10-09)
       case 'item/autoApprovalReview/completed': {
         const a = p.action ?? {};
