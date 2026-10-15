@@ -20,8 +20,21 @@ import { corePaths, ensureDir, readOrCreateToken } from './paths.js';
 import { formatMail, parseMailHeads } from './mail.js';
 import { CoreError, ERR, PROTOCOL_VERSION, type ApprovalRequest, type LoggedEvent, type Mail, type MethodName, type Methods, type PostMethods, type RequestFrame, type SessionInfo } from './protocol.js';
 
-// SDK 자식(claude CLI)이 이 프로세스를 띄운 세션의 CLAUDE_* 를 물려받지 않게 — 워커 세션 안에서 띄우면 자식 세션 표식이 딸려 간다
-const SDK_ENV: NodeJS.ProcessEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('CLAUDE')));
+/** 벤더 자식(claude CLI·codex)에 넘기지 않을 env — 워커 Claude 세션 안에서 띄우면 그 세션의 표식(CLAUDECODE·CLAUDE_CODE_SESSION_ID·
+ *  CLAUDE_CODE_CHILD_SESSION·CLAUDE_CODE_ENTRYPOINT·CLAUDE_CODE_MESSAGING_* 등, claude 2.1.282·2.1.300 실측)이 딸려 가 자식이 남의 세션 안이라 여긴다.
+ *  사용자 설정은 남긴다 — CLAUDE_CONFIG_DIR 을 지우면 자식이 ~/.claude 를 봐 import·resume 이 "No conversation found" 로 끝났다.
+ *  gitignore 꼴: `*` 는 아무 글자, `!` 는 빼지 않는다, 마지막으로 맞은 줄이 정한다. 표식엔 규칙이 없고 버전마다 바뀌어 이 목록만 고친다 (사용자 2026-10-15) */
+export const STRIP_ENV = ['CLAUDECODE', 'CLAUDE_*', '!CLAUDE_CONFIG_DIR'];
+
+export function stripEnv(env: NodeJS.ProcessEnv, rules: string[] = STRIP_ENV): NodeJS.ProcessEnv {
+  const pats = rules.map((r) => ({ keep: r.startsWith('!'), re: new RegExp(`^${r.replace(/^!/, '').replaceAll('*', '.*')}$`) }));
+  return Object.fromEntries(Object.entries(env).filter(([k]) => {
+    let strip = false;
+    for (const p of pats) if (p.re.test(k)) strip = !p.keep;
+    return !strip;
+  }));
+}
+const SDK_ENV = stripEnv(process.env);
 /** 소유자가 close 없이 끊긴 뒤(SIGKILL·크래시) 새 소유자를 기다리는 시간 — 카드 핸드오프·serve 재기동의 틈. 빈 값·숫자 아님은 기본값 */
 const OWNER_GRACE_MS = (Number(process.env.SLCODE_OWNER_GRACE_SECS) > 0 ? Number(process.env.SLCODE_OWNER_GRACE_SECS) : 10) * 1000;
 /** 벤더 종료를 기다리는 상한 — core 는 detached 라 superlite 의 SIGKILL(서비스 중지 3초 뒤)이 닿지 않는다. 넘으면 정리하고 끝낸다 */

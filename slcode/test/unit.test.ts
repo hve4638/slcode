@@ -74,3 +74,10 @@ test('eventLog.sockPath: 세션 폴더의 sock, cwd 슬러그가 길어 소켓 �
   assert.ok(Buffer.byteLength(path.join(long.dir, 'sock')) > 100);
   assert.equal(long.sockPath, path.join(dir, '..', 'sock', 'abcd1234'));
 });
+
+test('stripEnv: 부모 Claude 세션의 표식은 빼고 사용자 설정은 남긴다, 규칙은 마지막으로 맞은 줄이 정한다', async () => {
+  const { stripEnv } = await import('../src/core.ts');
+  const env = { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 's', CLAUDE_CODE_ENTRYPOINT: 'cli', CLAUDE_EFFORT: 'high', CLAUDE_CONFIG_DIR: '/c', PATH: '/bin', CLAUDEX: 'x' };
+  assert.deepEqual(stripEnv(env), { CLAUDE_CONFIG_DIR: '/c', PATH: '/bin', CLAUDEX: 'x' });
+  assert.deepEqual(stripEnv(env, ['CLAUDE_*', '!CLAUDE_C*', 'CLAUDE_CODE_*']), { CLAUDECODE: '1', CLAUDE_CONFIG_DIR: '/c', PATH: '/bin', CLAUDEX: 'x' });
+});

@@ -50,9 +50,7 @@ jobs:
       - name: 테스트
         working-directory: slcode
         timeout-minutes: 10
-        # slcode.new 동사 테스트 하나는 건너뛴다. 동사가 카드 mount 를 기다리는데 테스트의 가짜 views.open 은 mount 하지 않아
-        # 끝나지 않고 취소된다 (앱에서는 카드가 열리며 mount 된다). major 쪽이 테스트를 고치면 --test-skip-pattern 을 지운다.
-        run: node --import tsx --test --test-skip-pattern='^slcode\.new 동사:' test/*.test.ts
+        run: pnpm test
 
       - name: zip
         run: slcode/scripts/release.sh

@@ -28,6 +28,8 @@ function homes() {
   const pd = path.join(claude, 'projects', work.replace(/[^A-Za-z0-9-]/g, '-'));
   fs.mkdirSync(pd, { recursive: true });
   fs.writeFileSync(path.join(pd, `${CID}.jsonl`), fs.readFileSync(path.join(FIX, 'claude-session.jsonl'), 'utf8').replaceAll('__CWD__', work));
+  // 세션 프로세스의 claude 가 이 홈의 설정을 읽었다는 표 — 세션이 뜨면 SessionStart 훅이 started 를 만든다 (첫 프롬프트 전에도 돈다)
+  fs.writeFileSync(path.join(claude, 'settings.json'), JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: `touch '${path.join(claude, 'started')}'` }] }] } }));
   const xd = path.join(codex, 'sessions', '2026', '10', '07');
   fs.mkdirSync(xd, { recursive: true });
   fs.writeFileSync(path.join(xd, `rollout-2026-10-07T01-02-03-${XID}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id: XID, cwd: work } }) + '\n');
@@ -87,8 +89,10 @@ test('import (claude): 복제본으로 slcode 세션 — 이전 대화가 표지
   const dir = tmp('slcode-vi-');
   const src = withEnv(env, () => findVendorSession(CID, 'claude')!.file);
   const before = fs.readFileSync(src, 'utf8');
-  const err = await importOnce(t, dir, env, [CID, '--title', 'imp']);
+  const started = path.join(env.CLAUDE_CONFIG_DIR, 'started');
+  const err = await importOnce(t, dir, env, [CID, '--title', 'imp'], () => fs.existsSync(started));
   assert.match(err, new RegExp(`imported claude session ${CID} as \\w+ \\(${work}, 2 earlier turns\\) — a copy \\([0-9a-f-]{36}\\), the original is untouched`));
+  assert.ok(fs.existsSync(started), '세션 프로세스의 claude 가 CLAUDE_CONFIG_DIR 의 설정을 읽는다 (core 가 지우지 않는다)');
 
   const [meta] = sessions(dir);
   assert.deepEqual([meta.vendor, meta.cwd, meta.forkFrom, meta.title], ['claude', work, CID, 'imp']);
@@ -99,7 +103,8 @@ test('import (claude): 복제본으로 slcode 세션 — 이전 대화가 표지
   assert.deepEqual(evs.filter((e) => e.kind === 'turn.start').map((e) => e.text), ['Create a file named hello.txt containing exactly the word hi. Then reply with one short sentence.', 'Read hello.txt and tell me its content in one word.']);
   const mark = evs.find((e) => e.kind === 'session.imported');
   assert.deepEqual([mark.vendorSessionId, mark.fork], [CID, true]);
-  // 표지 뒤의 것은 세션 프로세스가 낸 것 — 가짜 홈이라 claude 가 복제본을 못 찾고 끝난다 (core 가 CLAUDE_* env 를 지운다)
+  // 표지 뒤의 것은 세션 프로세스가 낸 것 — 같은 홈에서 복제본을 찾아 이어 받는다 (예전엔 core 가 CLAUDE_CONFIG_DIR 까지 지워 "No conversation found" 로 끝났다)
+  assert.ok(!evs.some((e) => /No conversation found/.test(e.error ?? e.message ?? '')), '세션 프로세스가 복제본을 찾는다');
   const imported = evs.slice(0, evs.indexOf(mark));
   assert.equal(imported.filter((e) => e.kind === 'turn.end').length, 2, '표지는 옮긴 대화 뒤에');
   assert.equal(mark.uuid, imported.filter((e) => e.kind === 'turn.end').at(-1).uuid, '표지의 uuid 는 복제본의 마지막 항목 (forkSession 이 uuid 를 새로 매긴다)');

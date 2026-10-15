@@ -41,7 +41,7 @@ export type SessionOptions = {
   permissionMode?: string | null;
   /** 이벤트에 SDK 원문을 raw 로 싣는다 */
   raw?: boolean;
-  /** SDK 가 부모 세션의 CLAUDE_* 를 물려받지 않게 정리된 env */
+  /** SDK 가 부모 세션의 표식을 물려받지 않게 정리된 env (core.ts STRIP_ENV) */
   env?: NodeJS.ProcessEnv;
 };
 

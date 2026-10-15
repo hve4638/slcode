@@ -194,15 +194,26 @@ test('slcode.resume 동사: --id 는 그 세션 카드를 요청자 deck 에 열
   } finally { restore(); plugin.deactivate(); }
 });
 
-// ---- 셸 동사 slcode.new (ticket slcode-bare-new) — 가짜 서비스가 hello 를 보내고 session.attach 에 답한다
+// ---- 셸 동사 slcode.new (ticket slcode-bare-new) — 가짜 서비스가 hello 를 보내고 session.attach 에 답한다. 동사는 카드가 mount 된 뒤에
+// 서비스를 띄우므로 가짜 views.open 이 앱처럼 새 key 의 카드를 뒤이어 mount 한다 (뷰가 쓰는 DOM 은 최소한의 가짜)
 test('slcode.new 동사: 요청자 터미널 옆(near)에 카드를 열고, 폴더·옵션으로 서비스를 띄워 세션 id 를 돌려준다', async () => {
-  const verbs: Record<string, any> = {}; const opened: any[] = []; const started: any[] = [];
+  const verbs: Record<string, any> = {}; const opened: any[] = []; const started: any[] = []; const views: Record<string, any> = {};
   let cb: ((m: unknown) => void) | null = null;
   const files: Record<string, string> = { 'plugin.json': PLUGIN_JSON, 'bin/linux-x64/manifest.json': mf('0.1.0') };
   const { api } = fakeApi(files);
+  const el = (): any => ({ style: {}, appendChild: () => {}, addEventListener: () => {} });
+  const g = globalThis as any;
+  g.document = { createElement: el };
+  g.IntersectionObserver = class { observe() {} disconnect() {} };
   Object.assign(api, {
     verbs: { register: (d: any) => { verbs[d.name] = d; } },
-    views: { register: () => {}, open: (...a: any[]) => opened.push(a) },
+    views: {
+      register: (id: string, d: any) => { views[id] = d; },
+      open: (...a: any[]) => {
+        opened.push(a);
+        if (a[1]?.key) setTimeout(() => views[a[0]].mount(el(), { state: a[1], card: `card-${a[1].key}`, setState: () => {}, setTitle: () => {}, setBadge: () => {} }));
+      },
+    },
     services: {
       onMessage: (_id: string, f: (m: unknown) => void) => { cb = f; return () => {}; },
       open: async (_id: string, o: any) => { started.push(o); queueMicrotask(() => cb?.({ url: null, id: 'sess-9', sock: '/s' })); return { onClose: () => () => {}, webUrl: async () => '/svc/x/', close: async () => {} }; },
@@ -222,6 +233,6 @@ test('slcode.new 동사: 요청자 터미널 옆(near)에 카드를 열고, 폴�
     assert.equal(def, 'sess-9');
     assert.equal(opened[2][2].near, undefined, 'tmux 없는 요청자는 near 없이');
     assert.match(started[1].command, / new '\/home\/me' --stdio/, '폴더 기본값은 요청자 cwd');
-  } finally { restore(); plugin.deactivate(); }
+  } finally { restore(); plugin.deactivate(); delete g.document; delete g.IntersectionObserver; }
 });
 
