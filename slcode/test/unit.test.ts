@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { acquireLock, releaseLock, readPid } from '../src/lock.ts';
 import { EventLog } from '../src/eventLog.ts';
+import type { LoggedEvent } from '../src/protocol.ts';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-'));
 
@@ -80,4 +81,68 @@ test('stripEnv: 부모 Claude 세션의 표식은 빼고 사용자 설정은 남
   const env = { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 's', CLAUDE_CODE_ENTRYPOINT: 'cli', CLAUDE_EFFORT: 'high', CLAUDE_CONFIG_DIR: '/c', PATH: '/bin', CLAUDEX: 'x' };
   assert.deepEqual(stripEnv(env), { CLAUDE_CONFIG_DIR: '/c', PATH: '/bin', CLAUDEX: 'x' });
   assert.deepEqual(stripEnv(env, ['CLAUDE_*', '!CLAUDE_C*', 'CLAUDE_CODE_*']), { CLAUDECODE: '1', CLAUDE_CONFIG_DIR: '/c', PATH: '/bin', CLAUDEX: 'x' });
+});
+
+test('historyPage·summarize: 되돌린 턴을 빼고 화면 항목(delta 묶음) 기준으로 열린 도구가 없는 turn.start 에서 자른다, 합계는 기록 전체 (ticket slcode-history-paging)', async () => {
+  const { historyPage, summarize, visible } = await import('../src/eventLog.ts');
+  const evs: LoggedEvent[] = [];
+  const add = (ev: any) => evs.push({ seq: evs.length + 1, at: 0, ev });
+  const turn = (text: string, deltas: number, cost: number) => {
+    add({ kind: 'turn.start', text, origin: null });
+    for (let i = 0; i < deltas; i++) add({ kind: 'text.delta', text: 'x' }); // 화면 항목 하나
+    add({ kind: 'hook', event: 'Stop', phase: 'response', ok: true });
+    add({ kind: 'turn.end', ok: true, error: null, interrupted: false, costUsd: cost, durationMs: 1, usage: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4 } });
+  };
+  add({ kind: 'session.ready', model: 'm1', tools: [] });
+  turn('a', 50, 0.1); turn('b', 50, 0.3);
+  // c 턴에서 시작한 도구가 d 턴(작업 중 보낸 메시지) 뒤에 끝난다 — d 의 turn.start 는 자름 지점이 아니다
+  add({ kind: 'turn.start', text: 'c', origin: null }); const cSeq = evs.length;
+  add({ kind: 'tool.start', toolUseId: 't1', name: 'Bash', input: {} });
+  add({ kind: 'turn.start', text: 'd', origin: null }); const dSeq = evs.length;
+  add({ kind: 'tool.end', toolUseId: 't1', ok: true, summary: '' });
+  add({ kind: 'turn.end', ok: true, error: null, interrupted: false, costUsd: 0.05, durationMs: 1, usage: null }); // 벤더 재기동 — 누계가 줄었다
+  // e 턴은 되돌렸다
+  add({ kind: 'turn.start', text: 'e', origin: null }); const eSeq = evs.length;
+  add({ kind: 'text.delta', text: 'gone' });
+  add({ kind: 'session.ready', model: 'm2', tools: [] });
+  add({ kind: 'turn.end', ok: true, error: null, interrupted: false, costUsd: 0.07, durationMs: 1, usage: null });
+  add({ kind: 'turn.rewound', seq: eSeq, conversation: true, files: false, filesChanged: null });
+  turn('f', 3, 0.08);
+
+  assert.ok(!visible(evs).some((e) => e.seq >= eSeq && e.seq < eSeq + 4), '되돌린 턴은 빠진다');
+  const all = historyPage(evs, Infinity, 1e9);
+  assert.equal(all.more, false); assert.equal(all.history[0].seq, 1);
+  // 끝에서 5개 안에 자름 지점(f)이 있다 → f 부터
+  const p1 = historyPage(evs, Infinity, 5);
+  assert.equal((p1.history[0].ev as any).text, 'f'); assert.equal(p1.more, true);
+  // 그 앞 — d 는 열린 도구 때문에 자름 지점이 아니라 c 에서 자른다
+  const p2 = historyPage(evs, p1.history[0].seq, 5);
+  assert.equal(p2.history[0].seq, cSeq); assert.ok(p2.history.some((e) => e.seq === dSeq)); assert.equal(p2.history.at(-1)!.seq < p1.history[0].seq, true);
+  assert.ok(p2.history.some((e) => e.ev.kind === 'turn.rewound'), '되돌림 표지는 남는다 (파일 되돌림 안내)');
+  // delta 50개는 한 항목 — 턴 하나가 4항목(시작·글·훅·끝). limit 3 이면 b 안에 자름 지점이 없어 그 너머 첫 지점 b, limit 5 도 b
+  assert.equal((historyPage(evs, cSeq, 3).history[0].ev as any).text, 'b');
+  const p3 = historyPage(evs, cSeq, 5);
+  assert.equal((p3.history[0].ev as any).text, 'b'); assert.equal(p3.more, true);
+  // 처음까지(9항목) limit 안이면 전부 — 첫 턴 앞의 session.ready 만 남은 페이지를 따로 받지 않는다
+  const p4 = historyPage(evs, cSeq, 10);
+  assert.equal(p4.history[0].seq, 1); assert.equal(p4.more, false);
+
+  const s = summarize(evs);
+  assert.equal(s.turns, 5, '되돌린 턴도 센다');
+  assert.deepEqual(s.usage, { input: 3, output: 6, cacheRead: 9, cacheWrite: 12 });
+  assert.ok(Math.abs(s.costUsd! - (0.3 + 0.08)) < 1e-9, `0.3 다음에 줄었으니 기준선 0.3 + 재기동 뒤 누계 0.08 (${s.costUsd})`);
+  assert.equal(s.lastCostUsd, 0.08);
+  assert.equal(s.hooks, 3); assert.equal(s.lastHook, 'Stop response');
+  assert.equal((s.ready as any).model, 'm2', '마지막 session.ready — 되돌린 턴 안의 것이라도');
+});
+
+test('historyPage: 끝 이벤트 없이 세션이 끝난 도구는 session.exit 뒤의 자름 지점을 막지 않는다', async () => {
+  const { historyPage } = await import('../src/eventLog.ts');
+  const evs: LoggedEvent[] = [];
+  const add = (ev: any) => evs.push({ seq: evs.length + 1, at: 0, ev });
+  add({ kind: 'turn.start', text: 'a', origin: null }); add({ kind: 'tool.start', toolUseId: 'lost', name: 'Bash', input: {} });
+  add({ kind: 'session.exit', reason: 'crash' });
+  for (const t of ['b', 'c']) { add({ kind: 'turn.start', text: t, origin: null }); add({ kind: 'turn.end', ok: true, error: null, interrupted: false, costUsd: null, durationMs: 1, usage: null }); }
+  const p = historyPage(evs, Infinity, 1);
+  assert.equal((p.history[0].ev as any).text, 'c'); assert.equal(p.more, true);
 });

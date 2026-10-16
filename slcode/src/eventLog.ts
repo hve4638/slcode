@@ -4,7 +4,7 @@
 // 옛 평탄 구조 sessions/<id>/ 는 migrate 가 슬러그 아래로 옮긴다 (2026-09-27 이전 세션).
 import fs from 'node:fs';
 import path from 'node:path';
-import type { LoggedEvent, SessionInfo, Vendor } from './protocol.js';
+import type { HistorySummary, LoggedEvent, SessionInfo, Vendor } from './protocol.js';
 import { cwdSlug, sessionDir } from './paths.js';
 
 export type SessionMeta = {
@@ -33,6 +33,58 @@ export function unrewound(events: readonly LoggedEvent[]): LoggedEvent[] {
   const out: LoggedEvent[] = [];
   for (const e of events) { if (e.ev.kind === 'turn.rewound') { const cut = e.ev.seq; while (out.length && out[out.length - 1].seq >= cut) out.pop(); } else out.push(e); }
   return out;
+}
+
+/** 화면에 남는 이벤트 — 되돌린 턴을 빼되 끝 이벤트는 남긴다 (앞 턴의 도구·승인 카드를 닫는다). 웹 replayHistory 와 같은 규칙 */
+export function visible(events: readonly LoggedEvent[]): LoggedEvent[] {
+  let out: LoggedEvent[] = [];
+  for (const e of events) {
+    if (e.ev.kind === 'turn.rewound') { const cut = e.ev.seq; out = out.filter((x) => x.seq < cut || x.ev.kind === 'tool.end' || x.ev.kind === 'approval.resolved'); }
+    out.push(e);
+  }
+  return out;
+}
+
+/** 기록 한 페이지 (ticket slcode-history-paging) — seq before 앞에서 끝부터 화면 항목 limit 개 안의 가장 앞 자름 지점, 없으면 그 너머 첫 지점.
+ *  화면 항목은 웹이 그리는 단위라 이어진 같은 범위의 delta 는 하나로 센다. 자름 지점은 열린 도구·승인·작업이 없는 turn.start (웹 pickCut 과 같다) */
+export function historyPage(events: readonly LoggedEvent[], before: number, limit: number): { history: LoggedEvent[]; more: boolean } {
+  const vis = visible(events);
+  const cuts = new Set<number>(), open = new Set<string>();
+  for (const { seq, ev } of vis) {
+    if (ev.kind === 'turn.start' && !open.size) cuts.add(seq);
+    else if (ev.kind === 'session.exit') open.clear(); // 벤더가 끝났다 — 그 전의 도구·작업은 끝 이벤트가 오지 않는다 (남으면 그 뒤로 못 자른다)
+    else if (ev.kind === 'tool.start') open.add(ev.toolUseId);
+    else if (ev.kind === 'tool.end') open.delete(ev.toolUseId);
+    else if (ev.kind === 'approval.requested') open.add(ev.requestId);
+    else if (ev.kind === 'approval.resolved') open.delete(ev.requestId);
+    else if (ev.kind === 'task') { if (ev.phase === 'ended') open.delete(ev.taskId); else open.add(ev.taskId); }
+  }
+  let end = vis.length;
+  while (end > 0 && vis[end - 1].seq >= before) end--;
+  const isDelta = (k: string) => k === 'text.delta' || k === 'thinking.delta';
+  let cut = 0, found = 0;
+  for (let i = end - 1, n = 0; i >= 0; i--) {
+    const e = vis[i].ev, p = vis[i - 1]?.ev;
+    if (!(isDelta(e.kind) && p && p.kind === e.kind && (p as { parent?: string }).parent === (e as { parent?: string }).parent)) n++;
+    if (cuts.has(vis[i].seq)) found = i;
+    if (n >= limit && found) { cut = found; break; } // 처음까지 limit 안에 들면 전부 — 첫 턴 앞 몇 줄만 남은 페이지를 따로 받지 않게
+  }
+  return { history: vis.slice(cut, end), more: cut > 0 };
+}
+
+/** 기록 전체의 합계 — 되돌린 턴도 센다. SDK 비용은 프로세스 누계라 --resume 뒤 0 부터 다시 시작한다: 줄어드는 경계에서 기준선에 합친다 (웹 tally 와 같다) */
+export function summarize(events: readonly LoggedEvent[]): HistorySummary {
+  const s: HistorySummary = { turns: 0, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, costUsd: null, lastCostUsd: null, hooks: 0, lastHook: null, ready: null };
+  let costBase = 0, costLast = 0;
+  for (const { ev } of events) {
+    if (ev.kind === 'turn.end') {
+      s.turns++;
+      if (ev.usage) { s.usage.input += ev.usage.input; s.usage.output += ev.usage.output; s.usage.cacheRead += ev.usage.cacheRead; s.usage.cacheWrite += ev.usage.cacheWrite; }
+      if (ev.costUsd != null) { if (ev.costUsd < costLast) costBase += costLast; costLast = ev.costUsd; s.costUsd = costBase + costLast; s.lastCostUsd = costLast; }
+    } else if (ev.kind === 'hook') { s.hooks++; s.lastHook = `${ev.event} ${ev.phase}`; }
+    else if (ev.kind === 'session.ready') { const { raw: _raw, ...ready } = ev; s.ready = ready; }
+  }
+  return s;
 }
 
 /** 유닉스 소켓 경로 상한(sun_path 108바이트)에 여유를 둔 값 — 넘으면 listen 이 EADDRINUSE/ENAMETOOLONG 로 실패한다 (2026-10-04 실측: 워크트리 경로 슬러그) */

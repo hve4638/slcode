@@ -13,7 +13,7 @@ import { execFile } from 'node:child_process';
 import { ClaudeSession } from './session.js';
 import { CodexSession } from './codex.js';
 import type { AgentSession } from './base.js';
-import { EventLog, type SessionMeta } from './eventLog.js';
+import { EventLog, historyPage, summarize, type SessionMeta } from './eventLog.js';
 import { isLoopback, reachable, sockAlive } from './live.js';
 import { connectPost, VERSION, type RpcClient } from './client.js';
 import { corePaths, ensureDir, readOrCreateToken } from './paths.js';
@@ -124,9 +124,14 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     'session.attach': (conn, p) => {
       const s = mine(p?.id);
       conn.detach?.();
-      const history = s.since(Number(p.since ?? 0));
+      // limit 이면 끝 한 페이지와 합계 (ticket slcode-history-paging) — 구독과 같은 틱이라 페이지와 실시간 사이에 빠지는 이벤트가 없다
+      const page = p.limit ? { ...historyPage(s.log.all, Infinity, Number(p.limit)), summary: summarize(s.log.all) } : { history: s.since(Number(p.since ?? 0)) };
       conn.detach = s.onEvent((e: LoggedEvent) => conn.send({ event: 'session.event', params: { id: sid, ...e } }));
-      return { info: s.info(), history, pending: s.pendingApprovals() as ApprovalRequest[], draft };
+      return { info: s.info(), ...page, pending: s.pendingApprovals() as ApprovalRequest[], draft };
+    },
+    'session.history': (_c, p) => {
+      if (typeof p?.before !== 'number' || !(p.limit > 0)) throw new CoreError(ERR.badRequest, 'before and limit required');
+      return historyPage(mine(p.id).log.all, p.before, p.limit);
     },
     'session.detach': (conn, p) => { mine(p?.id); conn.detach?.(); conn.detach = null; return { ok: true }; },
     'session.send': (_c, p) => {

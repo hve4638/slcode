@@ -157,3 +157,28 @@ test('codex: 비용은 가격표로 추정한 누계 — 표에 없는 모델은
   c.close();
   await h.close('test');
 });
+
+test('core: session.attach limit 은 끝 한 페이지·more·summary, session.history 는 그 앞 페이지, limit 없으면 지금처럼 전체 (ticket slcode-history-paging)', async () => {
+  process.env.SLCODE_GRACE_SECS = '1';
+  process.env.SLCODE_CODEX_BIN = `${process.execPath} ${FAKE}`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-codex-'));
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
+  const log = EventLog.create(corePaths(dir).sessionsDir, { id: 'pppp0001', vendor: 'codex', cwd: work, title: null, vendorSessionId: 'thr-1', createdAt: 1, permissionMode: null, raw: false });
+  let seq = 0;
+  for (let t = 0; t < 30; t++) for (const ev of [{ kind: 'turn.start', text: `t${t}`, origin: null }, { kind: 'text.delta', text: 'a' }, { kind: 'text.delta', text: 'b' },
+    { kind: 'turn.end', ok: true, error: null, interrupted: false, costUsd: 0.01 * (t + 1), durationMs: 1, usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 } }]) log.append({ seq: ++seq, at: 0, ev: ev as any });
+  log.close();
+  const h = await serveSession({ dir, cwd: work, resume: 'pppp0001', web: false });
+  const c = await connectSession(h.sock);
+  try {
+    const a = await c.request('session.attach', { id: h.session.id, limit: 10 });
+    assert.equal(a.more, true);
+    assert.equal(a.history[0].ev.kind, 'turn.start'); assert.match((a.history[0].ev as any).text, /^t2[6-9]$/, '턴당 3항목(delta 묶음) — 끝에서 10항목 안팎 (재개 때 붙는 상태 이벤트도 센다)');
+    assert.equal(a.summary!.turns, 30); assert.ok(Math.abs(a.summary!.costUsd! - 0.3) < 1e-9); assert.equal(a.summary!.usage.input, 30);
+    const older = await c.request('session.history', { id: h.session.id, before: a.history[0].seq, limit: 1000 });
+    assert.equal(older.more, false); assert.equal(older.history[0].seq, 1); assert.equal(older.history.at(-1)!.seq, a.history[0].seq - 1);
+    const full = await c.request('session.attach', { id: h.session.id });
+    assert.equal(full.summary, undefined); assert.equal(full.more, undefined); assert.equal(full.history[0].seq, 1, 'limit 없으면 지금처럼 since 뒤 전체');
+    await assert.rejects(c.request('session.history', { id: h.session.id } as any), /before and limit/);
+  } finally { c.close(); await h.close('test'); }
+});

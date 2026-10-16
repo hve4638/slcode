@@ -57,6 +57,11 @@ export type Attachment = { name: string; mediaType: string; data: string };
 
 export type Usage = { input: number; output: number; cacheRead: number; cacheWrite: number };
 
+/** 기록 전체의 합계 — 페이지로 받는 웹이 앞 기록 없이 사이드바·비용을 그린다 (ticket slcode-history-paging). 되돌린 턴도 센다.
+ *  costUsd 는 비용 합계(turn.end 에 비용이 하나도 없으면 null), lastCostUsd 는 마지막 turn.end 의 costUsd — SDK 비용은 프로세스 누계라
+ *  다음 turn.end 가 이보다 작으면 벤더가 새로 떴고 합계에 이어 붙인다. ready 는 마지막 session.ready 본문 */
+export type HistorySummary = { turns: number; usage: Usage; costUsd: number | null; lastCostUsd: number | null; hooks: number; lastHook: string | null; ready: Extract<CoreEventBody, { kind: 'session.ready' }> | null };
+
 export type ApprovalDecision = 'allow' | 'deny';
 export type ResolvedDecision = ApprovalDecision | 'cancelled';
 
@@ -146,7 +151,11 @@ export type Methods = {
   'server.info': { params: Record<string, never>; result: { session: string; cwd: string; host: string | null; port: number | null; url: string | null; version: string; owner?: number | null; serves?: { host: string; port: number; url: string; version: string }[] } };
   /** 이 연결에 세션의 이벤트 스트림을 켠다. since 뒤의 로그를 history 로, 대기 승인을 pending 으로 */
   /** draft 는 웹 입력창 초안 (session.setDraft 로 맡긴 것, 없으면 '') — 다시 붙은 웹이 비어 있는 입력창을 채운다 */
-  'session.attach': { params: { id: string; since?: number }; result: { info: SessionInfo; history: LoggedEvent[]; pending: ApprovalRequest[]; draft: string } };
+  /** limit 이 있으면 history 는 끝 한 페이지(되돌린 턴을 빼고 화면 항목 limit 개 안팎, 열린 도구·승인·작업이 없는 turn.start 에서 자른 것)이고 more·summary 가 붙는다 — since 는 보지 않는다.
+   *  옛 core 는 limit 을 모르고 전체를 보낸다 (summary 없음) (ticket slcode-history-paging, 2026-10-17) */
+  'session.attach': { params: { id: string; since?: number; limit?: number }; result: { info: SessionInfo; history: LoggedEvent[]; pending: ApprovalRequest[]; draft: string; more?: boolean; summary?: HistorySummary } };
+  /** seq before 앞의 한 페이지 (attach limit 과 같은 규칙). more 는 그 앞이 더 있는가 */
+  'session.history': { params: { id: string; before: number; limit: number }; result: { history: LoggedEvent[]; more: boolean } };
   'session.detach': { params: { id: string }; result: { ok: true } };
   /** idle·running 가리지 않고 큐에 넣는다 — 한 호출. origin 은 발신자 표식 (우편으로 들어온 턴은 'mail') */
   'session.send': { params: { id: string; text: string; origin?: string; attachments?: Attachment[] }; result: { ok: true; state: SessionState } };

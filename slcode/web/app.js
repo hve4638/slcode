@@ -378,7 +378,7 @@ export function mountAgentFront(root, transport, opts = {}) {
       case 'approval.resolved': resolveCard(ev.requestId, ev.decision); break;
       case 'turn.end': {
         endText();
-        if (!replaying) { tally(ev); loadStatus(); }
+        if (live) { tally(ev); loadStatus(); } // 기록의 턴은 replayHistory 가 센다 — 열 때 턴마다 status 를 부르지 않게
         // 실패한 턴은 빨간 오류 블록 — 벤더 문구, 인증 실패면 로그인 안내 한 줄. API 를 쓰지 못한 턴(통계 0)은 통계 줄을 뺀다 (ticket slcode-auth-error-shown-as-answer)
         const failed = !ev.ok && !ev.interrupted;
         if (failed) push(h('div', { class: 'errblock' }, h('div', { class: 'msg' }, h('b', {}, '오류'), ` · ${ev.error ?? ''}`),
@@ -399,7 +399,7 @@ export function mountAgentFront(root, transport, opts = {}) {
       case 'session.ready': ready = ev; renderMode(); renderSide(); break;
       case 'session.imported': push(h('div', { class: 'notice' }, `imported from ${ev.vendor} (${ev.vendorSessionId.slice(0, 8)})`)); break; // 표지는 옮겨 온 대화 뒤에 선다 (사용자 2026-10-15: 짧게)
       case 'context.compacted': endText(); push(h('div', { class: 'notice' }, `컨텍스트 압축${ev.preTokens ? ` · ${fmtTok(ev.preTokens)}` : ''}`)); break;
-      case 'hook': if (!replaying) { hooks++; lastHook = `${ev.event} ${ev.phase}`; } break;
+      case 'hook': if (live) { hooks++; lastHook = `${ev.event} ${ev.phase}`; } break;
       case 'error': endText(); push(h('div', { class: 'meta err' }, ev.message)); break;
       case 'review': {
         endText();
@@ -637,8 +637,12 @@ export function mountAgentFront(root, transport, opts = {}) {
 
   // ---- 이력: 마지막 몇 턴만 먼저 그리고, 위로 올리면 앞 턴을 붙인다 (사용자 2026-10-04, 이력 2759건에 1.2s)
   // 옛 턴은 화면만 만든다 — 사용량·훅·상태는 미리 센다. 연속된 delta 는 한 조각으로 합친다 (조각마다 마크다운 전체를 다시 그렸다)
+  // 기록은 서버에서 페이지로 받는다 (ticket slcode-history-paging, 사용자 2026-10-17): 처음엔 끝 PAGE 개(그릴 것 + 버퍼), 그 뒤로는 미리 받은 버퍼가
+  // 화면 두 번 분량 아래로 줄면 그 앞 페이지를 받아 둔다. 합계는 서버 요약으로. 옛 core 는 limit 을 모르고 전체를 보낸다 (summary 없음)
   const CHUNK = 300; // ponytail: 이벤트 수로 자른다, 턴 하나가 아주 길면 그 턴은 통째로
+  const PAGE = CHUNK * 2;
   let backlog = [];
+  let more = false, oldest = 0, fetching = false; // more: 서버에 앞 기록이 더 있다, oldest: 받은 것 중 가장 앞 seq
   // 끝에서 CHUNK 개 안의 가장 앞 자름 지점, 없으면 그 너머의 첫 지점, 그것도 없으면 전부
   function pickCut(a) {
     let cut = 0;
@@ -646,7 +650,8 @@ export function mountAgentFront(root, transport, opts = {}) {
     return cut;
   }
   const cuts = new Set(); // 자를 수 있는 turn.start 의 seq — 열린 도구·승인·서브에이전트가 없을 때만 (작업 중에 보낸 메시지는 앞 턴 카드를 이어 쓴다)
-  function replayHistory(history) {
+  // 받은 기록(전체 또는 자름 지점에서 시작하는 한 페이지)을 그릴 단위로 — 되돌린 턴을 빼고 delta 를 합치고 자름 지점을 모은다
+  function prepare(history) {
     const evs = [];
     let exited = false; // 종료 뒤의 오류는 같이 죽은 벤더의 종료 코드(exit 143) — 옛 기록에 남아 있어 뺀다 (사용자 2026-10-11)
     for (const e of history) {
@@ -661,22 +666,32 @@ export function mountAgentFront(root, transport, opts = {}) {
     const open = new Set();
     for (const { seq, ev } of evs) {
       if (ev.kind === 'turn.start' && !open.size) cuts.add(seq);
+      else if (ev.kind === 'session.exit') open.clear(); // 서버 historyPage 와 같은 규칙
       else if (ev.kind === 'tool.start') open.add(ev.toolUseId);
       else if (ev.kind === 'tool.end') open.delete(ev.toolUseId);
       else if (ev.kind === 'approval.requested') open.add(ev.requestId);
       else if (ev.kind === 'approval.resolved') open.delete(ev.requestId);
       else if (ev.kind === 'task') open[ev.phase === 'ended' ? 'delete' : 'add'](ev.taskId);
     }
+    return evs;
+  }
+  function replayHistory(history, summary) {
+    const evs = prepare(history);
     const cut = lastSeq ? 0 : pickCut(evs); // 재접속(since)이면 새 것만 오므로 전부 그린다
     backlog = backlog.concat(evs.slice(0, cut));
-    const shown = new Set(evs.slice(cut).map((e) => e.seq)); // 되돌려져 안 그리는 턴도 사용량엔 든다
-    for (const e of history) {
-      if (shown.has(e.seq)) continue;
+    if (!summary) for (const e of history) { // 되돌려져 안 그리는 턴도 사용량엔 든다
       if (e.ev.kind === 'turn.end') tally(e.ev);
       else if (e.ev.kind === 'hook') { hooks++; lastHook = `${e.ev.event} ${e.ev.phase}`; }
       else if (e.ev.kind === 'session.ready') { ready = e.ev; }
     }
     for (const e of evs.slice(cut)) render(e);
+    if (summary) { // 서버가 센 기록 전체 — 그린 페이지의 session.ready 보다 뒤의 것(되돌린 턴 안)일 수 있어 그린 뒤에
+      const u = summary.usage;
+      Object.assign(usage, { turns: summary.turns, input: u.input, output: u.output, cacheRead: u.cacheRead, cacheWrite: u.cacheWrite, cost: summary.costUsd ?? 0 });
+      costKnown = summary.costUsd != null; costLast = summary.lastCostUsd ?? 0; costBase = (summary.costUsd ?? 0) - costLast;
+      hooks = summary.hooks; lastHook = summary.lastHook ?? '';
+      if (summary.ready) ready = summary.ready;
+    }
     lastSeq = Math.max(lastSeq, history.at(-1)?.seq ?? 0);
     if (follow) jump(feed.scrollHeight);
     rearm();
@@ -693,7 +708,19 @@ export function mountAgentFront(root, transport, opts = {}) {
     finally { replaying = false; col = liveCol; main = saved; }
     older.prepend(...box.children);
     jump(feed.scrollTop + feed.scrollHeight - h0); // 보던 자리 유지
-    renderSide(); rearm();
+    renderSide(); rearm(); prefetch();
+  }
+  // 버퍼가 화면 두 번 분량 아래면 그 앞 페이지를 받아 둔다 — 위로 올리는 동안 기다리지 않게. 받은 뒤 표지가 보이고 있으면 rearm 이 바로 붙인다
+  async function prefetch() {
+    if (!more || fetching || backlog.length >= PAGE || !current) return;
+    fetching = true;
+    try {
+      const r = await rpc('session.history', { id: current, before: oldest, limit: PAGE });
+      more = r.more;
+      if (r.history.length) { oldest = r.history[0].seq; backlog = prepare(r.history).concat(backlog); }
+    } catch (e) { if (e.code !== 'closed') more = false; return; } // 끊김이면 재접속의 attach 가 다시 부른다. 그 밖의 실패는 다시 불러도 같으니 멈춘다
+    finally { fetching = false; }
+    rearm(); prefetch();
   }
   // 맨 위 표지가 보이면 앞 턴을 붙인다. 붙인 뒤에도 계속 보이면 교차 상태가 안 바뀌어 콜백이 없으므로 다시 건다
   const io = new IntersectionObserver((es) => { if (es[0].isIntersecting) requestAnimationFrame(loadOlder); }, { root: feed, rootMargin: '600px 0px 0px 0px' });
@@ -703,18 +730,19 @@ export function mountAgentFront(root, transport, opts = {}) {
   async function attach(id) {
     current = id; renderSide();
     let r;
-    try { r = await rpc('session.attach', { id, since: lastSeq }); }
+    const first = !lastSeq; // 처음이면 끝 한 페이지, 재접속이면 끊긴 동안의 것 전부
+    try { r = await rpc('session.attach', first ? { id, limit: PAGE } : { id, since: lastSeq }); }
     catch (e) {
-      if (e.code === 'not_live') { push(h('div', { class: 'notice' }, '세션 복원')); await rpc('session.create', { id }); r = await rpc('session.attach', { id, since: lastSeq }); }
-      else if (e.code === 'no_session') { push(h('div', { class: 'meta err' }, `세션 없음: ${id}`)); setState('exited'); return; }
+      if (e.code === 'no_session') { push(h('div', { class: 'meta err' }, `세션 없음: ${id}`)); setState('exited'); return; }
       else throw e;
     }
+    if (first && r.summary) { more = !!r.more; oldest = r.history[0]?.seq ?? 0; }
     info = r.info; setTitle(info.title);
     if (r.draft && !input.value) { input.value = r.draft; input.oninput(); } // 다시 로드된 화면 — 쓰던 글을 되살린다 (치던 중이면 그대로)
-    replayHistory(r.history);
+    replayHistory(r.history, first ? r.summary : null);
     for (const p of r.pending) renderCard(p);
     setState(info.state);
-    loadModels(); loadStatus(); loadCommands(); renderMode();
+    loadModels(); loadStatus(); loadCommands(); renderMode(); prefetch();
     if (opts.onAttach) opts.onAttach(id, info);
   }
   transport.onEvent((m) => {
