@@ -127,10 +127,13 @@ test('벤더가 첫 턴 전에 죽으면 오류 한 줄 + 종료 한 줄 (serve 
   await c.request('session.send', { id: h.session.id, text: 'x' });
   await h.done; // 벤더 종료 → serve close
   c.close();
-  const kinds = EventLog.open(corePaths(dir).sessionsDir, h.session.id)!.all.map((e) => e.ev.kind);
+  const evs = EventLog.open(corePaths(dir).sessionsDir, h.session.id)!.all.map((e) => e.ev);
+  const kinds = evs.map((e) => e.kind);
   assert.equal(kinds.filter((k) => k === 'error').length, 1);
   assert.equal(kinds.filter((k) => k === 'session.exit').length, 1);
-  assert.equal(kinds.filter((k) => k === 'session.state').length, 1, 'exited 한 번 (starting 에서 보낸 턴이라 running 은 없다)');
+  const states = evs.flatMap((e) => (e.kind === 'session.state' ? [e.state] : []));
+  assert.equal(states[0], 'idle', '기동 직후 대기');
+  assert.equal(states.filter((s) => s === 'exited').length, 1, 'exited 한 번');
 });
 
 test('root: env 에 IS_SANDBOX 가 없어도 bypass 세션이 뜬다 (slcode 가 IS_SANDBOX=1 을 얹는다)', { skip: process.getuid?.() !== 0 && 'root 에서만', timeout: 60000 }, async () => {
@@ -161,6 +164,23 @@ test('claude 인증 실패: 로그인 없는 HOME 의 턴은 답변(text.delta) 
     assert.match(end.error, /Not logged in/); assert.equal(end.errorKind, 'auth');
     assert.ok(!log.all.some((e) => e.ev.kind === 'text.delta'), '오류 문구는 답변으로 내지 않는다');
   } finally { await s.close('test'); } // 실패해도 벤더 프로세스를 내린다 — 남으면 테스트 러너가 끝나지 않는다
+});
+
+test('claude 첫 턴: 기동 직후 idle, 첫 프롬프트에 running, 끝나면 idle — init 이 프롬프트 뒤에 와도 (ticket slcode-first-turn-shows-idle)', { timeout: 60000 }, async () => {
+  const { ClaudeSession } = await import('../src/session.ts');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-first-'));
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-home-')); // 로그인 정보 없음 — API 를 부르지 않고 턴이 끝난다
+  const log = EventLog.create(dir, { id: 'frst0001', vendor: 'claude', cwd: work, title: null, vendorSessionId: null, createdAt: Date.now(), permissionMode: null, raw: false });
+  const s = new ClaudeSession({ log, env: { HOME: home, PATH: process.env.PATH } });
+  try {
+    assert.equal(s.state, 'idle');
+    const ended = new Promise<void>((r) => s.onEvent((e) => { if (e.ev.kind === 'session.state' && e.ev.state === 'idle' && log.all.some((x) => x.ev.kind === 'turn.end')) r(); }));
+    s.send('hi');
+    await ended;
+    const evs = log.all.map((e) => e.ev).filter((e) => e.kind === 'session.state' || e.kind === 'turn.start' || e.kind === 'session.ready' || e.kind === 'turn.end');
+    assert.deepEqual(evs.map((e) => (e.kind === 'session.state' ? e.state : e.kind)), ['idle', 'turn.start', 'running', 'session.ready', 'turn.end', 'idle']);
+  } finally { await s.close('test'); }
 });
 
 test('루프백 밖 호스트는 토큰 필수; --no-web 은 소켓만', async () => {

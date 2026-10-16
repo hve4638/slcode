@@ -79,6 +79,8 @@ export class ClaudeSession extends AgentSession {
     super(opts.log, opts.raw);
     this.opts = opts;
     this.running = this.run(opts);
+    // init 은 첫 프롬프트 뒤에야 온다 — 그 전도 보낼 수 있는 상태. starting 에 두면 첫 턴이 running 을 거치지 않고 idle 로만 보인다 (ticket slcode-first-turn-shows-idle)
+    if (this.state === 'starting') this.emit({ kind: 'session.state', state: 'idle' }); // run 이 첫 await 전에 실패해 이미 exited 일 수 있다
   }
 
   pendingApprovals(): ApprovalRequest[] {
@@ -298,7 +300,6 @@ export class ClaudeSession extends AgentSession {
             tools: s.tools ?? [], skills: s.skills ?? [], plugins: s.plugins ?? [], mcp: s.mcp_servers ?? [],
             slashCommands: s.slash_commands ?? [], agents: s.agents ?? [], version: s.claude_code_version ?? null,
           }, raw);
-          if (this.state === 'starting') this.emit({ kind: 'session.state', state: 'idle' });
         } else if (s.subtype === 'session_state_changed') this.emit({ kind: 'session.state', state: s.state }, raw);
         else if (s.subtype === 'compact_boundary') this.emit({ kind: 'context.compacted', trigger: s.compact_metadata?.trigger ?? 'unknown', preTokens: s.compact_metadata?.pre_tokens ?? null }, raw);
         else if (s.subtype === 'hook_started') this.emit({ kind: 'hook', event: s.hook_event, phase: 'started', ok: null }, raw);
