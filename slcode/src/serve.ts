@@ -5,7 +5,7 @@
 //   중계 연결        화면 연결(WS·stdio·서비스 웹) 하나마다 세션 소켓 연결 하나. 프레임은 해석하지 않고 그대로 넘긴다
 //                    (화면 설정 settings.get·set 만 serve 가 답한다 — 설정은 세션이 아니라 입구(웹·superlite)의 것, ticket slcode-web-settings)
 // 루프백 밖 웹은 core.auth 가 통과할 때까지 다른 요청을 막고 core 의 프레임도 넘기지 않는다 (토큰 검사는 core).
-// 세션 파일은 건드리지 않는다. 직접 다루는 파일은 자기 설치 폴더의 web/ 정적 파일과 상태 폴더의 settings-*.json(읽기·쓰기·감시)뿐이다.
+// 세션 파일은 건드리지 않는다. 직접 다루는 파일은 자기 설치 폴더의 web/ 정적 파일(시작 때 한 번 읽어 고정)과 상태 폴더의 settings-*.json(읽기·쓰기·감시)뿐이다.
 // 수명: 소유자 serve 가 닫히면(Ctrl-C·SIGTERM) session.close 를 보내고 core 가 끝나기를 기다린다. core 가 끝나면 serve 도 끝난다.
 // attach 면 이미 떠 있는 core 에 붙는 중계일 뿐이다 (소유자 아님 — superlite 카드가 떠 있는 세션에 붙는 길). stdin 이 닫히면 끝난다.
 import http from 'node:http';
@@ -61,25 +61,34 @@ export type ServeOptions = {
 
 export type ServeHandle = { url: string | null; sock: string; session: SessionInfo; close: (reason?: string) => Promise<void>; done: Promise<void> };
 
-/** 웹 정적 파일 (web/) — 세션 웹과 서비스 웹이 같이 쓴다. 경로는 상대(경로 접두사 아래에서도 — relay /svc).
+/** web/ 아래 파일 전부 — 상대 경로('/' 구분) → 내용. serve 가 시작할 때 한 번 읽어 고정한다 (ticket slcode-settings-set-unknown-method).
+ *  플러그인 Update 는 떠 있는 serve 를 둔 채 설치 폴더의 파일만 바꾼다. 요청마다 디스크를 읽으면 옛 serve 가 새 웹을 내보내고, 새 웹이 보낸
+ *  settings.set 을 옛 serve 가 모른 채 core 로 넘겨 unknown method 가 됐다 (2026-10-16 실측). web/ 을 고치면 serve 를 다시 띄워야 보인다 */
+export function loadWeb(root = WEB_DIR): Map<string, Buffer> {
+  const web = new Map<string, Buffer>();
+  for (const f of fs.readdirSync(root, { recursive: true, encoding: 'utf8' })) {
+    const fp = path.join(root, f);
+    if (fs.statSync(fp).isFile()) web.set(f.split(path.sep).join('/'), fs.readFileSync(fp));
+  }
+  return web;
+}
+
+/** 웹 정적 파일 (loadWeb 이 고정한 web/) — 세션 웹과 서비스 웹이 같이 쓴다. 경로는 상대(경로 접두사 아래에서도 — relay /svc).
  *  dir 이 있으면 index.html 의 <html> 에 그 상태 폴더·입구(kind)의 테마(data-theme)를 넣어 보낸다 — 연결 전 첫 화면부터 그 테마로
  *  (카드 iframe 이 다시 로드될 때 시스템 색이 비치지 않게, ticket slcode-web-settings) */
-export function staticHandler(req: http.IncomingMessage, res: http.ServerResponse, dir?: string, kind: SettingsKind = 'web'): void {
-  const file = decodeURIComponent((req.url ?? '/').split('?')[0]).replace(/^\/+/, '') || 'index.html';
-  const fp = path.join(WEB_DIR, path.normalize(file));
-  if (!fp.startsWith(WEB_DIR)) { res.writeHead(403); res.end(); return; }
-  let st: fs.Stats;
-  try { st = fs.statSync(fp); } catch { res.writeHead(404); res.end('not found'); return; }
-  const target = st.isDirectory() ? path.join(fp, 'index.html') : fp;
-  if (!fs.existsSync(target)) { res.writeHead(404); res.end('not found'); return; }
-  res.writeHead(200, { 'content-type': TYPES[path.extname(target)] ?? 'application/octet-stream', 'cache-control': 'no-cache' });
-  if (dir && target === path.join(WEB_DIR, 'index.html')) {
+export function staticHandler(req: http.IncomingMessage, res: http.ServerResponse, web: Map<string, Buffer>, dir?: string, kind: SettingsKind = 'web'): void {
+  const file = path.posix.normalize(decodeURIComponent((req.url ?? '/').split('?')[0]).replace(/^\/+/, '') || 'index.html').replace(/\/+$/, '');
+  const name = web.has(file) ? file : `${file}/index.html`;
+  const body = web.get(name);
+  if (!body) { res.writeHead(404); res.end('not found'); return; }
+  res.writeHead(200, { 'content-type': TYPES[path.extname(name)] ?? 'application/octet-stream', 'cache-control': 'no-cache' });
+  if (dir && name === 'index.html') {
     const { theme } = readSettings(dir, kind);
     const attr = /^[\w-]+$/.test(theme) ? ` data-theme="${theme}"` : '';
-    res.end(fs.readFileSync(target, 'utf8').replace('<html lang="ko">', `<html lang="ko"${attr}>`));
+    res.end(body.toString('utf8').replace('<html lang="ko">', `<html lang="ko"${attr}>`));
     return;
   }
-  fs.createReadStream(target).on('error', () => res.end()).pipe(res);
+  res.end(body);
 }
 
 /** 서비스 웹 소켓 주소에 listen — `/` 로 시작하면 uds(0600), 아니면 host:port */
@@ -122,6 +131,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
   const log = opts.log ?? (() => {});
   const P = corePaths(opts.dir);
   const owner = !opts.attach;
+  const web = loadWeb();
 
   // ---- core: 띄우거나(소유자) 떠 있는 것에 붙는다(attach)
   let sid: string, sock: string, session: SessionInfo;
@@ -226,7 +236,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
   const fail =async (e: unknown): Promise<never> => { if (owner) await control.request('session.close', { id: sid }).catch(() => {}); control.close(); for (const f of stopAll) f(); throw e; };
   // superlite 서비스 웹 (ticket plugin-service-web) — TCP 웹과 별개, 인증 없음 (UDS 와 같은 신뢰 경계)
   if (opts.webSock) {
-    const svc = http.createServer((q, r) => staticHandler(q, r, P.dir, 'superlite'));
+    const svc = http.createServer((q, r) => staticHandler(q, r, web, P.dir, 'superlite'));
     const svcWss = wsOn(svc, false, 'superlite');
     stopAll.push(() => { for (const c of svcWss.clients) c.close(); svcWss.close(); svc.close(); });
     // attach 는 서비스 웹을 열지 못해도 stdio 중계는 계속한다 (옛 proxyStdio 와 같다)
@@ -235,7 +245,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
   let url: string | null = opts.attach?.url ?? null;
   const host = opts.host ?? '127.0.0.1';
   if (opts.web !== false && !opts.attach) {
-    const srv = http.createServer((q, r) => staticHandler(q, r, P.dir, 'web'));
+    const srv = http.createServer((q, r) => staticHandler(q, r, web, P.dir, 'web'));
     const wss = wsOn(srv, !isLoopback(host), 'web');
     stopAll.push(() => { for (const c of wss.clients) c.close(); wss.close(); srv.close(); });
     const port = await new Promise<number>((resolve, reject) => { srv.once('error', reject); srv.listen(opts.port ?? 0, host, () => resolve((srv.address() as net.AddressInfo).port)); }).catch(fail);

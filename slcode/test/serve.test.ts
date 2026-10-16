@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { serveSession } from '../src/serve.ts';
+import { loadWeb, serveSession, staticHandler } from '../src/serve.ts';
 import { connectPost, connectSession } from '../src/client.ts';
 import { corePaths, cwdSlug } from '../src/paths.ts';
 import { EventLog } from '../src/eventLog.ts';
@@ -238,6 +238,29 @@ test('superlite 서비스 웹 소켓(webSock): 인증 없이 정적 파일·WS, 
   });
   assert.equal(r.result.session, h.session.id, '토큰 없이 (core.auth 생략) 바로 요청');
   await h.close('test');
+});
+
+test('웹 정적 파일은 serve 시작 때 고정 — 그 뒤 설치 폴더의 web/ 이 바뀌어도(플러그인 Update) 옛 웹을 보낸다 (ticket slcode-settings-set-unknown-method)', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-web-'));
+  fs.writeFileSync(path.join(root, 'index.html'), '<html lang="ko">old</html>');
+  fs.writeFileSync(path.join(root, 'app.js'), 'old');
+  fs.mkdirSync(path.join(root, 'sub'));
+  fs.writeFileSync(path.join(root, 'sub', 'index.html'), 'sub');
+  const web = loadWeb(root);
+  fs.writeFileSync(path.join(root, 'index.html'), '<html lang="ko">new</html>');
+  fs.writeFileSync(path.join(root, 'app.js'), 'new');
+  fs.writeFileSync(path.join(root, 'settings.js'), 'new');
+  const http = await import('node:http');
+  const srv = http.createServer((q, r) => staticHandler(q, r, web));
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${(srv.address() as import('node:net').AddressInfo).port}`;
+  const get = async (p: string) => { const r = await fetch(base + p); return [r.status, await r.text()]; };
+  assert.deepEqual(await get('/'), [200, '<html lang="ko">old</html>']);
+  assert.deepEqual(await get('/app.js?v=1'), [200, 'old']);
+  assert.deepEqual(await get('/sub/'), [200, 'sub']);
+  assert.equal((await get('/settings.js'))[0], 404, '시작 뒤에 생긴 파일은 없다');
+  assert.equal((await get('/%2e%2e/serve.test.ts'))[0], 404);
+  srv.close();
 });
 
 test('중계: 큰 프레임의 한글이 청크 경계에서 깨지지 않는다 (웹 → serve → core 소켓, ticket slcode-core-serve-split)', async () => {
