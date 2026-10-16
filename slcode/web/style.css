@@ -1,7 +1,7 @@
 /* agent front — Codex Desktop 감각: 중립 회색, 넓은 여백, 가운데 한 열, 둥근 작성창.
    모든 선택자는 .acf 아래 — superlite 카드(Shadow DOM)에 그대로 넣어도 밖으로 새지 않는다 */
 /* 테마 (ticket slcode-web-settings) — <html data-theme> 가 고른다. 붙이는 것은 settings.js, 첫 화면은 serve 가 index.html 에 넣어 보낸다.
-   기본(system)은 light-dark() 로 시스템 라이트·다크를 따르고, light·dark 는 color-scheme 만 고정한다. 변형은 같은 변수의 값만 바꾼다.
+   기본(system)은 light-dark() 로 시스템 라이트·다크를 따르고, light·dark 와 -light·-dark 로 끝나는 id 는 color-scheme 을 고정한다. 색 묶음은 같은 변수의 값만 바꾼다.
    :root 만이 아니라 [data-theme] 에도 거는 것은 설정 창의 견본이 자기 data-theme 로 그 테마 색을 그리게 하려는 것 */
 :root, [data-theme] {
   color-scheme: light dark;
@@ -10,16 +10,51 @@
   --acf-ok: light-dark(#17834a, #3ec27a); --acf-warn: light-dark(#b45f06, #f0a23a); --acf-err: light-dark(#c93a3a, #ef6b6b); --acf-user: light-dark(#eaecf1, #26262b);
   --acf-shadow: light-dark(rgba(0,0,0,.12), rgba(0,0,0,.4));
 }
-[data-theme="light"] { color-scheme: light; }
-[data-theme="dark"] { color-scheme: dark; }
-/* superlite 의 Dark Modern (VS Code 기본 다크) — 카드 둘레와 같은 색 */
-[data-theme="superlite"] { color-scheme: dark; --acf-bg: #1f1f1f; --acf-panel: #181818; --acf-fg: #cccccc; --acf-muted: #9d9d9d; --acf-line: #2b2b2b; --acf-soft: #2a2d2e; --acf-accent: #0078d4; --acf-ok: #73c991; --acf-warn: #cca700; --acf-err: #f85149; --acf-user: #2b2b2b; --acf-shadow: rgba(0,0,0,.5); }
-[data-theme="dimmed"] { color-scheme: dark; --acf-bg: #22272e; --acf-panel: #2d333b; --acf-fg: #adbac7; --acf-muted: #768390; --acf-line: #444c56; --acf-soft: #373e47; --acf-accent: #4184e4; --acf-ok: #57ab5a; --acf-warn: #c69026; --acf-err: #e5534b; --acf-user: #373e47; --acf-shadow: rgba(0,0,0,.4); }
-[data-theme="nord"] { color-scheme: dark; --acf-bg: #2e3440; --acf-panel: #3b4252; --acf-fg: #eceff4; --acf-muted: #9aa3b2; --acf-line: #4c566a; --acf-soft: #434c5e; --acf-accent: #5e81ac; --acf-ok: #a3be8c; --acf-warn: #ebcb8b; --acf-err: #bf616a; --acf-user: #434c5e; --acf-shadow: rgba(0,0,0,.35); }
-[data-theme="mocha"] { color-scheme: dark; --acf-bg: #1e1e2e; --acf-panel: #181825; --acf-fg: #cdd6f4; --acf-muted: #9399b2; --acf-line: #313244; --acf-soft: #313244; --acf-accent: #cba6f7; --acf-on-accent: #1e1e2e; --acf-ok: #a6e3a1; --acf-warn: #f9e2af; --acf-err: #f38ba8; --acf-user: #313244; --acf-shadow: rgba(0,0,0,.45); }
-[data-theme="black"] { color-scheme: dark; --acf-bg: #000000; --acf-panel: #0e0e10; --acf-fg: #e6e6e6; --acf-muted: #8b8b90; --acf-line: #222226; --acf-soft: #1a1a1d; --acf-accent: #6b9cff; --acf-ok: #3ec27a; --acf-warn: #f0a23a; --acf-err: #ef6b6b; --acf-user: #1a1a1d; --acf-shadow: rgba(0,0,0,.6); }
-[data-theme="solarized"] { color-scheme: light; --acf-bg: #fdf6e3; --acf-panel: #fffcf4; --acf-fg: #3c4f56; --acf-muted: #839496; --acf-line: #e6dfc8; --acf-soft: #eee8d5; --acf-accent: #268bd2; --acf-ok: #859900; --acf-warn: #b58900; --acf-err: #dc322f; --acf-user: #eee8d5; --acf-shadow: rgba(88,110,117,.15); }
-[data-theme="paper"] { color-scheme: light; --acf-bg: #f4ecd8; --acf-panel: #faf5e8; --acf-fg: #3d3428; --acf-muted: #7d6f5c; --acf-line: #e2d6bd; --acf-soft: #ebe1c9; --acf-accent: #9a5b2c; --acf-ok: #4f7a28; --acf-warn: #a8650a; --acf-err: #b03a2e; --acf-user: #ebe1c9; --acf-shadow: rgba(61,52,40,.14); }
+[data-theme="light"], [data-theme$="-light"] { color-scheme: light; }
+[data-theme="dark"], [data-theme$="-dark"] { color-scheme: dark; }
+/* 색 묶음 — 라이트·다크 짝을 light-dark() 로 한 벌씩, 어느 쪽을 쓸지는 id 끝(-light·-dark)이 위에서 정한다. 값은 각 원본에서 그대로 옮겼다 (2026-10-16) */
+[data-theme^="graphite-"] { /* ChatGPT 의 색 (openai/apps-sdk-ui, MIT) — 강조색 없이 검정·흰 버튼 */
+  --acf-bg: light-dark(#ffffff, #212121); --acf-panel: light-dark(#ffffff, #303030); --acf-fg: light-dark(#0d0d0d, #ffffff); --acf-muted: light-dark(#5d5d5d, #afafaf);
+  --acf-line: light-dark(#e7e7e7, #3c3c3c); --acf-soft: light-dark(#ededed, #393939); --acf-accent: light-dark(#181818, #f3f3f3); --acf-on-accent: light-dark(#ffffff, #0d0d0d);
+  --acf-ok: light-dark(#008635, #04b84c); --acf-warn: light-dark(#916f00, #ffc300); --acf-err: light-dark(#ba2623, #fa423e); --acf-user: light-dark(#f3f3f3, #303030);
+  --acf-shadow: light-dark(rgba(0,0,0,.08), rgba(0,0,0,.5));
+}
+[data-theme^="clay-"] { /* Claude 의 색 (claude.ai CSS 의 [data-theme=claude]) */
+  --acf-bg: light-dark(#faf9f5, #262624); --acf-panel: light-dark(#ffffff, #30302e); --acf-fg: light-dark(#141413, #faf9f5); --acf-muted: light-dark(#73726c, #9c9a92);
+  --acf-line: light-dark(#e4e3df, #42413e); --acf-soft: light-dark(#f0eee6, #1f1e1d); --acf-accent: light-dark(#c6613f, #d97757); --acf-on-accent: #ffffff;
+  --acf-ok: light-dark(#2f7613, #65bb30); --acf-warn: light-dark(#875a08, #da9e25); --acf-err: light-dark(#b53333, #dd5353); --acf-user: light-dark(#f0eee6, #141413);
+  --acf-shadow: light-dark(rgba(0,0,0,.08), rgba(0,0,0,.4));
+}
+[data-theme^="cobalt-"] { /* Gemini 의 색 (gemini.google.com 의 --gem-sys-color) */
+  --acf-bg: light-dark(#ffffff, #131314); --acf-panel: light-dark(#f0f4f9, #1e1f20); --acf-fg: light-dark(#1f1f1f, #e3e3e3); --acf-muted: light-dark(#444746, #c4c7c5);
+  --acf-line: light-dark(#e1e3e1, #444746); --acf-soft: light-dark(#e9eef6, #282a2c); --acf-accent: light-dark(#0b57d0, #a8c7fa); --acf-on-accent: light-dark(#ffffff, #062e6f);
+  --acf-ok: light-dark(#146c2e, #6dd58c); --acf-warn: light-dark(#9a4600, #e86e00); --acf-err: light-dark(#b3261e, #f2b8b5); --acf-user: light-dark(#e9eef6, #333537);
+  --acf-shadow: light-dark(rgba(0,0,0,.1), rgba(0,0,0,.5));
+}
+[data-theme^="superlite-"] { /* VS Code 의 Light Modern·Dark Modern (MIT) — 다크는 superlite 화면(Dark Modern)·카드 둘레와 같은 색, superlite 에 라이트는 없다 */
+  --acf-bg: light-dark(#ffffff, #1f1f1f); --acf-panel: light-dark(#f8f8f8, #181818); --acf-fg: light-dark(#3b3b3b, #cccccc); --acf-muted: light-dark(#767676, #9d9d9d);
+  --acf-line: light-dark(#e5e5e5, #2b2b2b); --acf-soft: light-dark(#f2f2f2, #2a2d2e); --acf-accent: light-dark(#005fb8, #0078d4); --acf-on-accent: #ffffff;
+  --acf-ok: light-dark(#388a34, #73c991); --acf-warn: light-dark(#bf8803, #cca700); --acf-err: #f85149; --acf-user: light-dark(#f2f2f2, #2b2b2b);
+  --acf-shadow: light-dark(rgba(0,0,0,.16), rgba(0,0,0,.5));
+}
+[data-theme^="slate-"] { /* GitHub 의 색 (@primer/primitives 의 light·dark-dimmed, MIT) */
+  --acf-bg: light-dark(#ffffff, #212830); --acf-panel: light-dark(#f6f8fa, #262c36); --acf-fg: light-dark(#1f2328, #d1d7e0); --acf-muted: light-dark(#59636e, #9198a1);
+  --acf-line: light-dark(#d1d9e0, #3d444d); --acf-soft: light-dark(#eff1f3, #2e363e); --acf-accent: light-dark(#0969da, #478be6); --acf-on-accent: #ffffff;
+  --acf-ok: light-dark(#1a7f37, #57ab5a); --acf-warn: light-dark(#9a6700, #c69026); --acf-err: light-dark(#d1242f, #e5534b); --acf-user: light-dark(#f6f8fa, #262c36);
+  --acf-shadow: light-dark(rgba(31,35,40,.12), rgba(0,0,0,.4));
+}
+[data-theme^="catppuccin-"] { /* catppuccin/palette 의 Latte·Mocha */
+  --acf-bg: light-dark(#eff1f5, #1e1e2e); --acf-panel: light-dark(#e6e9ef, #181825); --acf-fg: light-dark(#4c4f69, #cdd6f4); --acf-muted: light-dark(#6c6f85, #a6adc8);
+  --acf-line: light-dark(#ccd0da, #313244); --acf-soft: light-dark(#dce0e8, #313244); --acf-accent: light-dark(#8839ef, #cba6f7); --acf-on-accent: light-dark(#eff1f5, #1e1e2e);
+  --acf-ok: light-dark(#40a02b, #a6e3a1); --acf-warn: light-dark(#df8e1d, #f9e2af); --acf-err: light-dark(#d20f39, #f38ba8); --acf-user: light-dark(#ccd0da, #313244);
+  --acf-shadow: light-dark(rgba(0,0,0,.1), rgba(0,0,0,.45));
+}
+[data-theme="solarized-light"] { /* Solarized 의 바탕 8단계와 강조색 — 라이트만 (다크는 대비가 낮고 면이 구분되지 않아 뺐다, 사용자 2026-10-16) */
+  --acf-bg: #fdf6e3; --acf-panel: #fdf6e3; --acf-fg: #586e75; --acf-muted: #93a1a1;
+  --acf-line: #eee8d5; --acf-soft: #eee8d5; --acf-accent: #268bd2; --acf-on-accent: #fdf6e3;
+  --acf-ok: #859900; --acf-warn: #b58900; --acf-err: #dc322f; --acf-user: #eee8d5;
+  --acf-shadow: rgba(88,110,117,.15);
+}
 :root {
   --acf-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --acf-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, "Noto Sans KR", Roboto, sans-serif;
@@ -310,6 +345,11 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf dialog.confirm p { margin: 0 0 14px; }
 .acf dialog.confirm .btns { display: flex; justify-content: flex-end; gap: 8px; }
 /* 테마 견본 — 자기 data-theme 의 색: 바탕·패널 띠·글자 두 줄·강조 점 */
+/* 테마 분류 — 라이트·다크·기타, 누른 분류의 테마만 아래에 (사용자 2026-10-16) */
+.acf dialog.settings .cats { display: inline-flex; gap: 2px; margin-bottom: 10px; padding: 2px; border-radius: 8px; background: var(--acf-soft); }
+.acf dialog.settings button.cat { padding: 3px 14px; border: 0; border-radius: 6px; background: transparent; color: var(--acf-muted); font-size: 13px; }
+.acf dialog.settings button.cat:hover { background: transparent; color: var(--acf-fg); }
+.acf dialog.settings button.cat[aria-pressed=true] { background: var(--acf-panel); color: var(--acf-fg); box-shadow: 0 1px 2px var(--acf-shadow); }
 .acf dialog.settings .themes { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
 .acf dialog.settings button.theme { display: flex; flex-direction: column; gap: 5px; padding: 5px; border-radius: 10px; background: transparent; }
 .acf dialog.settings button.theme:hover { background: var(--acf-soft); }

@@ -4,11 +4,16 @@
 // 브라우저 저장소(localStorage)엔 두지 않는다. 고르면 바로 저장되고 모든 화면이 settings.changed 로 바뀐다 — 저장 버튼이 없다.
 // 색 묶음은 style.css 의 [data-theme] 가, 목록과 이름은 여기가 정한다.
 
+// 색 묶음은 라이트·다크를 따로 고른다: Graphite (light)·Graphite (dark) (사용자 2026-10-16). mode 는 설정 창의 분류 —
+// 'auto'(시스템 라이트·다크를 따른다)는 라이트·다크 두 분류에 다 맨 앞, 라이트·다크로 가르기 애매한 것은 'other'(기타).
+// Graphite·Clay·Cobalt·Slate 는 ChatGPT·Claude·Gemini·GitHub 의 색이다 — 다른 회사 상표를 테마 이름에 쓰지 않고(AI 셋은 벤더·모델 고르기와도
+// 헷갈린다), 이름만 바꿨다. Superlite 는 VS Code Modern 의 짝 (사용자 2026-10-16)
+const PALETTES = [['graphite', 'Graphite'], ['clay', 'Clay'], ['cobalt', 'Cobalt'], ['superlite', 'Superlite'], ['slate', 'Slate'], ['catppuccin', 'Catppuccin'], ['solarized', 'Solarized', ['light']]]; // 셋째 값이 있으면 그 모드만 — Solarized 다크는 대비가 낮아 뺐다
 export const THEMES = [
-  { id: 'system', label: '시스템' }, { id: 'light', label: '라이트' }, { id: 'dark', label: '다크' },
-  { id: 'superlite', label: 'Superlite' }, { id: 'dimmed', label: 'Dimmed' }, { id: 'nord', label: 'Nord' }, { id: 'mocha', label: 'Mocha' }, { id: 'black', label: 'Black' },
-  { id: 'solarized', label: 'Solarized' }, { id: 'paper', label: 'Paper' },
+  { id: 'system', label: '시스템', mode: 'auto' },
+  ...['light', 'dark'].flatMap((m) => [{ id: m, label: `기본 (${m})`, mode: m }, ...PALETTES.filter(([, , only]) => !only || only.includes(m)).map(([id, name]) => ({ id: `${id}-${m}`, label: `${name} (${m})`, mode: m }))]),
 ];
+const CATS = [['light', '라이트'], ['dark', '다크'], ['other', '기타']];
 /** serve 의 DEFAULT_SETTINGS 와 같다 — 옛 serve(settings.get 이 없다)에 붙었을 때 이것으로 그린다 */
 export const DEFAULTS = { theme: 'system', context: { warn: true, yellow: 30, red: 50 } };
 
@@ -31,10 +36,23 @@ export function settingsDialog(h, set, end) {
   const err = h('div', { class: 'meta err', hidden: '' });
   const save = (patch) => set(patch).then(() => { err.hidden = true; }, (e) => { err.textContent = `저장하지 못했습니다: ${e.message}`; err.hidden = false; });
 
-  // 테마 — 견본마다 자기 data-theme 로 그 테마 색을 그린다. 시스템은 라이트·다크 반씩
+  // 테마 — 위의 분류(라이트·다크·기타)를 누르면 그 분류의 테마만. 테마가 없는 분류는 보이지 않는다.
+  // 견본마다 자기 data-theme 로 그 테마 색을 그린다. 시스템은 라이트·다크 반씩
   const swatch = (id) => h('span', { class: 'sw', 'data-theme': id }, h('span', { class: 'bar' }), h('span', { class: 'ln' }), h('span', { class: 'ln short' }), h('span', { class: 'dot' }));
-  const themes = h('div', { class: 'themes' }, ...THEMES.map((t) => h('button', { class: 'theme', 'data-id': t.id, onclick: () => save({ theme: t.id }) },
-    t.id === 'system' ? h('span', { class: 'split' }, swatch('light'), swatch('dark')) : swatch(t.id), h('span', { class: 'name' }, t.label))));
+  const card = (t) => h('button', { class: 'theme', 'data-id': t.id, onclick: () => save({ theme: t.id }) },
+    t.mode === 'auto' ? h('span', { class: 'split' }, swatch('light'), swatch('dark')) : swatch(t.id), h('span', { class: 'name' }, t.label));
+  const themes = h('div', { class: 'themes' });
+  const catBtns = CATS.filter(([c]) => THEMES.some((t) => t.mode === c)).map(([c, label]) => h('button', { class: 'cat', 'data-cat': c, onclick: () => showCat(c) }, label));
+  const cats = h('div', { class: 'cats' }, ...catBtns);
+  let cur = DEFAULTS.theme;
+  const mark = () => { for (const b of themes.children) b.setAttribute('aria-checked', String(b.dataset.id === cur)); };
+  function showCat(c) {
+    for (const b of catBtns) b.setAttribute('aria-pressed', String(b.dataset.cat === c));
+    themes.replaceChildren(...THEMES.filter((t) => t.mode === c || (t.mode === 'auto' && c !== 'other')).map(card));
+    mark();
+  }
+  /** 창을 열 때의 분류 — 지금 테마가 든 곳. 시스템을 따르는 테마면 지금 시스템 쪽 */
+  const catOf = (id) => { const m = THEMES.find((t) => t.id === id).mode; return m !== 'auto' ? m : matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; };
 
   // context 경고 — 켜기·끄기 + 손잡이 두 개 (첫째 ≤ 둘째). 꺼도 경계 값은 남는다. 손잡이는 놓을 때 저장하고, 끌고 있는 동안엔 이 창만 따라간다.
   // 경계 % 는 손잡이에 올리거나 잡거나 키보드로 고를 때만 그 위에 (사용자 2026-10-16 — 설명·범례 줄은 두지 않는다)
@@ -66,7 +84,7 @@ export function settingsDialog(h, set, end) {
   const dlg = h('dialog', { class: 'settings' },
     h('header', {}, h('h2', {}, '설정'), close),
     h('div', { class: 'body' },
-      sec('테마', themes),
+      sec('테마', cats, themes),
       h('section', {}, h('label', { class: 'switch' }, h('h3', {}, 'context 경고'), warn), ctxBody),
       endRow,
       err),
@@ -74,11 +92,11 @@ export function settingsDialog(h, set, end) {
   dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); }); // 바깥(배경) 클릭
 
   function update(s) {
-    for (const b of themes.children) b.setAttribute('aria-checked', String(b.dataset.id === known(s.theme)));
+    cur = known(s.theme); mark();
     warn.checked = s.context.warn; ctxBody.classList.toggle('off', !s.context.warn); lo.disabled = hi.disabled = !s.context.warn;
     // 손잡이를 잡고 끌고 있으면 그 값을 그대로 둔다
     if (!range.matches(':active')) { lo.value = s.context.yellow; hi.value = s.context.red; paintRange(); }
   }
   update(DEFAULTS);
-  return { el: dlg, open: () => dlg.showModal(), update, endable: (on) => { endRow.hidden = !on; } };
+  return { el: dlg, open: () => { showCat(catOf(cur)); dlg.showModal(); }, update, endable: (on) => { endRow.hidden = !on; } };
 }
