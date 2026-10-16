@@ -3,8 +3,9 @@
 // 그 뒤로는 세션 소켓으로만 이야기한다:
 //   제어 연결 하나   core.own(소유자) · serve.register(TCP 웹 주소) — 이 연결의 수명이 곧 serve 가 core 를 붙든 시간
 //   중계 연결        화면 연결(WS·stdio·서비스 웹) 하나마다 세션 소켓 연결 하나. 프레임은 해석하지 않고 그대로 넘긴다
+//                    (화면 설정 settings.get·set 만 serve 가 답한다 — 설정은 세션이 아니라 입구(웹·superlite)의 것, ticket slcode-web-settings)
 // 루프백 밖 웹은 core.auth 가 통과할 때까지 다른 요청을 막고 core 의 프레임도 넘기지 않는다 (토큰 검사는 core).
-// 세션 파일은 건드리지 않는다. 직접 다루는 파일은 자기 설치 폴더의 web/ 정적 파일뿐이다.
+// 세션 파일은 건드리지 않는다. 직접 다루는 파일은 자기 설치 폴더의 web/ 정적 파일과 상태 폴더의 settings-*.json(읽기·쓰기·감시)뿐이다.
 // 수명: 소유자 serve 가 닫히면(Ctrl-C·SIGTERM) session.close 를 보내고 core 가 끝나기를 기다린다. core 가 끝나면 serve 도 끝난다.
 // attach 면 이미 떠 있는 core 에 붙는 중계일 뿐이다 (소유자 아님 — superlite 카드가 떠 있는 세션에 붙는 길). stdin 이 닫히면 끝난다.
 import http from 'node:http';
@@ -18,7 +19,8 @@ import { connectSession, PKG, VERSION } from './client.js';
 import { corePaths, ensureDir } from './paths.js';
 import { closedSessions, isLoopback } from './live.js';
 import type { CoreOptions } from './core.js';
-import { CoreError, ERR, type SessionInfo } from './protocol.js';
+import { readSettings, watchSettings, writeSettings } from './settings.js';
+import { CoreError, ERR, type SessionInfo, type SettingsKind, type SettingsPatch } from './protocol.js';
 
 export const WEB_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'web');
 const TYPES: Record<string, string> = {
@@ -59,8 +61,10 @@ export type ServeOptions = {
 
 export type ServeHandle = { url: string | null; sock: string; session: SessionInfo; close: (reason?: string) => Promise<void>; done: Promise<void> };
 
-/** 웹 정적 파일 (web/) — 세션 웹과 서비스 웹이 같이 쓴다. 경로는 상대(경로 접두사 아래에서도 — relay /svc) */
-export function staticHandler(req: http.IncomingMessage, res: http.ServerResponse): void {
+/** 웹 정적 파일 (web/) — 세션 웹과 서비스 웹이 같이 쓴다. 경로는 상대(경로 접두사 아래에서도 — relay /svc).
+ *  dir 이 있으면 index.html 의 <html> 에 그 상태 폴더·입구(kind)의 테마(data-theme)를 넣어 보낸다 — 연결 전 첫 화면부터 그 테마로
+ *  (카드 iframe 이 다시 로드될 때 시스템 색이 비치지 않게, ticket slcode-web-settings) */
+export function staticHandler(req: http.IncomingMessage, res: http.ServerResponse, dir?: string, kind: SettingsKind = 'web'): void {
   const file = decodeURIComponent((req.url ?? '/').split('?')[0]).replace(/^\/+/, '') || 'index.html';
   const fp = path.join(WEB_DIR, path.normalize(file));
   if (!fp.startsWith(WEB_DIR)) { res.writeHead(403); res.end(); return; }
@@ -69,6 +73,12 @@ export function staticHandler(req: http.IncomingMessage, res: http.ServerRespons
   const target = st.isDirectory() ? path.join(fp, 'index.html') : fp;
   if (!fs.existsSync(target)) { res.writeHead(404); res.end('not found'); return; }
   res.writeHead(200, { 'content-type': TYPES[path.extname(target)] ?? 'application/octet-stream', 'cache-control': 'no-cache' });
+  if (dir && target === path.join(WEB_DIR, 'index.html')) {
+    const { theme } = readSettings(dir, kind);
+    const attr = /^[\w-]+$/.test(theme) ? ` data-theme="${theme}"` : '';
+    res.end(fs.readFileSync(target, 'utf8').replace('<html lang="ko">', `<html lang="ko"${attr}>`));
+    return;
+  }
   fs.createReadStream(target).on('error', () => res.end()).pipe(res);
 }
 
@@ -135,14 +145,31 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
     await control.request('session.detach', { id: sid });
   }
 
+  // ---- 화면 설정 (ticket slcode-web-settings) — settings.get·set 은 core 로 넘기지 않고 여기서 답한다 (설정은 세션이 아니라 입구의 것).
+  // 묶음은 연결이 들어온 입구가 정한다: TCP 웹은 web, 서비스 웹·stdio 는 superlite (사용자 결정 2026-10-16 — 두 벌은 완전히 따로).
+  // 파일이 바뀌면(어느 serve 가 썼든) 그 입구의 인증된 화면 연결 모두에 settings.changed. 쓴 serve 도 자기 감시로 알린다 — 길이 하나
+  const screens: Record<SettingsKind, Set<(line: string) => void>> = { web: new Set(), superlite: new Set() };
+  /** settings.get·set 이면 답하고 true — 메서드 이름이 들어 있을 때만 해석한다 */
+  function settingsCall(line: string, send: (line: string) => void, kind: SettingsKind): boolean {
+    if (!line.includes('"settings.get"') && !line.includes('"settings.set"')) return false;
+    let m: { id?: unknown; method?: unknown; params?: { settings?: SettingsPatch } };
+    try { m = JSON.parse(line); } catch { return false; }
+    if (m?.method !== 'settings.get' && m?.method !== 'settings.set') return false;
+    try { send(JSON.stringify({ id: m.id, result: m.method === 'settings.get' ? readSettings(P.dir, kind) : writeSettings(P.dir, kind, m.params?.settings) })); }
+    catch (e) { send(JSON.stringify({ id: m.id, error: { message: (e as Error).message } })); }
+    return true;
+  }
+
   // ---- 중계: 화면 연결 하나 ↔ 세션 소켓 연결 하나
   const relays = new Set<net.Socket>();
   /** gate 면 core.auth 가 통과할 때까지 다른 요청을 막고 core 의 프레임을 넘기지 않는다. 그 사이 온 요청은 줄 세워 두었다가(HELD_MAX 까지) 통과하면 보낸다.
-   *  제어 메서드(CONTROL_ONLY)는 화면 연결에서 늘 거절한다 */
-  function relay(send: (line: string) => void, end: () => void, gate: boolean, fix?: (line: string) => string) {
+   *  제어 메서드(CONTROL_ONLY)는 화면 연결에서 늘 거절한다. kind 는 이 연결이 들어온 입구 — 화면 설정의 묶음 */
+  function relay(send: (line: string) => void, end: () => void, gate: boolean, kind: SettingsKind, fix?: (line: string) => string) {
     const s = net.createConnection(sock);
     relays.add(s);
     let authed = !gate, authId: unknown, held: string[] = [], buf = '';
+    if (authed) screens[kind].add(send);
+    const forward = (line: string) => { if (!settingsCall(line, send, kind)) s.write(line + '\n'); };
     s.setEncoding('utf8');
     s.on('data', (d: string) => {
       buf += d;
@@ -154,14 +181,14 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
           try { m = JSON.parse(l); } catch { continue; }
           if (authId === undefined || m.id !== authId) continue;
           authId = undefined; send(l);
-          if (m.result) { authed = true; for (const h of held.splice(0)) s.write(h + '\n'); }
+          if (m.result) { authed = true; screens[kind].add(send); for (const h of held.splice(0)) forward(h); }
           else for (const h of held.splice(0)) deny(h);
           continue;
         }
         send(fix ? fix(l) : l);
       }
     });
-    s.on('close', () => { relays.delete(s); end(); });
+    s.on('close', () => { relays.delete(s); screens[kind].delete(send); end(); });
     s.on('error', () => {});
     const refuse = (line: string, code: string, message: string) => { try { const m = JSON.parse(line); if (m?.id !== undefined) send(JSON.stringify({ id: m.id, error: { code, message } })); } catch {} };
     const deny = (line: string) => refuse(line, ERR.unauthorized, 'core.auth first');
@@ -170,7 +197,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
     return {
       write(line: string) {
         if (isControl(line)) { refuse(line, ERR.badRequest, 'not allowed on a screen connection'); return; }
-        if (authed) { s.write(line + '\n'); return; }
+        if (authed) { forward(line); return; }
         let m: { id?: unknown; method?: unknown; params?: Record<string, unknown> };
         try { m = JSON.parse(line); } catch { return; }
         if (authId !== undefined) { if (held.length < HELD_MAX) held.push(line); else deny(line); return; }
@@ -183,11 +210,11 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
   }
 
   // ---- http + ws
-  const wsOn = (server: http.Server, gate: boolean) => {
+  const wsOn = (server: http.Server, gate: boolean, kind: SettingsKind) => {
     const w = new WebSocketServer({ server, path: '/ws' });
     w.on('error', () => {});
     w.on('connection', (ws: WebSocket) => {
-      const r = relay((l) => { if (ws.readyState === ws.OPEN) ws.send(l); }, () => ws.close(), gate);
+      const r = relay((l) => { if (ws.readyState === ws.OPEN) ws.send(l); }, () => ws.close(), gate, kind);
       ws.on('message', (d) => r.write(d.toString()));
       ws.on('close', () => r.close());
       ws.on('error', () => {});
@@ -195,11 +222,12 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
     return w;
   };
   const stopAll: (() => void)[] = [];
-  const fail = async (e: unknown): Promise<never> => { if (owner) await control.request('session.close', { id: sid }).catch(() => {}); control.close(); for (const f of stopAll) f(); throw e; };
+  for (const kind of ['web', 'superlite'] as const) stopAll.push(watchSettings(P.dir, kind, (st) => { const l = JSON.stringify({ event: 'settings.changed', params: st }); for (const f of screens[kind]) f(l); }));
+  const fail =async (e: unknown): Promise<never> => { if (owner) await control.request('session.close', { id: sid }).catch(() => {}); control.close(); for (const f of stopAll) f(); throw e; };
   // superlite 서비스 웹 (ticket plugin-service-web) — TCP 웹과 별개, 인증 없음 (UDS 와 같은 신뢰 경계)
   if (opts.webSock) {
-    const svc = http.createServer(staticHandler);
-    const svcWss = wsOn(svc, false);
+    const svc = http.createServer((q, r) => staticHandler(q, r, P.dir, 'superlite'));
+    const svcWss = wsOn(svc, false, 'superlite');
     stopAll.push(() => { for (const c of svcWss.clients) c.close(); svcWss.close(); svc.close(); });
     // attach 는 서비스 웹을 열지 못해도 stdio 중계는 계속한다 (옛 proxyStdio 와 같다)
     await listenAddr(svc, opts.webSock).catch(owner ? fail : (e: Error) => log(`service web: ${e.message}`));
@@ -207,8 +235,8 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
   let url: string | null = opts.attach?.url ?? null;
   const host = opts.host ?? '127.0.0.1';
   if (opts.web !== false && !opts.attach) {
-    const srv = http.createServer(staticHandler);
-    const wss = wsOn(srv, !isLoopback(host));
+    const srv = http.createServer((q, r) => staticHandler(q, r, P.dir, 'web'));
+    const wss = wsOn(srv, !isLoopback(host), 'web');
     stopAll.push(() => { for (const c of wss.clients) c.close(); wss.close(); srv.close(); });
     const port = await new Promise<number>((resolve, reject) => { srv.once('error', reject); srv.listen(opts.port ?? 0, host, () => resolve((srv.address() as net.AddressInfo).port)); }).catch(fail);
     url = (await control.request('serve.register', { host, port, version: VERSION }).catch(fail)).url;
@@ -233,7 +261,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
         const l = buf.slice(0, i); buf = buf.slice(i + 1);
         if (!l.trim()) continue;
         if (fix) try { const m = JSON.parse(l); if (m.method === 'server.info') asked.add(m.id); } catch {}
-        r ??= relay((x) => process.stdout.write(x + '\n'), () => {}, false, fix);
+        r ??= relay((x) => process.stdout.write(x + '\n'), () => {}, false, 'superlite', fix);
         r.write(l);
       }
     });

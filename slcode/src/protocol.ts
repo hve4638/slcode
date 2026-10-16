@@ -23,6 +23,9 @@ export const FILES = {
   sessionsDir: 'sessions',
   mailDir: 'mail',
   sessionSock: 'sock',
+  /** 화면 설정 — 입구(SettingsKind)마다 하나 (settings.ts) */
+  settingsWeb: 'settings-web.json',
+  settingsSuperlite: 'settings-superlite.json',
 } as const;
 
 export type Vendor = 'claude' | 'codex';
@@ -116,6 +119,15 @@ export type LoggedEvent = { seq: number; at: number; ev: CoreEvent };
 
 // ---- 요청·응답 (세션 소켓 · 웹 WebSocket)
 
+/** 화면 설정 — 상태 폴더에 입구마다 한 벌 (ticket slcode-web-settings, 사용자 확정 2026-10-16). 같은 입구의 화면끼리 같이 쓴다.
+ *  theme 은 id 이고 목록은 웹(web/settings.js)이 정한다 — 모르는 id 는 웹이 'system' 으로 읽는다.
+ *  context: warn 이면 ctx % 를 yellow 미만 초록, red 미만 노랑, 그 이상 빨강. 끄면 색 없이. 0 ≤ yellow ≤ red ≤ 100 */
+export type Settings = { theme: string; context: { warn: boolean; yellow: number; red: number } };
+/** 설정 묶음 — 화면이 들어온 입구로 serve 가 정한다. web 은 slcode 가 연 웹(브라우저), superlite 는 superlite 안의 slcode 탭
+ *  (서비스 웹 SUPERLITE_SERVICE_WEB·stdio). 두 벌은 완전히 따로다 — 한쪽에서 바꿔도 다른 쪽은 그대로 (사용자 결정 2026-10-16) */
+export type SettingsKind = 'web' | 'superlite';
+export type SettingsPatch = Partial<Omit<Settings, 'context'>> & { context?: Partial<Settings['context']> };
+
 /** 플랜 리밋 창 하나 — pct 는 쓴 비율(0-100), resetsAt 은 ISO 8601 */
 export type LimitWindow = { pct: number | null; resetsAt: string | null };
 
@@ -172,6 +184,14 @@ export type Methods = {
 
 export type MethodName = keyof Methods;
 
+/** 화면 설정 (ticket slcode-web-settings) — serve 가 화면 연결(웹·stdio)에서 직접 답한다. core 로 넘기지 않아 세션 소켓에 바로 붙은 연결엔 없다.
+ *  어느 묶음인지는 연결이 들어온 입구(SettingsKind)가 정한다 — 요청에 싣지 않는다 */
+export type ServeMethods = {
+  'settings.get': { params: Record<string, never>; result: Settings };
+  /** 지금 설정에 겹쳐 쓴다 (context 는 항목별로). 결과는 겹친 뒤의 전체 — 같은 입구의 화면 모두에 settings.changed 도 간다 */
+  'settings.set': { params: { settings: SettingsPatch }; result: Settings };
+};
+
 /** 세션 소켓·웹의 이벤트 — 붙은 세션의 이벤트와 세션 상태 */
 export type Broadcasts = {
   'session.event': { id: string } & LoggedEvent;
@@ -179,6 +199,8 @@ export type Broadcasts = {
   'session.closed': { id: string; reason: string };
   /** 소유권을 빼앗긴 연결에만 — 새 소유자의 pid (protocol 3) */
   'core.owner': { pid: number | null };
+  /** 설정 파일이 바뀌었다 (어느 serve 가 썼든, 손으로 고쳤든) — 각 serve 가 파일을 감시해 그 입구로 들어온 자기 화면 연결에만 보낸다 */
+  'settings.changed': Settings;
 };
 
 export type EventName = keyof Broadcasts;

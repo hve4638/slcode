@@ -1,16 +1,28 @@
-/* agent front — Codex Desktop 감각: 중립 회색, 넓은 여백, 가운데 한 열, 둥근 작성창. 라이트·다크는 시스템을 따른다.
+/* agent front — Codex Desktop 감각: 중립 회색, 넓은 여백, 가운데 한 열, 둥근 작성창.
    모든 선택자는 .acf 아래 — superlite 카드(Shadow DOM)에 그대로 넣어도 밖으로 새지 않는다 */
+/* 테마 (ticket slcode-web-settings) — <html data-theme> 가 고른다. 붙이는 것은 settings.js, 첫 화면은 serve 가 index.html 에 넣어 보낸다.
+   기본(system)은 light-dark() 로 시스템 라이트·다크를 따르고, light·dark 는 color-scheme 만 고정한다. 변형은 같은 변수의 값만 바꾼다.
+   :root 만이 아니라 [data-theme] 에도 거는 것은 설정 창의 견본이 자기 data-theme 로 그 테마 색을 그리게 하려는 것 */
+:root, [data-theme] {
+  color-scheme: light dark;
+  --acf-bg: light-dark(#f7f7f8, #18181b); --acf-panel: light-dark(#ffffff, #1f1f23); --acf-fg: light-dark(#1f1f23, #ececef); --acf-muted: light-dark(#6b6f76, #9a9ca3);
+  --acf-line: light-dark(#e2e3e8, #2c2c31); --acf-soft: light-dark(#ececef, #26262b); --acf-accent: light-dark(#2f6fed, #6b9cff); --acf-on-accent: #fff;
+  --acf-ok: light-dark(#17834a, #3ec27a); --acf-warn: light-dark(#b45f06, #f0a23a); --acf-err: light-dark(#c93a3a, #ef6b6b); --acf-user: light-dark(#eaecf1, #26262b);
+  --acf-shadow: light-dark(rgba(0,0,0,.12), rgba(0,0,0,.4));
+}
+[data-theme="light"] { color-scheme: light; }
+[data-theme="dark"] { color-scheme: dark; }
+/* superlite 의 Dark Modern (VS Code 기본 다크) — 카드 둘레와 같은 색 */
+[data-theme="superlite"] { color-scheme: dark; --acf-bg: #1f1f1f; --acf-panel: #181818; --acf-fg: #cccccc; --acf-muted: #9d9d9d; --acf-line: #2b2b2b; --acf-soft: #2a2d2e; --acf-accent: #0078d4; --acf-ok: #73c991; --acf-warn: #cca700; --acf-err: #f85149; --acf-user: #2b2b2b; --acf-shadow: rgba(0,0,0,.5); }
+[data-theme="dimmed"] { color-scheme: dark; --acf-bg: #22272e; --acf-panel: #2d333b; --acf-fg: #adbac7; --acf-muted: #768390; --acf-line: #444c56; --acf-soft: #373e47; --acf-accent: #4184e4; --acf-ok: #57ab5a; --acf-warn: #c69026; --acf-err: #e5534b; --acf-user: #373e47; --acf-shadow: rgba(0,0,0,.4); }
+[data-theme="nord"] { color-scheme: dark; --acf-bg: #2e3440; --acf-panel: #3b4252; --acf-fg: #eceff4; --acf-muted: #9aa3b2; --acf-line: #4c566a; --acf-soft: #434c5e; --acf-accent: #5e81ac; --acf-ok: #a3be8c; --acf-warn: #ebcb8b; --acf-err: #bf616a; --acf-user: #434c5e; --acf-shadow: rgba(0,0,0,.35); }
+[data-theme="mocha"] { color-scheme: dark; --acf-bg: #1e1e2e; --acf-panel: #181825; --acf-fg: #cdd6f4; --acf-muted: #9399b2; --acf-line: #313244; --acf-soft: #313244; --acf-accent: #cba6f7; --acf-on-accent: #1e1e2e; --acf-ok: #a6e3a1; --acf-warn: #f9e2af; --acf-err: #f38ba8; --acf-user: #313244; --acf-shadow: rgba(0,0,0,.45); }
+[data-theme="black"] { color-scheme: dark; --acf-bg: #000000; --acf-panel: #0e0e10; --acf-fg: #e6e6e6; --acf-muted: #8b8b90; --acf-line: #222226; --acf-soft: #1a1a1d; --acf-accent: #6b9cff; --acf-ok: #3ec27a; --acf-warn: #f0a23a; --acf-err: #ef6b6b; --acf-user: #1a1a1d; --acf-shadow: rgba(0,0,0,.6); }
+[data-theme="solarized"] { color-scheme: light; --acf-bg: #fdf6e3; --acf-panel: #fffcf4; --acf-fg: #3c4f56; --acf-muted: #839496; --acf-line: #e6dfc8; --acf-soft: #eee8d5; --acf-accent: #268bd2; --acf-ok: #859900; --acf-warn: #b58900; --acf-err: #dc322f; --acf-user: #eee8d5; --acf-shadow: rgba(88,110,117,.15); }
+[data-theme="paper"] { color-scheme: light; --acf-bg: #f4ecd8; --acf-panel: #faf5e8; --acf-fg: #3d3428; --acf-muted: #7d6f5c; --acf-line: #e2d6bd; --acf-soft: #ebe1c9; --acf-accent: #9a5b2c; --acf-ok: #4f7a28; --acf-warn: #a8650a; --acf-err: #b03a2e; --acf-user: #ebe1c9; --acf-shadow: rgba(61,52,40,.14); }
 :root {
-  --acf-bg: #f7f7f8; --acf-panel: #ffffff; --acf-fg: #1f1f23; --acf-muted: #6b6f76; --acf-line: #e2e3e8; --acf-soft: #ececef;
-  --acf-accent: #2f6fed; --acf-ok: #17834a; --acf-warn: #b45f06; --acf-err: #c93a3a; --acf-user: #eaecf1; --acf-shadow: rgba(0,0,0,.12);
   --acf-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --acf-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, "Noto Sans KR", Roboto, sans-serif;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --acf-bg: #18181b; --acf-panel: #1f1f23; --acf-fg: #ececef; --acf-muted: #9a9ca3; --acf-line: #2c2c31; --acf-soft: #26262b;
-    --acf-accent: #6b9cff; --acf-ok: #3ec27a; --acf-warn: #f0a23a; --acf-err: #ef6b6b; --acf-user: #26262b; --acf-shadow: rgba(0,0,0,.4);
-  }
 }
 html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 #root { height: 100%; container-type: inline-size; } /* 좁은 화면 기준은 창이 아니라 이 컨테이너 폭 — superlite 카드 안에서는 카드 폭 (ticket agent-plugin-card) */
@@ -22,7 +34,7 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf, .acf * { scrollbar-width: thin; scrollbar-color: var(--acf-line) transparent; }
 .acf button { font: inherit; color: inherit; background: var(--acf-panel); border: 1px solid var(--acf-line); border-radius: 8px; padding: 5px 11px; cursor: pointer; }
 .acf button:hover { background: var(--acf-soft); }
-.acf button.primary { background: var(--acf-accent); border-color: var(--acf-accent); color: #fff; }
+.acf button.primary { background: var(--acf-accent); border-color: var(--acf-accent); color: var(--acf-on-accent); }
 .acf button.primary:hover { filter: brightness(1.08); }
 .acf button.danger { color: var(--acf-err); }
 .acf button.ghost { border-color: transparent; background: transparent; color: var(--acf-muted); }
@@ -36,7 +48,7 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 /* 헤더 — 세션 이름·상태 … 세션 종료·사이드바 버튼. 왼쪽 레일(2026-09-27)에서 옮겼고 폭이 좁아도 숨지 않는다, 이름만 잘린다 (사용자 2026-10-13) */
 .acf > .hdr { grid-row: 1; grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; padding: 6px 10px 6px 16px; border-bottom: 1px solid var(--acf-line); min-width: 0; }
 .acf .hdr .gap { flex: 1; }
-.acf .hdr .pill, .acf .hdr button.end { flex: none; }
+.acf .hdr .pill { flex: none; }
 .acf .hdr .title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .acf .hdr .name-row { display: flex; align-items: center; gap: 2px; max-width: 100%; min-width: 0; }
 .acf .hdr .title { cursor: text; }
@@ -47,15 +59,11 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .hdr .name-row button.ico:hover { background: var(--acf-soft); color: var(--acf-muted); }
 .acf .hdr .name-row button.ico svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .acf .hdr .title-edit { font: inherit; font-weight: 600; width: 100%; min-width: 0; padding: 1px 4px; border: 1px solid var(--acf-line); border-radius: 4px; background: transparent; color: inherit; }
-.acf .hdr button.end { font-size: 12px; padding: 2px 9px; }
-/* 세션 종료 확인 — 버튼 오른쪽 끝 아래 (사용자 2026-10-13) */
-.acf #acf-end { min-width: 0; padding: 12px 14px; }
-.acf #acf-end .btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 /* 사이드바 버튼 — 열려 있으면 눌린 꼴 */
-.acf .hdr button.side-tg { width: 30px; height: 30px; flex: none; padding: 0; border: 0; background: transparent; color: var(--acf-muted); border-radius: 8px; display: grid; place-items: center; }
-.acf .hdr button.side-tg:hover { background: var(--acf-soft); color: var(--acf-fg); }
+.acf .hdr button.side-tg, .acf .hdr button.gear { width: 30px; height: 30px; flex: none; padding: 0; border: 0; background: transparent; color: var(--acf-muted); border-radius: 8px; display: grid; place-items: center; }
+.acf .hdr button.side-tg:hover, .acf .hdr button.gear:hover { background: var(--acf-soft); color: var(--acf-fg); }
 .acf.side-open .hdr button.side-tg { background: var(--acf-soft); color: var(--acf-fg); }
-.acf .hdr button.side-tg svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.acf .hdr button.side-tg svg, .acf .hdr button.gear svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .acf .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--acf-line); color: var(--acf-muted); white-space: nowrap; }
 .acf .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .acf .pill.running { color: var(--acf-accent); }
@@ -154,8 +162,8 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .card .tab i { width: 11px; height: 11px; border: 1.5px solid currentColor; border-radius: 3px; display: inline-block; }
 .acf .card .tab.done { color: var(--acf-fg); }
 .acf .card .tab.done i { border-color: var(--acf-ok); background: var(--acf-ok); box-shadow: inset 0 0 0 2px var(--acf-panel); }
-.acf .card .tab.on, .acf .card button.tab.on:hover { background: var(--acf-accent); border-color: var(--acf-accent); color: #fff; font-weight: 600; }
-.acf .card .tab.on.done i { border-color: #fff; background: #fff; box-shadow: inset 0 0 0 2px var(--acf-accent); }
+.acf .card .tab.on, .acf .card button.tab.on:hover { background: var(--acf-accent); border-color: var(--acf-accent); color: var(--acf-on-accent); font-weight: 600; }
+.acf .card .tab.on.done i { border-color: var(--acf-on-accent); background: var(--acf-on-accent); box-shadow: inset 0 0 0 2px var(--acf-accent); }
 .acf .card .tab.submit { border-style: dashed; }
 .acf .card .review ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .acf .card .review li .a { color: var(--acf-ok); padding-left: 14px; }
@@ -255,7 +263,8 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .composer .stat .tok > :nth-child(even) { text-align: right; }
 .acf .composer .stat .tok .sub { padding-left: 10px; color: var(--acf-muted); }
 .acf .composer .stat b { font-weight: 500; color: var(--acf-fg); }
-.acf .composer .stat b.hot { color: var(--acf-err); }
+/* context 경고 (ticket slcode-web-settings) — 설정의 두 경계로 초록·노랑·빨강, 끄면 색 없이 */
+.acf .composer .stat b.ok { color: var(--acf-ok); } .acf .composer .stat b.warn { color: var(--acf-warn); } .acf .composer .stat b.err { color: var(--acf-err); }
 .acf .composer button.add { width: 34px; height: 34px; padding: 0; display: grid; place-items: center; }
 .acf .composer button.add svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 .acf button.pill-btn { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 3px 8px 3px 10px; border-radius: 8px; background: var(--acf-soft); color: var(--acf-fg); }
@@ -279,6 +288,66 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .menu .item.toggle { border-top: 1px solid var(--acf-line); border-radius: 0; margin-top: 4px; padding-top: 10px; color: var(--acf-muted); }
 .acf .menu .item.toggle::after { content: "›"; }
 .acf .menu .more { display: none; } .acf .menu .more.open { display: block; }
+/* 설정 창 (ticket slcode-web-settings) — 가운데 모달. 고르면 바로 저장·반영되므로 저장 버튼이 없다. 바깥 클릭·Esc·✕ 로 닫는다 */
+.acf dialog.settings { width: min(560px, calc(100vw - 24px)); max-height: calc(100dvh - 48px); padding: 0; border: 1px solid var(--acf-line); border-radius: 14px; background: var(--acf-panel); color: var(--acf-fg); box-shadow: 0 16px 48px var(--acf-shadow); font: 14px/1.45 var(--acf-sans); overflow: hidden; flex-direction: column; }
+.acf dialog.settings[open] { display: flex; }
+.acf dialog.settings::backdrop { background: rgba(0,0,0,.3); }
+.acf dialog.settings > header { display: flex; align-items: center; padding: 10px 12px 10px 18px; border-bottom: 1px solid var(--acf-line); }
+.acf dialog.settings h2 { flex: 1; margin: 0; font-size: 15px; font-weight: 600; }
+.acf dialog.settings button.x { width: 28px; height: 28px; padding: 0; display: grid; place-items: center; }
+.acf dialog.settings .body { overflow-y: auto; padding: 0 18px 16px; }
+.acf dialog.settings section { padding: 14px 0 6px; }
+.acf dialog.settings section + section { border-top: 1px solid var(--acf-line); }
+.acf dialog.settings h3 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--acf-muted); }
+/* 세션 종료 — 설정 맨 아래 줄: 왼쪽 이름, 오른쪽 끝 빨간 '종료'. 누르면 확인 창 (사용자 2026-10-16, 전엔 헤더) */
+.acf button.danger.solid { background: var(--acf-err); border-color: var(--acf-err); color: #fff; }
+.acf button.danger.solid:hover { background: var(--acf-err); filter: brightness(1.08); }
+.acf dialog.settings section.end[hidden] { display: none; }
+.acf dialog.settings section.end .row { display: flex; align-items: center; justify-content: space-between; }
+.acf dialog.settings section.end h3 { margin: 0; }
+.acf dialog.confirm { min-width: 260px; padding: 16px 18px 14px; border: 1px solid var(--acf-line); border-radius: 12px; background: var(--acf-panel); color: var(--acf-fg); box-shadow: 0 16px 48px var(--acf-shadow); font: 14px/1.45 var(--acf-sans); }
+.acf dialog.confirm::backdrop { background: rgba(0,0,0,.2); }
+.acf dialog.confirm p { margin: 0 0 14px; }
+.acf dialog.confirm .btns { display: flex; justify-content: flex-end; gap: 8px; }
+/* 테마 견본 — 자기 data-theme 의 색: 바탕·패널 띠·글자 두 줄·강조 점 */
+.acf dialog.settings .themes { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
+.acf dialog.settings button.theme { display: flex; flex-direction: column; gap: 5px; padding: 5px; border-radius: 10px; background: transparent; }
+.acf dialog.settings button.theme:hover { background: var(--acf-soft); }
+.acf dialog.settings button.theme[aria-checked=true] { border-color: var(--acf-accent); box-shadow: inset 0 0 0 1px var(--acf-accent); }
+.acf dialog.settings .sw { position: relative; display: grid; grid-template-rows: 9px 5px 5px; align-content: start; gap: 6px; height: 50px; padding: 8px; border: 1px solid var(--acf-line); border-radius: 6px; background: var(--acf-bg); }
+.acf dialog.settings .sw .bar { border: 1px solid var(--acf-line); border-radius: 3px; background: var(--acf-panel); }
+.acf dialog.settings .sw .ln { width: 75%; border-radius: 3px; background: var(--acf-fg); }
+.acf dialog.settings .sw .ln.short { width: 45%; background: var(--acf-muted); }
+.acf dialog.settings .sw .dot { position: absolute; right: 7px; bottom: 7px; width: 11px; height: 11px; border-radius: 50%; background: var(--acf-accent); }
+.acf dialog.settings .split { display: grid; grid-template-columns: 1fr 1fr; }
+.acf dialog.settings .split .sw:first-child { border-right: 0; border-radius: 6px 0 0 6px; }
+.acf dialog.settings .split .sw:last-child { border-left: 0; border-radius: 0 6px 6px 0; }
+.acf dialog.settings .split .sw .dot { display: none; }
+.acf dialog.settings button.theme .name { font-size: 12px; text-align: center; }
+/* context 경고 — 켜기·끄기 스위치, 손잡이 두 개 슬라이더(range 두 개를 한 트랙에 겹치고 손잡이만 잡힌다). 경계 % 는 손잡이 위 팝오버로만 */
+.acf dialog.settings label.switch { display: flex; align-items: center; justify-content: space-between; cursor: pointer; }
+.acf dialog.settings label.switch h3 { margin: 0; }
+.acf dialog.settings input[role=switch] { -webkit-appearance: none; appearance: none; position: relative; width: 34px; height: 20px; margin: 0; border-radius: 10px; background: var(--acf-line); cursor: pointer; transition: background .15s; }
+.acf dialog.settings input[role=switch]::before { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: transform .15s; }
+.acf dialog.settings input[role=switch]:checked { background: var(--acf-accent); }
+.acf dialog.settings input[role=switch]:checked::before { transform: translateX(14px); }
+.acf dialog.settings input[role=switch]:focus-visible { outline: 2px solid var(--acf-accent); outline-offset: 2px; }
+.acf dialog.settings .ctxbody { padding: 30px 0 4px; }
+.acf dialog.settings .ctxbody.off { opacity: .45; }
+.acf dialog.settings .dual { position: relative; height: 28px; margin: 0 9px; }
+.acf dialog.settings .dual::before { content: ""; position: absolute; left: 0; right: 0; top: 11px; height: 6px; border-radius: 3px; background: linear-gradient(to right, var(--acf-ok) 0 var(--y), var(--acf-warn) var(--y) var(--r), var(--acf-err) var(--r) 100%); }
+/* 입력을 트랙보다 손잡이 폭(18px)만큼 넓혀 손잡이 가운데가 트랙의 그 % 자리에 오게 */
+.acf dialog.settings .dual input { position: absolute; top: 0; left: -9px; width: calc(100% + 18px); height: 28px; margin: 0; -webkit-appearance: none; appearance: none; background: transparent; pointer-events: none; }
+.acf dialog.settings .dual input::-webkit-slider-runnable-track { height: 28px; background: transparent; }
+.acf dialog.settings .dual input::-webkit-slider-thumb { -webkit-appearance: none; pointer-events: auto; width: 18px; height: 18px; margin-top: 5px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.45); cursor: grab; }
+.acf dialog.settings .dual input::-moz-range-track { background: transparent; }
+.acf dialog.settings .dual input::-moz-range-thumb { pointer-events: auto; width: 18px; height: 18px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.45); cursor: grab; }
+.acf dialog.settings .dual input:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--acf-accent); outline-offset: 1px; }
+.acf dialog.settings .dual input:disabled::-webkit-slider-thumb { cursor: default; }
+/* 손잡이 위 경계 % — 올리거나 잡거나 키보드로 고를 때만 (stat 줄 툴팁과 같은 꼴) */
+.acf dialog.settings .dual .tip { position: absolute; bottom: calc(100% + 2px); left: var(--y); transform: translateX(-50%); padding: 1px 7px; border: 1px solid var(--acf-line); border-radius: 6px; background: var(--acf-panel); color: var(--acf-fg); box-shadow: 0 2px 8px var(--acf-shadow); font: 12px/1.5 var(--acf-mono); font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity .12s; }
+.acf dialog.settings .dual .tip.hi { left: var(--r); }
+.acf dialog.settings .dual input.lo:is(:hover, :active, :focus-visible) ~ .tip.lo, .acf dialog.settings .dual input.hi:is(:hover, :active, :focus-visible) ~ .tip.hi { opacity: 1; }
 /* 권한 모드 메뉴 (agent-core-claude-finish) — 이름 뒤에 흐린 설명, 체크는 맨 뒤 */
 .acf #acf-mode .item { gap: 12px; }
 .acf #acf-mode .item .desc { flex: 1; color: var(--acf-muted); font-size: 12px; }

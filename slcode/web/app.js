@@ -4,6 +4,7 @@
 // 세션 목록·새 세션은 이 화면에 없다 — 새 세션은 새 `slcode` 명령(또는 superlite 의 새 카드).
 // transport = { request(method, params), onEvent(fn), onStatus(fn) } (rpc.js 표면).
 import { renderMarkdown } from './markdown.js';
+import { DEFAULTS, applySettings, ctxLevel, settingsDialog } from './settings.js';
 
 const STATE_LABEL = { starting: '시작 중', idle: '대기', running: '실행 중', requires_action: '응답 필요', exited: '종료', disconnected: '연결 끊김' };
 const h = (tag, attrs = {}, ...children) => {
@@ -37,13 +38,6 @@ export function mountAgentFront(root, transport, opts = {}) {
   const setTitle = (t) => { title.textContent = t || DEFAULT_NAME; };
   const nameRow = h('div', { class: 'name-row' }, title); // 연필 버튼은 iconBtn 정의 뒤에 붙인다
   const pill = h('span', { class: 'pill starting' }, STATE_LABEL.starting);
-  // 세션 종료 (사용자 2026-10-11) — 카드는 두고 세션만 끈다(카드를 제거하면 세션도 끝난다). 꺼진 세션은 resume 으로 다시 띄운다
-  // 사이드바 버튼 바로 옆이라 누르면 아래에 확인을 한 번 띄운다 (사용자 2026-10-13). 바깥 클릭·Esc 는 취소
-  const endBtn = h('button', { class: 'ghost end', popovertarget: 'acf-end' }, '세션 종료');
-  const endMenu = h('div', { class: 'menu', id: 'acf-end', popover: '' }, '세션을 종료할까요?', h('div', { class: 'btns' },
-    h('button', { onclick: () => endMenu.hidePopover() }, '취소'),
-    h('button', { class: 'danger', onclick: () => { endMenu.hidePopover(); if (current) rpc('session.close', { id: current }).catch((e) => push(h('div', { class: 'meta err' }, e.message))); } }, '종료')));
-  endMenu.ontoggle = () => { if (endMenu.matches(':popover-open')) { const r = endBtn.getBoundingClientRect(); endMenu.style.left = `${Math.max(8, r.right - endMenu.offsetWidth)}px`; endMenu.style.top = `${r.bottom + 6}px`; } };
   // 오른쪽 사이드바는 기본으로 닫혀 있고 헤더 오른쪽 끝 버튼으로 연다. 연 상태는 브라우저에 기억한다 (사용자 2026-10-13).
   // 좁으면(820px 이하) 본문 위에 겹쳐 여는데 이건 기억하지 않는다 — 카드가 다시 로드될 때마다 피드를 덮지 않게. 본문을 누르면 닫힌다
   const SIDE_KEY = 'slcode.side';
@@ -52,6 +46,15 @@ export function mountAgentFront(root, transport, opts = {}) {
     else localStorage.setItem(SIDE_KEY, el.classList.toggle('side-open') ? 'open' : 'closed');
   } });
   if (localStorage.getItem(SIDE_KEY) === 'open') el.classList.add('side-open');
+  // 설정 — 헤더 오른쪽, 사이드바 버튼 왼쪽 (ticket slcode-web-settings). 같은 입구(브라우저·superlite 탭)의 다른 화면에서 바꿔도 settings.changed 로 온다
+  // 바꾼 화면은 응답으로 바로 그린다 — 다른 화면은 settings.changed 로 (serve 의 파일 감시가 늦거나 못 걸려도 여기는 바로)
+  // 세션 종료 (사용자 2026-10-11) — 카드는 두고 세션만 끈다(카드를 제거하면 세션도 끝난다). 꺼진 세션은 resume 으로 다시 띄운다.
+  // 자리는 설정 창 맨 아래 줄의 빨간 '종료', 누르면 확인 창을 한 번 더 (사용자 2026-10-16 — 전엔 헤더 사이드바 버튼 옆)
+  const endSession = () => { if (current) rpc('session.close', { id: current }).catch((e) => push(h('div', { class: 'meta err' }, e.message))); };
+  const settingsUi = settingsDialog(h, (patch) => rpc('settings.set', { settings: patch }).then(setSettings), endSession);
+  const gearBtn = h('button', { class: 'ico gear', title: '설정', 'aria-label': '설정', onclick: () => settingsUi.open() });
+  let settings = DEFAULTS;
+  const setSettings = (s) => { settings = s; applySettings(s); settingsUi.update(s); renderStat(); };
   const feed = h('div', { class: 'feed' });
   const liveCol = h('div', { class: 'col' });
   let col = liveCol; // 옛 턴을 그릴 땐 임시 div 로 바꿨다가 앞에 붙인다
@@ -158,13 +161,14 @@ export function mountAgentFront(root, transport, opts = {}) {
     if (on && !busyTimer) { busySince = busySince || Date.now(); busyRefresh(); busyTimer = setInterval(busyRefresh, 200); }
     if (!on && busyTimer) { clearInterval(busyTimer); busyTimer = null; busySince = 0; }
   } // 승인·질문 카드는 입력창 자리에 뜬다 — 피드에는 호출 표식만 (사용자 2026-09-30)
-  // 맨 위 헤더 = 세션 이름·상태 … 세션 종료·사이드바 버튼, 폭이 좁아도 늘 보인다 (사용자 2026-10-13). 전엔 왼쪽 레일이라 1100px 아래에서 숨었다
+  // 맨 위 헤더 = 세션 이름·상태 … 설정·사이드바 버튼, 폭이 좁아도 늘 보인다 (사용자 2026-10-13). 전엔 왼쪽 레일이라 1100px 아래에서 숨었다
   const center = h('div', { class: 'main' }, feed, dock, composer);
   center.addEventListener('pointerdown', () => el.classList.remove('peek'));
   el.append(
-    h('header', { class: 'hdr' }, nameRow, pill, h('span', { class: 'gap' }), endBtn, endMenu, sideBtn),
+    h('header', { class: 'hdr' }, nameRow, pill, h('span', { class: 'gap' }), gearBtn, sideBtn),
     center,
     side,
+    settingsUi.el,
   );
   root.append(el);
 
@@ -222,6 +226,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
     check: '<path d="M5 12l5 5L20 7"/>',
     rewind: '<path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
+    gear: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
   };
   const icon = (name) => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.innerHTML = ICONS[name]; return s; };
   const iconBtn = (name, title, onclick) => h('button', { class: 'ico', title, 'aria-label': title, onclick }, icon(name));
@@ -245,7 +250,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   const pencil = iconBtn('pencil', '이름 바꾸기', editName);
   title.addEventListener('dblclick', editName);
   nameRow.append(pencil);
-  sendBtn.append(icon('up')); addBtn.append(icon('plus')); stopBtn.append(icon('stop')); modelBtn.append(icon('chevron')); effortBtn.append(icon('chevron')); modeBtn.prepend(icon('shield')); modeBtn.append(icon('chevron')); sideBtn.append(icon('panel'));
+  sendBtn.append(icon('up')); addBtn.append(icon('plus')); stopBtn.append(icon('stop')); modelBtn.append(icon('chevron')); effortBtn.append(icon('chevron')); modeBtn.prepend(icon('shield')); modeBtn.append(icon('chevron')); sideBtn.append(icon('panel')); gearBtn.append(icon('gear'));
   // 보낼 게 없거나(빈 입력·첨부 없음) 세션이 끝났으면 보내기 버튼을 비활성처럼 (사용자 2026-09-27)
   // 실행 중엔 보내기 자리에 중단 (사용자 2026-10-09) — 입력이나 첨부가 생기면 다시 보내기, 작업 중에도 보낼 수 있으므로
   const canSend = () => {
@@ -286,7 +291,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     pill.className = `pill ${state}`; pill.textContent = STATE_LABEL[state] ?? state;
     busyNow = state === 'running' || state === 'requires_action';
     showBusy(state === 'running');
-    input.disabled = state === 'exited'; endBtn.hidden = state === 'exited'; canSend();
+    input.disabled = state === 'exited'; settingsUi.endable(state !== 'exited'); canSend();
     if (state !== 'exited' && exitNote) { exitNote.remove(); exitNote = null; }
     if (opts.onState) opts.onState(state);
     renderSide();
@@ -571,7 +576,7 @@ export function mountAgentFront(root, transport, opts = {}) {
       cwd && h('span', { class: 'grp where' }, icon('folder'), h('span', { class: 'name', title: cwd }, cwd.split('/').filter(Boolean).pop() ?? cwd), iconBtn('copy', '전체 경로 복사', copyOf(cwd))),
       status?.repo && h('span', { class: 'grp where' }, icon('branch'), h('span', { class: 'name' }, status.repo, status.branch ? h('span', { class: 'dim' }, ` (${status.branch})`) : '')),
       lims.length && grp('hourglass', ...lims),
-      ctx && grp('box', h('span', { title: `${fmtTok(ctx.tokens)} / ${fmtTok(ctx.max)}` }, 'ctx ', h('b', { class: ctx.pct >= 80 ? 'hot' : '' }, `${Math.round(ctx.pct)}%`))),
+      ctx && grp('box', h('span', { title: `${fmtTok(ctx.tokens)} / ${fmtTok(ctx.max)}` }, 'ctx ', h('b', { class: ctxLevel(ctx.pct, settings.context) }, `${Math.round(ctx.pct)}%`))),
       h('span', { class: 'grp cost', onmouseenter: fit }, icon('coin'), h('span', {}, usage.turns && !costKnown ? '—' : usage.cost ? `$${usage.cost.toFixed(2)}` : '$0'), tok), // 턴이 있는데 비용을 모르면(가격표에 없는 Codex 모델) —
     ].filter(Boolean));
   }
@@ -704,10 +709,12 @@ export function mountAgentFront(root, transport, opts = {}) {
     if (m.event === 'session.event' && m.params.id === current) render(m.params, true);
     else if (m.event === 'session.changed' && m.params.id === current) { info = m.params; setTitle(info.title); renderMode(); renderSide(); }
     else if (m.event === 'session.closed' && m.params.id === current) { /* session.exit 이벤트가 이미 그렸다 */ }
+    else if (m.event === 'settings.changed') setSettings(m.params);
   });
   transport.onStatus(async (s) => {
     connected = s.connected;
     if (s.connected) {
+      rpc('settings.get').then(setSettings, () => {}); // 옛 serve 엔 없다 — 기본값으로 그린다
       try {
         const id = opts.sessionId ?? current ?? (await rpc('server.info')).session;
         await attach(id);
