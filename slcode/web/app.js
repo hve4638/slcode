@@ -161,11 +161,23 @@ export function mountAgentFront(root, transport, opts = {}) {
     if (on && !busyTimer) { busySince = busySince || Date.now(); busyRefresh(); busyTimer = setInterval(busyRefresh, 200); }
     if (!on && busyTimer) { clearInterval(busyTimer); busyTimer = null; busySince = 0; }
   } // 승인·질문 카드는 입력창 자리에 뜬다 — 피드에는 호출 표식만 (사용자 2026-09-30)
+  // 여는 동안의 단계·경과 — 헤더 상태 칸 옆(사이드바와 무관), 화면이 다 그려지면 사라진다 (ticket slcode-boot-progress, 사용자 2026-10-17).
+  // 그리기(0.1초 안팎)는 따로 안 보인다 — 칠할 틈을 주려고 쉬면 그 사이 온 실시간 이벤트가 기록보다 먼저 그려진다.
+  // 그 뒤의 '시작 중' 은 첫 메시지 전 Claude Code 상태(init 이 첫 프롬프트 뒤에 온다, 실측)라 단계에 넣지 않는다
+  const bootEl = h('span', { class: 'boot', hidden: '' });
+  let bootStage = null, bootSince = 0, bootTimer = null;
+  const bootPaint = () => { bootEl.hidden = !bootStage; bootEl.textContent = bootStage ? `${bootStage}… (${fmtDur(Date.now() - bootSince)})` : ''; };
+  function boot(stage) {
+    if (stage && !bootStage) { bootSince = Date.now(); bootTimer = setInterval(bootPaint, 500); }
+    if (!stage) { clearInterval(bootTimer); bootTimer = null; }
+    bootStage = stage; bootPaint();
+  }
+  boot('connecting');
   // 맨 위 헤더 = 세션 이름·상태 … 설정·사이드바 버튼, 폭이 좁아도 늘 보인다 (사용자 2026-10-13). 전엔 왼쪽 레일이라 1100px 아래에서 숨었다
   const center = h('div', { class: 'main' }, feed, dock, composer);
   center.addEventListener('pointerdown', () => el.classList.remove('peek'));
   el.append(
-    h('header', { class: 'hdr' }, nameRow, pill, h('span', { class: 'gap' }), gearBtn, sideBtn),
+    h('header', { class: 'hdr' }, nameRow, pill, bootEl, h('span', { class: 'gap' }), gearBtn, sideBtn),
     center,
     side,
     settingsUi.el,
@@ -715,12 +727,15 @@ export function mountAgentFront(root, transport, opts = {}) {
     connected = s.connected;
     if (s.connected) {
       rpc('settings.get').then(setSettings, () => {}); // 옛 serve 엔 없다 — 기본값으로 그린다
+      boot('loading history');
       try {
         const id = opts.sessionId ?? current ?? (await rpc('server.info')).session;
         await attach(id);
       } catch (e) { push(h('div', { class: 'meta err' }, e.message)); }
+      finally { boot(null); }
     }
     else {
+      boot(null);
       pill.className = 'pill disconnected'; pill.textContent = s.fatal ? `인증 실패` : STATE_LABEL.disconnected; renderSide();
       // 알약엔 '인증 실패' 한마디뿐이라 고칠 길은 피드에 남긴다 (사용자 2026-10-09, 그땐 좁은 화면에서 알약이 숨었다). fatal 은 재접속하지 않아 한 번만 온다
       if (s.fatal) push(h('div', { class: 'meta err' }, '인증 실패: 토큰(?token=)이 붙은 주소로 다시 여세요'));
