@@ -244,6 +244,7 @@ export function activate(api) {
     else if (c.url) {
       const f = document.createElement('iframe');
       f.src = c.url; f.title = 'slcode';
+      c.frame = f; // 링크 열기 요청(slcode.open)의 출처 확인
       f.allow = 'clipboard-read; clipboard-write';
       // 배경은 slcode 웹과 같은 색(시스템 라이트·다크) — 숨겼다 다시 보일 때 안쪽이 그려지기 전 흰 화면이 번쩍였다
       f.style.cssText = 'flex:1;border:0;width:100%;height:100%;color-scheme:light dark;background:light-dark(#f7f7f8,#18181b)';
@@ -582,7 +583,17 @@ export function activate(api) {
   }).catch((e) => api.notify('error', `slcode: ${e?.message ?? e}`));
   api.commands.register({ id: 'installCommand', title: 'slcode: Install command', run: () => runInstallCommand(false) });
 
-  shutdown = () => { for (const c of cards.values()) detach(c); cards.clear(); };
+  // 카드 안 답변의 링크·이미지 (web/app.js, ticket slcode-append-system-prompt) — slcode.open 은 superlite 의 open 동사(웹 주소는 URL 탭, 파일은 에디터),
+  // slcode.download 는 download 동사(로컬 파일을 Download 뷰 대기열에 — 사용자가 확인하면 이 PC 로)
+  const VERB = { 'slcode.open': 'open', 'slcode.download': 'download' };
+  const onOpen = (e) => {
+    const verb = VERB[e.data?.type];
+    if (!verb || typeof e.data.target !== 'string') return;
+    if (![...cards.values()].some((c) => c.frame?.contentWindow === e.source)) return;
+    api.verbs.run(verb, [e.data.target]).catch((err) => api.notify('error', `slcode: ${err?.message ?? err}`));
+  };
+  globalThis.window?.addEventListener('message', onOpen); // 테스트(node)엔 window 가 없다
+  shutdown = () => { globalThis.window?.removeEventListener('message', onOpen); for (const c of cards.values()) detach(c); cards.clear(); };
   return {
     /** 다른 플러그인용 — 세션 id 로 카드 열기 */
     open: (id) => openCard(undefined, id),

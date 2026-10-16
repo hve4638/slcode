@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import type { ApprovalDecision, ApprovalRequest, Attachment, LimitWindow, TaskEvent } from './protocol.js';
 import { AgentSession, type ApproveOpts, type Command, type ContextUsage, type Limits, type ModelsResult } from './base.js';
 import type { EventLog } from './eventLog.js';
+import { SLCODE_PROMPT } from './prompt.js';
 
 export type CodexOptions = {
   log: EventLog;
@@ -186,8 +187,9 @@ export class CodexSession extends AgentSession {
         catch (e) { if (!/not found|no rollout/i.test((e as Error).message)) throw e; this.emit({ kind: 'error', message: `codex thread ${this.threadId} not found — starting a new thread` }); }
       }
       // slcode import --fork — 원본은 두고 갈라 낸 새 thread 로 (원본이 없으면 새 thread 로 대체하지 않고 실패)
-      if (!r && this.log.meta.forkFrom) r = await this.request('thread/fork', { threadId: this.log.meta.forkFrom, ...base, excludeTurns: true });
-      r ??= await this.request('thread/start', base);
+      // slcode 고정 지시는 새 thread 에만 — developer 메시지로 덧붙는다, 기본 프롬프트(baseInstructions)는 그대로 (ticket slcode-append-system-prompt, 사용자 결정 2026-10-17: 새 세션부터)
+      if (!r && this.log.meta.forkFrom) r = await this.request('thread/fork', { threadId: this.log.meta.forkFrom, ...base, developerInstructions: SLCODE_PROMPT, excludeTurns: true });
+      r ??= await this.request('thread/start', { ...base, developerInstructions: SLCODE_PROMPT });
       this.threadId = r.thread.id;
       this.log.updateMeta({ vendorSessionId: r.thread.id });
       this.model ??= r.model ?? null;

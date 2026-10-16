@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import type { ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, Usage, LimitWindow } from './protocol.js';
 import { EventLog, unrewound } from './eventLog.js';
 import { AgentSession } from './base.js';
+import { SLCODE_PROMPT } from './prompt.js';
 
 /** push 와 비동기 순회를 잇는 무한 큐 — streaming input 의 프롬프트 공급원 */
 class AsyncQueue<T> implements AsyncIterable<T> {
@@ -241,7 +242,8 @@ export class ClaudeSession extends AgentSession {
         forwardSubagentText: true,      // 서브에이전트의 텍스트·thinking 도 parent_tool_use_id 를 달고 온다 — 작업 카드 안에 중첩해 그린다
         agentProgressSummaries: true,   // task_progress 에 한 줄 진행 요약 (약 30초마다 짧은 포크, 비용은 작다)
         thinking: { type: 'adaptive', display: 'summarized' },
-        systemPrompt: { type: 'preset', preset: 'claude_code' },
+        // slcode 고정 지시를 기본 프롬프트 뒤에 (ticket slcode-append-system-prompt). snapshot 은 SDK 기본 — 첫 요청 때 기록하고 resume 도 그 기록이라 기존 세션엔 compact 뒤부터 (사용자 결정 2026-10-17: 새 세션부터)
+        systemPrompt: { type: 'preset', preset: 'claude_code', append: SLCODE_PROMPT },
         // CLI 와 같은 로드 — user/project/local (스파이크 (a) 실측: 플러그인·스킬·훅·MCP 가 CLI 와 같다)
         settingSources: ['user', 'project', 'local'],
         // IS_SANDBOX=1 을 늘 얹는다 — uid 0 이면 CLI 가 이것 없이는 아래 skip 플래그나 bypass 모드만으로 첫 턴 전에 exit 1 한다 (CLI 2.1.282, 2026-10-08 실측, 값은 '1' 만).

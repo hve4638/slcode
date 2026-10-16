@@ -16,7 +16,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { connectSession, PKG, VERSION } from './client.js';
-import { corePaths, ensureDir } from './paths.js';
+import { corePaths, ensureDir, readOrCreateToken } from './paths.js';
 import { closedSessions, isLoopback } from './live.js';
 import type { CoreOptions } from './core.js';
 import { readSettings, watchSettings, writeSettings } from './settings.js';
@@ -26,6 +26,7 @@ export const WEB_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json', '.woff2': 'font/woff2',
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.pdf': 'application/pdf', // 로컬 파일 (fileHandler)
 };
 /** 화면 연결(웹·stdio)에서는 부를 수 없는 제어 메서드 — 소유권과 웹 주소 등록(토큰이 붙은 url 을 돌려준다)은 serve 의 제어 연결만 */
 const CONTROL_ONLY = new Set(['core.own', 'serve.register']);
@@ -89,6 +90,30 @@ export function staticHandler(req: http.IncomingMessage, res: http.ServerRespons
     return;
   }
   res.end(body);
+}
+
+/** 로컬 파일 — 답변의 마크다운 링크·이미지가 가리키는 절대 경로를 `file?path=` 로 (ticket slcode-append-system-prompt, 사용자 결정 2026-10-17).
+ *  범위는 serve 사용자가 읽을 수 있는 모든 파일 — 토큰을 통과한 화면은 이미 에이전트로 무엇이든 읽힐 수 있다. token 이 있으면(루프백 밖 웹) 같은 토큰만.
+ *  file 경로가 아니면 false — 정적 파일로 넘긴다 */
+export function fileHandler(req: http.IncomingMessage, res: http.ServerResponse, token: string | null): boolean {
+  const u = new URL(req.url ?? '/', 'http://x');
+  if (u.pathname !== '/file') return false;
+  const end = (code: number, msg: string) => { res.writeHead(code, { 'content-type': 'text/plain; charset=utf-8' }); res.end(msg); };
+  if (token !== null && u.searchParams.get('token') !== token) { end(401, 'unauthorized'); return true; }
+  const want = u.searchParams.get('path') ?? '';
+  if (!path.isAbsolute(want)) { end(400, 'absolute path required'); return true; }
+  // Codex 는 파일 링크에 줄 번호를 붙인다 ([a.ts:12](/abs/a.ts:12)) — 그 경로가 없으면 떼고 다시
+  const p = [want, want.replace(/:\d+(:\d+)?$/, '')].find((c) => { try { return fs.statSync(c).isFile(); } catch { return false; } });
+  if (!p) { end(404, 'not found'); return true; }
+  let type = TYPES[path.extname(p).toLowerCase()];
+  if (!type) { // 소스·로그 같은 글은 브라우저에 보이게, 나머지는 내려받기
+    const head = Buffer.alloc(8192), fd = fs.openSync(p, 'r');
+    try { type = head.subarray(0, fs.readSync(fd, head, 0, head.length, 0)).includes(0) ? 'application/octet-stream' : 'text/plain; charset=utf-8'; } finally { fs.closeSync(fd); }
+  }
+  // 같은 출처로 열린 html·svg 가 스크립트로 화면의 토큰(localStorage)이나 /ws 에 닿지 못하게 sandbox
+  res.writeHead(200, { 'content-type': type, 'content-security-policy': 'sandbox', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'cache-control': 'no-cache' });
+  fs.createReadStream(p).on('error', () => res.destroy()).pipe(res);
+  return true;
 }
 
 /** 서비스 웹 소켓 주소에 listen — `/` 로 시작하면 uds(0600), 아니면 host:port */
@@ -236,7 +261,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
   const fail =async (e: unknown): Promise<never> => { if (owner) await control.request('session.close', { id: sid }).catch(() => {}); control.close(); for (const f of stopAll) f(); throw e; };
   // superlite 서비스 웹 (ticket plugin-service-web) — TCP 웹과 별개, 인증 없음 (UDS 와 같은 신뢰 경계)
   if (opts.webSock) {
-    const svc = http.createServer((q, r) => staticHandler(q, r, web, P.dir, 'superlite'));
+    const svc = http.createServer((q, r) => { if (!fileHandler(q, r, null)) staticHandler(q, r, web, P.dir, 'superlite'); });
     const svcWss = wsOn(svc, false, 'superlite');
     stopAll.push(() => { for (const c of svcWss.clients) c.close(); svcWss.close(); svc.close(); });
     // attach 는 서비스 웹을 열지 못해도 stdio 중계는 계속한다 (옛 proxyStdio 와 같다)
@@ -245,7 +270,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
   let url: string | null = opts.attach?.url ?? null;
   const host = opts.host ?? '127.0.0.1';
   if (opts.web !== false && !opts.attach) {
-    const srv = http.createServer((q, r) => staticHandler(q, r, web, P.dir, 'web'));
+    const srv = http.createServer((q, r) => { if (!fileHandler(q, r, isLoopback(host) ? null : readOrCreateToken(P))) staticHandler(q, r, web, P.dir, 'web'); });
     const wss = wsOn(srv, !isLoopback(host), 'web');
     stopAll.push(() => { for (const c of wss.clients) c.close(); wss.close(); srv.close(); });
     const port = await new Promise<number>((resolve, reject) => { srv.once('error', reject); srv.listen(opts.port ?? 0, host, () => resolve((srv.address() as net.AddressInfo).port)); }).catch(fail);

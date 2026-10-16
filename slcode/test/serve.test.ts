@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { loadWeb, serveSession, staticHandler } from '../src/serve.ts';
+import { fileHandler, loadWeb, serveSession, staticHandler } from '../src/serve.ts';
 import { connectPost, connectSession } from '../src/client.ts';
 import { corePaths, cwdSlug } from '../src/paths.ts';
 import { EventLog } from '../src/eventLog.ts';
@@ -280,6 +280,36 @@ test('웹 정적 파일은 serve 시작 때 고정 — 그 뒤 설치 폴더의 
   assert.deepEqual(await get('/sub/'), [200, 'sub']);
   assert.equal((await get('/settings.js'))[0], 404, '시작 뒤에 생긴 파일은 없다');
   assert.equal((await get('/%2e%2e/serve.test.ts'))[0], 404);
+  srv.close();
+});
+
+test('로컬 파일(file?path=): 읽을 수 있는 절대 경로를 형식·sandbox 헤더와 함께, 토큰이 있으면 같은 토큰만, file 이 아니면 정적 파일로 (ticket slcode-append-system-prompt)', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-file-'));
+  fs.writeFileSync(path.join(root, 'a.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  fs.writeFileSync(path.join(root, 'a.ts'), 'const x = 1;\n');
+  fs.writeFileSync(path.join(root, 'b.bin'), Buffer.from([1, 0, 2]));
+  fs.writeFileSync(path.join(root, 'index.html'), '<html lang="ko">web</html>');
+  const web = loadWeb(root);
+  const http = await import('node:http');
+  let token: string | null = null;
+  const srv = http.createServer((q, r) => { if (!fileHandler(q, r, token)) staticHandler(q, r, web); });
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${(srv.address() as import('node:net').AddressInfo).port}`;
+  const get = (p: string, extra = '') => fetch(`${base}/file?path=${encodeURIComponent(p)}${extra}`);
+  let r = await get(path.join(root, 'a.png'));
+  assert.equal(r.status, 200); assert.equal(r.headers.get('content-type'), 'image/png'); assert.equal(r.headers.get('content-security-policy'), 'sandbox');
+  assert.deepEqual([...new Uint8Array(await r.arrayBuffer())], [0x89, 0x50, 0x4e, 0x47]);
+  r = await get(path.join(root, 'a.ts') + ':12');
+  assert.equal(r.status, 200, '줄 번호를 떼고 다시'); assert.equal(r.headers.get('content-type'), 'text/plain; charset=utf-8'); assert.equal(await r.text(), 'const x = 1;\n');
+  assert.equal((await get(path.join(root, 'b.bin'))).headers.get('content-type'), 'application/octet-stream');
+  assert.equal((await get(path.join(root, 'none.png'))).status, 404);
+  assert.equal((await get(root)).status, 404, '폴더는 아니다');
+  assert.equal((await get('a.png')).status, 400, '상대 경로는 아니다');
+  assert.equal(await (await fetch(base + '/')).text(), '<html lang="ko">web</html>');
+  token = 'tok';
+  assert.equal((await get(path.join(root, 'a.png'))).status, 401);
+  assert.equal((await get(path.join(root, 'a.png'), '&token=bad')).status, 401);
+  assert.equal((await get(path.join(root, 'a.png'), '&token=tok')).status, 200);
   srv.close();
 });
 

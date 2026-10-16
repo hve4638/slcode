@@ -13,6 +13,7 @@
 // ?token= 은 localStorage 로 옮기고 URL 에서 지운다 (루프백 밖으로 열었을 때만 붙는다).
 import { WsTransport } from './rpc.js';
 import { mountAgentFront } from './app.js';
+import { setFileToken } from './markdown.js';
 
 const q = new URLSearchParams(location.search);
 if (q.get('token')) { localStorage.setItem(`slcode.token.${location.host}`, q.get('token')); history.replaceState(null, '', location.pathname); }
@@ -20,6 +21,7 @@ const token = localStorage.getItem(`slcode.token.${location.host}`) ?? '';
 // 상대 경로 — superlite /svc/<토큰>/ 아래에서도 이 페이지 옆의 ws 로 (ticket plugin-service-web)
 const wsUrl = new URL('ws', location.href); wsUrl.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'; wsUrl.search = '';
 const transport = new WsTransport(wsUrl.href, token);
+setFileToken(token); // 답변 속 로컬 파일(file?path=)도 같은 토큰으로
 mountAgentFront(document.getElementById('root'), transport, {
   onAttach: (id, info) => { document.title = info.title || `slcode · ${id}`; },
 });

@@ -139,6 +139,16 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .assistant ul, .acf .assistant ol { margin: .3em 0 .7em; padding-left: 1.5em; }
 .acf .assistant li { margin: .15em 0; } .acf .assistant li::marker { color: var(--acf-muted); }
 .acf .assistant blockquote { margin: .7em 0; padding: 2px 0 2px 12px; border-left: 3px solid var(--acf-line); color: var(--acf-muted); }
+.acf .assistant a.img { display: block; width: fit-content; max-width: 100%; margin: .5em auto; } /* 답변 속 이미지 — 한 줄을 차지하고 가운데 (같은 줄에 글이 있어도 앞뒤 글은 다른 줄로), 누르면 보기 화면 */
+.acf .assistant a.img img { display: block; max-width: 100%; max-height: 320px; border-radius: 4px; }
+.acf dialog.imgview { position: fixed; inset: 0; width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; background: rgba(0,0,0,.85); } /* 이미지 보기 — 화면에 맞춰, 작으면 원래 크기 */
+.acf dialog.imgview[open] { display: grid; place-items: center; }
+.acf dialog.imgview::backdrop { background: transparent; }
+.acf dialog.imgview > img { max-width: calc(100% - 48px); max-height: calc(100% - 112px); object-fit: contain; }
+.acf dialog.imgview .bar { position: absolute; top: 12px; right: 12px; display: flex; gap: 8px; }
+.acf dialog.imgview .bar button.ico { width: 36px; height: 36px; padding: 0; border-radius: 999px; display: grid; place-items: center; background: var(--acf-panel); color: var(--acf-fg); border: 1px solid var(--acf-line); }
+.acf dialog.imgview .bar button.ico:hover { background: var(--acf-soft); }
+.acf dialog.imgview .bar button.ico svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .acf .assistant a { text-decoration-thickness: 1px; text-underline-offset: 2px; }
 .acf .assistant hr { border: 0; border-top: 1px solid var(--acf-line); margin: 1em 0; }
 /* 표 — 넓으면 표 안에서 가로 스크롤 */

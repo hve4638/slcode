@@ -10,6 +10,7 @@ import { connectSession } from '../src/client.ts';
 import { EventLog } from '../src/eventLog.ts';
 import { corePaths } from '../src/paths.ts';
 import { estimateCostUsd } from '../src/codex.ts';
+import { SLCODE_PROMPT } from '../src/prompt.ts';
 
 const FAKE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-codex.mjs');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -108,6 +109,24 @@ test('codex: meta.forkFrom(slcode import --fork) 이면 첫 기동이 thread/for
   await sleep(300);
   assert.equal(EventLog.open(corePaths(dir).sessionsDir, 'ffff0001')!.meta.vendorSessionId, 'fork-thr-orig', '두 번째 기동은 fork 가 아니라 resume');
   await h2.close('test');
+});
+
+test('codex: slcode 고정 지시는 thread/start·thread/fork 의 developerInstructions 로, thread/resume 에는 넣지 않는다 (ticket slcode-append-system-prompt)', async () => {
+  process.env.SLCODE_GRACE_SECS = '1';
+  process.env.SLCODE_CODEX_BIN = `${process.execPath} ${FAKE}`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-codex-'));
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
+  const calls = path.join(dir, 'calls.jsonl');
+  process.env.FAKE_CODEX_CALLS = calls;
+  try {
+    const launch = async (resume?: string) => { const h = await serveSession({ dir, cwd: work, vendor: 'codex', web: false, ...(resume ? { resume } : {}) }); await sleep(300); await h.close('test'); return h.session.id; };
+    await launch(await launch());
+    EventLog.create(corePaths(dir).sessionsDir, { id: 'ffff0002', vendor: 'codex', cwd: work, title: null, vendorSessionId: null, forkFrom: 'thr-orig', createdAt: 1, permissionMode: null, raw: false }).close();
+    await launch('ffff0002');
+  } finally { delete process.env.FAKE_CODEX_CALLS; }
+  const got = fs.readFileSync(calls, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepEqual(got.map((c) => [c.method, c.developerInstructions === SLCODE_PROMPT ? 'prompt' : c.developerInstructions]),
+    [['thread/start', 'prompt'], ['thread/resume', null], ['thread/fork', 'prompt']]);
 });
 
 test('codex: auto 모드 = on-request + workspaceWrite + approvalsReviewer auto_review, 다른 모드로 돌리면 reviewer 는 user (사용자 2026-10-09)', async () => {

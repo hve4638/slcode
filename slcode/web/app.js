@@ -237,6 +237,8 @@ export function mountAgentFront(root, transport, opts = {}) {
     coin: '<circle cx="12" cy="12" r="10"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><path d="M12 18V6"/>',
     mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
     check: '<path d="M5 12l5 5L20 7"/>',
+    download: '<path d="M12 4v12"/><path d="M6 11l6 6 6-6"/><path d="M5 20h14"/>',
+    x: '<path d="M6 6l12 12"/><path d="M18 6 6 18"/>',
     rewind: '<path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
     gear: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
   };
@@ -828,6 +830,36 @@ export function mountAgentFront(root, transport, opts = {}) {
   }
   // 바깥(superlite 카드)이 탭을 다시 보일 때 입력창으로 — focus() 는 직전 커서·선택을 그대로 둔다 (사용자 2026-10-04)
   window.addEventListener('message', (e) => { if (e.data?.type === 'slcode.focus' && !input.disabled) input.focus(); });
+  // 답변 속 링크·이미지(data-open, ticket slcode-append-system-prompt). superlite 카드면 링크는 superlite 가 연다 — 웹 주소는 URL 탭, 파일은 에디터
+  // (main.js 의 open 동사). 브라우저로 연 웹은 그대로 새 탭. 이미지는 어디서든 보기 화면으로 (ChatGPT 꼴, 사용자 2026-10-17)
+  const inCard = window.parent !== window;
+  const openLink = (a) => { if (inCard) window.parent.postMessage({ type: 'slcode.open', target: a.dataset.open }, '*'); else window.open(a.href, '_blank', 'noopener'); };
+  // 다운로드 — 카드의 로컬 파일은 superlite download 동사(Download 뷰 대기열, 앱 웹뷰에선 브라우저 다운로드가 안 될 수 있다). 그 밖은 브라우저 다운로드:
+  // 로컬 파일은 같은 출처라 바로, 웹 이미지는 받아서 — 그 사이트가 막으면(CORS) 링크처럼 연다
+  async function download(a) {
+    const target = a.dataset.open, local = !/^https?:/.test(target);
+    if (local && inCard) { window.parent.postMessage({ type: 'slcode.download', target }, '*'); return; }
+    let url = a.href, blob = null;
+    if (!local) {
+      try { const r = await fetch(url); if (r.ok) url = blob = URL.createObjectURL(await r.blob()); } catch {}
+      if (!blob) { openLink(a); return; }
+    }
+    const d = h('a', { href: url, download: target.split(/[\\/]/).pop().split(/[?#]/)[0] || 'image' });
+    document.body.append(d); d.click(); d.remove();
+    if (blob) setTimeout(() => URL.revokeObjectURL(blob), 1000);
+  }
+  const viewImg = h('img', { alt: '' });
+  let viewing = null;
+  const viewer = h('dialog', { class: 'imgview' }, h('div', { class: 'bar' }, iconBtn('download', '다운로드', () => viewing && download(viewing)), iconBtn('x', '닫기', () => viewer.close())), viewImg);
+  viewer.addEventListener('click', (e) => { if (e.target === viewer) viewer.close(); }); // 이미지 밖(배경)을 누르면 닫는다, Esc 는 dialog 가
+  el.append(viewer);
+  el.addEventListener('click', (e) => {
+    const a = e.target.closest?.('a[data-open]');
+    if (!a || e.button !== 0) return;
+    const img = a.querySelector('img');
+    if (img) { e.preventDefault(); viewing = a; viewImg.src = img.src; viewImg.alt = img.alt; viewer.showModal(); return; }
+    if (inCard) { e.preventDefault(); openLink(a); }
+  });
   input.onpaste = (e) => { const fs = [...e.clipboardData.files]; if (fs.length) { e.preventDefault(); addFiles(fs); } };
   el.ondragover = (e) => e.preventDefault();
   el.ondrop = (e) => { e.preventDefault(); addFiles(e.dataTransfer.files); };
