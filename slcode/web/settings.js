@@ -80,6 +80,9 @@ export function settingsDialog(h, set, end) {
   confirmEnd.addEventListener('click', (e) => { if (e.target === confirmEnd) confirmEnd.close(); });
   const endRow = h('section', { class: 'end' }, h('div', { class: 'row' }, h('h3', {}, '세션 종료'), h('button', { class: 'danger solid', onclick: () => confirmEnd.showModal() }, '종료')));
 
+  // 버전 — 맨 아래 오른쪽 구석에 흐리게 (사용자 2026-10-18, ticket slcode-web-version-display). 화면(serve)과 세션(core)이 같으면 하나, 다르면 core 를 괄호로 (사용자 2026-10-18 — '화면·세션' 이름은 뺐다).
+  // 업데이트는 떠 있는 core 를 두므로 다시 연 카드가 옛 세션에 붙으면 갈린다. 벤더(Claude Code·Codex) 버전과 디스크 최신 안내는 두지 않는다 (사용자 결정)
+  const ver = h('div', { class: 'ver' });
   const sec = (title, ...kids) => h('section', {}, h('h3', {}, title), ...kids);
   const dlg = h('dialog', { class: 'settings' },
     h('header', {}, h('h2', {}, '설정'), close),
@@ -87,7 +90,8 @@ export function settingsDialog(h, set, end) {
       sec('테마', cats, themes),
       h('section', {}, h('label', { class: 'switch' }, h('h3', {}, 'context 경고'), warn), ctxBody),
       endRow,
-      err),
+      err,
+      ver),
     confirmEnd);
   dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); }); // 바깥(배경) 클릭
 
@@ -98,5 +102,7 @@ export function settingsDialog(h, set, end) {
     if (!range.matches(':active')) { lo.value = s.context.yellow; hi.value = s.context.red; paintRange(); }
   }
   update(DEFAULTS);
-  return { el: dlg, open: () => { showCat(catOf(cur)); dlg.showModal(); }, update, endable: (on) => { endRow.hidden = !on; } };
+  /** screen 은 index.html 의 data-version(serve 가 넣는다 — 디스크의 웹을 그대로 보내는 0.1.8 이하 serve 엔 없다), core 는 server.info.version */
+  const version = (screen, core) => { ver.textContent = !screen || screen === core ? `slcode ${core}` : `slcode ${screen} (core ${core})`; };
+  return { el: dlg, open: () => { showCat(catOf(cur)); dlg.showModal(); }, update, endable: (on) => { endRow.hidden = !on; }, version };
 }

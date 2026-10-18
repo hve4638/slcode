@@ -775,7 +775,9 @@ export function mountAgentFront(root, transport, opts = {}) {
       rpc('settings.get').then(setSettings, () => {}); // 옛 serve 엔 없다 — 기본값으로 그린다
       boot('loading history');
       try {
-        const id = opts.sessionId ?? current ?? (await rpc('server.info')).session;
+        const si = await rpc('server.info');
+        settingsUi.version(document.documentElement.dataset.version, si.version);
+        const id = opts.sessionId ?? current ?? si.session;
         await attach(id);
       } catch (e) { push(h('div', { class: 'meta err' }, e.message)); }
       finally { boot(null); }

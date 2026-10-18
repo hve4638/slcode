@@ -351,6 +351,7 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf dialog.settings section.end[hidden] { display: none; }
 .acf dialog.settings section.end .row { display: flex; align-items: center; justify-content: space-between; }
 .acf dialog.settings section.end h3 { margin: 0; }
+.acf dialog.settings .ver { margin-top: 10px; text-align: right; font-size: 11px; color: var(--acf-muted); opacity: .7; user-select: text; }
 .acf dialog.confirm { min-width: 260px; padding: 16px 18px 14px; border: 1px solid var(--acf-line); border-radius: 12px; background: var(--acf-panel); color: var(--acf-fg); box-shadow: 0 16px 48px var(--acf-shadow); font: 14px/1.45 var(--acf-sans); }
 .acf dialog.confirm::backdrop { background: rgba(0,0,0,.2); }
 .acf dialog.confirm p { margin: 0 0 14px; }

@@ -8,6 +8,7 @@ import { DEFAULT_SETTINGS, normalizeSettings, readSettings, watchSettings, write
 import http from 'node:http';
 import { WebSocket as WS } from 'ws';
 import { serveSession } from '../src/serve.ts';
+import { VERSION } from '../src/client.ts';
 // 웹 모듈(JS) — ctxLevel 은 DOM 을 쓰지 않아 node 에서 바로 부른다
 import { ctxLevel } from '../web/settings.js';
 
@@ -132,9 +133,9 @@ test('serve: settings.get·set 은 serve 가 답하고 입구마다 따로 — �
     await sleep(1500); // 감시가 폴링으로 돌아도(inotify 한도) 한 번은 돌 시간
     assert.deepEqual([a, b, s1, s2].map((x) => x.changes().length), [1, 1, 1, 1], '알림은 그 입구의 화면에만');
     assert.equal((await b.call('server.info')).result.session, h2.session.id, '다른 요청은 그대로 core 로');
-    // 첫 화면부터 그 입구의 테마로 — index.html 의 <html> 에 넣어 보낸다
-    assert.match(await (await fetch(h1.url!)).text(), /<html lang="ko" data-theme="dark">/);
-    assert.match(await getUds(svc1, '/'), /<html lang="ko" data-theme="nord">/);
+    // 첫 화면부터 그 입구의 테마로 — index.html 의 <html> 에 넣어 보낸다. 화면의 버전(이 serve 의 것)도 함께
+    assert.ok((await (await fetch(h1.url!)).text()).includes(`<html lang="ko" data-theme="dark" data-version="${VERSION}">`));
+    assert.ok((await getUds(svc1, '/')).includes(`<html lang="ko" data-theme="nord" data-version="${VERSION}">`));
     for (const x of [a, b, s1, s2]) x.close();
   } finally {
     await Promise.all([h1.close('test'), h2.close('test')]);

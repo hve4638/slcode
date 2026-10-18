@@ -76,7 +76,8 @@ export function loadWeb(root = WEB_DIR): Map<string, Buffer> {
 
 /** 웹 정적 파일 (loadWeb 이 고정한 web/) — 세션 웹과 서비스 웹이 같이 쓴다. 경로는 상대(경로 접두사 아래에서도 — relay /svc).
  *  dir 이 있으면 index.html 의 <html> 에 그 상태 폴더·입구(kind)의 테마(data-theme)를 넣어 보낸다 — 연결 전 첫 화면부터 그 테마로
- *  (카드 iframe 이 다시 로드될 때 시스템 색이 비치지 않게, ticket slcode-web-settings) */
+ *  (카드 iframe 이 다시 로드될 때 시스템 색이 비치지 않게, ticket slcode-web-settings). 이 serve 의 버전(data-version)도 함께 — 웹은 이 serve 가 고정한 것이라
+ *  화면의 버전이다. 설정 창이 세션(core) 버전과 견준다 (ticket slcode-web-version-display) */
 export function staticHandler(req: http.IncomingMessage, res: http.ServerResponse, web: Map<string, Buffer>, dir?: string, kind: SettingsKind = 'web'): void {
   const file = path.posix.normalize(decodeURIComponent((req.url ?? '/').split('?')[0]).replace(/^\/+/, '') || 'index.html').replace(/\/+$/, '');
   const name = web.has(file) ? file : `${file}/index.html`;
@@ -85,7 +86,7 @@ export function staticHandler(req: http.IncomingMessage, res: http.ServerRespons
   res.writeHead(200, { 'content-type': TYPES[path.extname(name)] ?? 'application/octet-stream', 'cache-control': 'no-cache' });
   if (dir && name === 'index.html') {
     const { theme } = readSettings(dir, kind);
-    const attr = /^[\w-]+$/.test(theme) ? ` data-theme="${theme}"` : '';
+    const attr = (/^[\w-]+$/.test(theme) ? ` data-theme="${theme}"` : '') + ` data-version="${VERSION}"`;
     res.end(body.toString('utf8').replace('<html lang="ko">', `<html lang="ko"${attr}>`));
     return;
   }
