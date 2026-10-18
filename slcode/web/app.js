@@ -341,7 +341,7 @@ export function mountAgentFront(root, transport, opts = {}) {
         if (!sc.textEl) { sc.textEl = push(h('div', { class: 'assistant streaming' }), sc); sc.textBuf = ''; }
         sc.textBuf += ev.text;
         const stick = atBottom();
-        sc.textEl.innerHTML = renderMarkdown(sc.textBuf);
+        sc.textEl.innerHTML = renderMarkdown(sc.textBuf, info?.cwd ?? ready?.cwd);
         if (stick) feed.scrollTop = feed.scrollHeight;
         break;
       }
