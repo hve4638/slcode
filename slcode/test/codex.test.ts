@@ -59,6 +59,8 @@ test('codex: initialize→thread/start→turn/start, 델타·도구·승인(acce
   assert.ok(ck.includes('context.compacted') && evs.slice(n0).find((e) => e.kind === 'context.compacted').trigger === 'manual', String(ck));
   assert.ok(!ck.includes('text.delta'), '모델에게 텍스트로 가지 않는다');
   await assert.rejects(c.request('session.rewind', { id: h.session.id, seq: 1, conversation: true, files: false }), /not supported/);
+  assert.deepEqual(await c.request('session.mcp', { id: h.session.id }), []);
+  await assert.rejects(c.request('session.mcpReconnect', { id: h.session.id, name: 'x' }), /not supported/);
   c.close();
   await h.close('test');
   

@@ -155,6 +155,12 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       const [top, branch, limits, context] = await Promise.all([git(['rev-parse', '--show-toplevel']), git(['branch', '--show-current']), s.limits(), s.context()]);
       return { repo: top ? path.basename(top) : null, branch, limits, context };
     },
+    'session.mcp': (_c, p) => mine(p?.id).mcp(),
+    'session.mcpReconnect': async (_c, p) => {
+      if (typeof p?.name !== 'string' || !p.name) throw new CoreError(ERR.badRequest, 'name required');
+      try { return await mine(p.id).reconnectMcp(p.name); }
+      catch (e) { if (e instanceof CoreError) throw e; throw new CoreError(ERR.badRequest, (e as Error).message); }
+    },
     'session.rewind': async (_c, p) => {
       if (typeof p?.seq !== 'number') throw new CoreError(ERR.badRequest, 'seq required');
       try { return { ok: true, filesChanged: await mine(p.id).rewind(p.seq, !!p.conversation, !!p.files) }; }

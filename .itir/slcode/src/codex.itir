@@ -38,6 +38,12 @@ export class CodexSession {
   export fn commands() {
     role: 빈 배열
   }
+  export fn mcp() {
+    role: 빈 배열 (session.ready 의 mcp 도 비어 있다)
+  }
+  export fn reconnectMcp(name) {
+    role: 미지원 — 오류
+  }
   export fn limits() {
     role: 마지막 account/rateLimits/updated, 없으면 account/rateLimits/read
   }

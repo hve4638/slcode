@@ -472,6 +472,13 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .side details.list summary .n { margin-left: auto; font-size: 11px; color: var(--acf-muted); background: var(--acf-soft); border-radius: 999px; padding: 0 7px; font-family: var(--acf-mono); }
 .acf .side details.list ul { margin: 2px 0 4px; padding-left: 18px; list-style: none; font-family: var(--acf-mono); font-size: 12px; color: var(--acf-muted); max-height: 160px; overflow: auto; }
 .acf .side details.list li { padding: 1px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acf .side details.list .mcpf { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 4px; }
+.acf .side details.list .mcpf .nm { overflow: hidden; text-overflow: ellipsis; }
+.acf .side details.list .mcpf button.ico { width: 20px; height: 20px; padding: 0; border: 0; background: transparent; color: var(--acf-muted); border-radius: 6px; display: grid; place-items: center; cursor: pointer; }
+.acf .side details.list .mcpf button.ico:hover:not(:disabled) { background: var(--acf-soft); color: var(--acf-fg); }
+.acf .side details.list .mcpf button.ico:disabled { opacity: .4; cursor: default; }
+.acf .side details.list .mcpf button.ico svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.acf .side details.list .mcpf .why { grid-column: 1 / -1; white-space: normal; overflow-wrap: anywhere; font-size: 11px; opacity: .8; padding-left: 8px; }
 .acf .side .pend { display: grid; gap: 4px; }
 .acf .side .pend a { cursor: pointer; }
 .acf .side .empty { color: var(--acf-muted); }

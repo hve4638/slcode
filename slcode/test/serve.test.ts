@@ -366,3 +366,29 @@ test('UDS 클라이언트(RpcClient)도 큰 응답의 한글이 청크 경계에
   c.close();
   await h.close('test');
 });
+
+test('MCP 상태: failed 는 사유가 붙고, 다시 연결은 그 서버만 — 다시 실패해도 목록으로 온다 (ticket slcode-mcp-failed-path)', async () => {
+  const dir = isolated();
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
+  // 프로젝트 MCP 하나 — 없는 명령이라 반드시 실패한다. settings.local 로 승인 없이 켠다 (settingSources 에 local 이 있다)
+  fs.writeFileSync(path.join(work, '.mcp.json'), JSON.stringify({ mcpServers: { broken: { command: path.join(work, 'no-such-node') } } }));
+  fs.mkdirSync(path.join(work, '.claude'));
+  fs.writeFileSync(path.join(work, '.claude', 'settings.local.json'), JSON.stringify({ enableAllProjectMcpServers: true }));
+  const h = await serveSession({ dir, cwd: work, web: false });
+  const c = await connectSession(h.sock);
+  let list: any[] = [];
+  for (let t0 = Date.now(); Date.now() - t0 < 15000; await sleep(200)) { // 연결 시도가 끝날 때까지 (pending → failed)
+    list = await c.request('session.mcp', { id: h.session.id });
+    if (list.find((m) => m.name === 'broken')?.status === 'failed') break;
+  }
+  const b = list.find((m) => m.name === 'broken');
+  assert.equal(b?.status, 'failed', JSON.stringify(list));
+  assert.ok(b.error, '실패 사유');
+  const again = await c.request('session.mcpReconnect', { id: h.session.id, name: 'broken' });
+  const b2 = again.find((m: any) => m.name === 'broken');
+  assert.equal(b2.status, 'failed'); assert.ok(b2.error);
+  await assert.rejects(c.request('session.mcpReconnect', { id: h.session.id, name: 'nope' }), (e: any) => e.code === 'bad_request');
+  await assert.rejects(c.request('session.mcpReconnect', { id: h.session.id }), /name required/);
+  c.close();
+  await h.close('test');
+});

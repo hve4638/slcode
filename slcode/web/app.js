@@ -209,6 +209,16 @@ export function mountAgentFront(root, transport, opts = {}) {
     if (ev.costUsd != null) { costKnown = true; if (ev.costUsd < costLast) costBase += costLast; costLast = ev.costUsd; usage.cost = costBase + costLast; }
   }
   async function loadStatus() { if (!current) return; try { status = await rpc('session.status', { id: current }); } catch { status = null; } renderSide(); }
+  // MCP 의 지금 상태 — session.ready 의 mcp 는 기동 때 것이라 실패 사유가 없다. failed 가 있을 때만 묻는다 (폴링 없음, ticket slcode-mcp-failed-path)
+  let mcp = null, mcpBusy = null; // mcp: session.mcp·mcpReconnect 결과, 없으면 ready.mcp 를 그린다. mcpBusy: 다시 연결 중인 서버 이름
+  async function loadMcp() { if (!current || !ready?.mcp?.some((m) => m.status === 'failed')) return; try { mcp = await rpc('session.mcp', { id: current }); } catch { return; } renderSide(); }
+  async function retryMcp(name) {
+    if (mcpBusy) return;
+    mcpBusy = name; renderSide();
+    try { mcp = await rpc('session.mcpReconnect', { id: current, name }); }
+    catch (e) { mcp = (mcp ?? ready.mcp).map((m) => (m.name === name ? { ...m, error: e.message } : m)); }
+    mcpBusy = null; renderSide();
+  }
 
   // 따라가기 — 바닥에 있을 때만 새 항목을 따라 내려간다. 부드러운 스크롤 도중엔 위치 측정이 틀리므로(2026-09-30 실측) 값을 재지 않고 플래그를 든다:
   // 사용자가 스크롤하면 그때 바닥 여부를 재고, 보내기·바닥 도달 때 켠다
@@ -240,6 +250,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     download: '<path d="M12 4v12"/><path d="M6 11l6 6 6-6"/><path d="M5 20h14"/>',
     x: '<path d="M6 6l12 12"/><path d="M18 6 6 18"/>',
     rewind: '<path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
+    retry: '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>',
     gear: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
   };
   const icon = (name) => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.innerHTML = ICONS[name]; return s; };
@@ -398,7 +409,7 @@ export function mountAgentFront(root, transport, opts = {}) {
         break;
       }
       case 'session.state': setState(ev.state); break;
-      case 'session.ready': ready = ev; renderMode(); renderSide(); break;
+      case 'session.ready': ready = ev; mcp = null; renderMode(); renderSide(); if (live) loadMcp(); break;
       case 'session.imported': push(h('div', { class: 'notice' }, `imported from ${ev.vendor} (${ev.vendorSessionId.slice(0, 8)})`)); break; // 표지는 옮겨 온 대화 뒤에 선다 (사용자 2026-10-15: 짧게)
       case 'context.compacted': endText(); push(h('div', { class: 'notice' }, `컨텍스트 압축${ev.preTokens ? ` · ${fmtTok(ev.preTokens)}` : ''}`)); break;
       case 'hook': if (live) { hooks++; lastHook = `${ev.event} ${ev.phase}`; } break;
@@ -631,8 +642,13 @@ export function mountAgentFront(root, transport, opts = {}) {
       d.addEventListener('toggle', () => { if (d.open) folded.add(`+${key}`); else folded.delete(`+${key}`); }); // 목록은 기본 접힘
       return d;
     };
+    // failed 는 사유(있으면)와 다시 연결 버튼 — 다시 연결은 그 서버 하나만, 세션·대화는 그대로
+    const mcpItem = (m) => m.status !== 'failed' ? `${m.name} (${m.status})` : h('div', { class: 'mcpf' },
+      h('span', { class: 'nm' }, `${m.name} (${mcpBusy === m.name ? '다시 연결 중' : 'failed'})`),
+      h('button', { class: 'ico', title: '다시 연결', 'aria-label': '다시 연결', disabled: mcpBusy ? '' : null, onclick: () => retryMcp(m.name) }, icon('retry')),
+      m.error ? h('div', { class: 'why' }, m.error) : null);
     side.append(sec('loaded', '로드됨', ready
-      ? h('div', {}, list('tools', '도구', ready.tools), list('skills', '스킬', ready.skills), list('plugins', '플러그인', ready.plugins, (p) => p.name), list('mcp', 'MCP', ready.mcp, (m) => `${m.name} (${m.status})`), list('slash', '슬래시 명령', ready.slashCommands), list('agents', '에이전트', ready.agents))
+      ? h('div', {}, list('tools', '도구', ready.tools), list('skills', '스킬', ready.skills), list('plugins', '플러그인', ready.plugins, (p) => p.name), list('mcp', 'MCP', mcp ?? ready.mcp, mcpItem), list('slash', '슬래시 명령', ready.slashCommands), list('agents', '에이전트', ready.agents))
       : h('div', { class: 'empty' }, '첫 턴 뒤')));
     side.append(sec('hooks', '훅', kv([['실행', String(hooks)], ['마지막', lastHook || '—']])));
   }
@@ -744,7 +760,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     replayHistory(r.history, first ? r.summary : null);
     for (const p of r.pending) renderCard(p);
     setState(info.state);
-    loadModels(); loadStatus(); loadCommands(); renderMode(); prefetch();
+    loadModels(); loadStatus(); loadCommands(); loadMcp(); renderMode(); prefetch();
     if (opts.onAttach) opts.onAttach(id, info);
   }
   transport.onEvent((m) => {

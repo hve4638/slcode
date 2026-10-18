@@ -31,6 +31,12 @@ export class ClaudeSession {
   export fn context() {
     role: 컨텍스트 창 사용량(tokens·max·%) — SDK getContextUsage(summary). 벤더 미기동·오류면 null
   }
+  export fn mcp() {
+    role: MCP 서버 상태(이름·status·failed 면 error) — SDK mcpServerStatus. session.ready 의 mcp 는 기동 때 것이라 실패 사유가 없다. 벤더 미기동·오류면 빈 배열 (ticket slcode-mcp-failed-path)
+  }
+  export fn reconnectMcp(name) {
+    role: SDK reconnectMcpServer(name) 뒤 mcp() — 실패해도 던지지 않고 목록의 error 로 돌려준다(목록에 사유가 없으면 던진 메시지를 싣는다). 목록에 없는 이름·벤더 미기동이면 오류
+  }
   export fn setEffort(effort) {
     role: SDK applyFlagSettings({effortLevel}) — 세션 한정 설정층이라 설정 파일엔 안 쓴다. meta.effort 에 남겨 복원 때 options.effort 로 넘긴다. models() 가 지금 effort 와 모델별 supportedEffortLevels 를 같이 준다
   }

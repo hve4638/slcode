@@ -3,7 +3,7 @@
 // 승인(canUseTool)은 Deferred 로 무기한 기다린다 — interrupt·close·프로세스 종료만 cancelled 로 푼다 (사용자 결정 2026-09-26).
 import { query, type Query, type SDKMessage, type SDKUserMessage, type PermissionResult, type PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
 import { randomUUID } from 'node:crypto';
-import type { ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, Usage, LimitWindow } from './protocol.js';
+import type { ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, Usage, LimitWindow, McpStatus } from './protocol.js';
 import { EventLog, unrewound } from './eventLog.js';
 import { AgentSession } from './base.js';
 import { SLCODE_PROMPT } from './prompt.js';
@@ -137,6 +137,23 @@ export class ClaudeSession extends AgentSession {
     if (!this.q) return null;
     try { const c = await this.q.getContextUsage({ detail: 'summary' }); return { tokens: c.totalTokens, max: c.maxTokens, pct: c.percentage }; }
     catch { return null; }
+  }
+
+  /** MCP 서버 상태 — SDK mcpServerStatus (failed 면 error 에 사유). 벤더가 안 떠 있으면 [] */
+  async mcp(): Promise<McpStatus[]> {
+    if (!this.q) return [];
+    try { return (await this.q.mcpServerStatus()).map((m) => ({ name: m.name, status: m.status, ...(m.error ? { error: m.error } : {}) })); }
+    catch { return []; }
+  }
+
+  /** MCP 서버 하나 다시 연결 — SDK 는 실패면 던진다. 결과는 목록으로 돌려주고, 목록에 사유가 없으면 던진 메시지를 싣는다. 목록에 없는 이름이면 던진다 */
+  async reconnectMcp(name: string): Promise<McpStatus[]> {
+    if (!this.q) throw new Error('vendor is not running');
+    let thrown: string | null = null;
+    try { await this.q.reconnectMcpServer(name); } catch (e) { thrown = e instanceof Error ? e.message : String(e); }
+    const list = await this.mcp();
+    if (thrown && !list.some((m) => m.name === name)) throw new Error(thrown);
+    return thrown ? list.map((m) => (m.name === name && !m.error ? { ...m, error: thrown } : m)) : list;
   }
 
   /** 다음 턴부터 쓸 effort. SDK 의 세션 한정 설정층이라 설정 파일엔 안 쓴다. meta 에 남겨 복원 때 options.effort 로 넘긴다 */

@@ -1,6 +1,6 @@
 // 벤더 어댑터의 공통 뼈대 — 세션 id·EventLog·state·seq·구독자·raw 스위치와 emit/info/onEvent/since.
 // 벤더별 동작은 추상 메서드로 두고 serve.ts 는 이 표면만 본다 (ticket agent-core-codex, 2026-09-30).
-import type { ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, LoggedEvent, SessionInfo, SessionState, LimitWindow } from './protocol.js';
+import type { ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, LoggedEvent, SessionInfo, SessionState, LimitWindow, McpStatus } from './protocol.js';
 import { EventLog } from './eventLog.js';
 
 export type ModelsResult = { current: string | null; effort: string | null; models: { value: string; resolvedModel?: string; displayName: string; description: string; efforts?: string[] }[] };
@@ -58,6 +58,8 @@ export abstract class AgentSession {
   abstract commands(): Promise<Command[]>;
   abstract limits(): Promise<Limits>;
   abstract context(): Promise<ContextUsage>;
+  abstract mcp(): Promise<McpStatus[]>;
+  abstract reconnectMcp(name: string): Promise<McpStatus[]>;
   abstract interrupt(): Promise<void>;
   abstract approve(requestId: string, decision: ApprovalDecision, opts?: ApproveOpts): boolean;
   abstract rewind(seq: number, conversation: boolean, files: boolean): Promise<string[] | null>;

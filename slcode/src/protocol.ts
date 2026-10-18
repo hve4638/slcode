@@ -133,6 +133,9 @@ export type Settings = { theme: string; context: { warn: boolean; yellow: number
 export type SettingsKind = 'web' | 'superlite';
 export type SettingsPatch = Partial<Omit<Settings, 'context'>> & { context?: Partial<Settings['context']> };
 
+/** MCP 서버 하나의 지금 상태 — status 는 connected·failed·needs-auth·pending·disabled, error 는 failed 의 사유 (ticket slcode-mcp-failed-path) */
+export type McpStatus = { name: string; status: string; error?: string };
+
 /** 플랜 리밋 창 하나 — pct 는 쓴 비율(0-100), resetsAt 은 ISO 8601 */
 export type LimitWindow = { pct: number | null; resetsAt: string | null };
 
@@ -172,6 +175,10 @@ export type Methods = {
   'session.commands': { params: { id: string }; result: { name: string; description: string; argumentHint: string }[] };
   /** 사이드바 상단(claude 상태줄과 같은 정보) — cwd 의 git repo 이름·브랜치, 벤더 플랜 리밋 창(5시간·7일, 0-100 %), 컨텍스트 창 사용량. 플랜이 없거나 벤더가 답을 못 주면 그 항목은 null. 폴링 없이 attach·turn.end 때 한 번씩 (사용자 2026-09-29) */
   'session.status': { params: { id: string }; result: { repo: string | null; branch: string | null; limits: { fiveHour: LimitWindow | null; sevenDay: LimitWindow | null } | null; context: { tokens: number; max: number; pct: number } | null } };
+  /** MCP 서버 상태 — 벤더가 지금 아는 값. session.ready 의 mcp 는 기동 때 것이고 실패 사유가 없다. 벤더가 안 떠 있거나 Codex 면 [] */
+  'session.mcp': { params: { id: string }; result: McpStatus[] };
+  /** MCP 서버 하나를 다시 연결한 뒤의 상태 목록 — 다시 실패해도 오류가 아니라 목록의 error 로 온다 */
+  'session.mcpReconnect': { params: { id: string; name: string }; result: McpStatus[] };
   /** 턴 되돌리기 (claude 의 Esc-Esc). seq 는 버릴 첫 턴의 turn.start seq. conversation 은 벤더 세션을 그 앞 지점에서 다시 열고, files 는 벤더 체크포인트로 파일을 되돌린다. idle 일 때만 */
   'session.rewind': { params: { id: string; seq: number; conversation: boolean; files: boolean }; result: { ok: true; filesChanged: string[] | null } };
   /** remember 는 벤더 제안 규칙을 세션 한정으로 기억 (영구 설정 파일에 쓰지 않는다). AskUserQuestion 은 updatedInput.answers */
