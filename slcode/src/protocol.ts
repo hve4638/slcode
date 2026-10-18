@@ -1,4 +1,4 @@
-// slcode 프로토콜 — 유일한 계약 표면. 프런트(웹 모드·카드 모드)·CLI·우체국이 전부 이 타입만 본다.
+// slcode 프로토콜 — 유일한 계약 표면. 프런트(웹 모드·카드 모드)·CLI 가 전부 이 타입만 본다.
 // 프레이밍은 superlite 와이어 꼴 (사용자 결정 2026-09-26): JSON 한 줄이 프레임이고
 //   요청   {id, method, params}
 //   응답   {id, result} | {id, error: {code?, message}}
@@ -6,22 +6,16 @@
 // 구조 (사용자 결정 2026-09-27, ticket agent-core-split): 세션 하나 = core 프로세스 하나가 자기 안에서 쥔다.
 //   세션 소켓 sessions/<cwd 슬러그>/<id>/sock (Methods 의 session.*) — serve 가 웹·stdio 연결마다 이 소켓에 하나씩 붙어 같은 메서드를 중계한다
 //   (ticket slcode-core-serve-split, 2026-10-15). 세션의 수명은 소유자(core.own 을 보낸 연결 하나)가 정한다.
-//   우체국 post.sock 은 머신에 하나 — 세션 등록(연결 유지 = 살아 있음)·우편 보관·시그널만. 본문은 세션이 mail.fetch 로 가져간다 (폴링 없음).
-//   버전 공존: 옛 세션 프로세스와 새 세션 프로세스가 같이 뜬다. 우체국과의 계약(PostMethods·시그널)은 최소로 고정한다.
+//   세션 사이 메시지는 켜진 받는 세션의 소켓(session.deliver)으로 직접, 꺼진 세션에는 보내지 않는다 (mail.ts, ticket slcode-p2p-messaging 2026-10-19 — 우체국 없음).
 // 이벤트 어휘는 벤더 중립 15종. 각 이벤트는 선택 필드 raw 에 벤더 원문(SDK 메시지)을 같은 봉투로 싣는다 (raw:true 일 때만).
 
 export const PROTOCOL_VERSION = 3;
 
 /** 파일 위치 — $SLCODE_DIR, 없으면 ~/.local/state/slcode */
 export const FILES = {
-  postSock: 'post.sock',
-  postLock: 'post.lock',
-  postPid: 'post.pid',
-  postLog: 'post.log',
   coreLog: 'core.log',
   token: 'slcode.token',
   sessionsDir: 'sessions',
-  mailDir: 'mail',
   sessionSock: 'sock',
   /** 화면 설정 — 입구(SettingsKind)마다 하나 (settings.ts) */
   settingsWeb: 'settings-web.json',
@@ -179,7 +173,7 @@ export type Methods = {
   /** seq before 앞의 한 페이지 (attach limit 과 같은 규칙). more 는 그 앞이 더 있는가 */
   'session.history': { params: { id: string; before: number; limit: number }; result: { history: LoggedEvent[]; more: boolean } };
   'session.detach': { params: { id: string }; result: { ok: true } };
-  /** idle·running 가리지 않고 큐에 넣는다 — 한 호출. origin 은 발신자 표식 (우편으로 들어온 턴은 'mail') */
+  /** idle·running 가리지 않고 큐에 넣는다 — 한 호출. origin 은 발신자 표식 (메시지로 들어온 턴은 'mail') */
   'session.send': { params: { id: string; text: string; origin?: string; attachments?: Attachment[] }; result: { ok: true; state: SessionState } };
   /** 벤더가 고를 수 있는 모델 목록과 지금 모델·effort */
   'session.models': { params: { id: string }; result: { current: string | null; effort: string | null; models: { value: string; resolvedModel?: string; displayName: string; description: string; efforts?: string[] }[] } };
@@ -216,13 +210,15 @@ export type Methods = {
   'session.inspectTurn': { params: { id: string; end: number }; result: { calls: InspectCall[] } };
   /** 호출 하나의 원본 — 상한으로 지웠으면 bad_request */
   'session.inspectCall': { params: { id: string; n: number }; result: InspectRecord };
-  // ---- 메시징 (ticket superlite-agent-messaging, 사용자 확정 2026-10-02: 스탠드얼론, superlite 등록부 매핑 없음). 세션 안의 `slcode check/ask/reply` 가 자기 세션 소켓으로 부른다
-  /** 밀린 우편을 지금 꺼낸다 (우체국에서 가져온 뒤 inbox 전부 ack) — 진행 중 턴 안에서 읽는 용도. 꺼낸 우편은 턴으로 다시 오지 않는다. text 는 mail.ts formatMail 꼴 */
+  // ---- 메시징 (ticket superlite-agent-messaging 2026-10-02 → slcode-p2p-messaging 2026-10-19). 세션 안의 `slcode check/ask/reply` 가 자기 세션 소켓으로 부른다
+  /** 이 세션 앞으로 한 통 — 다음 idle 에 턴으로 (메모리, 보관함 없음). 같은 id 를 다시 보내도 한 통. id·ts 는 mail.sendMail 이 정한다 */
+  'session.deliver': { params: { id: string; mail: Omit<Mail, 'id' | 'ts'> & { id?: string; ts?: number } }; result: { mailId: string } };
+  /** 밀린 메시지를 지금 꺼낸다 — 진행 중 턴 안에서 읽는 용도. 꺼낸 메시지는 턴으로 다시 오지 않는다. text 는 mail.ts formatMail 꼴 */
   'session.check': { params: { id: string }; result: { count: number; text: string } };
-  /** kind=ask 우편을 보내고 kind=reply re=<그 id> 가 올 때까지 이 요청을 연다 — 기본 무기한, timeoutMs 로만 제한(ERR.timeout). 답장은 턴이 아니라 이 응답으로 온다 */
+  /** kind=ask 메시지를 켜진 세션에 보내고 (아니면 no_session) kind=reply re=<그 id> 가 올 때까지 이 요청을 연다 — 기본 무기한, timeoutMs 로만 제한(ERR.timeout). 답장은 턴이 아니라 이 응답으로 온다 */
   'session.ask': { params: { id: string; to: string; text: string; timeoutMs?: number }; result: { mailId: string; reply: Mail; text: string } };
-  /** 받은 우편 id 로 그 보낸 이에게 kind=reply. 모르는 id(이 세션이 받은 적 없음)면 bad_request */
-  'session.reply': { params: { id: string; re: string; text: string }; result: { id: string; to: string; delivered: boolean } };
+  /** 받은 메시지 id 로 그 보낸 이에게 kind=reply. 모르는 id(이 세션이 받은 적 없음)면 bad_request, 보낸 이가 켜진 세션이 아니면 no_session */
+  'session.reply': { params: { id: string; re: string; text: string }; result: { id: string; to: string } };
 };
 
 export type MethodName = keyof Methods;
@@ -260,32 +256,8 @@ export type Broadcasts = {
 
 export type EventName = keyof Broadcasts;
 
-// ---- 우체국 (post.sock) — 세션 프로세스·CLI 가 붙는다. 이 계약은 버전이 달라도 깨지지 않게 최소로 고정한다
-
-/** 우체국에 등록된 살아 있는 세션 한 장 */
-export type PostEntry = { id: string; cwd: string; pid: number; sock: string; version: string; title: string | null; since: number };
-
-/** 봉투 — body 는 문자열 또는 JSON. kind 로 메시지·게시판·알림을 구분 (사용자 결정 2026-09-27) */
-export type Mail = { id: string; from: string; to: string; ts: number; kind: string; body: unknown; /** 답장이 가리키는 원 우편 id (kind=reply) */ re?: string };
-
-export type PostMethods = {
-  /** 세션 프로세스가 붙자마자. 이 연결이 살아 있는 동안 등록 — 끊기면 목록에서 빠진다 */
-  'post.register': { params: Omit<PostEntry, 'since'>; result: { ok: true; unread: number } };
-  'post.list': { params: Record<string, never>; result: PostEntry[] };
-  'post.info': { params: Record<string, never>; result: { pid: number; startedAt: number; dir: string; protocol: number; sessions: number } };
-  'post.shutdown': { params: Record<string, never>; result: { ok: true } };
-  /** 디스크에 쓰고, 받는 세션이 살아 있으면 시그널만 보낸다. 없으면 보관 */
-  'mail.send': { params: { from: string; to: string; kind?: string; body: unknown; re?: string }; result: { id: string; delivered: boolean } };
-  /** 안 읽은 우편 전부 (ts 순). schema 는 세션이 아는 봉투 버전 — 지금은 1 */
-  'mail.fetch': { params: { to: string; schema?: number }; result: Mail[] };
-  'mail.ack': { params: { to: string; ids: string[] }; result: { ok: true } };
-};
-
-/** 우체국 시그널 — 내용 없이 고정. 세션은 이걸 받으면 mail.fetch 한다 */
-export type PostBroadcasts = {
-  mail: { to: string };
-  'post.shutdown': { reason: string };
-};
+/** 봉투 — body 는 문자열 또는 JSON. kind 는 message·ask·reply. via 는 실제로 넘긴 쪽 (보내는 CLI 가 자동으로: from 과 다른 세션 id 또는 outside) */
+export type Mail = { id: string; from: string; to: string; ts: number; kind: string; body: unknown; /** 답장이 가리키는 원 메시지 id (kind=reply) */ re?: string; via?: string };
 
 export type RequestFrame = { id: number | string; method: string; params?: unknown };
 export type ResponseFrame = { id: number | string; result?: unknown; error?: { code?: string; message: string } };

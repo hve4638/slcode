@@ -1,9 +1,7 @@
 // 파일 위치 — 한 머신·한 사용자에 디렉토리 하나. $SLCODE_DIR(옛 $AGENT_CORE_DIR 도 한 버전 폴백) 로 격리(테스트·데모)할 수 있다.
-//   post.sock/lock/pid/log      우체국 (post.ts)
 //   core.log                      core 프로세스들의 stderr (serve 가 detached 로 띄울 때 잇는다)
 //   slcode.token                  웹을 루프백 밖으로 열 때의 토큰 (0600)
 //   sessions/<cwd 슬러그>/<id>/  meta.json · events.jsonl · sock(core 가 살아 있을 때만)
-//   mail/<세션 id>/<우편 id>.json  보관 우편 (우체국이 쓴다)
 // cwd 슬러그는 claude 규칙 — 경로의 영숫자·- 밖 글자를 - 로 (사용자 결정 2026-09-27: 평탄 구조 기각, 수천 세션 전제)
 import path from 'node:path';
 import os from 'node:os';
@@ -20,19 +18,14 @@ export function coreDir(): string {
   return !fs.existsSync(cur) && fs.existsSync(old) ? old : cur;
 }
 
-export type CorePaths = { dir: string; postSock: string; postLock: string; postPid: string; postLog: string; coreLog: string; token: string; sessionsDir: string; mailDir: string };
+export type CorePaths = { dir: string; coreLog: string; token: string; sessionsDir: string };
 
 export function corePaths(dir = coreDir()): CorePaths {
   return {
     dir,
-    postSock: path.join(dir, FILES.postSock),
-    postLock: path.join(dir, FILES.postLock),
-    postPid: path.join(dir, FILES.postPid),
-    postLog: path.join(dir, FILES.postLog),
     coreLog: path.join(dir, FILES.coreLog),
     token: path.join(dir, FILES.token),
     sessionsDir: path.join(dir, FILES.sessionsDir),
-    mailDir: path.join(dir, FILES.mailDir),
   };
 }
 

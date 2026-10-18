@@ -20,6 +20,8 @@ export type SessionMeta = {
   closedAt?: number;
   permissionMode: string | null;
   raw: boolean;
+  /** core 프로세스 pid — listen 뒤 남긴다 (close --force 가 kill 할 대상, list 의 pid). 소켓이 살아 있을 때만 믿는다 */
+  pid?: number;
   /** session.setModel 로 고른 모델 — 없으면 벤더 기본 */
   model?: string | null;
   /** session.setEffort 로 고른 effort — 없으면 벤더 기본 */

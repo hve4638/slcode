@@ -4,14 +4,14 @@
 //   대화       prompt <s> <text> | interrupt <s>
 //   조회       status <s> | pending <s> | last <s> [--turn N] | log <s> [--since N] [--tail N]      — 평문 기본, --json 이면 같은 내용을 JSON 으로
 //   응답       respond <s> <req> allow|deny [--remember] | respond <s> <req> --answer <text> | respond <s> <req> --json '<updatedInput>'
-//   우편       mail <to> <text> [--from X] | inbox [<s>] | (세션 안) check | ask <to> <text> [--timeout S] | reply <mail id> <text>
-//   우체국     post status | post restart
-// <s>·<to> 는 모든 동사에서 세션 id 또는 유일한 제목. 옛 동사(send·approve·shutdown·post 단독·폴더 위치 인자)는 폐기, 폴백 별칭 없음.
+//   메시지     mail <to> <text> [--from X] [--re <id>] | (세션 안) check | ask <to> <text> [--timeout S] | reply <id> <text>
+// <s>·<to> 는 모든 동사에서 세션 id 또는 유일한 제목. 옛 동사(send·approve·shutdown·post·폴더 위치 인자)는 폐기, 폴백 별칭 없음.
 import { parseArgs } from 'node:util';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
-import { connectPost, connectSession, diskBuild, type RpcClient } from './client.js';
+import { connectSession, diskBuild, type RpcClient } from './client.js';
+import { sendMail } from './mail.js';
 import { EventLog } from './eventLog.js';
 import { corePaths, readOrCreateToken } from './paths.js';
 import { serveSession } from './serve.js';
@@ -24,7 +24,7 @@ import { pullHistory } from './history.js';
 import { randomUUID } from 'node:crypto';
 import { FILES, type ApprovalRequest, type LoggedEvent, type Methods, type SessionInfo } from './protocol.js';
 
-type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; 'no-inspect'?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; takeover?: boolean; version?: boolean; help?: boolean };
+type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; 'no-inspect'?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; re?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; takeover?: boolean; version?: boolean; help?: boolean };
 
 const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세션 id 또는 유일한 제목. * 는 세션 안(SLCODE_SESSION)에서만)
 
@@ -63,14 +63,12 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
   respond <s> <req> allow|deny [--remember]
   respond <s> <req> --answer <text>         질문에 답 (선택지 번호·라벨·자유 텍스트)
   respond <s> <req> --json '<updatedInput>'  입력 수정·여러 질문 등 복잡한 답
-우편
-  mail <to> <text> [--from X]    세션 밖에서는 --from 필수
-  inbox [<s>]                    세션 밖에서는 <s> 필수
-* check                          밀린 우편을 지금 읽는다
+메시지 (<to> 는 켜진 세션의 id 또는 제목 — 꺼진 세션에는 보내지 않는다)
+  mail <to> <text> [--from X] [--re <id>]
+                                 보낸 이는 --from, 없으면 지금 세션, 세션 밖이면 unknown. --re 는 그 메시지의 답장으로
+* check                          밀린 메시지를 지금 읽는다
 * ask <to> <text> [--timeout S]  묻고 답장을 기다린다
-* reply <mail id> <text>         받은 우편에 답장
-우체국
-  post status | post restart     restart 는 우체국만 내린다 — 다음 세션이 새로 띄운다
+* reply <id> <text>              받은 메시지에 답장
 공통: --dir D (SLCODE_DIR 대체), --help, --version [--json] (--json 이면 {"version","build"} — build 는 dist/cli.js 의 mtime)`;
 
 function usage(msg?: string): never {
@@ -84,7 +82,7 @@ try {
     options: {
       port: { type: 'string' }, host: { type: 'string' }, stdio: { type: 'boolean' }, vendor: { type: 'string' }, mode: { type: 'string' }, title: { type: 'string' },
       since: { type: 'string' }, tail: { type: 'string' }, turn: { type: 'string' }, raw: { type: 'boolean' }, 'no-inspect': { type: 'boolean' }, all: { type: 'boolean' }, force: { type: 'boolean' }, json: { type: 'boolean' },
-      remember: { type: 'boolean' }, from: { type: 'string' }, timeout: { type: 'string' }, answer: { type: 'string' },
+      remember: { type: 'boolean' }, from: { type: 'string' }, re: { type: 'string' }, timeout: { type: 'string' }, answer: { type: 'string' },
       'no-web': { type: 'boolean' }, web: { type: 'boolean' }, takeover: { type: 'boolean' }, version: { type: 'boolean' }, dir: { type: 'string' }, help: { type: 'boolean', short: 'h' },
     },
   });
@@ -105,7 +103,7 @@ const P = corePaths(flags.dir);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const num = (v: string | undefined, name: string) => { if (v === undefined) return undefined; const n = Number(v); if (!Number.isInteger(n) || n < 0) usage(`--${name} must be a non-negative integer`); return n; };
 
-/** <s>·<to>: 세션 id 그대로, 아니면 유일한 제목. 여럿이면 후보를 나열하고 실패. 모르는 값은 그대로 (우체국은 받는 이를 몰라도 보관한다) */
+/** <s>·<to>: 세션 id 그대로, 아니면 유일한 제목. 여럿이면 후보를 나열하고 실패. 모르는 값은 그대로 (메시지의 받는 이는 mail.findLive 가 켜진 세션에서 찾는다) */
 function resolve(s: string | undefined): string {
   if (!s) usage(`${cmd}: session required`);
   const all = EventLog.list(P.sessionsDir);
@@ -115,7 +113,7 @@ function resolve(s: string | undefined): string {
   if (hits.length > 1) { err(`ambiguous title "${s}": ${hits.map((m) => `${m.id} (${m.cwd})`).join(', ')}`); process.exit(2); }
   return s;
 }
-/** check·ask·reply·(인자 없는 inbox) 는 세션 안에서만 — 벤더 자식 env 의 SLCODE_SESSION */
+/** check·ask·reply 는 세션 안에서만 — 벤더 자식 env 의 SLCODE_SESSION */
 function inSession(): string {
   const sid = process.env.SLCODE_SESSION;
   if (!sid) { err(`${cmd} works only inside a slcode session (SLCODE_SESSION)`); process.exit(2); }
@@ -133,13 +131,12 @@ async function liveClient(s: string | undefined) {
   try { return { client: await connectSession(log.sockPath), id: log.meta.id, log }; }
   catch { err(`session ${log.meta.id} is not live — slcode resume ${log.meta.id}`); process.exit(1); }
 }
-/** close --force (사이드바 강제 종료, 사용자 2026-10-11) — session.close 를 보내고 3초 안에 소켓이 닫히지 않으면(멈춘 세션) 우체국이 아는 pid 를 SIGKILL.
+/** close --force (사이드바 강제 종료, 사용자 2026-10-11) — session.close 를 보내고 3초 안에 소켓이 닫히지 않으면(멈춘 세션) core 가 meta 에 남긴 pid 를 SIGKILL.
  *  kill 은 serve 의 close 를 거치지 않으니 closedAt 을 여기서 남긴다 */
 async function forceClose(log: EventLog): Promise<{ ok: true; killed: boolean }> {
   const id = log.meta.id;
-  let pid = 0;
-  try { const { client } = await connectPost({ dir: flags.dir, autoStart: false }); pid = (await client.request('post.list')).find((e) => e.id === id)?.pid ?? 0; client.close(); } catch {}
-  if (!pid && !(await sockAlive(log.sockPath))) { err(`session ${id} is not live`); process.exit(1); }
+  if (!(await sockAlive(log.sockPath))) { err(`session ${id} is not live`); process.exit(1); }
+  const pid = log.meta.pid ?? 0;
   try { const client = await connectSession(log.sockPath); client.request('session.close', { id }).catch(() => {}); } catch {}
   for (const t0 = Date.now(); Date.now() - t0 < 3000; await sleep(100)) if (!(await sockAlive(log.sockPath))) return { ok: true, killed: false };
   if (!pid) { err(`session ${id} did not close and its pid is unknown`); process.exit(1); }
@@ -392,11 +389,11 @@ try {
       break;
     }
     case 'list': {
-      // 저장 세션은 폴더에서, 살아 있는지는 우체국에서 (우체국이 없으면 전부 꺼진 것). 기본은 live 만 — 에이전트가 메시지 상대를 고르는 목록이라 꺼진 세션이 섞이면 안 된다 (사용자 2026-10-02); --all 은 resume 대상 고르기
+      // 저장 세션은 폴더에서, 살아 있는지는 세션 소켓에 붙어 보아서 (pid 는 core 가 meta 에 남긴 것). 기본은 live 만 — 에이전트가 메시지 상대를 고르는 목록이라 꺼진 세션이 섞이면 안 된다 (사용자 2026-10-02); --all 은 resume 대상 고르기
       EventLog.migrate(P.sessionsDir);
       const stored = EventLog.list(P.sessionsDir);
-      let live = new Map<string, number>();
-      try { const { client } = await connectPost({ dir: flags.dir, autoStart: false }); live = new Map((await client.request('post.list')).map((e) => [e.id, e.pid])); client.close(); } catch {}
+      const alive = await Promise.all(stored.map((m) => sockAlive(new EventLog(P.sessionsDir, m).sockPath)));
+      const live = new Map(stored.flatMap((m, i) => (alive[i] ? [[m.id, m.pid ?? null] as const] : [])));
       const me = process.env.SLCODE_SESSION ?? null;
       const rows = stored.map((m) => ({ id: m.id, vendor: m.vendor, cwd: m.cwd, title: m.title, createdAt: m.createdAt, updatedAt: m.updatedAt ?? m.createdAt, closedAt: m.closedAt ?? null, live: live.has(m.id), pid: live.get(m.id) ?? null, ...(m.id === me ? { me: true } : {}) }))
         .sort((a, b) => a.updatedAt - b.updatedAt);
@@ -417,7 +414,7 @@ try {
     case 'delete': {
       const log = openLog(rest[0]); const id = log.meta.id;
       try { const client = await connectSession(log.sockPath); await client.request('session.close', { id }); client.close(); } catch {}
-      EventLog.remove(P.sessionsDir, id); fs.rmSync(path.join(P.mailDir, id), { recursive: true, force: true });
+      EventLog.remove(P.sessionsDir, id);
       print({ ok: true }); break;
     }
     // ---- 대화
@@ -506,32 +503,29 @@ try {
       print({ ok: true, requestId: req, decision: params.decision });
       break;
     }
-    // ---- 우편 (사용자 확정 2026-10-02): 보낸 이는 세션 안이면 SLCODE_SESSION, 밖이면 --from 필수. --as 같은 대리 지정은 없다
+    // ---- 메시지 (ticket slcode-p2p-messaging, 사용자 결정 2026-10-19): 보낸 이는 --from, 없으면 SLCODE_SESSION, 둘 다 없으면 unknown.
+    // via 는 옵션으로 열지 않는다 — 세션 안에서 다른 이름으로 보내면 그 세션 id, 세션 밖이면 outside (env 를 바꿔 치는 것은 막지 않는다)
     case 'mail': {
-      const from = process.env.SLCODE_SESSION ?? flags.from;
-      if (!from) { err('--from required outside a session'); process.exit(2); }
-      if (!rest[1]) usage('mail <to> <text>');
-      const { client } = await connectPost({ dir: flags.dir }); print(await client.request('mail.send', { from, to: resolve(rest[0]), body: rest.slice(1).join(' ') })); client.close(); break;
-    }
-    case 'inbox': {
-      const to = rest[0] ? resolve(rest[0]) : inSession();
-      const { client } = await connectPost({ dir: flags.dir, autoStart: false }); print(await client.request('mail.fetch', { to, schema: 1 })); client.close(); break;
+      if (!rest[1]) usage('mail <to> <text> [--from X] [--re <id>]');
+      const me = process.env.SLCODE_SESSION;
+      const from = flags.from ?? me ?? 'unknown';
+      const via = !me ? 'outside' : from !== me ? me : undefined;
+      const r = await sendMail(P.sessionsDir, rest[0], { from, kind: flags.re ? 'reply' : 'message', body: rest.slice(1).join(' '), ...(flags.re ? { re: flags.re } : {}), ...(via ? { via } : {}) });
+      print(r); break;
     }
     case 'check': { const sid = inSession(); const { client } = await liveClient(sid); const r = await client.request('session.check', { id: sid }); console.log(r.count ? r.text : '(no mail)'); client.close(); break; }
     case 'ask': {
       const sid = inSession(); if (!rest[1]) usage('ask <to> <text>');
       const { client } = await liveClient(sid);
-      try { const r = await client.request('session.ask', { id: sid, to: resolve(rest[0]), text: rest.slice(1).join(' '), ...(flags.timeout ? { timeoutMs: Number(flags.timeout) * 1000 } : {}) }); console.log(r.text); }
+      try { const r = await client.request('session.ask', { id: sid, to: rest[0], text: rest.slice(1).join(' '), ...(flags.timeout ? { timeoutMs: Number(flags.timeout) * 1000 } : {}) }); console.log(r.text); }
       finally { client.close(); }
       break;
     }
-    case 'reply': { const sid = inSession(); if (!rest[1]) usage('reply <mail id> <text>'); const { client } = await liveClient(sid); print(await client.request('session.reply', { id: sid, re: rest[0], text: rest.slice(1).join(' ') })); client.close(); break; }
-    // ---- 우체국
-    case 'post': {
-      if (rest[0] !== 'status' && rest[0] !== 'restart') usage('post status | post restart');
-      const { client } = await connectPost({ dir: flags.dir, autoStart: false });
-      print(rest[0] === 'status' ? { ...(await client.request('post.info')), live: await client.request('post.list') } : await client.request('post.shutdown'));
-      client.close(); break;
+    case 'reply': { // 실패(받는 이가 꺼짐 등)에도 소켓을 닫는다 — 열린 채 두면 이 명령이 끝나지 않아 부른 벤더 도구가 멈춘다 (데모 실측 2026-10-19)
+      const sid = inSession(); if (!rest[1]) usage('reply <id> <text>');
+      const { client } = await liveClient(sid);
+      try { print(await client.request('session.reply', { id: sid, re: rest[0], text: rest.slice(1).join(' ') })); } finally { client.close(); }
+      break;
     }
     default: usage(`unknown verb: ${cmd}`);
   }

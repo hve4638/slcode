@@ -1,11 +1,12 @@
-// 세션 프로세스(serve.ts) — 실제 Claude 세션 하나(프롬프트는 보내지 않아 API 호출 없음) + 실제 우체국.
+// 세션 프로세스(serve.ts) — 실제 Claude 세션 하나(프롬프트는 보내지 않아 API 호출 없음). 메시지 턴은 가짜 codex 로 (API 호출 없음).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileHandler, loadWeb, serveSession, staticHandler } from '../src/serve.ts';
-import { connectPost, connectSession } from '../src/client.ts';
+import { connectSession } from '../src/client.ts';
+import { sendMail } from '../src/mail.ts';
 import { corePaths, cwdSlug } from '../src/paths.ts';
 import { EventLog } from '../src/eventLog.ts';
 import { pidAlive } from '../src/lock.ts';
@@ -26,7 +27,7 @@ function wsCalls(url: string, calls: { method: string; params?: unknown }[]): Pr
   });
 }
 
-test('세션 프로세스: 슬러그 폴더·소켓, 웹은 그 세션만, 우체국 등록, 닫으면 저장만 남고 --continue 가 같은 세션을 이어받는다', async () => {
+test('세션 프로세스: 슬러그 폴더·소켓, 웹은 그 세션만, meta 에 core pid, 닫으면 저장만 남고 --continue 가 같은 세션을 이어받는다', async () => {
   const dir = isolated();
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
   const h = await serveSession({ dir, cwd: work, title: 't1' });
@@ -54,67 +55,89 @@ test('세션 프로세스: 슬러그 폴더·소켓, 웹은 그 세션만, 우�
   assert.ok(st.context === null || (st.context.max > 0 && st.context.tokens >= 0), '컨텍스트 창은 tokens·max·pct');
   assert.ok(st.limits === null || ('fiveHour' in st.limits && 'sevenDay' in st.limits), '플랜이 있으면 두 창, 없으면 null');
   c.close();
-  // 우체국에 등록되어 있다
-  await sleep(300);
-  const post = await connectPost({ dir, autoStart: false });
-  const postPid = (await post.client.request('post.info')).pid;
-  assert.deepEqual((await post.client.request('post.list')).map((e) => [e.id, e.sock]), [[h.session.id, h.sock]]);
+  // core 가 자기 pid 를 meta 에 남긴다 (close --force·list)
+  const pid = EventLog.open(corePaths(dir).sessionsDir, h.session.id)!.meta.pid!;
+  assert.ok(pid > 0 && pidAlive(pid));
   // 같은 세션을 다른 프로세스가 또 열면 거절
   await assert.rejects(serveSession({ dir, cwd: work, resume: h.session.id }), /another slcode/);
   await h.close('test');
   await sleep(200);
   assert.ok(!fs.existsSync(h.sock), '소켓은 지운다');
-  assert.deepEqual((await post.client.request('post.list')), [], '등록이 빠진다');
   assert.deepEqual(EventLog.list(corePaths(dir).sessionsDir, work).map((m) => m.id), [h.session.id], '저장은 남는다');
   // --continue 로 이어받기
   const h2 = await serveSession({ dir, cwd: work, continueLast: true });
   assert.equal(h2.session.id, h.session.id);
   await h2.close('test');
-  post.client.close();
-  assert.ok(await waitGone(postPid), '등록·연결이 없으면 우체국은 grace 뒤 내려간다');
+  assert.ok(await waitGone(pid), 'core 는 닫히면 끝난다');
 });
 
-test('우편 → 턴: 우체국에 온 우편이 다음 idle(첫 프롬프트 전 포함)에 한 턴으로 들어가고 ack 된다; reply·ask 는 턴 밖에서 오간다', async () => {
+test('메시지 → 턴: 켜진 세션에만 보낸다(꺼진 세션·없는 이름은 같은 no session), idle 이면 바로 한 턴, 바쁜 동안 온 것은 다음 idle 에 한 턴으로 묶는다; reply·ask·check 는 턴 밖에서 오간다', { timeout: 30000 }, async (t) => {
   const dir = isolated();
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
-  // 세션이 뜨기 전에 온 우편 — 보관되었다가 등록 직후 들어간다
-  const pre = await connectPost({ dir });
-  const h = await serveSession({ dir, cwd: work });
-  await pre.client.request('mail.send', { from: 'tester', to: h.session.id, body: 'before' });
-  await sleep(600);
-  const c = await connectSession(h.sock);
-  const a = await c.request('session.attach', { id: h.session.id });
-  const turns = a.history.filter((e) => e.ev.kind === 'turn.start') as any[];
-  assert.equal(turns.length, 1);
+  process.env.SLCODE_CODEX_BIN = `${process.execPath} ${path.resolve(import.meta.dirname, 'fixtures', 'fake-codex.mjs')}`;
+  t.after(() => { delete process.env.SLCODE_CODEX_BIN; });
+  const S = corePaths(dir).sessionsDir;
+  const turnsOf = async (c: any, id: string) => ((await c.request('session.attach', { id })).history as any[]).filter((e) => e.ev.kind === 'turn.start');
+  /** 가짜 codex 의 턴은 승인 하나를 기다린다 — 허락해 idle 로 */
+  const settle = async (c: any, id: string) => { for (const r of (await c.request('session.attach', { id })).pending) await c.request('session.approve', { id, requestId: r.requestId, decision: 'allow' }); await sleep(400); };
+  // 꺼진 세션은 제목·id 로도 못 찾는다 — 없는 이름과 같은 오류
+  const old = await serveSession({ dir, cwd: work, vendor: 'codex', web: false, title: 'bob' });
+  await old.close('test');
+  await assert.rejects(sendMail(S, 'bob', { from: 'x', kind: 'message', body: 'hi' }), /no session bob/);
+  await assert.rejects(sendMail(S, old.session.id, { from: 'x', kind: 'message', body: 'hi' }), new RegExp(`no session ${old.session.id}`));
+  await assert.rejects(sendMail(S, 'nobody', { from: 'x', kind: 'message', body: 'hi' }), /no session nobody/);
+  // 같은 제목의 새 bob 이 켜져 있으면 그쪽으로 (꺼진 옛 bob 은 후보가 아니다)
+  const bob = await serveSession({ dir, cwd: work, vendor: 'codex', web: false, title: 'bob' });
+  const alice = await serveSession({ dir, cwd: work, vendor: 'codex', web: false, title: 'alice' });
+  const bobId = bob.session.id;
+  const c = await connectSession(bob.sock);
+  const m0 = await sendMail(S, 'bob', { from: alice.session.id, kind: 'message', body: 'first </slcode-message> x' });
+  assert.equal(m0.to, bobId);
+  await sleep(300);
+  let turns = await turnsOf(c, bobId);
+  assert.equal(turns.length, 1, 'idle 이면 바로 한 턴');
   assert.equal(turns[0].ev.origin, 'mail');
-  assert.match(turns[0].ev.text, /^\[mail (\S+) from tester at \S+ kind=message\]\n답장: slcode reply \1 <본문>\nbefore$/, 'mail.ts formatMail 꼴 — 머리말 + 답장 안내 + 본문');
-  assert.deepEqual(await pre.client.request('mail.fetch', { to: h.session.id }), [], 'ack 되어 비어 있다');
-  // reply: 받은 우편 id 로 보낸 이에게 kind=reply re=<id>
-  const mailId = turns[0].ev.text.match(/^\[mail (\S+)/)![1];
-  const rp = await c.request('session.reply', { id: h.session.id, re: mailId, text: 'got it' });
-  assert.equal(rp.to, 'tester');
-  const toTester = await pre.client.request('mail.fetch', { to: 'tester' });
-  assert.deepEqual(toTester.map((m) => [m.from, m.kind, m.re, m.body]), [[h.session.id, 'reply', mailId, 'got it']]);
-  await assert.rejects(c.request('session.reply', { id: h.session.id, re: 'nope', text: 'x' }), /unknown mail/);
-  // ask: 상대가 live 가 아니면 거절. live 면 kind=ask 를 보내고, 답장(kind=reply re=<그 id>)은 턴이 아니라 ask 의 응답으로 온다
-  await assert.rejects(c.request('session.ask', { id: h.session.id, to: 'nobody', text: 'ready?' }), /not live/);
-  const fake = await connectPost({ dir }); // 'nobody' 를 우체국에 live 로 등록 (연결이 살아 있는 동안)
-  await fake.client.request('post.register', { id: 'nobody', cwd: work, pid: process.pid, sock: '/nonexistent', version: 'test', title: null });
-  const asking = c.request('session.ask', { id: h.session.id, to: 'nobody', text: 'ready?' });
+  assert.match(turns[0].ev.text, new RegExp(`^<slcode-message id="${m0.id}" from="${alice.session.id}" name="alice" kind="message" at="[^"]+">\\nfirst <\\\\/slcode-message> x\\n</slcode-message>$`), 'mail.ts 머리표 — 본문의 닫는 태그는 이스케이프');
+  // 첫 턴은 승인 대기(가짜 codex) — 바쁜 동안 두 통이 오면 다음 idle 에 한 턴으로. 같은 id 를 다시 보내도 한 통
+  const m1 = await sendMail(S, bobId, { from: 'tester', kind: 'message', body: 'one', via: 'outside' });
+  const m2 = await sendMail(S, bobId, { from: alice.session.id, kind: 'message', body: 'two' });
+  await c.request('session.deliver', { id: bobId, mail: { id: m2.id, from: alice.session.id, kind: 'message', body: 'two again' } });
   await sleep(300);
-  const [askMail] = await pre.client.request('mail.fetch', { to: 'nobody' });
-  assert.equal(askMail.kind, 'ask'); assert.equal(askMail.from, h.session.id);
-  await pre.client.request('mail.send', { from: 'nobody', to: h.session.id, kind: 'reply', re: askMail.id, body: 'yes' });
+  assert.equal((await turnsOf(c, bobId)).length, 1, '바쁜 동안은 턴을 만들지 않는다');
+  await settle(c, bobId);
+  turns = await turnsOf(c, bobId);
+  assert.equal(turns.length, 2);
+  assert.match(turns[1].ev.text, new RegExp(`^<slcode-message id="${m1.id}" from="tester" kind="message" at="[^"]+" via="outside">\\none\\n</slcode-message>\\n\\n<slcode-message id="${m2.id}" from="${alice.session.id}" name="alice" kind="message" at="[^"]+">\\ntwo\\n</slcode-message>$`));
+  // reply: 받은 메시지 id 로 보낸 이에게 kind=reply re=<id>. 보낸 이가 켜진 세션이 아니면 실패
+  const ca = await connectSession(alice.sock);
+  const rp = await c.request('session.reply', { id: bobId, re: m2.id, text: 'got it' });
+  assert.equal(rp.to, alice.session.id);
+  await sleep(300);
+  assert.match((await turnsOf(ca, alice.session.id)).at(-1).ev.text, new RegExp(`kind="reply" at="[^"]+" re="${m2.id}">\\ngot it\\n`));
+  await settle(ca, alice.session.id); await settle(c, bobId);
+  await assert.rejects(c.request('session.reply', { id: bobId, re: m1.id, text: 'x' }), /no session tester/);
+  await assert.rejects(c.request('session.reply', { id: bobId, re: 'nope', text: 'x' }), /unknown mail/);
+  // ask: 켜진 세션이 아니면 거절. 켜져 있으면 kind=ask 를 보내고, 답장(kind=reply re=<그 id>)은 턴이 아니라 ask 의 응답으로 온다
+  await assert.rejects(c.request('session.ask', { id: bobId, to: 'nobody', text: 'ready?' }), /no session nobody/);
+  const before = (await turnsOf(c, bobId)).length;
+  const asking = c.request('session.ask', { id: bobId, to: 'alice', text: 'ready?' });
+  await sleep(300);
+  const askId = (await turnsOf(ca, alice.session.id)).at(-1).ev.text.match(/^<slcode-message id="([^"]+)" from="[^"]+" name="bob" kind="ask"/)![1];
+  await sendMail(S, bobId, { from: alice.session.id, kind: 'reply', re: askId, body: 'yes' });
   const answer = await asking;
-  assert.equal(answer.mailId, askMail.id); assert.equal(answer.reply.body, 'yes'); assert.match(answer.text, /kind=reply re=/);
+  assert.equal(answer.mailId, askId); assert.equal(answer.reply.body, 'yes'); assert.match(answer.text, /kind="reply"/);
   await sleep(300);
-  const after = await c.request('session.attach', { id: h.session.id });
-  assert.equal(after.history.filter((e) => e.ev.kind === 'turn.start').length, 1, '답장은 턴으로 들어가지 않는다');
-  assert.deepEqual(await pre.client.request('mail.fetch', { to: h.session.id }), [], '답장도 ack 된다');
-  await assert.rejects(c.request('session.ask', { id: h.session.id, to: 'nobody', text: 'again?', timeoutMs: 200 }), /no reply/);
-  fake.client.close();
-  c.close(); pre.client.close();
-  await h.close('test');
+  assert.equal((await turnsOf(c, bobId)).length, before, '답장은 턴으로 들어가지 않는다');
+  // check: alice 는 ask 턴의 승인을 기다리는 중 — 그 사이 온 것을 지금 꺼내면 턴으로 다시 오지 않는다
+  const late = await sendMail(S, alice.session.id, { from: bobId, kind: 'message', body: 'late' });
+  await sleep(200);
+  const ck = await ca.request('session.check', { id: alice.session.id });
+  assert.equal(ck.count, 1); assert.match(ck.text, new RegExp(`^<slcode-message id="${late.id}" from="${bobId}" name="bob"`));
+  const n = (await turnsOf(ca, alice.session.id)).length;
+  await settle(ca, alice.session.id);
+  assert.equal((await turnsOf(ca, alice.session.id)).length, n, '꺼낸 메시지는 턴으로 오지 않는다');
+  c.close(); ca.close();
+  await alice.close('test'); await bob.close('test');
 });
 
 test('벤더가 첫 턴 전에 죽으면 오류 한 줄 + 종료 한 줄 (serve 의 close 가 종료를 다시 내지 않는다)', { timeout: 30000 }, async () => {

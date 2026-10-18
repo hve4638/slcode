@@ -495,6 +495,7 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .mail .head svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .acf .mail .head .from { font-family: var(--acf-mono); }
 .acf .mail .head .kind { padding: 0 6px; border-radius: 6px; border: 1px solid var(--acf-line); }
+.acf .mail .head .via { font-size: 11px; }
 .acf .mail .head .at { margin-left: auto; }
 .acf .mail .body { white-space: pre-wrap; word-break: break-word; }
 .acf .mail .acts { margin: 0; }

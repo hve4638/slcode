@@ -1,3 +1,3 @@
 import { runCore } from './core'
 
-role: core 프로세스 진입점 — serve 가 detached(setsid, Windows 는 windowsHide)로 띄운다: node dist/coreMain.js '<CoreOptions JSON>' (우체국 post.js 와 같은 방식). 준비되면 stdout 첫 줄로 {id, sock, session}, 실패면 {error, code} 를 내고 exit 1. 그 뒤로 stdout 은 쓰지 않는다 — 띄운 serve 가 첫 줄만 읽고 파이프를 놓는다(stdout·stderr 쓰기 오류는 삼킨다). 로그는 stderr 한 줄씩(시각·pid·세션 id) — 띄운 쪽이 $SLCODE_DIR/core.log 로 잇는다. detached 라 터미널 시그널은 오지 않는다; kill 로 SIGTERM·SIGINT 를 직접 받으면 세션을 닫고, SIGHUP 은 무시한다. 세션이 닫히면(done) exit 0.
+role: core 프로세스 진입점 — serve 가 detached(setsid, Windows 는 windowsHide)로 띄운다: node dist/coreMain.js '<CoreOptions JSON>'. 준비되면 stdout 첫 줄로 {id, sock, session}, 실패면 {error, code} 를 내고 exit 1. 그 뒤로 stdout 은 쓰지 않는다 — 띄운 serve 가 첫 줄만 읽고 파이프를 놓는다(stdout·stderr 쓰기 오류는 삼킨다). 로그는 stderr 한 줄씩(시각·pid·세션 id) — 띄운 쪽이 $SLCODE_DIR/core.log 로 잇는다. detached 라 터미널 시그널은 오지 않는다; kill 로 SIGTERM·SIGINT 를 직접 받으면 세션을 닫고, SIGHUP 은 무시한다. 세션이 닫히면(done) exit 0.

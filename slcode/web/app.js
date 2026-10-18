@@ -363,14 +363,26 @@ export function mountAgentFront(root, transport, opts = {}) {
     inspectMsg.textContent = `inspect 를 ${on ? '켜면' : '끄면'} Claude 를 같은 대화로 다시 띄웁니다. 다음 호출에서 프롬프트 캐시가 깨져 비용이 더 들 수 있고, 이 세션에서 '이번 세션만 허용' 한 승인 규칙은 사라집니다.`;
     confirmInspect.showModal();
   };
-  // 우편 턴 — 내부적으로는 사용자 턴이지만 화면은 사용자 말풍선이 아니라 왼쪽의 봉투 카드 (프로토타입, 사용자 2026-09-27).
-  // 본문은 src/mail.ts formatMail 이 만든 꼴 (MAIL_HEAD 는 그 정규식의 사본): "[mail <id> from <세션 id> (<제목>) at <iso> kind=<kind> re=<id>]\n답장: …\n<본문>" 을 빈 줄로 이은 것
-  const MAIL_HEAD = /^\[mail (\S+) from (\S+)(?: \((.*?)\))? at (\S+) kind=(\S+)(?: re=(\S+))?\]\n(?:답장: [^\n]*\n)?/;
+  // 메시지 턴 — 내부적으로는 사용자 턴이지만 화면은 사용자 말풍선이 아니라 왼쪽의 봉투 카드 (프로토타입, 사용자 2026-09-27).
+  // 본문은 src/mail.ts formatMail 꼴 (MAIL_RE 는 그 정규식의 사본): <slcode-message id from name kind at [via] [re]>\n본문\n</slcode-message> 를 빈 줄로 이은 것.
+  // via 는 실제로 넘긴 쪽 — outside 면 "세션 밖에서 보냄", 세션 id 면 "실제 발신" (ticket slcode-p2p-messaging, 2026-10-19).
+  // 2026-10-19 전의 턴은 옛 머리말 "[mail <id> from <세션 id> (<제목>) at <iso> kind=<kind> re=<id>]\n답장: …" (OLD_HEAD)
+  const MAIL_RE = /<slcode-message ([^>]*)>\n([\s\S]*?)\n<\/slcode-message>/g;
+  const OLD_HEAD = /^\[mail (\S+) from (\S+)(?: \((.*?)\))? at (\S+) kind=(\S+)(?: re=(\S+))?\]\n(?:답장: [^\n]*\n)?/;
+  const unattr = (v) => v.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  function mailParts(text) {
+    const parts = [...text.matchAll(MAIL_RE)].map((m) => {
+      const a = Object.fromEntries([...m[1].matchAll(/(\w+)="([^"]*)"/g)].map((x) => [x[1], unattr(x[2])]));
+      return { from: a.name || a.from || '?', at: a.at || '', kind: a.kind || 'message', via: a.via || '', body: m[2].replaceAll('<\\/slcode-message', '</slcode-message') };
+    });
+    if (parts.length) return parts;
+    return text.split(/\n\n(?=\[mail )/).map((chunk) => { const m = chunk.match(OLD_HEAD); return m ? { from: m[3] || m[2], at: m[4], kind: m[5], via: '', body: chunk.slice(m[0].length) } : { from: '?', at: '', kind: 'message', via: '', body: chunk }; });
+  }
   function mailCard(text, seq) {
-    const parts = text.split(/\n\n(?=\[mail )/).map((chunk) => { const m = chunk.match(MAIL_HEAD); return m ? { id: m[1], from: m[3] || m[2], at: m[4], kind: m[5], body: chunk.slice(m[0].length) } : { id: '', from: '?', at: '', kind: 'message', body: chunk }; });
     const when = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); };
-    return h('div', { class: 'mail' }, ...parts.map((m) => h('div', { class: 'envelope' },
-      h('div', { class: 'head' }, icon('mail'), h('span', { class: 'from' }, m.from), m.kind !== 'message' ? h('span', { class: 'kind' }, m.kind) : null, h('span', { class: 'at' }, when(m.at))),
+    return h('div', { class: 'mail' }, ...mailParts(text).map((m) => h('div', { class: 'envelope' },
+      h('div', { class: 'head' }, icon('mail'), h('span', { class: 'from' }, m.from), m.kind !== 'message' ? h('span', { class: 'kind' }, m.kind) : null,
+        m.via ? h('span', { class: 'via' }, m.via === 'outside' ? '세션 밖에서 보냄' : `실제 발신 ${m.via}`) : null, h('span', { class: 'at' }, when(m.at))),
       h('div', { class: 'body' }, m.body))), rewindBtn(seq, text));
   }
   function setState(state) {

@@ -91,6 +91,45 @@ test('꺼진 세션: status·pending·last --turn·log --tail 은 로그 파일�
   assert.equal((await run(dir, ['status', 'alpha'])).code, 0, '이제 유일하다');
 });
 
+test('mail: 켜진 세션에만 — 꺼진 세션은 없는 이름과 같은 no session(exit 1); from·via 는 자동, --re 는 답장; post·inbox 동사는 없다', async (t) => {
+  const dir = tmp('slcode-cli-');
+  fakeStored(dir, 'aaaa1111', 'alpha');
+  for (const to of ['alpha', 'aaaa1111', 'nobody']) {
+    const r = await run(dir, ['mail', to, 'hello']);
+    assert.equal(r.code, 1); assert.match(r.stderr, new RegExp(`no session ${to}`));
+  }
+  assert.equal((await run(dir, ['post', 'status'])).code, 2, 'post 동사는 없다');
+  assert.equal((await run(dir, ['inbox', 'alpha'])).code, 2, 'inbox 동사는 없다');
+  // 켜진 세션(가짜 codex)으로 보내면 턴 본문의 머리표에 from·via 가 실린다
+  process.env.SLCODE_CODEX_BIN = `${process.execPath} ${path.resolve(import.meta.dirname, 'fixtures', 'fake-codex.mjs')}`;
+  t.after(() => { delete process.env.SLCODE_CODEX_BIN; });
+  const live = start(dir, ['new', tmp('slcode-work-'), '--no-web', '--vendor', 'codex', '--title', 'beta']);
+  t.after(() => { if (live.child.exitCode === null) live.child.kill('SIGTERM'); });
+  await live.out;
+  const out = await run(dir, ['mail', 'beta', 'hi', 'there']);
+  assert.equal(out.code, 0, out.stderr);
+  const sent = JSON.parse(out.stdout);
+  assert.deepEqual(Object.keys(sent).sort(), ['id', 'to']);
+  await run(dir, ['mail', 'beta', 'as', 'orch', '--from', 'orchestrator'], { SLCODE_SESSION: 'aaaa1111' });
+  await run(dir, ['mail', 'beta', 'mine'], { SLCODE_SESSION: 'aaaa1111' });
+  await run(dir, ['mail', 'beta', 'answer', '--re', 'q1', '--from', 'aaaa1111']);
+  await sleep(300);
+  // 첫 메시지 턴은 승인 대기(가짜 codex) — 허락하면 그 사이 온 세 통이 다음 턴 하나로 들어간다
+  for (const r of JSON.parse((await run(dir, ['pending', 'beta', '--json'])).stdout)) await run(dir, ['respond', 'beta', r.requestId, 'allow']);
+  await sleep(500);
+  const log = (await run(dir, ['log', 'beta', '--json'])).stdout.trim().split('\n').map((l) => JSON.parse(l));
+  const text = log.filter((e: any) => e.ev.kind === 'turn.start').map((e: any) => e.ev.text).join('\n\n');
+  const heads = [...text.matchAll(/<slcode-message ([^>]*)>\n([^\n]*)/g)].map((m) => [m[1].replace(/^id="[^"]+" | at="[^"]+"/g, ''), m[2]]);
+  assert.deepEqual(heads, [
+    ['from="unknown" kind="message" via="outside"', 'hi there'],
+    ['from="orchestrator" kind="message" via="aaaa1111"', 'as orch'],
+    ['from="aaaa1111" name="alpha" kind="message"', 'mine'],
+    ['from="aaaa1111" name="alpha" kind="reply" via="outside" re="q1"', 'answer'],
+  ]);
+  assert.match(text, new RegExp(`^<slcode-message id="${sent.id}"`));
+  assert.equal(log.filter((e: any) => e.ev.kind === 'turn.start').length, 2, '바쁜 동안 온 세 통은 한 턴');
+});
+
 test('살아 있는 세션: new 는 동사 이름 폴더도 폴더로, resume 은 웹 주소(--no-web 이면 안내), status 는 live, 닫은 뒤 resume 은 다시 띄운다', async (t) => {
   const dir = tmp('slcode-cli-');
   const work = path.join(tmp('slcode-work-'), 'list'); fs.mkdirSync(work); // 동사와 같은 이름의 폴더

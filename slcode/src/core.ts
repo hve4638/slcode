@@ -1,8 +1,8 @@
 // core — 세션 하나를 쥔 프로세스 (ticket slcode-core-serve-split, 설계 ws docs/report/slcode-core-serve-split.md, 사용자 확정 2026-10-15).
-// serve 가 detached 로 띄운다 (coreMain.ts). 세션(벤더 SDK)·이벤트 로그·세션 소켓·우체국·입력 초안·웹 토큰 검사를 여기서 맡고,
+// serve 가 detached 로 띄운다 (coreMain.ts). 세션(벤더 SDK)·이벤트 로그·세션 소켓·받은 메시지·입력 초안·웹 토큰 검사를 여기서 맡고,
 // Methods 는 sessions/<슬러그>/<id>/sock UDS 하나로만 낸다 (소켓 0600 이 곧 인증). 웹·stdio·서비스 웹은 serve 가 연결마다 이 소켓에 하나씩 붙어 중계한다.
-// 우체국(post.ts)에는 붙어서 등록하고 연결을 유지한다. 시그널 mail 이 오면 mail.fetch 로 가져와 다음 idle 에 한 턴으로 넣고 ack 한다
-// (여러 통이면 한 번에). 우체국이 없으면 띄우고, 끊기면 다시 붙는다 — 세션 동작은 우체국과 무관하다.
+// 받은 메시지(session.deliver)는 메모리에 두었다가 다음 idle 에 한 턴으로 넣는다 (여러 통이면 한 번에, mail.ts 머리표).
+// 보관함은 없다 — 꺼진 세션에는 보내지 않는다 (ticket slcode-p2p-messaging, 사용자 2026-10-19).
 // 수명: session.close·벤더 종료 → 세션을 닫고 소켓을 지우고 끝난다. 소유자(core.own 을 보낸 연결 하나)가 close 없이 끊기면
 // OWNER_GRACE 동안 새 소유자를 기다리고 없으면 닫는다 (기동 직후도 같다). 로그는 남아 --resume 으로 이어간다.
 import fs from 'node:fs';
@@ -15,12 +15,12 @@ import { CodexSession } from './codex.js';
 import type { AgentSession } from './base.js';
 import { EventLog, historyPage, summarize, type SessionMeta } from './eventLog.js';
 import { isLoopback, reachable, sockAlive } from './live.js';
-import { BUILD, connectPost, VERSION, type RpcClient } from './client.js';
+import { BUILD, VERSION } from './client.js';
 import { corePaths, ensureDir, readOrCreateToken } from './paths.js';
-import { formatMail, parseMailHeads } from './mail.js';
+import { formatMail, newMail, parseMails, sendMail, sessionMeta } from './mail.js';
 import { blockInspect, inspectBlocked, inspectEnv, keepsFirstParty, sdkVersion, startInspect, turnCalls, upstreamOf, type InspectProxy } from './inspect.js';
 import { InspectStore, maybeSweep } from './inspectDb.js';
-import { CoreError, ERR, FILES, PROTOCOL_VERSION, type ApprovalRequest, type LoggedEvent, type Mail, type MethodName, type Methods, type PostMethods, type RequestFrame, type SessionInfo } from './protocol.js';
+import { CoreError, ERR, FILES, PROTOCOL_VERSION, type ApprovalRequest, type LoggedEvent, type Mail, type MethodName, type Methods, type RequestFrame, type SessionInfo } from './protocol.js';
 
 /** 벤더 자식(claude CLI·codex)에 넘기지 않을 env — 워커 Claude 세션 안에서 띄우면 그 세션의 표식(CLAUDECODE·CLAUDE_CODE_SESSION_ID·
  *  CLAUDE_CODE_CHILD_SESSION·CLAUDE_CODE_ENTRYPOINT·CLAUDE_CODE_MESSAGING_* 등, claude 2.1.282·2.1.300 실측)이 딸려 가 자식이 남의 세션 안이라 여긴다.
@@ -260,22 +260,26 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       return rec;
     },
     'session.setDraft': (_c, p) => { mine(p?.id); if (typeof p.text !== 'string') throw new CoreError(ERR.badRequest, 'text required'); draft = p.text; return { ok: true }; },
-    // ---- 메시징 (스탠드얼론, 2026-10-02)
-    'session.check': async (_c, p) => {
+    // ---- 메시징 (ticket slcode-p2p-messaging, 2026-10-19)
+    'session.deliver': (_c, p) => {
       mine(p?.id);
-      await fetchMail(false);
-      const batch = inbox.splice(0);
+      const m = p.mail;
+      if (typeof m?.from !== 'string' || !m.from) throw new CoreError(ERR.badRequest, 'mail.from required');
+      const mail = newMail({ id: typeof m.id === 'string' && /^[\w-]{1,40}$/.test(m.id) ? m.id : undefined, ts: Number(m.ts) || undefined, from: m.from, to: sid, kind: typeof m.kind === 'string' && m.kind ? m.kind : 'message', body: m.body ?? '', ...(m.re ? { re: String(m.re) } : {}), ...(m.via ? { via: String(m.via) } : {}) });
+      take(mail);
+      return { mailId: mail.id };
+    },
+    'session.check': (_c, p) => {
+      mine(p?.id);
+      const batch = pending.splice(0);
       for (const m of batch) received.set(m.id, m.from);
-      if (batch.length) void post?.request('mail.ack', { to: sid, ids: batch.map((m) => m.id) }).catch(() => {});
       return { count: batch.length, text: batch.map(renderMail).join('\n\n') };
     },
     'session.ask': async (_c, p) => {
       mine(p?.id);
-      if (!post) throw new CoreError('no_post', 'post office is not connected');
       if (typeof p.to !== 'string' || !p.to) throw new CoreError(ERR.badRequest, 'to required');
-      // 꺼진 세션에 묻고 무기한 기다리는 사고를 막는다 — ask 는 live 에게만. 보관만 되는 우편은 mail 로 (사용자 2026-10-02)
-      if (!(await post.request('post.list', {})).some((e) => e.id === p.to)) throw new CoreError(ERR.notLive, `${p.to} is not live — use: slcode mail ${p.to} <text>`);
-      const { id: mailId } = await post.request('mail.send', { from: sid, to: p.to, kind: 'ask', body: String(p.text ?? '') });
+      // 받는 이는 켜진 세션 — 아니면 sendMail 이 no_session
+      const { id: mailId } = await sendMail(P.sessionsDir, p.to, { from: sid, kind: 'ask', body: String(p.text ?? '') });
       const reply = await new Promise<Mail>((resolve, reject) => {
         const timer = p.timeoutMs ? setTimeout(() => { asks.delete(mailId); reject(new CoreError('timeout', `no reply to ${mailId} in ${p.timeoutMs}ms`)); }, p.timeoutMs) : null;
         asks.set(mailId, { resolve: (m) => { if (timer) clearTimeout(timer); resolve(m); }, reject: (e) => { if (timer) clearTimeout(timer); reject(e); } });
@@ -284,11 +288,9 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     },
     'session.reply': async (_c, p) => {
       mine(p?.id);
-      if (!post) throw new CoreError('no_post', 'post office is not connected');
       const to = received.get(String(p.re));
       if (!to) throw new CoreError(ERR.badRequest, `unknown mail ${p.re} — this session did not receive it (use: slcode mail <to> <text>)`);
-      const r = await post.request('mail.send', { from: sid, to, kind: 'reply', body: String(p.text ?? ''), re: String(p.re) });
-      return { id: r.id, to, delivered: r.delivered };
+      return sendMail(P.sessionsDir, to, { from: sid, kind: 'reply', body: String(p.text ?? ''), re: String(p.re) });
     },
   };
   function broadcast(event: string, params: unknown) { for (const c of conns) c.send({ event, params }); }
@@ -342,54 +344,33 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   await new Promise<void>((resolve, reject) => { uds.once('error', reject); uds.listen(sockPath, () => { fs.chmodSync(sockPath, 0o600); resolve(); }); })
     .catch(async (e) => { await session.close('listen failed'); throw e; });
 
-  // ---- 우체국: 등록 + 우편 → 다음 idle 에 한 턴
-  let post: RpcClient<PostMethods> | null = null;
-  const inbox: Mail[] = [];
+  // ---- 받은 메시지 → 다음 idle 에 한 턴
+  const pending: Mail[] = [];
   const seen = new Set<string>();
-  /** 받은 우편 id → 보낸 이 (session.reply 의 대상). 재기동 뒤에는 로그의 mail 턴 머리말에서 복원 */
+  /** 받은 메시지 id → 보낸 이 (session.reply 의 대상). 재기동 뒤에는 로그의 mail 턴 머리표에서 복원 */
   const received = new Map<string, string>();
-  for (const e of logFile.all) if (e.ev.kind === 'turn.start' && e.ev.origin === 'mail') for (const h of parseMailHeads(e.ev.text)) received.set(h.id, h.from);
-  /** session.ask 대기 — 우편 id → 답장이 오면 푼다 */
+  for (const e of logFile.all) if (e.ev.kind === 'turn.start' && e.ev.origin === 'mail') for (const h of parseMails(e.ev.text)) if (h.id && h.from) received.set(h.id, h.from);
+  /** session.ask 대기 — 메시지 id → 답장이 오면 푼다 */
   const asks = new Map<string, { resolve: (m: Mail) => void; reject: (e: Error) => void }>();
-  /** 보낸 이 제목은 같은 디렉토리의 그 세션 meta 에서 (없으면 null) */
-  const renderMail = (m: Mail) => formatMail(m, EventLog.open(P.sessionsDir, m.from)?.meta.title ?? null);
-  async function joinPost() {
-    if (closed) return;
-    try {
-      const { client } = await connectPost({ dir: opts.dir });
-      if (closed) { client.close(); return; } // 붙는 동안 닫혔다 — 연결을 남기면 우체국이 idle 이 못 되고 이 프로세스도 안 끝난다 (codex 테스트 실측 2026-09-30)
-      post = client;
-      client.onEvent((m) => {
-        if (m.event === 'mail') void fetchMail();
-        else if (m.event === 'disconnected' || m.event === 'post.shutdown') { if (post === client) post = null; if (!closed) setTimeout(joinPost, 1000); }
-      });
-      await client.request('post.register', { id: sid, cwd, pid: process.pid, sock: sockPath, version: VERSION, title: logFile.meta.title });
-      await fetchMail();
-    } catch (e) { log(`post office: ${(e as Error).message}`); if (!closed) setTimeout(joinPost, 3000); }
-  }
-  async function fetchMail(flush = true) {
-    if (!post) return;
-    let mails: Mail[] = [];
-    try { mails = await post.request('mail.fetch', { to: sid, schema: 1 }); } catch { return; }
-    for (const m of mails) {
-      if (seen.has(m.id)) continue;
-      seen.add(m.id);
-      // 대기 중인 ask 의 답장은 턴이 아니라 그 요청의 응답으로
-      const waiter = m.kind === 'reply' && m.re ? asks.get(m.re) : undefined;
-      if (waiter) { asks.delete(m.re!); waiter.resolve(m); void post.request('mail.ack', { to: sid, ids: [m.id] }).catch(() => {}); continue; }
-      inbox.push(m);
-    }
-    if (flush) flushMail();
+  /** name 은 보낸 세션의 제목 (세션이 아니거나 제목이 없으면 null) */
+  const renderMail = (m: Mail) => formatMail(m, sessionMeta(P.sessionsDir, m.from)?.title ?? null);
+  function take(m: Mail) {
+    if (closed || seen.has(m.id)) return; // 같은 id 를 다시 보내도 한 통
+    seen.add(m.id);
+    // 대기 중인 ask 의 답장은 턴이 아니라 그 요청의 응답으로
+    const waiter = m.kind === 'reply' && m.re ? asks.get(m.re) : undefined;
+    if (waiter) { asks.delete(m.re!); waiter.resolve(m); return; }
+    pending.push(m);
+    flushMail();
   }
   // claude 의 메시지처럼: idle(첫 프롬프트 전 starting 포함)이면 즉시, 아니면 다음 idle 에. 여러 통은 한 턴으로 (사용자 결정 2026-09-27)
   function flushMail() {
-    if (closed || !inbox.length || (session.state !== 'idle' && session.state !== 'starting')) return;
-    const batch = inbox.splice(0);
+    if (closed || !pending.length || (session.state !== 'idle' && session.state !== 'starting')) return;
+    const batch = pending.splice(0);
     for (const m of batch) received.set(m.id, m.from);
     session.send(batch.map(renderMail).join('\n\n'), 'mail');
-    void post?.request('mail.ack', { to: sid, ids: batch.map((m) => m.id) }).catch(() => {});
   }
-  void joinPost();
+  logFile.updateMeta({ pid: process.pid });
 
   // ---- 수명
   let resolveDone!: () => void;
@@ -412,7 +393,6 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     uds.close();
     for (const s of socks) s.end(); // serve 의 중계·제어 연결이 닫힘을 본다
     try { fs.unlinkSync(sockPath); } catch {}
-    post?.close();
     resolveDone();
   })());
   closeFn = close;

@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { connectPost, connectSession } from '../src/client.ts';
+import { connectSession } from '../src/client.ts';
 import { sockAlive } from '../src/live.ts';
 import { EventLog } from '../src/eventLog.ts';
 import { corePaths } from '../src/paths.ts';
@@ -28,10 +28,7 @@ function serve(dir: string, work: string): { child: ChildProcess; sock: Promise<
   return { child, sock, exit };
 }
 async function corePid(dir: string, id: string): Promise<number> {
-  const { client } = await connectPost({ dir, autoStart: false });
-  const pid = (await client.request('post.list')).find((e) => e.id === id)?.pid ?? 0;
-  client.close();
-  return pid;
+  return EventLog.open(corePaths(dir).sessionsDir, id)?.meta.pid ?? 0;
 }
 const pgid = (pid: number) => Number(fs.readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ')[1].split(' ')[2]);
 async function waitClosed(sock: string, ms = 6000) { const t0 = Date.now(); while ((await sockAlive(sock)) && Date.now() - t0 < ms) await sleep(100); return !(await sockAlive(sock)); }

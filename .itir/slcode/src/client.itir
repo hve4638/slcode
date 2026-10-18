@@ -1,7 +1,6 @@
-import { corePaths, ensureDir } from './paths'
 import { CoreError, isEvent } from './protocol'
 
-role: JSON 줄 RPC 클라이언트 — 세션 소켓(sessions/<슬러그>/<id>/sock, Methods)과 우체국(post.sock, PostMethods)에 같은 꼴로 붙는다. 우체국은 없으면 detached 로 띄운다 (tmux 의 클라이언트가 서버를 불러오는 방식); 세션 소켓은 띄우지 않는다 — core 는 serve 가 띄운다 (serve.spawnCore). 종료 경쟁: 우체국에 붙었는데 post.info 가 실패하면(종료 중) 150ms 뒤 다시, timeout(15s) 안에서 반복
+role: JSON 줄 RPC 클라이언트 — 세션 소켓(sessions/<슬러그>/<id>/sock, Methods)에 붙는다. 세션 소켓은 띄우지 않는다 — core 는 serve 가 띄운다 (serve.spawnCore)
 
 export val PKG
 export val VERSION
@@ -10,7 +9,7 @@ export fn diskBuild() {
   role: 지금 디스크에 있는 이 설치의 {version(package.json), build(dist/cli.js 의 mtime ms — 같은 버전을 다시 빌드해도 바뀐다, 없으면 0)}. 떠 있는 프로세스의 VERSION·BUILD(뜰 때의 값)와 견줘 새 코드가 깔렸는지 안다 — serve 의 update.run 과 `slcode --version --json` (ticket slcode-core-serve-split 2단계)
 }
 export class RpcClient {
-  role: 타입 있는 요청 id 매칭(Methods 또는 PostMethods)·이벤트 구독·닫힘 프로미스 done. 소켓은 utf8 로 디코드한다 — 큰 응답(attach 의 긴 기록)에서 청크 경계의 한글이 깨지지 않게 (분리 전부터 있던 버그, 2026-10-15). 끊기면 대기 요청은 closed 로 거절하고 disconnected 를 이벤트로 흘린다
+  role: 타입 있는 요청 id 매칭·이벤트 구독·닫힘 프로미스 done. 소켓은 utf8 로 디코드한다 — 큰 응답(attach 의 긴 기록)에서 청크 경계의 한글이 깨지지 않게 (분리 전부터 있던 버그, 2026-10-15). 끊기면 대기 요청은 closed 로 거절하고 disconnected 를 이벤트로 흘린다
   export fn request(method, params) -> result {
     role: 타입 매칭 요청
   }
@@ -24,10 +23,3 @@ export class RpcClient {
 export fn connectSession(sockPath) -> RpcClient {
   role: 세션 소켓에 붙는다 — 없으면 no_session
 }
-export fn spawnPost(dir) -> Int? {
-  role: process.execPath dist/post.js 를 detached·unref 로, stdio 는 post.log, env 는 CLAUDE_* 제거 + SLCODE_DIR
-}
-export fn connectPost(opts) -> PostConnectResult {
-  role: 우체국에 붙거나 띄운다 — {client, spawned, pid}. autoStart false 면 no_post
-}
-type PostConnectOptions
