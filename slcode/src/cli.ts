@@ -21,7 +21,7 @@ import { pullHistory } from './history.js';
 import { randomUUID } from 'node:crypto';
 import type { ApprovalRequest, LoggedEvent, Methods, SessionInfo } from './protocol.js';
 
-type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; help?: boolean };
+type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; inspect?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; help?: boolean };
 
 const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세션 id 또는 유일한 제목. * 는 세션 안(SLCODE_SESSION)에서만)
 
@@ -32,8 +32,9 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
   new·resume·continue 는 superlite 터미널 안이면 그 터미널의 deck 에 카드로 연다. superlite 밖이거나 --web 이면 세션(core)을
   띄우고 이 프로세스가 웹을 연다 (Ctrl-C 로 닫는다). 이미 살아 있는 세션이면 그 카드로 가거나 웹 주소를 출력한다.
   --host H·--port N 은 웹으로 열 때 쓴다. --no-web 과는 함께 쓸 수 없고, superlite 안에서는 --web 과 함께 쓴다
-  new [folder] [--web] [--host H] [--port N] [--no-web] [--raw] [--mode M] [--title T] [--vendor claude|codex] [--stdio]
+  new [folder] [--web] [--host H] [--port N] [--no-web] [--raw] [--inspect] [--mode M] [--title T] [--vendor claude|codex] [--stdio]
                                  새 세션 (폴더 생략 시 현재 폴더)
+                                 --inspect: Claude 의 API 요청·응답 원본을 세션 폴더 inspect/ 에 남긴다 (웹 사이드바에서도 켜고 끈다)
                                  --stdio: stdin/stdout 을 프레임 연결로 (첫 줄 {"url","id","sock"}; superlite 서비스용). resume·continue 도 받는다
   resume [<s>]                   저장된 세션을 다시 띄운다. <s> 가 없으면 현재 폴더의 꺼진 세션 목록 (superlite 안이면 카드에서 고른다)
   continue [folder]              그 폴더에서 가장 최근에 꺼진 세션을 resume (없으면 새 세션)
@@ -77,7 +78,7 @@ try {
     allowPositionals: true,
     options: {
       port: { type: 'string' }, host: { type: 'string' }, stdio: { type: 'boolean' }, vendor: { type: 'string' }, mode: { type: 'string' }, title: { type: 'string' },
-      since: { type: 'string' }, tail: { type: 'string' }, turn: { type: 'string' }, raw: { type: 'boolean' }, all: { type: 'boolean' }, force: { type: 'boolean' }, json: { type: 'boolean' },
+      since: { type: 'string' }, tail: { type: 'string' }, turn: { type: 'string' }, raw: { type: 'boolean' }, inspect: { type: 'boolean' }, all: { type: 'boolean' }, force: { type: 'boolean' }, json: { type: 'boolean' },
       remember: { type: 'boolean' }, from: { type: 'string' }, timeout: { type: 'string' }, answer: { type: 'string' },
       'no-web': { type: 'boolean' }, web: { type: 'boolean' }, dir: { type: 'string' }, help: { type: 'boolean', short: 'h' },
     },
@@ -90,6 +91,7 @@ const argv0 = process.argv[2];
 const bare = !flags.help && (argv0 === undefined || argv0.startsWith('-'));
 if (bare && positionals.length) usage(`동사 없는 slcode 는 옵션만 받는다: ${positionals.join(' ')} — 다른 폴더는 slcode new <folder>`);
 const [cmd, ...rest] = bare ? ['new'] : positionals;
+if (flags.inspect && flags.vendor === 'codex') usage('--inspect is for claude sessions only');
 if (!cmd || flags.help) { console.log(HELP); process.exit(0); }
 const print = (o: unknown) => console.log(JSON.stringify(o, null, 2));
 const err = (msg: string) => console.error(`[slcode] ${msg}`);
@@ -191,7 +193,7 @@ function turnSlice(history: LoggedEvent[], back: number): LoggedEvent[] | null {
 
 /** resume·continue·import — 꺼진 세션은 카드(superlite 안) 또는 core 를 띄우고 이 프로세스가 웹 서빙, 살아 있는 세션은 그 카드를
  *  활성화(superlite 안) 또는 웹 주소를 찍고 끝난다. --stdio 는 카드 서비스 자신 — 살아 있으면 소켓 중계(attach), 아니면 core 를 띄운 소유자 serve */
-async function resumeLog(log: EventLog, skip: (keyof Flags)[] = ['title', 'mode', 'raw', 'no-web', 'dir']) {
+async function resumeLog(log: EventLog, skip: (keyof Flags)[] = ['title', 'mode', 'raw', 'inspect', 'no-web', 'dir']) {
   let live = false;
   try { (await connectSession(log.sockPath)).close(); live = true; } catch {}
   if (live && flags.stdio) return attachStdio(log); // 살아 있는 세션의 소켓을 stdin/stdout 으로 중계 — superlite 카드가 떠 있는 세션에 붙는 길
@@ -204,7 +206,7 @@ async function printWeb(log: EventLog) {
   const client = await connectSession(log.sockPath);
   const url = webUrl(await client.request('server.info', {}));
   client.close();
-  unused(['host', 'port', 'no-web', 'title', 'mode', 'raw'], 'session is already live');
+  unused(['host', 'port', 'no-web', 'title', 'mode', 'raw', 'inspect'], 'session is already live');
   if (!url) { err(`session ${log.meta.id} is live but has no web address`); process.exit(1); }
   console.log(url);
   err(`session ${log.meta.id} is already live`);
@@ -213,7 +215,7 @@ async function printWeb(log: EventLog) {
 async function serve(opts: { cwd: string; resume?: string }) {
   try {
     const h = await serveSession({
-      dir: flags.dir, ...opts, title: flags.title, raw: flags.raw, permissionMode: flags.mode, vendor: flags.vendor === 'codex' ? 'codex' : 'claude',
+      dir: flags.dir, ...opts, title: flags.title, raw: flags.raw, inspect: flags.inspect, permissionMode: flags.mode, vendor: flags.vendor === 'codex' ? 'codex' : 'claude',
       web: !flags['no-web'], host: flags.host, port: flags.port ? Number(flags.port) : undefined, stdio: flags.stdio, log: err,
       // superlite 서비스(serviceStart web)면 데몬이 정한 웹 소켓 주소 (ticket plugin-service-web)
       webSock: flags.stdio ? process.env.SUPERLITE_SERVICE_WEB || undefined : undefined,
@@ -262,14 +264,14 @@ function openCard(verb: string[], skip: (keyof Flags)[]): void {
 function newCard(cwd: string): void {
   const args = ['slcode.new', '--cwd', cwd];
   for (const k of ['vendor', 'title', 'mode'] as const) if (flags[k] !== undefined) args.push(`--${k}`, flags[k]!);
-  openCard(args, ['no-web', 'raw', 'dir']);
+  openCard(args, ['no-web', 'raw', 'inspect', 'dir']);
 }
 /** id 없는 resume — 현재 폴더의 꺼진 세션을 꺼진 순서(최근 먼저)로. superlite 안이면 카드 안에서 고르고(slcode.resume --cwd), 밖이면
  *  목록(id·시각·제목)을 찍고 끝난다 */
 async function pickClosed(cwd: string) {
   const rows = await closedSessions(P.sessionsDir, cwd);
   if (!rows.length) { err(`no closed session in ${cwd}`); process.exit(1); }
-  if (toCard()) openCard(['slcode.resume', '--cwd', cwd], ['title', 'mode', 'raw', 'no-web', 'dir']);
+  if (toCard()) openCard(['slcode.resume', '--cwd', cwd], ['title', 'mode', 'raw', 'inspect', 'no-web', 'dir']);
   const pad = (n: number) => String(n).padStart(2, '0');
   const stamp = (t: number) => { const d = new Date(t); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
   for (const m of rows) console.log(`${m.id}  ${stamp(closedTime(m))}  ${m.title ?? '-'}`);
@@ -356,7 +358,7 @@ try {
       const r = await pullHistory(log, vsid ?? found.id, { vendorSessionId: found.id, fork: true }).catch((e: Error) => { log.close(); EventLog.remove(P.sessionsDir, log.meta.id); err(`could not read ${found.vendor} session ${found.id}: ${e.message}`); process.exit(1); });
       log.close();
       err(`imported ${found.vendor} session ${found.id} as ${log.meta.id} (${found.cwd}, ${r?.turns ?? 0} earlier turns) — a copy${vsid ? ` (${vsid})` : ''}, the original is untouched`);
-      await resumeLog(log, ['raw', 'no-web', 'dir']); // --title·--mode 는 위 기록(meta)에 들어가 카드 세션에도 간다
+      await resumeLog(log, ['raw', 'inspect', 'no-web', 'dir']); // --title·--mode 는 위 기록(meta)에 들어가 카드 세션에도 간다
       break;
     }
     case 'export': {

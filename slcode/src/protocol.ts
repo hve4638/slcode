@@ -50,6 +50,18 @@ export type SessionInfo = {
   updatedAt?: number;
   permissionMode: string | null;
   raw: boolean;
+  /** Claude 벤더의 API 호출 원본 기록 (session.setInspect) — 한 번도 켠 적 없으면 없다 */
+  inspect?: boolean;
+};
+
+/** inspect 기록의 호출 하나 요약 (inspect/index.jsonl 한 줄). at 은 요청이 들어온 시각, ms 는 응답이 끝날 때까지. 상한으로 원본을 지웠으면 dropped */
+export type InspectCall = {
+  n: number; at: number; ms: number; method: string; path: string; model: string | null; status: number | null;
+  reqBytes: number; resBytes: number; error?: string; dropped?: boolean;
+};
+/** 호출 하나의 원본 — 인증 헤더는 가렸다. resBody 는 압축을 푼 텍스트 (SSE 는 도착한 그대로) */
+export type InspectRecord = InspectCall & {
+  reqHeaders: Record<string, string | string[]>; reqBody: string; resHeaders: Record<string, string | string[]>; resBody: string;
 };
 
 /** 턴에 딸린 파일 — 웹 프런트의 붙여넣기·끌어놓기. data 는 base64. 이미지·PDF 는 벤더 블록으로, 텍스트류는 본문에 인라인 */
@@ -189,6 +201,13 @@ export type Methods = {
   /** 웹 입력창 초안을 맡긴다 — 프로세스 메모리에 하나(마지막 쓴 것), 디스크·방송 없음. 카드 iframe 이 다시 로드돼도 쓰던 글이 남게
    *  (ticket slcode-card-periodic-reload, 사용자 결정 2026-10-10) */
   'session.setDraft': { params: { id: string; text: string }; result: { ok: true } };
+  // ---- inspect (ticket slcode-inspect-proxy, 사용자 결정 2026-10-17) — Claude 벤더만
+  /** 벤더의 API 호출 원본 기록을 켜고 끈다 — idle 일 때만, 벤더 프로세스를 같은 대화로 다시 띄운다. meta 에 남아 resume 뒤에도 유지 */
+  'session.setInspect': { params: { id: string; on: boolean }; result: { ok: true } };
+  /** seq end 의 turn.end 에 귀속되는 호출 요약 (앞 turn.end 뒤부터 이 turn.end 까지 시작한 것) */
+  'session.inspectTurn': { params: { id: string; end: number }; result: { calls: InspectCall[] } };
+  /** 호출 하나의 원본 — 상한으로 지웠으면 bad_request */
+  'session.inspectCall': { params: { id: string; n: number }; result: InspectRecord };
   // ---- 메시징 (ticket superlite-agent-messaging, 사용자 확정 2026-10-02: 스탠드얼론, superlite 등록부 매핑 없음). 세션 안의 `slcode check/ask/reply` 가 자기 세션 소켓으로 부른다
   /** 밀린 우편을 지금 꺼낸다 (우체국에서 가져온 뒤 inbox 전부 ack) — 진행 중 턴 안에서 읽는 용도. 꺼낸 우편은 턴으로 다시 오지 않는다. text 는 mail.ts formatMail 꼴 */
   'session.check': { params: { id: string }; result: { count: number; text: string } };

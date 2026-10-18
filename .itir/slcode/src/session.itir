@@ -43,6 +43,9 @@ export class ClaudeSession {
   export fn rewind(seq, conversation, files) -> String[]? {
     role: idle 일 때만. files 면 SDK rewindFiles(그 턴의 userUuid), conversation 이면 생성기를 닫고(restarting 플래그로 exit 이벤트를 막는다) 앞 턴의 uuid 를 resumeSessionAt 으로 run 재기동(유지 지점은 그 턴보다 앞의 마지막 turn.end 또는 session.imported 표지의 uuid — 표지는 가져온 턴들 뒤에 서므로 대상보다 앞의 것만 본다. 없으면 새 벤더 세션, 표지의 uuid 가 없으면 가져온 대화를 지킬 수 없어 오류. 되돌림을 반영한 로그는 eventLog.unrewound). turn.rewound 이벤트
   }
+  export fn reopen(env) {
+    role: idle(또는 첫 프롬프트 전 starting)일 때만 — 큐를 먼저 새로 바꾸고(내려가는 사이 온 프롬프트는 새 프로세스가 받는다) 생성기를 닫고(restarting) 기다린 뒤, 그사이 닫혔으면 그만두고 아니면 같은 벤더 세션으로 run 을 env 만 바꿔 재기동한다. inspect 토글이 쓴다 (ticket slcode-inspect-proxy). 세션 한정 승인 규칙(remember)은 rewind 처럼 잃는다
+  }
   export fn interrupt() {
     role: 진행 턴 중단 — 그 턴의 승인 대기는 cancelled
   }

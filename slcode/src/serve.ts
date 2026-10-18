@@ -42,6 +42,7 @@ export type ServeOptions = {
   continueLast?: boolean;
   title?: string;
   raw?: boolean;
+  inspect?: boolean;
   permissionMode?: string;
   /** 새 세션의 벤더 — 기본 claude. 이어받는 세션은 meta.vendor 를 따른다 */
   vendor?: 'claude' | 'codex';
@@ -168,7 +169,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
       resume = (await closedSessions(P.sessionsDir, opts.cwd))[0]?.id;
       if (!resume) log(`no closed session in ${opts.cwd} — starting a new one`);
     }
-    ({ id: sid, sock, session } = await spawnCore({ dir: P.dir, cwd: opts.cwd, resume, title: opts.title, raw: opts.raw, permissionMode: opts.permissionMode, vendor: opts.vendor }));
+    ({ id: sid, sock, session } = await spawnCore({ dir: P.dir, cwd: opts.cwd, resume, title: opts.title, raw: opts.raw, inspect: opts.inspect, permissionMode: opts.permissionMode, vendor: opts.vendor }));
   }
   const control = await connectSession(sock);
   // 소유권을 빼앗기면(core.owner — 카드 핸드오프) 이 serve 가 닫혀도 세션을 닫지 않는다

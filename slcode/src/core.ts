@@ -18,6 +18,7 @@ import { isLoopback, reachable, sockAlive } from './live.js';
 import { connectPost, VERSION, type RpcClient } from './client.js';
 import { corePaths, ensureDir, readOrCreateToken } from './paths.js';
 import { formatMail, parseMailHeads } from './mail.js';
+import { inspectEnv, readCall, startInspect, turnCalls, upstreamOf, type InspectProxy } from './inspect.js';
 import { CoreError, ERR, PROTOCOL_VERSION, type ApprovalRequest, type LoggedEvent, type Mail, type MethodName, type Methods, type PostMethods, type RequestFrame, type SessionInfo } from './protocol.js';
 
 /** 벤더 자식(claude CLI·codex)에 넘기지 않을 env — 워커 Claude 세션 안에서 띄우면 그 세션의 표식(CLAUDECODE·CLAUDE_CODE_SESSION_ID·
@@ -51,6 +52,8 @@ export type CoreOptions = {
   permissionMode?: string;
   /** 새 세션의 벤더 — 기본 claude. 이어받는 세션은 meta.vendor 를 따른다 */
   vendor?: 'claude' | 'codex';
+  /** 새 세션을 inspect 로 (Claude 만). 이어받는 세션은 meta.inspect 를 따른다 */
+  inspect?: boolean;
   log?: (msg: string) => void;
 };
 
@@ -70,20 +73,31 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     if (!found) throw new CoreError(ERR.noSession, `no session ${opts.resume}`);
     if (await sockAlive(found.sockPath)) throw new CoreError(ERR.badRequest, `session ${opts.resume} is live — another slcode is serving it`);
     if (opts.title !== undefined) found.updateMeta({ title: opts.title });
+    if (opts.inspect && found.meta.vendor !== 'codex') found.updateMeta({ inspect: true });
     logFile = found;
   } else {
     const meta: SessionMeta = {
       id: randomUUID().slice(0, 8), vendor: opts.vendor ?? 'claude', cwd: opts.cwd, title: opts.title ?? null,
       vendorSessionId: null, createdAt: Date.now(), permissionMode: opts.permissionMode ?? null, raw: opts.raw ?? false,
+      ...(opts.inspect ? { inspect: true } : {}),
     };
     logFile = EventLog.create(P.sessionsDir, meta);
   }
   const cwd = logFile.meta.cwd;
   // 벤더 자식(과 그 Bash 도구가 띄우는 명령)이 자기 세션을 알게 — 세션 안의 `slcode mail/check/ask/reply` 가 이걸 읽는다 (사용자 확정 2026-10-02)
   const env: NodeJS.ProcessEnv = { ...SDK_ENV, SLCODE_SESSION: logFile.meta.id };
+  // inspect (ticket slcode-inspect-proxy) — 켜져 있으면 벤더를 띄우기 전에 proxy 를 세우고 벤더 env 의 ANTHROPIC_BASE_URL 을 그리로
+  const inspectDir = path.join(logFile.dir, 'inspect');
+  let inspect: InspectProxy | null = null;
+  let switching = false; // session.setInspect 가 벤더를 다시 띄우는 중 — 겹친 토글은 거절한다
+  const vendorEnv = async () => {
+    if (!logFile.meta.inspect || logFile.meta.vendor === 'codex') return env;
+    inspect ??= await startInspect(inspectDir, upstreamOf(env));
+    return inspectEnv(env, inspect.url);
+  };
   const session: AgentSession = logFile.meta.vendor === 'codex'
     ? new CodexSession({ log: logFile, env, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw })
-    : new ClaudeSession({ log: logFile, env, resume: logFile.meta.vendorSessionId, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw });
+    : new ClaudeSession({ log: logFile, env: await vendorEnv(), resume: logFile.meta.vendorSessionId, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw });
   const sid = session.id;
 
   // ---- 디스패치 (UDS 연결마다 — CLI 동사, serve 의 중계 연결과 제어 연결)
@@ -173,6 +187,30 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     },
     'session.close': (_c, p) => { mine(p?.id); setImmediate(() => void close('closed by client')); return { ok: true }; },
     'session.rename': (_c, p) => { const s = mine(p?.id); s.log.updateMeta({ title: p.title ?? null }); broadcast('session.changed', s.info()); return { ok: true }; },
+    'session.setInspect': async (_c, p) => {
+      const s = mine(p?.id);
+      if (!(s instanceof ClaudeSession)) throw new CoreError(ERR.badRequest, 'inspect is for claude sessions only');
+      if (typeof p.on !== 'boolean') throw new CoreError(ERR.badRequest, 'on required');
+      if (p.on === !!logFile.meta.inspect) return { ok: true };
+      if (s.state !== 'idle' && s.state !== 'starting') throw new CoreError(ERR.badRequest, 'inspect can be switched only while idle');
+      if (switching) throw new CoreError(ERR.badRequest, 'inspect is already being switched');
+      switching = true;
+      logFile.updateMeta({ inspect: p.on });
+      // 켤 때는 proxy 를 먼저 세우고, 끌 때는 옛 벤더가 내려간 뒤에 닫는다. 실패하면 meta 와 새 proxy 를 되돌린다
+      try { await s.reopen(await vendorEnv()); }
+      catch (e) { logFile.updateMeta({ inspect: !p.on }); if (p.on) { await inspect?.close(); inspect = null; } throw new CoreError(ERR.badRequest, (e as Error).message); }
+      finally { switching = false; }
+      if (!p.on) { await inspect?.close(); inspect = null; }
+      broadcast('session.changed', s.info());
+      return { ok: true };
+    },
+    'session.inspectTurn': (_c, p) => ({ calls: turnCalls(inspectDir, mine(p?.id).log.all, Number(p.end)) }),
+    'session.inspectCall': (_c, p) => {
+      mine(p?.id);
+      const rec = readCall(inspectDir, Number(p.n));
+      if (!rec) throw new CoreError(ERR.badRequest, `no inspect call ${p.n} (dropped by the size cap or never recorded)`);
+      return rec;
+    },
     'session.setDraft': (_c, p) => { mine(p?.id); if (typeof p.text !== 'string') throw new CoreError(ERR.badRequest, 'text required'); draft = p.text; return { ok: true }; },
     // ---- 메시징 (스탠드얼론, 2026-10-02)
     'session.check': async (_c, p) => {
@@ -320,6 +358,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     let deadline: NodeJS.Timeout | undefined;
     await Promise.race([session.close(reason), new Promise<void>((r) => { deadline = setTimeout(() => { log(`vendor did not close in ${CLOSE_DEADLINE_MS / 1000}s — leaving it`); r(); }, CLOSE_DEADLINE_MS); })]);
     clearTimeout(deadline);
+    await inspect?.close();
     uds.close();
     for (const s of socks) s.end(); // serve 의 중계·제어 연결이 닫힘을 본다
     try { fs.unlinkSync(sockPath); } catch {}

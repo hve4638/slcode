@@ -235,6 +235,19 @@ export class ClaudeSession extends AgentSession {
     return filesChanged;
   }
 
+  /** 벤더 프로세스를 같은 대화로 env 만 바꿔 다시 띄운다 — inspect 토글 (ticket slcode-inspect-proxy). rewind 의 재기동과 같은 길이고, 세션 한정 승인 규칙은 잃는다 */
+  async reopen(env: NodeJS.ProcessEnv) {
+    if (this.state !== 'idle' && this.state !== 'starting') throw new Error('reopen needs an idle session');
+    this.opts = { ...this.opts, env };
+    this.restarting = true;
+    // 큐를 먼저 바꾼다 — 옛 프로세스가 내려가는 사이에 온 프롬프트는 새 큐에 쌓여 새 프로세스가 받는다 (옛 생성기의 대기자가 삼키지 않게)
+    this.input = new AsyncQueue();
+    try { (this.q as any)?.return?.(); } catch {}
+    await this.running;
+    if (this.ended) return; // 기다리는 사이에 닫혔다
+    this.running = this.run({ ...this.opts, resume: null });
+  }
+
   async close(reason = 'closed') {
     if (this.ended) return;
     this.ended = true;

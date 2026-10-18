@@ -5,6 +5,7 @@
 // transport = { request(method, params), onEvent(fn), onStatus(fn) } (rpc.js 표면).
 import { renderMarkdown } from './markdown.js';
 import { DEFAULTS, applySettings, ctxLevel, settingsDialog } from './settings.js';
+import { inspectDialog } from './inspect.js';
 
 const STATE_LABEL = { starting: '시작 중', idle: '대기', running: '실행 중', requires_action: '응답 필요', exited: '종료', disconnected: '연결 끊김' };
 const h = (tag, attrs = {}, ...children) => {
@@ -227,7 +228,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   const toBottom = () => { follow = true; feed.scrollTop = feed.scrollHeight; };
   const atBottom = () => follow;
   function push(node, sc = main) { const stick = atBottom(); node.dataset.seq = curSeq; (sc.col ?? col).append(node); if (!busy.hidden && !replaying) col.append(busy); if (stick && !replaying) feed.scrollTop = feed.scrollHeight; return node; }
-  function endText(sc = main) { if (sc.textEl) { sc.textEl.classList.remove('streaming'); sc.textEl.append(acts(iconBtn('copy', '복사', copyOf(sc.textBuf)))); } sc.textEl = null; sc.textBuf = ''; sc.thinkEl = null; sc.thinkBuf = ''; }
+  function endText(sc = main) { if (sc.textEl) { sc.textEl.classList.remove('streaming'); sc.textEl.append(sc.acts = acts(iconBtn('copy', '복사', copyOf(sc.textBuf)))); } sc.textEl = null; sc.textBuf = ''; sc.thinkEl = null; sc.thinkBuf = ''; }
   // 말풍선 아래 아이콘 줄 (ChatGPT 꼴, 사용자 2026-09-27) — 복사, (사용자 턴엔) 돌아가기 = claude 의 Esc-Esc: 답변만 / 코드만 / 둘 다
   const ICONS = {
     pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
@@ -249,6 +250,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     check: '<path d="M5 12l5 5L20 7"/>',
     download: '<path d="M12 4v12"/><path d="M6 11l6 6 6-6"/><path d="M5 20h14"/>',
     x: '<path d="M6 6l12 12"/><path d="M18 6 6 18"/>',
+    inspect: '<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/><path d="m16 16-1.9-1.9"/>',
     rewind: '<path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
     retry: '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>',
     gear: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
@@ -285,12 +287,13 @@ export function mountAgentFront(root, transport, opts = {}) {
     stopBtn.style.display = stop ? '' : 'none'; sendBtn.style.display = stop ? 'none' : '';
   };
   // 클립보드 API 는 https·localhost 에서만 있고 iframe 은 clipboard-write 권한도 필요하다 — 없으면 execCommand 로 (http://IP 로 열 때, 2026-09-27)
-  async function copyText(text) {
+  // 모달(showModal) 안에서는 바깥이 inert 라 textarea 를 그 dialog 안에 둔다 (inspect 모달의 블록 복사)
+  async function copyText(text, host = document.body) {
     try { if (navigator.clipboard) { await navigator.clipboard.writeText(text); return true; } } catch {}
-    const ta = h('textarea', { style: 'position:fixed;top:0;left:0;opacity:0' }); ta.value = text; document.body.append(ta); ta.select();
+    const ta = h('textarea', { style: 'position:fixed;top:0;left:0;opacity:0' }); ta.value = text; host.append(ta); ta.select();
     try { return document.execCommand('copy'); } finally { ta.remove(); }
   }
-  const copyOf = (text) => async (e) => { const b = e.currentTarget; const ok = await copyText(text); b.replaceChildren(ok ? icon('check') : '✗'); setTimeout(() => b.replaceChildren(icon('copy')), 1200); };
+  const copyOf = (text) => async (e) => { const b = e.currentTarget; const ok = await copyText(text, b.closest('dialog') ?? document.body); b.replaceChildren(ok ? icon('check') : '✗'); setTimeout(() => b.replaceChildren(icon('copy')), 1200); };
   function rewindBtn(seq, text) {
     const row = acts(iconBtn('copy', '복사', copyOf(text)), iconBtn('rewind', '이 턴부터 되돌리기', () => ask()));
     function ask() {
@@ -302,6 +305,12 @@ export function mountAgentFront(root, transport, opts = {}) {
     }
     return row;
   }
+  // inspect (ticket slcode-inspect-proxy, 사용자 결정 2026-10-18) — 턴 마지막 응답 아래 '복사' 옆 버튼이 그 턴 동안 나간 API 호출 모달(inspect.js)을 연다.
+  // 버튼은 inspect 를 한 번이라도 켠 세션에서만 보인다 (.inspectable). 응답 글이 없는 턴(오류·중단)은 버튼만 한 줄로
+  const inspectUi = inspectDialog(h, rpc, () => status?.context?.max ?? null, (text) => iconBtn('copy', '복사', copyOf(text)));
+  el.append(inspectUi.el);
+  const inspectBtn = (endSeq) => { const b = iconBtn('inspect', '이 턴의 API 호출 보기', () => inspectUi.open(current, endSeq)); b.classList.add('insp'); return b; };
+  const syncInspect = () => el.classList.toggle('inspectable', info?.inspect != null);
   // 우편 턴 — 내부적으로는 사용자 턴이지만 화면은 사용자 말풍선이 아니라 왼쪽의 봉투 카드 (프로토타입, 사용자 2026-09-27).
   // 본문은 src/mail.ts formatMail 이 만든 꼴 (MAIL_HEAD 는 그 정규식의 사본): "[mail <id> from <세션 id> (<제목>) at <iso> kind=<kind> re=<id>]\n답장: …\n<본문>" 을 빈 줄로 이은 것
   const MAIL_HEAD = /^\[mail (\S+) from (\S+)(?: \((.*?)\))? at (\S+) kind=(\S+)(?: re=(\S+))?\]\n(?:답장: [^\n]*\n)?/;
@@ -329,7 +338,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     const ev = e.ev;
     switch (ev.kind) {
       case 'turn.start': if (!replaying) busySince = e.at || Date.now(); setBusy('작업 중');
-        endText();
+        endText(); main.acts = null; // 이 턴 마지막 응답의 아이콘 줄 — turn.end 가 inspect 버튼을 붙인다
         if (ev.origin === 'mail') { push(mailCard(ev.text, e.seq)); break; }
         push(h('div', { class: 'user' }, h('div', { class: 'bubble' }, ev.origin ? h('span', { class: 'origin' }, ev.origin) : null,
           ev.attachments?.length ? h('div', { class: 'chips' }, ...ev.attachments.map((a) => { const local = sentFiles.get(a.name); return h('span', { class: 'chip' }, local ? h('img', { src: local }) : null, a.name); })) : null,
@@ -404,6 +413,7 @@ export function mountAgentFront(root, transport, opts = {}) {
           if (u) parts.push(`↑${fmtTok(u.input + u.cacheRead + u.cacheWrite)} ↓${fmtTok(u.output)}`);
           if (e.at) parts.push(new Date(e.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })); // 끝난 시각 — claude 의 "done 오후 9:14" 자리 (사용자 2026-10-15)
         }
+        if (main.acts) main.acts.append(inspectBtn(e.seq)); else push(h('div', { class: 'acts solo' }, inspectBtn(e.seq)));
         if (parts.length) push(h('div', { class: `meta${ev.interrupted ? ' err' : ''}` }, parts.join(' · ')));
         if (!replaying) renderSide();
         break;
@@ -629,6 +639,9 @@ export function mountAgentFront(root, transport, opts = {}) {
     side.append(sec('session', '세션', kv([
       ['상태', STATE_LABEL[info?.state] ?? ''], ['id', current ? h('span', { class: 'idv' }, current, iconBtn('copy', '세션 id 복사', copyOf(current))) : null],['벤더 세션', info?.vendorSessionId ?? ready?.vendorSessionId], ['권한 모드', ready?.permissionMode ?? info?.permissionMode],
       ['연결', connected ? '연결됨' : '끊김'], ['raw', info?.raw ? '켬' : '끔'],
+      // inspect 토글 — 켜고 끄면 claude 를 같은 대화로 다시 띄운다 (idle 일 때만). 값은 session.changed 로 온다
+      ...(info?.vendor === 'claude' ? [['inspect', h('button', { class: 'ghost', title: '켜거나 끄면 claude 를 같은 대화로 다시 띄웁니다 (대기 중일 때만)', disabled: info.state === 'idle' || info.state === 'starting' ? null : '',
+        onclick: (ev) => { ev.currentTarget.disabled = true; rpc('session.setInspect', { id: current, on: !info.inspect }).catch((e) => { push(h('div', { class: 'meta err' }, e.message)); renderSide(); }); } }, info.inspect ? '켬' : '끔')]] : []),
     ])));
     const pend = [...cards.entries()].filter(([, c]) => !c.classList.contains('resolved'));
     side.append(sec('pending', '대기 중', pend.length
@@ -755,7 +768,7 @@ export function mountAgentFront(root, transport, opts = {}) {
       else throw e;
     }
     if (first && r.summary) { more = !!r.more; oldest = r.history[0]?.seq ?? 0; }
-    info = r.info; setTitle(info.title);
+    info = r.info; setTitle(info.title); syncInspect();
     if (r.draft && !input.value) { input.value = r.draft; input.oninput(); } // 다시 로드된 화면 — 쓰던 글을 되살린다 (치던 중이면 그대로)
     replayHistory(r.history, first ? r.summary : null);
     for (const p of r.pending) renderCard(p);
@@ -765,7 +778,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   }
   transport.onEvent((m) => {
     if (m.event === 'session.event' && m.params.id === current) render(m.params, true);
-    else if (m.event === 'session.changed' && m.params.id === current) { info = m.params; setTitle(info.title); renderMode(); renderSide(); }
+    else if (m.event === 'session.changed' && m.params.id === current) { info = m.params; setTitle(info.title); syncInspect(); renderMode(); renderSide(); }
     else if (m.event === 'session.closed' && m.params.id === current) { /* session.exit 이벤트가 이미 그렸다 */ }
     else if (m.event === 'settings.changed') setSettings(m.params);
   });

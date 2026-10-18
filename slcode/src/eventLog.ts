@@ -26,6 +26,8 @@ export type SessionMeta = {
   effort?: string | null;
   /** `slcode import --fork` 의 원본 벤더 세션 — Codex 는 첫 기동 때 thread/fork 로 갈라 vendorSessionId 를 얻는다 (Claude 는 import 때 이미 갈랐다) */
   forkFrom?: string | null;
+  /** inspect 모드 (session.setInspect) — Claude 벤더의 API 호출 원본을 inspect/ 에 남긴다 */
+  inspect?: boolean;
 };
 
 /** turn.rewound 가 버린 턴(그 seq 부터)을 뺀 이벤트 — 버린 턴은 벤더 쪽에도 없으므로 대화 되돌리기의 유지 지점·다시 import 의 기준에서 뺀다 */
