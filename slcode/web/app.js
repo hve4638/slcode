@@ -347,6 +347,22 @@ export function mountAgentFront(root, transport, opts = {}) {
   el.append(inspectUi.el);
   const inspectBtn = (endSeq) => { const b = iconBtn('inspect', '이 턴의 API 호출 보기', () => inspectUi.open(current, endSeq)); b.classList.add('insp'); return b; };
   const syncInspect = () => el.classList.toggle('inspectable', info?.inspect != null);
+  // 사이드바 inspect 토글의 확인 창 (사용자 2026-10-19, ticket slcode-inspect-default-on) — 켜고 끄면 claude 를 다시 띄워 다음 호출의 캐시가 깨질 수 있다
+  let inspectTo = false;
+  const inspectMsg = h('p', {});
+  const confirmInspect = h('dialog', { class: 'confirm' }, inspectMsg, h('div', { class: 'btns' },
+    h('button', { onclick: () => confirmInspect.close() }, '취소'),
+    h('button', { class: 'primary', onclick: () => {
+      confirmInspect.close();
+      rpc('session.setInspect', { id: current, on: inspectTo }).catch((e) => { push(h('div', { class: 'meta err' }, e.message)); renderSide(); });
+    } }, '계속')));
+  confirmInspect.addEventListener('click', (e) => { if (e.target === confirmInspect) confirmInspect.close(); });
+  el.append(confirmInspect);
+  const askInspect = (on) => {
+    inspectTo = on;
+    inspectMsg.textContent = `inspect 를 ${on ? '켜면' : '끄면'} Claude 를 같은 대화로 다시 띄웁니다. 다음 호출에서 프롬프트 캐시가 깨져 비용이 더 들 수 있고, 이 세션에서 '이번 세션만 허용' 한 승인 규칙은 사라집니다.`;
+    confirmInspect.showModal();
+  };
   // 우편 턴 — 내부적으로는 사용자 턴이지만 화면은 사용자 말풍선이 아니라 왼쪽의 봉투 카드 (프로토타입, 사용자 2026-09-27).
   // 본문은 src/mail.ts formatMail 이 만든 꼴 (MAIL_HEAD 는 그 정규식의 사본): "[mail <id> from <세션 id> (<제목>) at <iso> kind=<kind> re=<id>]\n답장: …\n<본문>" 을 빈 줄로 이은 것
   const MAIL_HEAD = /^\[mail (\S+) from (\S+)(?: \((.*?)\))? at (\S+) kind=(\S+)(?: re=(\S+))?\]\n(?:답장: [^\n]*\n)?/;
@@ -677,7 +693,7 @@ export function mountAgentFront(root, transport, opts = {}) {
       ['연결', connected ? '연결됨' : '끊김'], ['raw', info?.raw ? '켬' : '끔'],
       // inspect 토글 — 켜고 끄면 claude 를 같은 대화로 다시 띄운다 (idle 일 때만). 값은 session.changed 로 온다
       ...(info?.vendor === 'claude' ? [['inspect', h('button', { class: 'ghost', title: '켜거나 끄면 claude 를 같은 대화로 다시 띄웁니다 (대기 중일 때만)', disabled: info.state === 'idle' || info.state === 'starting' ? null : '',
-        onclick: (ev) => { ev.currentTarget.disabled = true; rpc('session.setInspect', { id: current, on: !info.inspect }).catch((e) => { push(h('div', { class: 'meta err' }, e.message)); renderSide(); }); } }, info.inspect ? '켬' : '끔')]] : []),
+        onclick: () => askInspect(!info.inspect) }, info.inspect ? '켬' : '끔')]] : []),
     ])));
     const pend = [...cards.entries()].filter(([, c]) => !c.classList.contains('resolved'));
     side.append(sec('pending', '대기 중', pend.length
@@ -826,6 +842,7 @@ export function mountAgentFront(root, transport, opts = {}) {
       rpc('serve.info').then((si) => {
         if (page.build && (si.version !== page.version || String(si.build) !== page.build)) { location.reload(); return; }
         if (si.update && !update) { update = si.update; paintUpd(); }
+        settingsUi.inspectBlocked(si.inspectBlocked);
       }, () => {});
       boot('loading history');
       try {

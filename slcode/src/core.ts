@@ -18,8 +18,9 @@ import { isLoopback, reachable, sockAlive } from './live.js';
 import { BUILD, connectPost, VERSION, type RpcClient } from './client.js';
 import { corePaths, ensureDir, readOrCreateToken } from './paths.js';
 import { formatMail, parseMailHeads } from './mail.js';
-import { inspectEnv, readCall, startInspect, turnCalls, upstreamOf, type InspectProxy } from './inspect.js';
-import { CoreError, ERR, PROTOCOL_VERSION, type ApprovalRequest, type LoggedEvent, type Mail, type MethodName, type Methods, type PostMethods, type RequestFrame, type SessionInfo } from './protocol.js';
+import { blockInspect, inspectBlocked, inspectEnv, keepsFirstParty, sdkVersion, startInspect, turnCalls, upstreamOf, type InspectProxy } from './inspect.js';
+import { InspectStore, maybeSweep } from './inspectDb.js';
+import { CoreError, ERR, FILES, PROTOCOL_VERSION, type ApprovalRequest, type LoggedEvent, type Mail, type MethodName, type Methods, type PostMethods, type RequestFrame, type SessionInfo } from './protocol.js';
 
 /** 벤더 자식(claude CLI·codex)에 넘기지 않을 env — 워커 Claude 세션 안에서 띄우면 그 세션의 표식(CLAUDECODE·CLAUDE_CODE_SESSION_ID·
  *  CLAUDE_CODE_CHILD_SESSION·CLAUDE_CODE_ENTRYPOINT·CLAUDE_CODE_MESSAGING_* 등, claude 2.1.282·2.1.300 실측)이 딸려 가 자식이 남의 세션 안이라 여긴다.
@@ -52,7 +53,7 @@ export type CoreOptions = {
   permissionMode?: string;
   /** 새 세션의 벤더 — 기본 claude. 이어받는 세션은 meta.vendor 를 따른다 */
   vendor?: 'claude' | 'codex';
-  /** 새 세션을 inspect 로 (Claude 만). 이어받는 세션은 meta.inspect 를 따른다 */
+  /** 새 세션을 inspect 로 (Claude 만) — 입구 설정(Settings.inspect)을 CLI 가 읽어 넘긴다. 이어받는 세션은 meta.inspect 를 따르고, false 면 끈다 (--no-inspect) */
   inspect?: boolean;
   log?: (msg: string) => void;
 };
@@ -73,7 +74,8 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     if (!found) throw new CoreError(ERR.noSession, `no session ${opts.resume}`);
     if (await sockAlive(found.sockPath)) throw new CoreError(ERR.badRequest, `session ${opts.resume} is live — another slcode is serving it`);
     if (opts.title !== undefined) found.updateMeta({ title: opts.title });
-    if (opts.inspect && found.meta.vendor !== 'codex') found.updateMeta({ inspect: true });
+    // --no-inspect 는 켜져 있던 세션만 끈다 — 켠 적 없는 세션엔 값을 남기지 않는다 (inspect 버튼은 켠 적 있는 세션에만 보인다)
+    if (opts.inspect === false && found.meta.inspect) found.updateMeta({ inspect: false });
     logFile = found;
   } else {
     const meta: SessionMeta = {
@@ -86,19 +88,75 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   const cwd = logFile.meta.cwd;
   // 벤더 자식(과 그 Bash 도구가 띄우는 명령)이 자기 세션을 알게 — 세션 안의 `slcode mail/check/ask/reply` 가 이걸 읽는다 (사용자 확정 2026-10-02)
   const env: NodeJS.ProcessEnv = { ...SDK_ENV, SLCODE_SESSION: logFile.meta.id };
-  // inspect (ticket slcode-inspect-proxy) — 켜져 있으면 벤더를 띄우기 전에 proxy 를 세우고 벤더 env 의 ANTHROPIC_BASE_URL 을 그리로
+  // inspect (ticket slcode-inspect-proxy·slcode-inspect-default-on) — 켜져 있으면 벤더를 띄우기 전에 proxy 를 세우고 벤더 env 의 ANTHROPIC_BASE_URL 을 그리로.
+  // 기록은 세션 폴더 inspect/inspect.db. proxy 를 띄운 core 는 3일마다 상태 폴더 전체를 정리한다 (기록이 늘어나는 것은 proxy 가 떠 있을 때뿐)
   const inspectDir = path.join(logFile.dir, 'inspect');
+  const blockedFile = path.join(P.dir, FILES.inspectBlocked);
   let inspect: InspectProxy | null = null;
+  let store: InspectStore | null = null;
+  let sweeper: NodeJS.Timeout | null = null;
   let switching = false; // session.setInspect 가 벤더를 다시 띄우는 중 — 겹친 토글은 거절한다
+  const sweep = () => void maybeSweep(path.join(P.dir, FILES.inspectSweep), path.join(P.dir, FILES.inspectSweepLock), P.sessionsDir, { log })
+    .catch((e) => log(`inspect sweep failed: ${(e as Error).message}`));
+  const startProxy = async () => {
+    const blocked = inspectBlocked(blockedFile);
+    if (blocked) throw new Error(`inspect is blocked for this Claude Code (Agent SDK ${blocked}): it does not treat the proxy as first party, so prompt caching and other features would be lost`);
+    store ??= InspectStore.open(inspectDir);
+    inspect ??= await startInspect(store, upstreamOf(env), { watch: keepsFirstParty(env), onLost: firstPartyLost, log });
+    if (!sweeper) { sweep(); sweeper = setInterval(sweep, 3600_000); sweeper.unref(); }
+    return inspect;
+  };
   const vendorEnv = async () => {
     if (!logFile.meta.inspect || logFile.meta.vendor === 'codex') return env;
-    inspect ??= await startInspect(inspectDir, upstreamOf(env));
-    return inspectEnv(env, inspect.url);
+    return inspectEnv(env, (await startProxy()).url);
   };
+  /** 지난 기록을 읽는 DB — 켠 적 없는 세션엔 만들지 않는다 */
+  const readStore = () => {
+    if (!store && InspectStore.exists(inspectDir)) {
+      try { store = InspectStore.open(inspectDir); } catch (e) { throw new CoreError(ERR.badRequest, (e as Error).message); }
+    }
+    return store;
+  };
+  // 첫 기동에서 못 켜면(이 SDK 에서 막힘·node:sqlite 없음) 끄고 띄운다 — 사유는 세션이 생긴 뒤 기록에 남긴다
+  let firstEnv = env, inspectFailed: string | null = null;
+  try { firstEnv = await vendorEnv(); } catch (e) { logFile.updateMeta({ inspect: false }); inspectFailed = (e as Error).message; }
   const session: AgentSession = logFile.meta.vendor === 'codex'
     ? new CodexSession({ log: logFile, env, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw })
-    : new ClaudeSession({ log: logFile, env: await vendorEnv(), resume: logFile.meta.vendorSessionId, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw });
+    : new ClaudeSession({ log: logFile, env: firstEnv, resume: logFile.meta.vendorSessionId, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw });
   const sid = session.id;
+  if (inspectFailed) session.notice(`inspect 를 켜지 않았습니다: ${inspectFailed}`);
+
+  /** 켤 때는 proxy 를 먼저 세우고, 끌 때는 옛 벤더가 내려간 뒤에 닫는다. 실패하면 meta 와 새 proxy 를 되돌린다 */
+  async function setInspect(on: boolean) {
+    const s = session as ClaudeSession;
+    if (on === !!logFile.meta.inspect) return;
+    if (s.state !== 'idle' && s.state !== 'starting') throw new CoreError(ERR.badRequest, 'inspect can be switched only while idle');
+    if (switching) throw new CoreError(ERR.badRequest, 'inspect is already being switched');
+    switching = true;
+    logFile.updateMeta({ inspect: on });
+    try { await s.reopen(await vendorEnv()); }
+    catch (e) { logFile.updateMeta({ inspect: !on }); if (on) { await inspect?.close(); inspect = null; } throw new CoreError(ERR.badRequest, (e as Error).message); }
+    finally { switching = false; }
+    if (!on) { await inspect?.close(); inspect = null; if (sweeper) { clearInterval(sweeper); sweeper = null; } }
+    broadcast('session.changed', s.info());
+  }
+  /** 1st party 감시 (사용자 결정 2026-10-19) — 내부 플래그가 듣지 않는다. 이 SDK 버전을 기록해 새 세션은 inspect 없이 시작하게 하고,
+   *  이 세션은 지금 턴이 끝나 idle 이 되면 proxy 없이 다시 띄운다 */
+  function firstPartyLost() {
+    blockInspect(blockedFile);
+    session.notice(`inspect 를 끕니다: 이 Claude Code(Agent SDK ${sdkVersion()})는 proxy 주소를 1st party 로 보지 않아 프롬프트 캐시 등 일부 기능이 꺼집니다. 지금 턴이 끝나면 proxy 없이 다시 띄우고, 이 버전에서는 새 세션도 inspect 없이 시작합니다.`);
+    // 줄 선 턴까지 끝난 idle 에서만 — 실패하면(겹친 토글 등) 다음 idle 에 다시. 구독은 꺼진 뒤에 푼다
+    let trying = false;
+    const off = () => {
+      const s = session as ClaudeSession;
+      if (trying || closed || s.state !== 'idle' || switching || s.queued) return;
+      if (!logFile.meta.inspect) { stop(); return; } // 그사이 사이드바로 껐다
+      trying = true;
+      setInspect(false).then(() => stop(), (e) => { trying = false; log(`inspect off failed, retrying at the next idle: ${(e as Error).message}`); });
+    };
+    const stop = session.onEvent(off);
+    off();
+  }
 
   // ---- 디스패치 (UDS 연결마다 — CLI 동사, serve 의 중계 연결과 제어 연결)
   type Web = { host: string; port: number; url: string; version: string };
@@ -191,23 +249,13 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       const s = mine(p?.id);
       if (!(s instanceof ClaudeSession)) throw new CoreError(ERR.badRequest, 'inspect is for claude sessions only');
       if (typeof p.on !== 'boolean') throw new CoreError(ERR.badRequest, 'on required');
-      if (p.on === !!logFile.meta.inspect) return { ok: true };
-      if (s.state !== 'idle' && s.state !== 'starting') throw new CoreError(ERR.badRequest, 'inspect can be switched only while idle');
-      if (switching) throw new CoreError(ERR.badRequest, 'inspect is already being switched');
-      switching = true;
-      logFile.updateMeta({ inspect: p.on });
-      // 켤 때는 proxy 를 먼저 세우고, 끌 때는 옛 벤더가 내려간 뒤에 닫는다. 실패하면 meta 와 새 proxy 를 되돌린다
-      try { await s.reopen(await vendorEnv()); }
-      catch (e) { logFile.updateMeta({ inspect: !p.on }); if (p.on) { await inspect?.close(); inspect = null; } throw new CoreError(ERR.badRequest, (e as Error).message); }
-      finally { switching = false; }
-      if (!p.on) { await inspect?.close(); inspect = null; }
-      broadcast('session.changed', s.info());
+      await setInspect(p.on);
       return { ok: true };
     },
-    'session.inspectTurn': (_c, p) => ({ calls: turnCalls(inspectDir, mine(p?.id).log.all, Number(p.end)) }),
+    'session.inspectTurn': (_c, p) => ({ calls: turnCalls(readStore(), mine(p?.id).log.all, Number(p.end)) }),
     'session.inspectCall': (_c, p) => {
       mine(p?.id);
-      const rec = readCall(inspectDir, Number(p.n));
+      const rec = readStore()?.read(Number(p.n)) ?? null;
       if (!rec) throw new CoreError(ERR.badRequest, `no inspect call ${p.n} (dropped by the size cap or never recorded)`);
       return rec;
     },
@@ -359,6 +407,8 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     await Promise.race([session.close(reason), new Promise<void>((r) => { deadline = setTimeout(() => { log(`vendor did not close in ${CLOSE_DEADLINE_MS / 1000}s — leaving it`); r(); }, CLOSE_DEADLINE_MS); })]);
     clearTimeout(deadline);
     await inspect?.close();
+    if (sweeper) clearInterval(sweeper);
+    store?.close();
     uds.close();
     for (const s of socks) s.end(); // serve 의 중계·제어 연결이 닫힘을 본다
     try { fs.unlinkSync(sockPath); } catch {}

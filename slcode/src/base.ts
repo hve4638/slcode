@@ -41,6 +41,9 @@ export abstract class AgentSession {
 
   since(seq: number): LoggedEvent[] { return this.log.since(seq); }
 
+  /** 벤더가 아니라 core 가 알리는 일 — 기록에 error 이벤트로 남는다 (inspect 를 껐다 등) */
+  notice(message: string) { this.emit({ kind: 'error', message }); }
+
   protected emit(ev: CoreEvent, raw?: unknown) {
     if (ev.kind === 'session.state') this.state = ev.state;
     if (this.rawOn && raw !== undefined) ev = { ...ev, raw };

@@ -1,4 +1,4 @@
-// 화면 설정 — 테마·context 경고 (ticket slcode-web-settings, 사용자 확정 2026-10-16. 글꼴 고르기는 사용자가 뺐다).
+// 화면 설정 — 테마·context 경고 (ticket slcode-web-settings, 사용자 확정 2026-10-16. 글꼴 고르기는 사용자가 뺐다)·새 세션 inspect (ticket slcode-inspect-default-on).
 // 값은 상태 폴더에 입구마다 한 벌: 브라우저로 연 slcode 와 superlite 안의 slcode 탭이 따로 쓴다. 어느 벌인지는 serve 가 연결의 입구로 정하므로
 // 이 파일은 모른다. serve 가 읽고 쓰고(settings.get·set), 파일이 바뀌면 같은 입구의 떠 있는 화면 모두에 settings.changed.
 // 브라우저 저장소(localStorage)엔 두지 않는다. 고르면 바로 저장되고 모든 화면이 settings.changed 로 바뀐다 — 저장 버튼이 없다.
@@ -15,7 +15,7 @@ export const THEMES = [
 ];
 const CATS = [['light', '라이트'], ['dark', '다크'], ['other', '기타']];
 /** serve 의 DEFAULT_SETTINGS 와 같다 — 옛 serve(settings.get 이 없다)에 붙었을 때 이것으로 그린다 */
-export const DEFAULTS = { theme: 'system', context: { warn: true, yellow: 30, red: 50 } };
+export const DEFAULTS = { theme: 'system', context: { warn: true, yellow: 30, red: 50 }, inspect: false };
 
 const known = (id) => (THEMES.some((x) => x.id === id) ? id : 'system');
 
@@ -73,6 +73,12 @@ export function settingsDialog(h, set, end) {
   lo.onchange = hi.onchange = () => save({ context: { yellow: +lo.value, red: +hi.value } });
   const ctxBody = h('div', { class: 'ctxbody' }, range);
 
+  // 새 세션 inspect (사용자 2026-10-19) — 이 입구에서 여는 새 Claude 세션의 시작값. 떠 있는 세션은 사이드바의 inspect 로 켜고 끈다.
+  // 내부 플래그가 듣지 않는 SDK 로 기록돼 있으면(serve.info inspectBlocked) 끄고 사유를 보인다
+  const insp = h('input', { type: 'checkbox', role: 'switch', onchange: () => save({ inspect: insp.checked }) });
+  const inspNote = h('p', { class: 'note' }, '새로 여는 Claude 세션이 API 요청·응답을 세션 폴더에 기록합니다. 지금 세션은 사이드바에서 켜고 끕니다.');
+  let inspBlocked = null;
+
   // 세션 종료 — 맨 아래 줄, 왼쪽 이름 · 오른쪽 끝 빨간 '종료' (context 경고 줄과 같은 꼴). 누르면 확인 창을 한 번 더 (사용자 2026-10-16). 끝난 세션이면 숨긴다(endable)
   const confirmEnd = h('dialog', { class: 'confirm' }, h('p', {}, '세션을 종료할까요?'), h('div', { class: 'btns' },
     h('button', { onclick: () => confirmEnd.close() }, '취소'),
@@ -89,6 +95,7 @@ export function settingsDialog(h, set, end) {
     h('div', { class: 'body' },
       sec('테마', cats, themes),
       h('section', {}, h('label', { class: 'switch' }, h('h3', {}, 'context 경고'), warn), ctxBody),
+      h('section', {}, h('label', { class: 'switch' }, h('h3', {}, '새 세션 inspect'), insp), inspNote),
       endRow,
       err,
       ver),
@@ -98,11 +105,18 @@ export function settingsDialog(h, set, end) {
   function update(s) {
     cur = known(s.theme); mark();
     warn.checked = s.context.warn; ctxBody.classList.toggle('off', !s.context.warn); lo.disabled = hi.disabled = !s.context.warn;
+    insp.checked = !!s.inspect && !inspBlocked;
     // 손잡이를 잡고 끌고 있으면 그 값을 그대로 둔다
     if (!range.matches(':active')) { lo.value = s.context.yellow; hi.value = s.context.red; paintRange(); }
   }
   update(DEFAULTS);
   /** screen 은 index.html 의 data-version(serve 가 넣는다 — 디스크의 웹을 그대로 보내는 0.1.8 이하 serve 엔 없다), core 는 server.info.version */
   const version = (screen, core) => { ver.textContent = !screen || screen === core ? `slcode ${core}` : `slcode ${screen} (core ${core})`; };
-  return { el: dlg, open: () => { showCat(catOf(cur)); dlg.showModal(); }, update, endable: (on) => { endRow.hidden = !on; }, version };
+  /** sdk 는 내부 플래그가 듣지 않는다고 기록된 Agent SDK 버전 (없으면 null) */
+  const inspectBlocked = (sdk) => {
+    inspBlocked = sdk ?? null;
+    insp.disabled = !!inspBlocked;
+    if (inspBlocked) { insp.checked = false; inspNote.textContent = `이 Claude Code(Agent SDK ${inspBlocked})는 inspect proxy 를 1st party 로 보지 않아 프롬프트 캐시 등 일부 기능이 꺼집니다. 그래서 이 버전에서는 inspect 를 켜지 않습니다.`; }
+  };
+  return { el: dlg, open: () => { showCat(catOf(cur)); dlg.showModal(); }, update, endable: (on) => { endRow.hidden = !on; }, version, inspectBlocked };
 }

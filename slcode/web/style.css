@@ -390,6 +390,7 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf dialog.settings input[role=switch]:focus-visible { outline: 2px solid var(--acf-accent); outline-offset: 2px; }
 .acf dialog.settings .ctxbody { padding: 30px 0 4px; }
 .acf dialog.settings .ctxbody.off { opacity: .45; }
+.acf dialog.settings p.note { margin: 6px 0 0; font-size: 12px; color: var(--acf-muted); }
 .acf dialog.settings .dual { position: relative; height: 28px; margin: 0 9px; }
 .acf dialog.settings .dual::before { content: ""; position: absolute; left: 0; right: 0; top: 11px; height: 6px; border-radius: 3px; background: linear-gradient(to right, var(--acf-ok) 0 var(--y), var(--acf-warn) var(--y) var(--r), var(--acf-err) var(--r) 100%); }
 /* 입력을 트랙보다 손잡이 폭(18px)만큼 넓혀 손잡이 가운데가 트랙의 그 % 자리에 오게 */

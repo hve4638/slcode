@@ -15,8 +15,9 @@ const hdr = (o, k) => { const v = o?.[k]; return Array.isArray(v) ? v.join(', ')
 const heads = (o) => Object.entries(o ?? {}).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`).join('\n');
 const ok = (c) => !c.error && c.status != null && c.status < 400;
 
-/** 응답 본문을 메시지 하나로 — SSE 면 message_start 에 블록·delta 를 이어 붙이고, 아니면 JSON 그대로 */
+/** 응답 본문을 메시지 하나로 — SSE 면 message_start 에 블록·delta 를 이어 붙이고, 아니면 JSON 그대로. compact 된 호출은 이미 메시지 하나의 JSON */
 export function responseOf(rec) {
+  if (rec.compacted) { const m = parse(rec.resBody); if (m) return m; }
   if (!String(hdr(rec.resHeaders, 'content-type') ?? '').includes('event-stream')) return parse(rec.resBody);
   let msg = null;
   const json = [];
@@ -76,7 +77,7 @@ export function inspectDialog(h, rpc, ctxMax, copyBtn) {
   function card(c) {
     const path = c.path.split('?')[0];
     const st = c.dropped ? h('span', { class: 'st' }, '지움') : ok(c) ? h('span', { class: 'st ok' }, `${c.status} 성공`) : h('span', { class: 'st bad', title: c.error ?? '' }, `${c.status ?? ''} 실패`.trim());
-    const b = h('button', { class: 'icard', title: c.dropped ? '상한(100MB)으로 지운 호출입니다' : c.path, disabled: c.dropped ? '' : null },
+    const b = h('button', { class: 'icard', title: c.dropped ? '전체 상한(10GB)을 넘어 지운 호출입니다' : c.path, disabled: c.dropped ? '' : null },
       h('div', { class: 'top' }, h('span', { class: 'path' }, `${c.method} ${path}`), st),
       c.model ? h('div', { class: 'model' }, c.model) : null,
       h('div', { class: 'bot' }, h('span', {}, stamp(c.at)), h('span', {}, `${(c.ms / 1000).toFixed(1)}s ↑${kb(c.reqBytes)} ↓${kb(c.resBytes)}`)),
@@ -207,11 +208,13 @@ export function inspectDialog(h, rpc, ctxMax, copyBtn) {
     return out;
   }
 
-  // ---- raw — HTTP 요청·응답 전문. 응답 본문은 기록할 때 압축을 푼 것이다
+  // ---- raw — HTTP 요청·응답 전문. 응답 본문은 기록할 때 압축을 푼 것이다. compact 된 호출(보관 기간·용량 상한을 넘은 뒤)은 원본이 없어 다시 조립한 본문을 보인다
   function raw({ rec }) {
+    const re = rec.compacted ? ' (재구성)' : '';
     return [
-      h('section', {}, h('h4', {}, '요청'), h('pre', { class: 'raw' }, `${rec.method} ${rec.path} HTTP/1.1\n${heads(rec.reqHeaders)}${rec.reqBody ? `\n\n${rec.reqBody}` : ''}`)),
-      h('section', {}, h('h4', {}, '응답'), rec.resHeaders?.['content-encoding'] ? dim(`본문은 ${rec.resHeaders['content-encoding']} 압축을 푼 것입니다.`) : null,
+      rec.compacted ? dim('raw 삭제됨') : null,
+      h('section', {}, h('h4', {}, `요청${re}`), h('pre', { class: 'raw' }, `${rec.method} ${rec.path} HTTP/1.1\n${heads(rec.reqHeaders)}${rec.reqBody ? `\n\n${rec.reqBody}` : ''}`)),
+      h('section', {}, h('h4', {}, `응답${re}`), !rec.compacted && rec.resHeaders?.['content-encoding'] ? dim(`본문은 ${rec.resHeaders['content-encoding']} 압축을 푼 것입니다.`) : null,
         h('pre', { class: 'raw' }, `HTTP/1.1 ${rec.status ?? '—'}${rec.error ? ` (${rec.error})` : ''}\n${heads(rec.resHeaders)}${rec.resBody ? `\n\n${rec.resBody}` : ''}`)),
     ];
   }

@@ -28,6 +28,9 @@ test('설정 파일: 없으면 기본값, 꼴이 틀린 값은 버리고, 겹쳐
   assert.deepEqual(b.context, { warn: true, yellow: 20, red: 60 }, 'context 의 다른 항목은 남는다');
   assert.equal(b.theme, 'dark');
   assert.deepEqual(writeSettings(dir, 'web', { theme: 7 as unknown as string }).theme, 'dark', '꼴이 틀린 patch 는 지금 값을 둔다');
+  assert.equal(DEFAULT_SETTINGS.inspect, false, '새 세션 inspect 는 기본 끔 (사용자 2026-10-19)');
+  assert.equal(writeSettings(dir, 'web', { inspect: true }).inspect, true);
+  assert.equal(writeSettings(dir, 'web', { inspect: 'yes' as unknown as boolean }).inspect, true, '꼴이 틀리면 지금 값');
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'settings-web.json'), 'utf8')), readSettings(dir, 'web'));
   assert.deepEqual(readSettings(dir, 'superlite'), DEFAULT_SETTINGS, 'web 을 바꿔도 superlite 는 그대로');
   assert.equal(writeSettings(dir, 'superlite', { theme: 'nord' }).theme, 'nord');

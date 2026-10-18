@@ -1,22 +1,32 @@
 import { InspectCall, InspectRecord, LoggedEvent } from './protocol'
+import { RAW_CAP, InspectStore } from './inspectDb'
 
-role: inspect 모드 (ticket slcode-inspect-proxy, 사용자 결정 2026-10-17) — Claude 벤더의 ANTHROPIC_BASE_URL 을 이 프로세스 안의 로컬 HTTP proxy 로 돌려 API 요청·응답 원본을 세션 폴더 inspect/ 에 남긴다. proxy 는 받은 바이트를 그대로 흘려보낸다 — 응답 청크는 도착하는 대로 쓰고(SSE 지연·순서 불변), 압축(gzip·br·zstd·deflate)도 풀지 않고 넘긴다. 기록 사본만 끝난 뒤 푼다. 업스트림 연결은 keep-alive 로 재사용한다(호출마다 TLS 를 새로 맺지 않게). 인증으로 보이는 헤더(이름에 auth·api-key·secret·cookie·access/session-token — 게이트웨이의 ANTHROPIC_CUSTOM_HEADERS 까지, 사용량 헤더는 남긴다)는 sk-ant-… 접두만 남기고 가려 저장한다. 기록 사본의 압축 해제·파일 쓰기는 비동기로, 저장은 줄을 세워 하나씩(상한·index 순서). 1st party 판정: Claude Code 는 base URL host 가 api.anthropic.com 일 때만 1st party 로 본다 — 주소만 바꾸면 tool search·beta 헤더가 달라진다(2026-10-17 실측). 원래 1st party 였으면(ANTHROPIC_BASE_URL 없음·api.anthropic.com·이미 플래그) 내부 env _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL=1 과, 사용자가 정하지 않았으면 공식 env ENABLE_TOOL_SEARCH=true 를 함께 준다 — 플래그가 버전이 바뀌어 사라져도 가장 큰 차이(tool search 꺼짐)는 공식 변수로 막는 안전망. 공식 변수만으로는 같아지지 않는다(2026-10-18 실측: global 프롬프트 캐시·eager_input_streaming·beta 2개·request-class 헤더가 빠진다, 공식 대안 env 는 없음). 다른 BASE_URL 이 있었으면 둘 다 없이 그 주소를 업스트림으로 쓴다. 저장: 호출 하나가 <n>.json(InspectRecord), 목록은 index.jsonl(InspectCall 한 줄씩, 끝난 순서). 상한 INSPECT_CAP(세션당 100MB) — <n>.json 합이 넘으면 가장 오래된 것부터 지운다(마지막 하나는 남긴다). 지운 호출은 index 에 남아 dropped 로 보인다. 턴 귀속: 시각으로 — turn.end 하나의 호출은 앞 turn.end 시각 뒤부터 그 turn.end 시각까지 시작한 것(턴은 FIFO 로 끝난다; 첫 턴 앞의 기동 호출은 첫 턴에, 턴 사이 호출은 다음 턴에)
+role: inspect 모드 (ticket slcode-inspect-proxy, 사용자 결정 2026-10-17) — Claude 벤더의 ANTHROPIC_BASE_URL 을 이 프로세스 안의 로컬 HTTP proxy 로 돌려 API 요청·응답 원본을 세션의 InspectStore(inspectDb.ts — 세션 폴더 inspect/inspect.db)에 남긴다. proxy 는 받은 바이트를 그대로 흘려보낸다 — 응답 청크는 도착하는 대로 쓰고(SSE 지연·순서 불변), 압축(gzip·br·zstd·deflate)도 풀지 않고 넘긴다. 기록 사본만 끝난 뒤 푼다(비동기). 업스트림 연결은 keep-alive 로 재사용한다(호출마다 TLS 를 새로 맺지 않게). 인증으로 보이는 헤더(이름에 auth·api-key·secret·cookie·access/session-token — 게이트웨이의 ANTHROPIC_CUSTOM_HEADERS 까지, 사용량 헤더는 남긴다)는 sk-ant-… 접두만 남기고 가려 저장한다. 쓰기는 동기 트랜잭션 하나씩이고 쓸 때마다 store.tidy(7일·세션 raw 상한 compact) — 디스크 오류로 벤더 호출을 막지 않고, 실패는 처음 한 번만 log. 1st party 판정: Claude Code 는 base URL host 가 api.anthropic.com 일 때만 1st party 로 본다 — 주소만 바꾸면 tool search·beta 헤더가 달라진다(2026-10-17 실측). 원래 1st party 였으면(keepsFirstParty: ANTHROPIC_BASE_URL 없음·api.anthropic.com·이미 플래그) 내부 env _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL=1 과, 사용자가 정하지 않았으면 공식 env ENABLE_TOOL_SEARCH=true 를 함께 준다 — 플래그가 버전이 바뀌어 사라져도 가장 큰 차이(tool search 꺼짐)는 공식 변수로 막는 안전망. 공식 변수만으로는 같아지지 않는다(2026-10-18 실측: global 프롬프트 캐시·eager_input_streaming·beta 2개·request-class 헤더가 빠진다, 공식 대안 env 는 없음). 다른 BASE_URL 이 있었으면 둘 다 없이 그 주소를 업스트림으로 쓴다. 1st party 감시(ticket slcode-inspect-default-on, 사용자 결정 2026-10-19): watch 면 tool 목록이 있는 첫 POST /v1/messages(count_tokens 제외 — 제목 생성 같은 부수 요청엔 tool 이 없다)에 x-claude-code-request-class 헤더가 없을 때 onLost 를 한 번 — 플래그가 듣지 않는다. onLost 는 HTTP 이벤트 처리 안에서 부르므로 던져도 잡아 log 한다(core 가 죽지 않게). 막힌 기록은 상태 폴더 파일 하나({sdk, at}) — 묶은 Agent SDK 버전이 같을 때만 막힌 것으로 본다(플래그가 사라지는 때는 SDK 가 바뀔 때뿐, 바뀌면 다시 검사). SDK 버전을 모르면(unknown) 남기지도 맞추지도 않는다. 턴 귀속: 시각으로 — turn.end 하나의 호출은 앞 turn.end 시각 뒤부터 그 turn.end 시각까지 시작한 것(턴은 FIFO 로 끝난다; 첫 턴 앞의 기동 호출은 첫 턴에, 턴 사이 호출은 다음 턴에)
 
-export val INSPECT_CAP
 export fn upstreamOf(env) -> Text {
   role: 넘길 곳 — env 의 ANTHROPIC_BASE_URL, 없으면 https://api.anthropic.com
 }
 export fn inspectEnv(env, url) -> Env {
   role: 벤더 env 에 proxy 주소를 얹는다 — 원래 1st party 였으면 _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL=1 과 (정하지 않았으면) ENABLE_TOOL_SEARCH=true 도
 }
-export fn startInspect(dir, upstream, cap) -> InspectProxy {
-  role: 127.0.0.1 임의 포트에 proxy 를 띄운다. 번호는 index 를 이어 매긴다(재기동·resume 뒤에도 단조). close 는 서버와 남은 연결을 닫는다
+export fn keepsFirstParty(env) -> Bool {
+  role: 원래 1st party 였는가 — inspectEnv 가 내부 플래그를 넣고 proxy 가 감시할 세션
 }
-export fn turnCalls(dir, events, end) -> InspectCall[] {
-  role: seq end 의 turn.end 에 귀속되는 호출들 — 파일이 지워졌으면 dropped
+export fn sdkVersion() -> Text {
+  role: 이 slcode 가 묶은 @anthropic-ai/claude-agent-sdk 의 package.json version (못 읽으면 unknown)
 }
-export fn readCall(dir, n) -> InspectRecord? {
-  role: 호출 하나의 원본 — 없으면(상한으로 지움) null
+export fn inspectBlocked(file) -> Text? {
+  role: 막힌 기록의 sdk 가 지금 SDK 버전과 같으면 그 버전, 아니면(없음·다른 버전) null
+}
+export fn blockInspect(file) {
+  role: 지금 SDK 버전과 시각을 막힌 기록으로 쓴다
+}
+export type InspectOptions
+export fn startInspect(store, upstream, opts) -> InspectProxy {
+  role: 127.0.0.1 임의 포트에 proxy 를 띄운다. 번호는 store.lastN 을 이어 매긴다(재기동·resume 뒤에도 단조). opts: rawCap(기본 RAW_CAP)·watch·onLost·log. close 는 서버와 남은 연결을 닫고 푸는 중인 기록을 기다린다
+}
+export fn turnCalls(store, events, end) -> InspectCall[] {
+  role: seq end 의 turn.end 에 귀속되는 호출들 — store 가 없으면(켠 적 없음) 빈 목록
 }
 fn redact(headers) -> Headers
 fn decode(buf, encoding) -> Text

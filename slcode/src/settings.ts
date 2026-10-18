@@ -1,4 +1,4 @@
-// 화면 설정 — 테마·context 경고 (ticket slcode-web-settings, 사용자 확정 2026-10-16). 상태 폴더에 입구(SettingsKind)마다 파일 하나:
+// 화면 설정 — 테마·context 경고 (ticket slcode-web-settings, 사용자 확정 2026-10-16)·새 세션 inspect (ticket slcode-inspect-default-on, 2026-10-19). 상태 폴더에 입구(SettingsKind)마다 파일 하나:
 // 브라우저로 연 slcode(web)와 superlite 안의 slcode 탭(superlite)은 완전히 따로 쓰고, 같은 입구끼리는 같은 $SLCODE_DIR 의 모든 serve
 // (떠 있는 세션·새 세션)가 같이 읽고 쓴다. 브라우저 localStorage 엔 두지 않는다 (sandbox 카드에서 SecurityError, 브라우저·카드마다 갈라진다).
 // 테마 id 의 목록은 웹(web/settings.js)이 정한다 — 여기서는 꼴만 맞추고, 모르는 id 는 웹이 기본값으로 읽는다.
@@ -6,8 +6,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { FILES, type Settings, type SettingsKind, type SettingsPatch } from './protocol.js';
 
-/** 기본값 — 두 입구 같다. context 경계 30·50 은 사용자 결정 (2026-10-16) */
-export const DEFAULT_SETTINGS: Settings = { theme: 'system', context: { warn: true, yellow: 30, red: 50 } };
+/** 기본값 — 두 입구 같다. context 경계 30·50 은 사용자 결정 (2026-10-16), inspect 기본 끔은 2026-10-19 */
+export const DEFAULT_SETTINGS: Settings = { theme: 'system', context: { warn: true, yellow: 30, red: 50 }, inspect: false };
 
 /** 꼴이 맞는 값만 남기고 나머지는 base 의 값 — 손으로 고친 파일·옛 버전 파일. 두 경계는 0~100 정수이고 yellow ≤ red */
 export function normalizeSettings(v: unknown, base: Settings = DEFAULT_SETTINGS): Settings {
@@ -19,6 +19,7 @@ export function normalizeSettings(v: unknown, base: Settings = DEFAULT_SETTINGS)
   return {
     theme: id(o.theme, base.theme),
     context: { warn: typeof c.warn === 'boolean' ? c.warn : base.context.warn, yellow: Math.min(yellow, red), red: Math.max(yellow, red) },
+    inspect: typeof o.inspect === 'boolean' ? o.inspect : base.inspect,
   };
 }
 

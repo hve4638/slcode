@@ -26,6 +26,11 @@ export const FILES = {
   /** 화면 설정 — 입구(SettingsKind)마다 하나 (settings.ts) */
   settingsWeb: 'settings-web.json',
   settingsSuperlite: 'settings-superlite.json',
+  /** inspect 의 내부 플래그가 이 SDK 버전에서 듣지 않는다는 기록 (inspect.ts blockInspect) */
+  inspectBlocked: 'inspect-blocked.json',
+  /** inspect 전체 정리 — 마지막 정리 시각과 정리하는 core 의 잠금 (inspectDb.ts maybeSweep) */
+  inspectSweep: 'inspect-sweep.json',
+  inspectSweepLock: 'inspect-sweep.lock',
 } as const;
 
 export type Vendor = 'claude' | 'codex';
@@ -50,18 +55,19 @@ export type SessionInfo = {
   updatedAt?: number;
   permissionMode: string | null;
   raw: boolean;
-  /** Claude 벤더의 API 호출 원본 기록 (session.setInspect) — 한 번도 켠 적 없으면 없다 */
+  /** Claude 벤더의 API 호출 원본 기록 (session.setInspect) — 한 번도 켠 적 없으면 없다. 새 세션은 입구 설정의 inspect 를 따른다 */
   inspect?: boolean;
 };
 
-/** inspect 기록의 호출 하나 요약 (inspect/index.jsonl 한 줄). at 은 요청이 들어온 시각, ms 는 응답이 끝날 때까지. 상한으로 원본을 지웠으면 dropped */
+/** inspect 기록의 호출 하나 요약 (inspect/inspect.db 의 calls 한 행). at 은 요청이 들어온 시각, ms 는 응답이 끝날 때까지. 전체 상한으로 지웠으면 dropped */
 export type InspectCall = {
   n: number; at: number; ms: number; method: string; path: string; model: string | null; status: number | null;
   reqBytes: number; resBytes: number; error?: string; dropped?: boolean;
 };
-/** 호출 하나의 원본 — 인증 헤더는 가렸다. resBody 는 압축을 푼 텍스트 (SSE 는 도착한 그대로) */
+/** 호출 하나의 원본 — 인증 헤더는 가렸다. resBody 는 압축을 푼 텍스트 (SSE 는 도착한 그대로).
+ *  compacted 면 원본은 지웠다 — reqBody 는 저장한 조각으로 다시 조립한 JSON, SSE 응답은 메시지 하나의 JSON */
 export type InspectRecord = InspectCall & {
-  reqHeaders: Record<string, string | string[]>; reqBody: string; resHeaders: Record<string, string | string[]>; resBody: string;
+  reqHeaders: Record<string, string | string[]>; reqBody: string; resHeaders: Record<string, string | string[]>; resBody: string; compacted?: true;
 };
 
 /** 턴에 딸린 파일 — 웹 프런트의 붙여넣기·끌어놓기. data 는 base64. 이미지·PDF 는 벤더 블록으로, 텍스트류는 본문에 인라인 */
@@ -138,8 +144,9 @@ export type LoggedEvent = { seq: number; at: number; ev: CoreEvent };
 
 /** 화면 설정 — 상태 폴더에 입구마다 한 벌 (ticket slcode-web-settings, 사용자 확정 2026-10-16). 같은 입구의 화면끼리 같이 쓴다.
  *  theme 은 id 이고 목록은 웹(web/settings.js)이 정한다 — 모르는 id 는 웹이 'system' 으로 읽는다.
- *  context: warn 이면 ctx % 를 yellow 미만 초록, red 미만 노랑, 그 이상 빨강. 끄면 색 없이. 0 ≤ yellow ≤ red ≤ 100 */
-export type Settings = { theme: string; context: { warn: boolean; yellow: number; red: number } };
+ *  context: warn 이면 ctx % 를 yellow 미만 초록, red 미만 노랑, 그 이상 빨강. 끄면 색 없이. 0 ≤ yellow ≤ red ≤ 100.
+ *  inspect: 이 입구에서 여는 새 Claude 세션이 inspect 로 시작한다 (ticket slcode-inspect-default-on, 기본 끔) — 떠 있는 세션은 사이드바 토글로 */
+export type Settings = { theme: string; context: { warn: boolean; yellow: number; red: number }; inspect: boolean };
 /** 설정 묶음 — 화면이 들어온 입구로 serve 가 정한다. web 은 slcode 가 연 웹(브라우저), superlite 는 superlite 안의 slcode 탭
  *  (서비스 웹 SUPERLITE_SERVICE_WEB·stdio). 두 벌은 완전히 따로다 — 한쪽에서 바꿔도 다른 쪽은 그대로 (사용자 결정 2026-10-16) */
 export type SettingsKind = 'web' | 'superlite';
@@ -202,7 +209,8 @@ export type Methods = {
    *  (ticket slcode-card-periodic-reload, 사용자 결정 2026-10-10) */
   'session.setDraft': { params: { id: string; text: string }; result: { ok: true } };
   // ---- inspect (ticket slcode-inspect-proxy, 사용자 결정 2026-10-17) — Claude 벤더만
-  /** 벤더의 API 호출 원본 기록을 켜고 끈다 — idle 일 때만, 벤더 프로세스를 같은 대화로 다시 띄운다. meta 에 남아 resume 뒤에도 유지 */
+  /** 벤더의 API 호출 원본 기록을 켜고 끈다 — idle 일 때만, 벤더 프로세스를 같은 대화로 다시 띄운다. meta 에 남아 resume 뒤에도 유지.
+   *  내부 플래그가 듣지 않는다고 기록된 SDK 버전(FILES.inspectBlocked)이면 켜기는 bad_request */
   'session.setInspect': { params: { id: string; on: boolean }; result: { ok: true } };
   /** seq end 의 turn.end 에 귀속되는 호출 요약 (앞 turn.end 뒤부터 이 turn.end 까지 시작한 것) */
   'session.inspectTurn': { params: { id: string; end: number }; result: { calls: InspectCall[] } };
@@ -226,8 +234,9 @@ export type ServeMethods = {
   /** 지금 설정에 겹쳐 쓴다 (context 는 항목별로). 결과는 겹친 뒤의 전체 — 같은 입구의 화면 모두에 settings.changed 도 간다 */
   'settings.set': { params: { settings: SettingsPatch }; result: Settings };
   /** 화면이 붙은 serve 의 버전·빌드(VERSION·BUILD)와 pid. update 는 update.run 이 찾은 새 버전(없으면 null) — 화면을 다시 열어도 restart required 가 남는다.
-   *  화면은 연결할 때마다 묻고 자기 페이지의 data-version·data-build 와 다르면 다시 로드한다 (serve 가 바뀌었다) */
-  'serve.info': { params: Record<string, never>; result: { version: string; build: number; pid: number; update: UpdateCheck | null } };
+   *  화면은 연결할 때마다 묻고 자기 페이지의 data-version·data-build 와 다르면 다시 로드한다 (serve 가 바뀌었다).
+   *  inspectBlocked 는 inspect 의 내부 플래그가 듣지 않는다고 기록된 SDK 버전 (없으면 null) — 설정 창이 새 세션 inspect 를 막고 사유를 보인다 */
+  'serve.info': { params: Record<string, never>; result: { version: string; build: number; pid: number; update: UpdateCheck | null; inspectBlocked?: string | null } };
   /** [업데이트] — 웹(TCP) 입구만. 설치 폴더의 package.json version·dist/cli.js mtime 을 이 serve 가 뜰 때의 것과 견준다.
    *  카드는 serve 가 아니라 플러그인이 확인한다 (원격 deploy 경로는 내용 해시라 serve 가 자기 폴더를 봐서는 모른다) */
   'update.run': { params: Record<string, never>; result: UpdateCheck };

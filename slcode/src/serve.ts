@@ -23,7 +23,8 @@ import { corePaths, ensureDir, readOrCreateToken } from './paths.js';
 import { closedSessions, isLoopback } from './live.js';
 import type { CoreOptions } from './core.js';
 import { readSettings, watchSettings, writeSettings } from './settings.js';
-import { CoreError, ERR, type SessionInfo, type SettingsKind, type SettingsPatch, type UpdateCheck } from './protocol.js';
+import { CoreError, ERR, FILES, type SessionInfo, type SettingsKind, type SettingsPatch, type UpdateCheck } from './protocol.js';
+import { inspectBlocked } from './inspect.js';
 
 export const WEB_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'web');
 const TYPES: Record<string, string> = {
@@ -216,7 +217,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
       switch (m.method) {
         case 'settings.get': return readSettings(P.dir, kind);
         case 'settings.set': return writeSettings(P.dir, kind, m.params?.settings);
-        case 'serve.info': return { version: VERSION, build: BUILD, pid: process.pid, update };
+        case 'serve.info': return { version: VERSION, build: BUILD, pid: process.pid, update, inspectBlocked: inspectBlocked(path.join(P.dir, FILES.inspectBlocked)) };
         case 'update.run':
           if (kind !== 'web') throw new CoreError(ERR.badRequest, 'update.run is for the web entry — a card asks the plugin');
           return checkUpdate();

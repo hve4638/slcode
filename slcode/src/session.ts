@@ -236,8 +236,13 @@ export class ClaudeSession extends AgentSession {
   }
 
   /** 벤더 프로세스를 같은 대화로 env 만 바꿔 다시 띄운다 — inspect 토글 (ticket slcode-inspect-proxy). rewind 의 재기동과 같은 길이고, 세션 한정 승인 규칙은 잃는다 */
+  /** 보냈지만 아직 turn.end 가 오지 않은 턴 수 — idle 경계에서도 다음 턴이 줄 서 있을 수 있다 (CLI 가 곧 집어간다) */
+  get queued(): number { return this.turnUuids.length; }
+
   async reopen(env: NodeJS.ProcessEnv) {
     if (this.state !== 'idle' && this.state !== 'starting') throw new Error('reopen needs an idle session');
+    // 줄 선 턴이 있으면 옛 프로세스와 함께 사라진다 (그 턴의 turn.end 가 오지 않는다) — 그 턴이 끝난 뒤에
+    if (this.queued) throw new Error('reopen needs an idle session with no queued turn');
     this.opts = { ...this.opts, env };
     this.restarting = true;
     // 큐를 먼저 바꾼다 — 옛 프로세스가 내려가는 사이에 온 프롬프트는 새 큐에 쌓여 새 프로세스가 받는다 (옛 생성기의 대기자가 삼키지 않게)
