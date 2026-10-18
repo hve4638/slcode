@@ -11,17 +11,18 @@ import { parseArgs } from 'node:util';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
-import { connectPost, connectSession, type RpcClient } from './client.js';
+import { connectPost, connectSession, diskBuild, type RpcClient } from './client.js';
 import { EventLog } from './eventLog.js';
 import { corePaths, readOrCreateToken } from './paths.js';
 import { serveSession } from './serve.js';
+import { runEntry } from './entry.js';
 import { reachable, closedSessions, closedTime, sockAlive } from './live.js';
 import { findVendorSession, forkClaude, vendorResumeCommand } from './vendor.js';
 import { pullHistory } from './history.js';
 import { randomUUID } from 'node:crypto';
 import type { ApprovalRequest, LoggedEvent, Methods, SessionInfo } from './protocol.js';
 
-type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; inspect?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; help?: boolean };
+type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; inspect?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; takeover?: boolean; version?: boolean; help?: boolean };
 
 const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세션 id 또는 유일한 제목. * 는 세션 안(SLCODE_SESSION)에서만)
 
@@ -36,6 +37,7 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
                                  새 세션 (폴더 생략 시 현재 폴더)
                                  --inspect: Claude 의 API 요청·응답 원본을 세션 폴더 inspect/ 에 남긴다 (웹 사이드바에서도 켜고 끈다)
                                  --stdio: stdin/stdout 을 프레임 연결로 (첫 줄 {"url","id","sock"}; superlite 서비스용). resume·continue 도 받는다
+                                 resume <s> --stdio --takeover: 살아 있는 세션의 소유권을 빼앗아 붙는다 (카드 핸드오프)
   resume [<s>]                   저장된 세션을 다시 띄운다. <s> 가 없으면 현재 폴더의 꺼진 세션 목록 (superlite 안이면 카드에서 고른다)
   continue [folder]              그 폴더에서 가장 최근에 꺼진 세션을 resume (없으면 새 세션)
   import <벤더 세션 id> [--vendor claude|codex] [--title T]
@@ -66,7 +68,7 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
 * reply <mail id> <text>         받은 우편에 답장
 우체국
   post status | post restart     restart 는 우체국만 내린다 — 다음 세션이 새로 띄운다
-공통: --dir D (SLCODE_DIR 대체), --help`;
+공통: --dir D (SLCODE_DIR 대체), --help, --version [--json] (--json 이면 {"version","build"} — build 는 dist/cli.js 의 mtime)`;
 
 function usage(msg?: string): never {
   if (msg) console.error(`[slcode] ${msg}\n(slcode --help)`); else console.error(HELP);
@@ -80,11 +82,13 @@ try {
       port: { type: 'string' }, host: { type: 'string' }, stdio: { type: 'boolean' }, vendor: { type: 'string' }, mode: { type: 'string' }, title: { type: 'string' },
       since: { type: 'string' }, tail: { type: 'string' }, turn: { type: 'string' }, raw: { type: 'boolean' }, inspect: { type: 'boolean' }, all: { type: 'boolean' }, force: { type: 'boolean' }, json: { type: 'boolean' },
       remember: { type: 'boolean' }, from: { type: 'string' }, timeout: { type: 'string' }, answer: { type: 'string' },
-      'no-web': { type: 'boolean' }, web: { type: 'boolean' }, dir: { type: 'string' }, help: { type: 'boolean', short: 'h' },
+      'no-web': { type: 'boolean' }, web: { type: 'boolean' }, takeover: { type: 'boolean' }, version: { type: 'boolean' }, dir: { type: 'string' }, help: { type: 'boolean', short: 'h' },
     },
   });
 } catch (e) { usage((e as Error).message); }
 const { values: flags, positionals } = parsed as { values: Flags; positionals: string[] };
+// 플러그인의 [업데이트] 가 받아 둔 slcode 에 묻는다 — 디스크의 이 설치 (ticket slcode-core-serve-split 2단계)
+if (flags.version) { const b = diskBuild(); console.log(flags.json ? JSON.stringify(b) : `slcode ${b.version}`); process.exit(0); }
 // 동사 없는 호출 = new . (ticket slcode-bare-new, 사용자 2026-10-07) — 인자가 없거나 첫 토큰이 옵션이면. 위치 인자는 받지 않는다
 // (폴더·세션 id 를 동사로 잘못 읽지 않게, 다른 폴더는 new <folder>)
 const argv0 = process.argv[2];
@@ -211,10 +215,15 @@ async function printWeb(log: EventLog) {
   console.log(url);
   err(`session ${log.meta.id} is already live`);
 }
-/** core 를 띄우고 그 소유자 serve 가 되어 끝까지 산다 — new·resume·continue */
+/** core 를 띄우고 그 소유자가 되어 끝까지 산다 — new·resume·continue. 웹 모드(--stdio·--no-web 없음)는 진입 프로세스가 되어 serve 를 자식으로
+ *  띄우고 교체한다 (entry.ts). 카드 서비스(--stdio)·--no-web 은 이 프로세스가 곧 serve 다 */
 async function serve(opts: { cwd: string; resume?: string }) {
   try {
-    const h = await serveSession({
+    const entry = !flags.stdio && !flags['no-web'];
+    const h = entry ? await runEntry({
+      dir: flags.dir, ...opts, title: flags.title, raw: flags.raw, inspect: flags.inspect, permissionMode: flags.mode, vendor: flags.vendor === 'codex' ? 'codex' : 'claude',
+      host: flags.host, port: flags.port ? Number(flags.port) : undefined, log: err,
+    }) : await serveSession({
       dir: flags.dir, ...opts, title: flags.title, raw: flags.raw, inspect: flags.inspect, permissionMode: flags.mode, vendor: flags.vendor === 'codex' ? 'codex' : 'claude',
       web: !flags['no-web'], host: flags.host, port: flags.port ? Number(flags.port) : undefined, stdio: flags.stdio, log: err,
       // superlite 서비스(serviceStart web)면 데몬이 정한 웹 소켓 주소 (ticket plugin-service-web)
@@ -287,13 +296,13 @@ function webUrl(info: { host: string | null; port: number | null; url?: string |
   return info.url ?? (info.port ? reachable(`http://${info.host}:${info.port}/${info.host && !['127.0.0.1', 'localhost', '::1'].includes(info.host) ? `?token=${readOrCreateToken(P)}` : ''}`) : null);
 }
 /** `resume --stdio` 가 살아 있는 세션을 만나면: hello 를 낸 뒤 stdio·서비스 웹을 그 세션 소켓에 중계한다. 소유자가 아니라 세션은 그대로
- *  (new --stdio 와 같은 모양을 카드에 준다, 2026-10-04). 중계는 serve 의 attach — core 를 띄우지 않는다 */
+ *  (new --stdio 와 같은 모양을 카드에 준다, 2026-10-04). 중계는 serve 의 attach — core 를 띄우지 않는다. --takeover 면 소유권을 빼앗는다 (카드 핸드오프의 새 카드) */
 async function attachStdio(log: EventLog) {
   const client = await connectSession(log.sockPath);
   const url = webUrl(await client.request('server.info', {}));
   client.close();
   const h = await serveSession({
-    dir: flags.dir, cwd: log.meta.cwd, web: false, stdio: true, attach: { id: log.meta.id, sock: log.sockPath, url }, log: err,
+    dir: flags.dir, cwd: log.meta.cwd, web: false, stdio: true, attach: { id: log.meta.id, sock: log.sockPath, url, takeover: flags.takeover }, log: err,
     webSock: process.env.SUPERLITE_SERVICE_WEB || undefined,
   });
   console.log(JSON.stringify({ url, id: log.meta.id, sock: log.sockPath }));

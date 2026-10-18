@@ -99,6 +99,10 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .hdr button.side-tg, .acf .hdr button.gear { width: 30px; height: 30px; flex: none; padding: 0; border: 0; background: transparent; color: var(--acf-muted); border-radius: 8px; display: grid; place-items: center; }
 .acf .hdr button.side-tg:hover, .acf .hdr button.gear:hover { background: var(--acf-soft); color: var(--acf-fg); }
 .acf.side-open .hdr button.side-tg { background: var(--acf-soft); color: var(--acf-fg); }
+.acf .hdr button.upd { flex: none; height: 26px; padding: 0 9px; border: 1px solid var(--acf-line); border-radius: 7px; background: transparent; color: var(--acf-muted); font: 12px var(--acf-sans); white-space: nowrap; cursor: pointer; }
+.acf .hdr button.upd:hover:not(:disabled) { background: var(--acf-soft); color: var(--acf-fg); }
+.acf .hdr button.upd:disabled { cursor: default; opacity: .7; }
+.acf .hdr button.upd.hot { border-color: var(--acf-accent); color: var(--acf-accent); }
 .acf .hdr button.side-tg svg, .acf .hdr button.gear svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .acf .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--acf-line); color: var(--acf-muted); white-space: nowrap; }
 .acf .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }

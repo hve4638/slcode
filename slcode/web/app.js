@@ -54,6 +54,42 @@ export function mountAgentFront(root, transport, opts = {}) {
   const endSession = () => { if (current) rpc('session.close', { id: current }).catch((e) => push(h('div', { class: 'meta err' }, e.message))); };
   const settingsUi = settingsDialog(h, (patch) => rpc('settings.set', { settings: patch }).then(setSettings), endSession);
   const gearBtn = h('button', { class: 'ico gear', title: '설정', 'aria-label': '설정', onclick: () => settingsUi.open() });
+  // 업데이트 — 헤더 오른쪽, 설정 버튼 왼쪽 (ticket slcode-core-serve-split 2단계, 사용자 2026-10-19). 누를 때만 새 버전을 확인한다(폴링 없음).
+  // 새 버전이 있으면 'restart required' — 누르면 serve 를 바꾼다. 웹은 serve 가 확인하고 같은 주소로 다시 붙은 뒤 새로고침된다(아래 onStatus 의 serve.info),
+  // 카드는 플러그인이 확인하고 새 카드로 옮긴다 (serve 의 stdio 로 보내면 그 카드를 띄운 모든 브라우저의 플러그인이 받는다)
+  const page = document.documentElement.dataset; // serve 가 넣는다: version·build·kind
+  const viaHost = page.kind === 'superlite';
+  let hostSeq = 0;
+  const hostWait = new Map();
+  window.addEventListener('message', (e) => { const w = e.source === window.parent && hostWait.get(e.data?.re); if (w) { hostWait.delete(e.data.re); w(e.data); } });
+  const askHost = (type, ms) => new Promise((resolve, reject) => {
+    const id = ++hostSeq;
+    const t = setTimeout(() => { hostWait.delete(id); reject(new Error('플러그인이 답하지 않습니다')); }, ms);
+    hostWait.set(id, (d) => { clearTimeout(t); d.error ? reject(new Error(d.error)) : resolve(d.result); });
+    window.parent.postMessage({ type, id, version: page.version, build: page.build }, '*');
+  });
+  let update = null; // 찾은 새 버전 — 있으면 버튼이 restart required
+  const updBtn = h('button', { class: 'upd', onclick: () => void (update ? restart() : checkUpdate()) }, '업데이트');
+  const paintUpd = (text = update ? 'restart required' : '업데이트', title = update ? `slcode ${page.version ?? '?'} → ${update.version}` : '새 버전 확인') => {
+    updBtn.textContent = text; updBtn.title = title; updBtn.classList.toggle('hot', !!update);
+  };
+  const flashUpd = (text, title) => { paintUpd(text, title ?? text); setTimeout(() => { if (!updBtn.disabled) paintUpd(); }, 2500); };
+  async function checkUpdate() {
+    updBtn.disabled = true; paintUpd('확인 중…');
+    let r;
+    try { r = viaHost ? await askHost('slcode.update', 120000) : await rpc('update.run'); } catch (e) { r = { status: 'failed', reason: e.message }; }
+    updBtn.disabled = false;
+    if (r.status === 'restart-required') { update = r; paintUpd(); }
+    else if (r.status === 'latest') flashUpd('최신 버전입니다');
+    else flashUpd('확인 실패', r.reason);
+  }
+  async function restart() {
+    updBtn.disabled = true; paintUpd('재시작 중…');
+    try { await (viaHost ? askHost('slcode.restart', 15000) : rpc('serve.restart')); }
+    catch (e) { updBtn.disabled = false; flashUpd('재시작 실패', e.message); return; }
+    if (viaHost) { updBtn.disabled = false; paintUpd(); } // 새 카드가 열렸다 — 옮겨지면 이 화면은 플러그인이 덮는다
+  }
+  paintUpd();
   let settings = DEFAULTS;
   const setSettings = (s) => { settings = s; applySettings(s); settingsUi.update(s); renderStat(); };
   const feed = h('div', { class: 'feed' });
@@ -178,7 +214,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   const center = h('div', { class: 'main' }, feed, dock, composer);
   center.addEventListener('pointerdown', () => el.classList.remove('peek'));
   el.append(
-    h('header', { class: 'hdr' }, nameRow, pill, bootEl, h('span', { class: 'gap' }), gearBtn, sideBtn),
+    h('header', { class: 'hdr' }, nameRow, pill, bootEl, h('span', { class: 'gap' }), updBtn, gearBtn, sideBtn),
     center,
     side,
     settingsUi.el,
@@ -786,6 +822,11 @@ export function mountAgentFront(root, transport, opts = {}) {
     connected = s.connected;
     if (s.connected) {
       rpc('settings.get').then(setSettings, () => {}); // 옛 serve 엔 없다 — 기본값으로 그린다
+      // 다시 붙은 serve 가 이 페이지를 낸 serve 와 다르면(serve 교체) 새 웹으로 다시 로드한다 — 초안은 core 가 들고 있다. 옛 serve 엔 serve.info 가 없다
+      rpc('serve.info').then((si) => {
+        if (page.build && (si.version !== page.version || String(si.build) !== page.build)) { location.reload(); return; }
+        if (si.update && !update) { update = si.update; paintUpd(); }
+      }, () => {});
       boot('loading history');
       try {
         const si = await rpc('server.info');

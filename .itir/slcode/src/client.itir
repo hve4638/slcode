@@ -5,6 +5,10 @@ role: JSON 줄 RPC 클라이언트 — 세션 소켓(sessions/<슬러그>/<id>/s
 
 export val PKG
 export val VERSION
+export val BUILD
+export fn diskBuild() {
+  role: 지금 디스크에 있는 이 설치의 {version(package.json), build(dist/cli.js 의 mtime ms — 같은 버전을 다시 빌드해도 바뀐다, 없으면 0)}. 떠 있는 프로세스의 VERSION·BUILD(뜰 때의 값)와 견줘 새 코드가 깔렸는지 안다 — serve 의 update.run 과 `slcode --version --json` (ticket slcode-core-serve-split 2단계)
+}
 export class RpcClient {
   role: 타입 있는 요청 id 매칭(Methods 또는 PostMethods)·이벤트 구독·닫힘 프로미스 done. 소켓은 utf8 로 디코드한다 — 큰 응답(attach 의 긴 기록)에서 청크 경계의 한글이 깨지지 않게 (분리 전부터 있던 버그, 2026-10-15). 끊기면 대기 요청은 closed 로 거절하고 disconnected 를 이벤트로 흘린다
   export fn request(method, params) -> result {

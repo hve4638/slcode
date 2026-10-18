@@ -197,6 +197,7 @@ export function activate(api) {
     if ('url' in m && 'sock' in m) { // hello
       c.hello = true; c.id = m.id ?? c.id;
       applyUrl(c); if (!c.attached) void attach(c); if (c.id) void remember(c);
+      handedOver(c);
       return;
     }
     if (m.event) { onEvent(c, m.event, m.params); return; }
@@ -225,7 +226,7 @@ export function activate(api) {
   function badge(c) {
     if (!c.ctx) return;
     const n = c.waits.size;
-    c.ctx.setBadge(n ? (n > 1 ? `!${n}` : '!') : c.state === 'running' ? '…' : c.state === 'exited' ? 'off' : null);
+    c.ctx.setBadge(c.moved ? null : n ? (n > 1 ? `!${n}` : '!') : c.state === 'running' ? '…' : c.state === 'exited' ? 'off' : null);
   }
   function applyTitle(c) { if (c.ctx) c.ctx.setTitle(c.title || (c.pick && !c.id ? PICK_NAME : DEFAULT_NAME)); } // 카드 제목 = 세션 이름 (slcode 웹 왼쪽 상단에서 고친다), 없으면 SLCode
   function applyUrl(c) {
@@ -258,7 +259,7 @@ export function activate(api) {
     } else {
       const p = document.createElement('div');
       p.style.cssText = 'margin:auto;font:13px system-ui;opacity:.8';
-      p.textContent = c.error ? `slcode 를 준비하지 못했습니다: ${c.error}` : c.note ?? (c.state === 'exited' ? '세션이 닫혔습니다' :'slcode 세션을 띄우는 중…');
+      p.textContent = c.moved ? '새 카드로 옮겨졌습니다' : c.error ? `slcode 를 준비하지 못했습니다: ${c.error}` : c.note ?? (c.state === 'exited' ? '세션이 닫혔습니다' :'slcode 세션을 띄우는 중…');
       if (c.error) { // 받기·기동 실패 — 사유를 보이고 다시 시도 (설정을 고친 뒤 등)
         p.style.cssText += ';max-width:80%;text-align:center;white-space:pre-wrap';
         const b = document.createElement('button');
@@ -291,6 +292,7 @@ export function activate(api) {
 
   // ---- 기동·연결 (attach-or-start). 선구독 → open(start+connect) → 이미 돌고 있었으면 hello 가 없으니 server.info 로 url·id
   async function ensure(c) {
+    if (c.moved) return;
     if (c.conn || c.starting) return c.starting;
     c.starting = (async () => {
       let dropped = false; // 이 시도에서 연 연결이 끊겼다
@@ -305,10 +307,11 @@ export function activate(api) {
         const sp = c.spawn ?? {};
         const verb = c.id ? `resume ${shq(c.id)}` : `new${sp.cwd ? ` ${shq(sp.cwd)}` : ''}${['vendor', 'title', 'mode'].map((k) => (sp[k] ? ` --${k} ${shq(sp[k])}` : '')).join('')}`;
         // --no-web: TCP 웹을 열지 않는다 — 화면은 서비스 웹 소켓(SUPERLITE_SERVICE_WEB)으로만
-        const command = `${bin.cmd} ${verb} --stdio --no-web${dir ? ` --dir ${shq(dir)}` : ''}`;
+        // --takeover: 핸드오프의 새 카드 — 떠 있는 세션의 소유권을 옛 카드의 serve 에서 가져온다
+        const command = `${bin.cmd} ${verb} --stdio --no-web${c.takeover && c.id ? ' --takeover' : ''}${dir ? ` --dir ${shq(dir)}` : ''}`;
         c.hello = false;
         const conn = await apiOf(c).services.open(SVC, { owner: ownerOf(c), command });
-        c.conn = conn; c.lost = false;
+        c.conn = conn; c.lost = false; c.takeover = false; // 다시 띄울 때는 보통 resume — 그 사이 소유권이 다른 카드로 갔을 수 있다
         conn.onClose(() => {
           // 연결이 끊기면 /svc 토큰도 폐기된다 — 다시 붙어 새 주소를 받는다 (세션 재접속·서비스 재기동). url 은 비운다: 그 사이 다시
           // 그리면 죽은 토큰 주소로 iframe 을 만들어 relay 의 404 본문이 보였다
@@ -321,6 +324,7 @@ export function activate(api) {
         if (!c.hello) { // 떠 있던 서비스에 붙었다 — hello 는 지나갔다. 세션 id 는 server.info 로
           const info = await request(c, 'server.info', {});
           c.id = info.session; void remember(c);
+          handedOver(c); // 다른 브라우저가 먼저 새 카드의 서비스를 띄웠다 — 소유권은 이미 넘어왔다
         }
         c.url = await conn.webUrl(); applyUrl(c);
         void countLive();
@@ -341,7 +345,7 @@ export function activate(api) {
    *  (ticket slcode-card-dies-background) */
   const canResume = (c) => !!c.el && (!!c.ctx?.services || shown(c));
   /** 끊긴 카드 다시 붙기 — 지금 못 붙는 숨은 카드(옛 superlite)는 mount 의 관찰자가 보이게 될 때 다시 부른다 */
-  function resume(c) { if (c.lost && !c.conn && c.state !== 'exited' && !c.closing && canResume(c)) void ensure(c); }
+  function resume(c) { if (c.lost && !c.conn && c.state !== 'exited' && !c.closing && !c.moved && canResume(c)) void ensure(c); }
   async function attach(c) {
     if (!c.id || c.attached) return;
     c.attached = true;
@@ -359,6 +363,48 @@ export function activate(api) {
     c.pending.clear();
   }
 
+  // ---- serve 교체 (ticket slcode-core-serve-split 2단계, 사용자 확정 2026-10-14·2026-10-19) — 카드 화면의 [업데이트]·[restart required] 가 postMessage 로 부른다.
+  // serve 의 stdio 를 거치지 않는 것은 그 카드를 띄운 모든 브라우저의 플러그인이 stdio 메시지를 받아 핸드오프가 여러 번 일어나기 때문이다
+  /** [업데이트] — 지금 쓸 slcode(받기·원격 올리기 포함)에 version·build 를 물어 카드 serve 의 것(화면이 보낸 값)과 견준다.
+   *  원격 deploy 경로는 내용 해시라 serve 가 자기 폴더를 봐서는 새 버전을 모른다 */
+  async function checkUpdate(c, d) {
+    const at = apiOf(c);
+    const bin = await resolveBin(() => {}, at);
+    const r = await at.proc.run(`${bin.cmd} --version --json`);
+    let b = null;
+    try { b = JSON.parse(r.stdout); } catch {}
+    if (r.code !== 0 || typeof b?.version !== 'string') return { status: 'failed', reason: r.stderr.trim() || `exit ${r.code}` };
+    return b.version !== d.version || String(b.build) !== String(d.build) ? { status: 'restart-required', version: b.version, build: b.build } : { status: 'latest' };
+  }
+  /** [restart required] — 이 카드 바로 다음에 새 카드를 열어(사용자가 보고 있으면 그쪽으로 넘어간다) 새 serve 가 --takeover 로 같은 세션을 이어받게 한다.
+   *  새 카드의 hello 가 오면 이 카드는 moveOut 으로 정리된다. 새 카드가 뜨지 못하면 새 카드에 사유가 보이고 이 카드는 그대로다 (사용자 2026-10-19) */
+  function handoff(a) {
+    if (!a.id || !a.ctx?.tabId) throw new Error('세션이 아직 준비되지 않았습니다');
+    const key = newKey(), b = card(key);
+    b.id = a.id; b.takeover = true; b.from = a.key; b.title = a.title;
+    api.views.open(VIEW, { key, id: a.id, takeover: true }, { as: 'card', key, title: a.title || DEFAULT_NAME, preserve: true, opener: a.ctx.tabId, focus: true });
+    return { ok: true };
+  }
+  /** 핸드오프의 새 카드에 serve 가 붙었다(소유권을 가져왔다) — 옛 카드를 옮겨진 카드로, state 의 takeover 는 지운다 */
+  function handedOver(b) {
+    if (!b.from) return;
+    const a = cards.get(b.from);
+    b.from = null;
+    b.ctx?.setState({ key: b.key, id: b.id });
+    if (a) void moveOut(a);
+  }
+  /** 옮겨진 카드 — 서비스를 멈추고(소유권이 새 카드로 가서 세션은 산다) 안내를 보인 뒤 닫기 요청([D], 사용자가 확인한다).
+   *  state·shared 에 남겨 새로고침·다른 브라우저에서도 다시 붙지 않는다. 옛 superlite 는 플러그인 카드를 닫지 못해 안내만 남는다 */
+  async function moveOut(a) {
+    const at = apiOf(a), owner = ownerOf(a), ctx = a.ctx;
+    a.moved = true; a.url = null; a.waits.clear();
+    detach(a); render(a); badge(a);
+    ctx?.setState({ key: a.key, id: a.id, moved: true });
+    void ctx?.shared?.set('moved', true).catch(() => {});
+    await at.services.stop(SVC, { owner }).catch(() => {});
+    if (ctx?.tabId) api.verbs.run('card.close', [ctx.tabId]).catch(() => {});
+  }
+
   // ---- 뷰: 카드 (state {key, id?})
   api.views.register(VIEW, {
     title: 'slcode', icon: 'hubot',
@@ -368,7 +414,11 @@ export function activate(api) {
       const c = card(st.key);
       c.id = c.id ?? st.id ?? null;
       if (!c.id && typeof st.pick === 'string') c.pick = st.pick; // 고르기 전 resume 카드 — 서비스를 띄우지 않는다
+      if (st.moved) c.moved = true; // 핸드오프로 옮겨진 카드 — 다시 붙지 않는다
+      if (st.takeover && c.takeover === undefined) c.takeover = true; // 핸드오프의 새 카드 (다른 브라우저가 먼저 mount 해도 소유권을 가져온다)
       c.ctx = ctx; c.el = el; c.cardId = ctx.card; c.savedId = st.id ?? null;
+      // 다른 브라우저에서 옮겨졌다 (moveOut 의 shared) — 이 창의 연결도 끊고 안내만
+      c.unshared?.(); c.unshared = ctx.shared?.on((k, v) => { if (k === 'moved' && v && !c.moved) { c.moved = true; c.url = null; detach(c); render(c); badge(c); } }) ?? null;
       c.onMount?.(); c.onMount = null;
       el.style.position = 'relative'; el.style.height = '100%';
       render(c); applyTitle(c); badge(c);
@@ -377,7 +427,7 @@ export function activate(api) {
       c.vis?.disconnect();
       c.vis = new IntersectionObserver((es) => { if (es[0].isIntersecting) resume(c); });
       c.vis.observe(el);
-      if (!c.pick) void ensure(c);
+      if (!c.pick && !c.moved) void ensure(c);
     },
     unmount(el) { for (const c of cards.values()) if (c.el === el) { c.el = null; c.vis?.disconnect(); } },
   });
@@ -386,7 +436,7 @@ export function activate(api) {
   async function openCard(key, id, near) {
     if (!key && id) { // 같은 세션의 카드가 여럿이면(닫힌 뒤 고르기 카드로 다시 연 경우) 꺼지지 않은 쪽
       const mine = [...cards.values()].filter((c) => c.id === id);
-      key = (mine.find((c) => c.state !== 'exited') ?? mine[0])?.key;
+      key = (mine.find((c) => c.state !== 'exited' && !c.moved) ?? mine.find((c) => !c.moved) ?? mine[0])?.key;
     }
     if (!key && id) key = await keyOf(id); // 이 세션을 띄운 카드 — 다른 브라우저가 연 카드가 남아 있으면 그것을 활성화 (없으면 resume 으로 새로)
     if (!key) key = newKey();
@@ -586,10 +636,19 @@ export function activate(api) {
   // 카드 안 답변의 링크·이미지 (web/app.js, ticket slcode-append-system-prompt) — slcode.open 은 superlite 의 open 동사(웹 주소는 URL 탭, 파일은 에디터),
   // slcode.download 는 download 동사(로컬 파일을 Download 뷰 대기열에 — 사용자가 확인하면 이 PC 로)
   const VERB = { 'slcode.open': 'open', 'slcode.download': 'download' };
+  // slcode.update·slcode.restart 는 [업데이트]·[restart required] — 결과를 {re: 요청 id, result | error} 로 그 iframe 에 돌려준다
+  const HOST = { 'slcode.update': checkUpdate, 'slcode.restart': handoff };
   const onOpen = (e) => {
+    const c = [...cards.values()].find((x) => x.frame?.contentWindow === e.source);
+    if (!c) return;
+    const host = HOST[e.data?.type];
+    if (host) {
+      const answer = (o) => e.source.postMessage({ re: e.data.id, ...o }, '*');
+      (async () => host(c, e.data))().then((result) => answer({ result }), (err) => answer({ error: String(err?.message ?? err) }));
+      return;
+    }
     const verb = VERB[e.data?.type];
     if (!verb || typeof e.data.target !== 'string') return;
-    if (![...cards.values()].some((c) => c.frame?.contentWindow === e.source)) return;
     api.verbs.run(verb, [e.data.target]).catch((err) => api.notify('error', `slcode: ${err?.message ?? err}`));
   };
   globalThis.window?.addEventListener('message', onOpen); // 테스트(node)엔 window 가 없다

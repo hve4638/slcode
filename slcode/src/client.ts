@@ -10,6 +10,16 @@ import { CoreError, isEvent, type EventFrame, type Methods, type PostMethods, ty
 
 export const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const VERSION: string = JSON.parse(fs.readFileSync(path.join(PKG, 'package.json'), 'utf8')).version;
+/** 지금 디스크에 있는 이 설치의 버전·빌드 — build 는 dist/cli.js 의 mtime(ms)이라 같은 버전을 다시 빌드해도 바뀐다.
+ *  떠 있는 프로세스의 것(VERSION·BUILD)과 견줘 새 코드가 깔렸는지 안다 (업데이트 확인, ticket slcode-core-serve-split 2단계) */
+export function diskBuild(): { version: string; build: number } {
+  const version: string = JSON.parse(fs.readFileSync(path.join(PKG, 'package.json'), 'utf8')).version;
+  let build = 0;
+  try { build = Math.floor(fs.statSync(path.join(PKG, 'dist', 'cli.js')).mtimeMs); } catch {}
+  return { version, build };
+}
+/** 이 프로세스가 뜰 때의 빌드 */
+export const BUILD: number = diskBuild().build;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function tryConnect(p: string): Promise<net.Socket> {

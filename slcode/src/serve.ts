@@ -8,6 +8,9 @@
 // 세션 파일은 건드리지 않는다. 직접 다루는 파일은 자기 설치 폴더의 web/ 정적 파일(시작 때 한 번 읽어 고정)과 상태 폴더의 settings-*.json(읽기·쓰기·감시)뿐이다.
 // 수명: 소유자 serve 가 닫히면(Ctrl-C·SIGTERM) session.close 를 보내고 core 가 끝나기를 기다린다. core 가 끝나면 serve 도 끝난다.
 // attach 면 이미 떠 있는 core 에 붙는 중계일 뿐이다 (소유자 아님 — superlite 카드가 떠 있는 세션에 붙는 길). stdin 이 닫히면 끝난다.
+// attach.takeover 면 떠 있는 core 의 소유권을 빼앗는다 — 카드 핸드오프의 새 카드. 그 뒤로는 소유자 serve 와 같다.
+// 웹 모드(터미널의 slcode new)에서는 진입 프로세스(entry.ts)가 포트를 쥐고 들어온 연결을 넘긴다(feed) — 이 serve 는 그 자식이고 소유자가 아니다.
+// serve 가 답하는 것: settings.get·set(화면 설정), serve.info·update.run·serve.restart(serve 교체, 2단계) — 그 밖은 core 로 그대로 넘긴다.
 import http from 'node:http';
 import fs from 'node:fs';
 import net from 'node:net';
@@ -15,12 +18,12 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { connectSession, PKG, VERSION } from './client.js';
+import { BUILD, connectSession, diskBuild, PKG, VERSION } from './client.js';
 import { corePaths, ensureDir, readOrCreateToken } from './paths.js';
 import { closedSessions, isLoopback } from './live.js';
 import type { CoreOptions } from './core.js';
 import { readSettings, watchSettings, writeSettings } from './settings.js';
-import { CoreError, ERR, type SessionInfo, type SettingsKind, type SettingsPatch } from './protocol.js';
+import { CoreError, ERR, type SessionInfo, type SettingsKind, type SettingsPatch, type UpdateCheck } from './protocol.js';
 
 export const WEB_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'web');
 const TYPES: Record<string, string> = {
@@ -30,6 +33,8 @@ const TYPES: Record<string, string> = {
 };
 /** 화면 연결(웹·stdio)에서는 부를 수 없는 제어 메서드 — 소유권과 웹 주소 등록(토큰이 붙은 url 을 돌려준다)은 serve 의 제어 연결만 */
 const CONTROL_ONLY = new Set(['core.own', 'serve.register']);
+/** serve 가 답하는 메서드 (ServeMethods) — core 로 넘기지 않는다 */
+const SERVE_METHODS = new Set(['settings.get', 'settings.set', 'serve.info', 'update.run', 'serve.restart']);
 /** 인증 전 줄 세워 둘 수 있는 요청 수 — 인증 안 된 원격 클라이언트가 serve 메모리를 키우지 못하게 */
 const HELD_MAX = 64;
 
@@ -56,8 +61,13 @@ export type ServeOptions = {
   /** superlite 서비스 웹 소켓 (SUPERLITE_SERVICE_WEB, ticket plugin-service-web) — uds 경로(`/` 시작) 또는 host:port. 여기에도 웹을 연다.
    *  superlite relay /svc 입구가 데몬을 거쳐 붙으므로 인증은 UDS 처럼 없다 (데몬·superlite 인증이 신뢰 경계) */
   webSock?: string;
-  /** 이미 떠 있는 세션에 붙기만 한다 — core 를 띄우지 않고 소유자도 아니다. url 은 hello 에 낸 주소 (옛 빌드 세션의 server.info 에 url 이 없으면 채운다) */
-  attach?: { id: string; sock: string; url: string | null };
+  /** 이미 떠 있는 세션에 붙기만 한다 — core 를 띄우지 않고 소유자도 아니다. url 은 hello 에 낸 주소 (옛 빌드 세션의 server.info 에 url 이 없으면 채운다).
+   *  takeover 면 소유권을 빼앗아 소유자가 된다 (카드 핸드오프 — resume --stdio --takeover) */
+  attach?: { id: string; sock: string; url: string | null; takeover?: boolean };
+  /** 웹 모드 진입 프로세스가 넘겨주는 TCP 연결 (entry.ts) — host·port 는 진입 프로세스가 listen 한 주소. 이 serve 는 listen 하지 않고 받은 연결만 서빙한다 */
+  feed?: { host: string; port: number; onConn: (cb: (sock: net.Socket) => void) => void };
+  /** serve.restart — 진입 프로세스에 교체를 맡긴다. 새 serve 가 준비되면 풀리고, 못 뜨면 사유로 거절된다. 없으면(카드·--no-web) 이 serve 는 스스로 바뀌지 못한다 */
+  onRestart?: () => Promise<void>;
   log?: (msg: string) => void;
 };
 
@@ -78,7 +88,8 @@ export function loadWeb(root = WEB_DIR): Map<string, Buffer> {
 /** 웹 정적 파일 (loadWeb 이 고정한 web/) — 세션 웹과 서비스 웹이 같이 쓴다. 경로는 상대(경로 접두사 아래에서도 — relay /svc).
  *  dir 이 있으면 index.html 의 <html> 에 그 상태 폴더·입구(kind)의 테마(data-theme)를 넣어 보낸다 — 연결 전 첫 화면부터 그 테마로
  *  (카드 iframe 이 다시 로드될 때 시스템 색이 비치지 않게, ticket slcode-web-settings). 이 serve 의 버전(data-version)도 함께 — 웹은 이 serve 가 고정한 것이라
- *  화면의 버전이다. 설정 창이 세션(core) 버전과 견준다 (ticket slcode-web-version-display) */
+ *  화면의 버전이다. 설정 창이 세션(core) 버전과 견준다 (ticket slcode-web-version-display). 빌드(data-build)는 다시 붙은 serve 가 바뀌었는지(serve.info), 입구(data-kind)는
+ *  [업데이트] 를 serve 와 플러그인 중 누구에게 물을지 화면이 안다 (ticket slcode-core-serve-split 2단계) */
 export function staticHandler(req: http.IncomingMessage, res: http.ServerResponse, web: Map<string, Buffer>, dir?: string, kind: SettingsKind = 'web'): void {
   const file = path.posix.normalize(decodeURIComponent((req.url ?? '/').split('?')[0]).replace(/^\/+/, '') || 'index.html').replace(/\/+$/, '');
   const name = web.has(file) ? file : `${file}/index.html`;
@@ -87,7 +98,7 @@ export function staticHandler(req: http.IncomingMessage, res: http.ServerRespons
   res.writeHead(200, { 'content-type': TYPES[path.extname(name)] ?? 'application/octet-stream', 'cache-control': 'no-cache' });
   if (dir && name === 'index.html') {
     const { theme } = readSettings(dir, kind);
-    const attr = (/^[\w-]+$/.test(theme) ? ` data-theme="${theme}"` : '') + ` data-version="${VERSION}"`;
+    const attr = (/^[\w-]+$/.test(theme) ? ` data-theme="${theme}"` : '') + ` data-version="${VERSION}" data-build="${BUILD}" data-kind="${kind}"`;
     res.end(body.toString('utf8').replace('<html lang="ko">', `<html lang="ko"${attr}>`));
     return;
   }
@@ -157,7 +168,9 @@ export function spawnCore(opts: CoreOptions & { dir: string }): Promise<{ id: st
 export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
   const log = opts.log ?? (() => {});
   const P = corePaths(opts.dir);
-  const owner = !opts.attach;
+  /** core 를 이 serve 가 띄웠다 — 웹을 열지 못하면 세션을 닫는다. attach(takeover 포함)는 남의 세션이라 닫지 않는다 */
+  const spawned = !opts.attach;
+  const owner = spawned || !!opts.attach?.takeover;
   const web = loadWeb();
 
   // ---- core: 띄우거나(소유자) 떠 있는 것에 붙는다(attach)
@@ -175,8 +188,8 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
   // 소유권을 빼앗기면(core.owner — 카드 핸드오프) 이 serve 가 닫혀도 세션을 닫지 않는다
   let owns = owner;
   control.onEvent((m) => { if (m.event === 'core.owner') { owns = false; log(`session ownership moved to pid ${(m.params as { pid: number | null }).pid ?? '?'}`); } });
-  if (owner) await control.request('core.own', { pid: process.pid }).catch((e) => { control.close(); throw e; });
-  else {
+  if (owner) await control.request('core.own', { pid: process.pid, takeover: opts.attach?.takeover }).catch((e) => { control.close(); throw e; });
+  if (opts.attach) {
     // 기록은 받지 않는다 — since 를 끝으로 (CLI 는 id 만 쓰지만 핸들 꼴을 맞춘다)
     session = (await control.request('session.attach', { id: sid, since: Number.MAX_SAFE_INTEGER })).info;
     await control.request('session.detach', { id: sid });
@@ -186,14 +199,34 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
   // 묶음은 연결이 들어온 입구가 정한다: TCP 웹은 web, 서비스 웹·stdio 는 superlite (사용자 결정 2026-10-16 — 두 벌은 완전히 따로).
   // 파일이 바뀌면(어느 serve 가 썼든) 그 입구의 인증된 화면 연결 모두에 settings.changed. 쓴 serve 도 자기 감시로 알린다 — 길이 하나
   const screens: Record<SettingsKind, Set<(line: string) => void>> = { web: new Set(), superlite: new Set() };
-  /** settings.get·set 이면 답하고 true — 메서드 이름이 들어 있을 때만 해석한다 */
-  function settingsCall(line: string, send: (line: string) => void, kind: SettingsKind): boolean {
-    if (!line.includes('"settings.get"') && !line.includes('"settings.set"')) return false;
+  // ---- serve 교체 (ticket slcode-core-serve-split 2단계, 사용자 2026-10-19). update 는 [업데이트] 가 찾은 새 버전 — 화면을 다시 열어도 남는다
+  let update: UpdateCheck | null = null;
+  function checkUpdate(): UpdateCheck {
+    const d = diskBuild();
+    if (d.version === VERSION && d.build === BUILD) return { status: 'latest' };
+    return (update = { status: 'restart-required', version: d.version, build: d.build });
+  }
+  /** ServeMethods 면 답하고 true — 메서드 이름이 들어 있을 때만 해석한다 */
+  function serveCall(line: string, send: (line: string) => void, kind: SettingsKind): boolean {
+    if (![...SERVE_METHODS].some((n) => line.includes(`"${n}"`))) return false;
     let m: { id?: unknown; method?: unknown; params?: { settings?: SettingsPatch } };
     try { m = JSON.parse(line); } catch { return false; }
-    if (m?.method !== 'settings.get' && m?.method !== 'settings.set') return false;
-    try { send(JSON.stringify({ id: m.id, result: m.method === 'settings.get' ? readSettings(P.dir, kind) : writeSettings(P.dir, kind, m.params?.settings) })); }
-    catch (e) { send(JSON.stringify({ id: m.id, error: { message: (e as Error).message } })); }
+    if (typeof m?.method !== 'string' || !SERVE_METHODS.has(m.method)) return false;
+    const answer = async () => {
+      switch (m.method) {
+        case 'settings.get': return readSettings(P.dir, kind);
+        case 'settings.set': return writeSettings(P.dir, kind, m.params?.settings);
+        case 'serve.info': return { version: VERSION, build: BUILD, pid: process.pid, update };
+        case 'update.run':
+          if (kind !== 'web') throw new CoreError(ERR.badRequest, 'update.run is for the web entry — a card asks the plugin');
+          return checkUpdate();
+        case 'serve.restart':
+          if (!opts.onRestart) throw new CoreError(ERR.badRequest, 'this serve cannot restart itself');
+          await opts.onRestart();
+          return { ok: true };
+      }
+    };
+    answer().then((result) => send(JSON.stringify({ id: m.id, result })), (e) => send(JSON.stringify({ id: m.id, error: { code: (e as CoreError).code, message: (e as Error).message } })));
     return true;
   }
 
@@ -206,7 +239,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
     relays.add(s);
     let authed = !gate, authId: unknown, held: string[] = [], buf = '';
     if (authed) screens[kind].add(send);
-    const forward = (line: string) => { if (!settingsCall(line, send, kind)) s.write(line + '\n'); };
+    const forward = (line: string) => { if (!serveCall(line, send, kind)) s.write(line + '\n'); };
     s.setEncoding('utf8');
     s.on('data', (d: string) => {
       buf += d;
@@ -260,14 +293,14 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
   };
   const stopAll: (() => void)[] = [];
   for (const kind of ['web', 'superlite'] as const) stopAll.push(watchSettings(P.dir, kind, (st) => { const l = JSON.stringify({ event: 'settings.changed', params: st }); for (const f of screens[kind]) f(l); }));
-  const fail =async (e: unknown): Promise<never> => { if (owner) await control.request('session.close', { id: sid }).catch(() => {}); control.close(); for (const f of stopAll) f(); throw e; };
+  const fail = async (e: unknown): Promise<never> => { if (spawned) await control.request('session.close', { id: sid }).catch(() => {}); control.close(); for (const f of stopAll) f(); throw e; };
   // superlite 서비스 웹 (ticket plugin-service-web) — TCP 웹과 별개, 인증 없음 (UDS 와 같은 신뢰 경계)
   if (opts.webSock) {
     const svc = http.createServer((q, r) => { if (!fileHandler(q, r, null)) staticHandler(q, r, web, P.dir, 'superlite'); });
     const svcWss = wsOn(svc, false, 'superlite');
     stopAll.push(() => { for (const c of svcWss.clients) c.close(); svcWss.close(); svc.close(); });
     // attach 는 서비스 웹을 열지 못해도 stdio 중계는 계속한다 (옛 proxyStdio 와 같다)
-    await listenAddr(svc, opts.webSock).catch(owner ? fail : (e: Error) => log(`service web: ${e.message}`));
+    await listenAddr(svc, opts.webSock).catch(spawned ? fail : (e: Error) => log(`service web: ${e.message}`));
   }
   let url: string | null = opts.attach?.url ?? null;
   const host = opts.host ?? '127.0.0.1';
@@ -277,6 +310,16 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
     stopAll.push(() => { for (const c of wss.clients) c.close(); wss.close(); srv.close(); });
     const port = await new Promise<number>((resolve, reject) => { srv.once('error', reject); srv.listen(opts.port ?? 0, host, () => resolve((srv.address() as net.AddressInfo).port)); }).catch(fail);
     url = (await control.request('serve.register', { host, port, version: VERSION }).catch(fail)).url;
+  }
+  if (opts.feed) {
+    // 진입 프로세스가 넘긴 연결 — listen 은 진입 프로세스가 한다. 이 serve 가 끝나면 받은 연결을 모두 끊어 화면이 다음 serve 로 다시 붙게 한다
+    const fh = opts.feed.host;
+    const srv = http.createServer((q, r) => { if (!fileHandler(q, r, isLoopback(fh) ? null : readOrCreateToken(P))) staticHandler(q, r, web, P.dir, 'web'); });
+    const wss = wsOn(srv, !isLoopback(fh), 'web');
+    const socks = new Set<net.Socket>();
+    opts.feed.onConn((c) => { if (down) { c.destroy(); return; } socks.add(c); c.on('close', () => socks.delete(c)); srv.emit('connection', c); });
+    stopAll.push(() => { for (const c of wss.clients) c.close(1012, 'serve restart'); wss.close(); for (const c of socks) c.end(); setTimeout(() => { for (const c of socks) c.destroy(); }, 200).unref(); });
+    url = (await control.request('serve.register', { host: fh, port: opts.feed.port, version: VERSION }).catch(fail)).url;
   }
 
   // ---- stdio (옵션) — 연결 하나. 첫 줄이 올 때 세션 소켓에 붙는다 (CLI 가 먼저 hello 를 내고, 그 앞에 core 의 방송이 끼지 않게)

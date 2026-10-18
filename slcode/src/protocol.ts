@@ -163,7 +163,7 @@ export type Methods = {
   /** 이 core 가 쥔 세션과 웹 주소. host·port·url 은 처음 등록된 웹 serve 의 것, 없으면 null */
   /** url 은 접속 가능한 웹 주소(토큰 포함, 0.0.0.0 은 IPv4 로 바꾼 것) — superlite 카드가 iframe 에 넣는다. --no-web 이면 null (2026-10-04).
    *  owner 는 소유자 연결이 알린 pid, serves 는 등록된 웹 serve 들 (protocol 3) */
-  'server.info': { params: Record<string, never>; result: { session: string; cwd: string; host: string | null; port: number | null; url: string | null; version: string; owner?: number | null; serves?: { host: string; port: number; url: string; version: string }[] } };
+  'server.info': { params: Record<string, never>; result: { session: string; cwd: string; host: string | null; port: number | null; url: string | null; version: string; build?: number; owner?: number | null; serves?: { host: string; port: number; url: string; version: string }[] } };
   /** 이 연결에 세션의 이벤트 스트림을 켠다. since 뒤의 로그를 history 로, 대기 승인을 pending 으로 */
   /** draft 는 웹 입력창 초안 (session.setDraft 로 맡긴 것, 없으면 '') — 다시 붙은 웹이 비어 있는 입력창을 채운다 */
   /** limit 이 있으면 history 는 끝 한 페이지(되돌린 턴을 빼고 화면 항목 limit 개 안팎, 열린 도구·승인·작업이 없는 turn.start 에서 자른 것)이고 more·summary 가 붙는다 — since 는 보지 않는다.
@@ -225,7 +225,18 @@ export type ServeMethods = {
   'settings.get': { params: Record<string, never>; result: Settings };
   /** 지금 설정에 겹쳐 쓴다 (context 는 항목별로). 결과는 겹친 뒤의 전체 — 같은 입구의 화면 모두에 settings.changed 도 간다 */
   'settings.set': { params: { settings: SettingsPatch }; result: Settings };
+  /** 화면이 붙은 serve 의 버전·빌드(VERSION·BUILD)와 pid. update 는 update.run 이 찾은 새 버전(없으면 null) — 화면을 다시 열어도 restart required 가 남는다.
+   *  화면은 연결할 때마다 묻고 자기 페이지의 data-version·data-build 와 다르면 다시 로드한다 (serve 가 바뀌었다) */
+  'serve.info': { params: Record<string, never>; result: { version: string; build: number; pid: number; update: UpdateCheck | null } };
+  /** [업데이트] — 웹(TCP) 입구만. 설치 폴더의 package.json version·dist/cli.js mtime 을 이 serve 가 뜰 때의 것과 견준다.
+   *  카드는 serve 가 아니라 플러그인이 확인한다 (원격 deploy 경로는 내용 해시라 serve 가 자기 폴더를 봐서는 모른다) */
+  'update.run': { params: Record<string, never>; result: UpdateCheck };
+  /** [restart required] — 웹 모드 진입 프로세스가 같은 포트로 새 serve 를 띄우고 이 serve 를 내린다. 새 serve 가 준비된 뒤 답한다(못 뜨면 그 사유로 오류) */
+  'serve.restart': { params: Record<string, never>; result: { ok: true } };
 };
+
+/** 새 버전 확인 결과 — restart-required 면 새 것의 version·build, failed 면 reason */
+export type UpdateCheck = { status: 'latest' | 'restart-required' | 'failed'; version?: string; build?: number; reason?: string };
 
 /** 세션 소켓·웹의 이벤트 — 붙은 세션의 이벤트와 세션 상태 */
 export type Broadcasts = {

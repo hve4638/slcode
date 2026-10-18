@@ -1,0 +1,3 @@
+import { serveSession } from './serve'
+
+role: 웹 모드 serve 프로세스 진입점 — 진입 프로세스(entry)가 fork 로 띄운다: node dist/serveMain.js '<{dir, id, sock, host, port} JSON>'. listen 하지 않고 serveSession 의 attach(소유자 아님)+feed 로 떠 있는 core 에 붙어, 진입 프로세스가 IPC 로 넘긴 연결('conn' + 소켓)을 서빙한다. IPC(늘리기만 한다 — 진입 프로세스는 옛 코드로 남는다): 이쪽에서 {type:'ready', url}·{type:'failed', reason}·{type:'restart'}(화면의 serve.restart — onRestart 가 restart-result 를 기다린다, 겹치면 거절), 진입에서 'conn'·{type:'restart-result', ok, reason?}·{type:'stop'}(같은 틱에 온 restart-result 의 응답이 화면에 먼저 나가게 setImmediate 뒤에 닫는다). 터미널 SIGINT·SIGHUP 은 무시한다 — 진입 프로세스가 받아 세션을 닫고, 이 프로세스는 core 가 끝나면 따라 끝난다. 진입 프로세스가 사라지면(IPC disconnect) 닫고 끝난다. done 뒤 300ms 에 exit 0 — 닫는 프레임·응답이 나갈 틈.

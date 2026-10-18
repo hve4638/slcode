@@ -15,7 +15,7 @@ import { CodexSession } from './codex.js';
 import type { AgentSession } from './base.js';
 import { EventLog, historyPage, summarize, type SessionMeta } from './eventLog.js';
 import { isLoopback, reachable, sockAlive } from './live.js';
-import { connectPost, VERSION, type RpcClient } from './client.js';
+import { BUILD, connectPost, VERSION, type RpcClient } from './client.js';
 import { corePaths, ensureDir, readOrCreateToken } from './paths.js';
 import { formatMail, parseMailHeads } from './mail.js';
 import { inspectEnv, readCall, startInspect, turnCalls, upstreamOf, type InspectProxy } from './inspect.js';
@@ -133,7 +133,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     },
     'server.info': () => {
       const w = webs()[0];
-      return { session: sid, cwd, host: w?.host ?? null, port: w?.port ?? null, url: w?.url ?? null, version: VERSION, owner: owner?.ownerPid ?? null, serves: webs() };
+      return { session: sid, cwd, host: w?.host ?? null, port: w?.port ?? null, url: w?.url ?? null, version: VERSION, build: BUILD, owner: owner?.ownerPid ?? null, serves: webs() };
     },
     'session.attach': (conn, p) => {
       const s = mine(p?.id);
