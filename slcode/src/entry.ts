@@ -5,11 +5,12 @@
 // 새 연결을 그쪽으로 돌린 뒤 옛 자식을 내린다. 옛 자식이 화면 연결을 끊으면 화면은 다시 붙어 새 serve 를 만난다. 새 자식이 못 뜨면 옛 자식이 그대로 일한다.
 // serve 자식이 교체 중이 아닐 때 죽으면 한 번 다시 띄운다. 다시 띄운 것도 1분 안에 죽으면 세션을 닫는다 (사용자 2026-10-19).
 // 이 프로세스는 교체되지 않는다 — serve 자식과의 IPC(serveMain.ts 머리말)는 늘리기만 한다.
+// core 교체(3단계)는 새 코드의 serve 자식이 청한다. 이 프로세스는 core.replaced 를 받으면 새 core 에 다시 붙어 소유권을 다시 잡는다.
 import net from 'node:net';
 import path from 'node:path';
 import { fork, type ChildProcess } from 'node:child_process';
-import { connectSession, PKG } from './client.js';
-import { spawnCore } from './serve.js';
+import { connectSession, PKG, type RpcClient } from './client.js';
+import { spawnCore } from './live.js';
 import { corePaths } from './paths.js';
 import type { CoreOptions } from './core.js';
 import type { SessionInfo } from './protocol.js';
@@ -29,9 +30,9 @@ export async function runEntry(opts: EntryOptions): Promise<EntryHandle> {
   const dir = corePaths(opts.dir).dir;
   const host = opts.host ?? '127.0.0.1';
   const { id, sock, session } = await spawnCore({ dir, cwd: opts.cwd, resume: opts.resume, title: opts.title, raw: opts.raw, inspect: opts.inspect, permissionMode: opts.permissionMode, vendor: opts.vendor });
-  const control = await connectSession(sock);
+  let control = await connectSession(sock);
   const closeSession = async () => { await control.request('session.close', { id }).catch(() => {}); control.close(); };
-  try { await control.request('core.own', { pid: process.pid }); } catch (e) { control.close(); throw e; }
+  try { await control.request('core.own', { pid: process.pid, follows: true }); } catch (e) { control.close(); throw e; }
 
   // ---- 포트 — 연결은 읽지 않고(pauseOnConnect) 지금의 serve 에 넘긴다. serve 가 없는 틈(다시 띄우는 중)의 연결은 끊는다 — 화면이 다시 붙는다
   let cur: Serve | null = null;
@@ -93,7 +94,17 @@ export async function runEntry(opts: EntryOptions): Promise<EntryHandle> {
     tcp.close();
     resolveDone();
   };
-  void control.done.then(shutdown);
+  // core.replaced 뒤에 끊기면 새 core 에 다시 붙어 소유권을 다시 잡는다 (connectSession 이 교체 표시를 보고 기다린다). 못 붙으면 core 가 끝난 것과 같다
+  const hook = (c: RpcClient) => {
+    let replaced = false;
+    c.onEvent((m) => { if (m.event === 'core.replaced') replaced = true; });
+    void c.done.then(async () => {
+      if (!replaced || stopping) { shutdown(); return; }
+      try { const next = await connectSession(sock); control = next; hook(next); await next.request('core.own', { pid: process.pid, follows: true }); log('core replaced — reconnected'); }
+      catch (e) { log(`core replaced but reconnecting failed: ${(e as Error).message}`); shutdown(); }
+    });
+  };
+  hook(control);
   let closing: Promise<void> | null = null;
   const close = (reason = 'closed'): Promise<void> => (closing ??= (async () => {
     stopping = true;

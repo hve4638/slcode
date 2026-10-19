@@ -15,13 +15,11 @@ import http from 'node:http';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { BUILD, connectSession, diskBuild, PKG, VERSION } from './client.js';
-import { corePaths, ensureDir, readOrCreateToken } from './paths.js';
-import { closedSessions, isLoopback } from './live.js';
-import type { CoreOptions } from './core.js';
+import { BUILD, connectSession, connectSock, diskBuild, PKG, VERSION, type RpcClient } from './client.js';
+import { corePaths, readOrCreateToken } from './paths.js';
+import { closedSessions, isLoopback, spawnCore } from './live.js';
 import { readSettings, watchSettings, writeSettings } from './settings.js';
 import { CoreError, ERR, FILES, type SessionInfo, type SettingsKind, type SettingsPatch, type UpdateCheck } from './protocol.js';
 import { inspectBlocked } from './inspect.js';
@@ -32,10 +30,12 @@ const TYPES: Record<string, string> = {
   '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json', '.woff2': 'font/woff2',
   '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.pdf': 'application/pdf', // 로컬 파일 (fileHandler)
 };
-/** 화면 연결(웹·stdio)에서는 부를 수 없는 제어 메서드 — 소유권과 웹 주소 등록(토큰이 붙은 url 을 돌려준다)은 serve 의 제어 연결만 */
-const CONTROL_ONLY = new Set(['core.own', 'serve.register']);
+/** 화면 연결(웹·stdio)에서는 부를 수 없는 제어 메서드 — 소유권·웹 주소 등록(토큰이 붙은 url 을 돌려준다)·core 교체는 serve 의 제어 연결만 */
+const CONTROL_ONLY = new Set(['core.own', 'serve.register', 'core.retire']);
 /** serve 가 답하는 메서드 (ServeMethods) — core 로 넘기지 않는다 */
 const SERVE_METHODS = new Set(['settings.get', 'settings.set', 'serve.info', 'update.run', 'serve.restart']);
+/** 프레임의 요청·응답 id — 앞머리만 본다 (첨부가 실린 큰 프레임을 해석하지 않게). 화면·core 는 id 를 맨 앞에 쓴다 ({id, method, params}·{id, result}). 아니면 null */
+const idOf = (line: string): string | null => /^\{"id":(-?\d+|"(?:[^"\\]|\\.)*")[,}]/.exec(line)?.[1] ?? null;
 /** 인증 전 줄 세워 둘 수 있는 요청 수 — 인증 안 된 원격 클라이언트가 serve 메모리를 키우지 못하게 */
 const HELD_MAX = 64;
 
@@ -140,32 +140,6 @@ export function listenAddr(s: http.Server, addr: string): Promise<void> {
   });
 }
 
-/** core 를 detached 로 띄우고 stdout 첫 줄(준비·실패)을 기다린다. 그 뒤 파이프를 놓아 core 가 이 프로세스와 따로 산다.
- *  setsid 라 serve 의 프로세스 그룹 밖이다 — 터미널 Ctrl-C·superlite 서비스 중지(그룹 SIGTERM)가 core 에 닿지 않는다 */
-export function spawnCore(opts: CoreOptions & { dir: string }): Promise<{ id: string; sock: string; session: SessionInfo }> {
-  const P = corePaths(opts.dir);
-  ensureDir(P.dir);
-  const err = fs.openSync(P.coreLog, 'a');
-  const child = spawn(process.execPath, [path.join(PKG, 'dist', 'coreMain.js'), JSON.stringify(opts)], { detached: true, stdio: ['ignore', 'pipe', err], windowsHide: true });
-  fs.closeSync(err);
-  return new Promise((resolve, reject) => {
-    let buf = '', settled = false;
-    const settle = (f: () => void) => { if (settled) return; settled = true; child.stdout!.destroy(); child.unref(); f(); };
-    child.stdout!.setEncoding('utf8');
-    child.stdout!.on('data', (d: string) => {
-      buf += d;
-      const i = buf.indexOf('\n');
-      if (i < 0) return;
-      let m: { id?: string; sock?: string; session?: SessionInfo; error?: string; code?: string };
-      try { m = JSON.parse(buf.slice(0, i)); } catch { m = { error: `bad core hello: ${buf.slice(0, i)}` }; }
-      settle(() => (m.error ? reject(new CoreError(m.code ?? 'error', m.error)) : resolve(m as { id: string; sock: string; session: SessionInfo })));
-    });
-    child.once('error', (e) => settle(() => reject(e)));
-    // exit 가 아니라 close — stdout 이 다 읽힌 뒤라 core 가 낸 실패 사유({error})가 일반 문구에 묻히지 않는다
-    child.once('close', (code) => settle(() => reject(new CoreError('core_exit', `core exited (${code}) before it was ready — see ${P.coreLog}`))));
-  });
-}
-
 export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
   const log = opts.log ?? (() => {});
   const P = corePaths(opts.dir);
@@ -185,11 +159,31 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
     }
     ({ id: sid, sock, session } = await spawnCore({ dir: P.dir, cwd: opts.cwd, resume, title: opts.title, raw: opts.raw, inspect: opts.inspect, permissionMode: opts.permissionMode, vendor: opts.vendor }));
   }
-  const control = await connectSession(sock);
+  let control = await connectSession(sock);
   // 소유권을 빼앗기면(core.owner — 카드 핸드오프) 이 serve 가 닫혀도 세션을 닫지 않는다
   let owns = owner;
-  control.onEvent((m) => { if (m.event === 'core.owner') { owns = false; log(`session ownership moved to pid ${(m.params as { pid: number | null }).pid ?? '?'}`); } });
-  if (owner) await control.request('core.own', { pid: process.pid, takeover: opts.attach?.takeover }).catch((e) => { control.close(); throw e; });
+  /** serve.register 로 알린 웹 주소 — core 가 바뀌면 새 core 에 다시 알린다 */
+  let registered: { host: string; port: number } | null = null;
+  /** 제어 연결의 이벤트. core.replaced 뒤에 끊기면 serve 를 끝내지 않고 새 core 에 다시 붙는다 (ticket slcode-core-serve-split 3단계) */
+  const hook = (c: RpcClient) => {
+    let replaced = false;
+    c.onEvent((m) => {
+      if (m.event === 'core.owner') { owns = false; log(`session ownership moved to pid ${(m.params as { pid: number | null }).pid ?? '?'}`); }
+      else if (m.event === 'core.replaced') replaced = true;
+    });
+    void c.done.then(async () => {
+      if (!replaced || down) { shutdown(); return; } // core 가 끝났다 (세션 닫힘·벤더 종료·크래시)
+      try {
+        const next = await connectSession(sock);
+        control = next; hook(next);
+        if (owns) await next.request('core.own', { pid: process.pid, follows: true });
+        if (registered) await next.request('serve.register', { ...registered, version: VERSION });
+        log(`core replaced (pid ${(await next.request('core.auth', {})).pid}) — reconnected`);
+      } catch (e) { log(`core replaced but reconnecting failed: ${(e as Error).message}`); shutdown(); }
+    });
+  };
+  hook(control);
+  if (owner) await control.request('core.own', { pid: process.pid, takeover: opts.attach?.takeover, follows: true }).catch((e) => { control.close(); throw e; });
   if (opts.attach) {
     // 기록은 받지 않는다 — since 를 끝으로 (CLI 는 id 만 쓰지만 핸들 꼴을 맞춘다)
     session = (await control.request('session.attach', { id: sid, since: Number.MAX_SAFE_INTEGER })).info;
@@ -236,35 +230,102 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
   /** gate 면 core.auth 가 통과할 때까지 다른 요청을 막고 core 의 프레임을 넘기지 않는다. 그 사이 온 요청은 줄 세워 두었다가(HELD_MAX 까지) 통과하면 보낸다.
    *  제어 메서드(CONTROL_ONLY)는 화면 연결에서 늘 거절한다. kind 는 이 연결이 들어온 입구 — 화면 설정의 묶음 */
   function relay(send: (line: string) => void, end: () => void, gate: boolean, kind: SettingsKind, fix?: (line: string) => string) {
-    const s = net.createConnection(sock);
-    relays.add(s);
+    let s!: net.Socket;
     let authed = !gate, authId: unknown, held: string[] = [], buf = '';
     if (authed) screens[kind].add(send);
-    const forward = (line: string) => { if (!serveCall(line, send, kind)) s.write(line + '\n'); };
-    s.setEncoding('utf8');
-    s.on('data', (d: string) => {
-      buf += d;
-      let i;
-      while ((i = buf.indexOf('\n')) >= 0) {
-        const l = buf.slice(0, i); buf = buf.slice(i + 1);
-        if (!authed) {
-          let m: { id?: unknown; result?: unknown };
-          try { m = JSON.parse(l); } catch { continue; }
-          if (authId === undefined || m.id !== authId) continue;
-          authId = undefined; send(l);
-          if (m.result) { authed = true; screens[kind].add(send); for (const h of held.splice(0)) forward(h); }
-          else for (const h of held.splice(0)) deny(h);
-          continue;
-        }
-        send(fix ? fix(l) : l);
+    // ---- core 교체를 넘어 다시 붙기 (ticket slcode-core-serve-split 3단계) — 화면은 core 가 바뀐 것을 모른다
+    let authLine: string | null = null; // 게이트를 통과한 core.auth (remote 를 붙인 것) — 새 core 에 다시
+    let attached: string | null = null; // 화면이 붙은 세션
+    let lastSeq = 0; // 화면에 넘긴 마지막 seq
+    const asked = new Map<string, string>(); // 답을 받지 못한 요청 — id(프레임 앞머리 그대로) → 줄
+    const attaches = new Set<string>(); // 그중 session.attach — 응답에서 마지막 seq 를 읽는다
+    const internal = new Map<string, (line: string) => void>(); // 다시 붙을 때 serve 가 보낸 요청
+    let paused: string[] | null = null; // core.replaced 뒤 새 core 에 붙을 때까지 줄 세운 화면 요청
+    let gone = false; // 화면이 닫았다
+    const toCore = (line: string) => {
+      const k = idOf(line);
+      if (k !== null) {
+        asked.set(k, line);
+        if (line.includes('"session.attach"') || line.includes('"session.detach"')) try {
+          const m = JSON.parse(line);
+          if (m.method === 'session.attach') { attached = m.params?.id ?? null; attaches.add(k); } else if (m.method === 'session.detach') attached = null;
+        } catch {}
       }
+      s.write(line + '\n');
+    };
+    const forward = (line: string) => { if (serveCall(line, send, kind)) return; if (paused) paused.push(line); else toCore(line); };
+    const open = (next: net.Socket) => {
+      s = next; buf = '';
+      relays.add(s);
+      s.setEncoding('utf8');
+      s.on('data', (d: string) => {
+        buf += d;
+        let i;
+        while ((i = buf.indexOf('\n')) >= 0) {
+          const l = buf.slice(0, i); buf = buf.slice(i + 1);
+          if (l.startsWith('{"event":"core.replaced"')) { paused ??= []; continue; }
+          const k = idOf(l);
+          if (k !== null && internal.has(k)) { internal.get(k)!(l); internal.delete(k); continue; }
+          if (!authed) {
+            let m: { id?: unknown; result?: unknown };
+            try { m = JSON.parse(l); } catch { continue; }
+            if (authId === undefined || m.id !== authId) continue;
+            authId = undefined; send(l);
+            if (m.result) { authed = true; screens[kind].add(send); for (const h of held.splice(0)) forward(h); }
+            else { authLine = null; for (const h of held.splice(0)) deny(h); }
+            continue;
+          }
+          if (k !== null) {
+            const req = asked.get(k);
+            asked.delete(k);
+            // 내려가기로 정한 core 가 거절했다 — 새 core 에 다시 보낸다
+            if (req && l.includes(`"code":"${ERR.retiring}"`)) { (paused ??= []).push(req); continue; }
+            if (attaches.delete(k)) try { lastSeq = Math.max(lastSeq, JSON.parse(l).result?.history?.at(-1)?.seq ?? 0); } catch {}
+          } else if (l.startsWith('{"event":"session.event"')) { const m = /"seq":(\d+)/.exec(l); if (m) lastSeq = Math.max(lastSeq, Number(m[1])); }
+          send(fix ? fix(l) : l);
+        }
+      });
+      s.on('close', () => {
+        relays.delete(next);
+        if (paused && !gone && !down) { void reopen(); return; }
+        screens[kind].delete(send); end();
+      });
+      s.on('error', () => {});
+    };
+    /** serve 가 새 core 에 보내는 요청 — 응답 줄 (10초 안에 없으면 null) */
+    let seq = 0;
+    const call = (method: string, params: unknown, frame?: Record<string, unknown>) => new Promise<string | null>((resolve) => {
+      const id = `slcode-relay-${++seq}`;
+      const t = setTimeout(() => { internal.delete(JSON.stringify(id)); resolve(null); }, 10000);
+      internal.set(JSON.stringify(id), (l) => { clearTimeout(t); resolve(l); });
+      s.write(JSON.stringify({ id, method, params, ...frame }) + '\n');
     });
-    s.on('close', () => { relays.delete(s); screens[kind].delete(send); end(); });
-    s.on('error', () => {});
+    const ok = (l: string | null) => { try { return !!l && !!JSON.parse(l).result; } catch { return false; } };
+    async function reopen() {
+      const stop = () => { screens[kind].delete(send); end(); };
+      let next: net.Socket;
+      try { next = await connectSock(sock); } catch { stop(); return; }
+      if (gone || down) { next.destroy(); return; }
+      open(next);
+      if (authLine) { const m = JSON.parse(authLine); if (!ok(await call('core.auth', m.params))) { s.end(); stop(); return; } }
+      if (attached) {
+        const r = await call('session.attach', { id: attached, since: lastSeq });
+        let res: { info?: unknown; history?: { seq: number }[] } | undefined;
+        try { res = r ? JSON.parse(r).result : undefined; } catch {}
+        if (!res) { s.end(); stop(); return; }
+        // 끊긴 동안의 기록은 실시간 이벤트처럼 — 화면은 attach 를 다시 부르지 않았다
+        for (const e of res.history ?? []) { lastSeq = Math.max(lastSeq, e.seq); send(JSON.stringify({ event: 'session.event', params: { id: attached, ...e } })); }
+        send(JSON.stringify({ event: 'session.changed', params: res.info }));
+      }
+      const again = [...asked.values(), ...(paused ?? [])];
+      asked.clear(); paused = null;
+      for (const l of again) toCore(l);
+    }
+    open(net.createConnection(sock));
     const refuse = (line: string, code: string, message: string) => { try { const m = JSON.parse(line); if (m?.id !== undefined) send(JSON.stringify({ id: m.id, error: { code, message } })); } catch {} };
     const deny = (line: string) => refuse(line, ERR.unauthorized, 'core.auth first');
     /** 제어 메서드인가 — 메서드 이름이 들어 있을 때만 해석한다 (첨부가 실린 큰 프레임을 매번 읽지 않게) */
-    const isControl = (line: string) => { if (!line.includes('"core.own"') && !line.includes('"serve.register"')) return false; try { return CONTROL_ONLY.has(JSON.parse(line)?.method); } catch { return false; } };
+    const isControl = (line: string) => { if (!line.includes('"core.own"') && !line.includes('"serve.register"') && !line.includes('"core.retire"')) return false; try { return CONTROL_ONLY.has(JSON.parse(line)?.method); } catch { return false; } };
     return {
       write(line: string) {
         if (isControl(line)) { refuse(line, ERR.badRequest, 'not allowed on a screen connection'); return; }
@@ -274,9 +335,10 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
         if (authId !== undefined) { if (held.length < HELD_MAX) held.push(line); else deny(line); return; }
         if (m?.method !== 'core.auth' || (typeof m.id !== 'number' && typeof m.id !== 'string')) { deny(line); return; }
         authId = m.id;
-        s.write(JSON.stringify({ ...m, params: { ...m.params, remote: true } }) + '\n');
+        authLine = JSON.stringify({ ...m, params: { ...m.params, remote: true } });
+        s.write(authLine + '\n');
       },
-      close() { s.end(); },
+      close() { gone = true; s.end(); },
     };
   }
 
@@ -311,6 +373,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
     stopAll.push(() => { for (const c of wss.clients) c.close(); wss.close(); srv.close(); });
     const port = await new Promise<number>((resolve, reject) => { srv.once('error', reject); srv.listen(opts.port ?? 0, host, () => resolve((srv.address() as net.AddressInfo).port)); }).catch(fail);
     url = (await control.request('serve.register', { host, port, version: VERSION }).catch(fail)).url;
+    registered = { host, port };
   }
   if (opts.feed) {
     // 진입 프로세스가 넘긴 연결 — listen 은 진입 프로세스가 한다. 이 serve 가 끝나면 받은 연결을 모두 끊어 화면이 다음 serve 로 다시 붙게 한다
@@ -321,6 +384,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
     opts.feed.onConn((c) => { if (down) { c.destroy(); return; } socks.add(c); c.on('close', () => socks.delete(c)); srv.emit('connection', c); });
     stopAll.push(() => { for (const c of wss.clients) c.close(1012, 'serve restart'); wss.close(); for (const c of socks) c.end(); setTimeout(() => { for (const c of socks) c.destroy(); }, 200).unref(); });
     url = (await control.request('serve.register', { host: fh, port: opts.feed.port, version: VERSION }).catch(fail)).url;
+    registered = { host: fh, port: opts.feed.port };
   }
 
   // ---- stdio (옵션) — 연결 하나. 첫 줄이 올 때 세션 소켓에 붙는다 (CLI 가 먼저 hello 를 내고, 그 앞에 core 의 방송이 끼지 않게)
@@ -363,7 +427,14 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
     control.close();
     resolveDone();
   };
-  void control.done.then(shutdown); // core 가 끝났다 (세션 닫힘·벤더 종료·크래시)
+  // core 교체 — 이 serve 가 core 보다 새 코드면 교체를 청한다. 새 serve 는 사용자가 [restart required] 를 눌러야 생기므로 core 도 그 뒤에 드러나지 않게 따라온다.
+  // 소유자이거나 웹 모드 serve 자식일 때만 (다른 브라우저가 붙은 attach 는 청하지 않는다). 옛 core 가 모르는 메서드면 그만 (ticket slcode-core-serve-split 3단계)
+  if (owner || opts.feed) void (async () => {
+    const si = await control.request('server.info');
+    if (!si.build || si.build >= BUILD) return;
+    await control.request('core.retire', { pkg: PKG });
+    log(`asked core ${si.version} to be replaced by this build (${VERSION})`);
+  })().catch((e) => log(`core replacement not started: ${(e as Error).message}`));
   // 닫는 중에 다시 부르면(시그널 두 번 — superlite 서비스 중지는 SIGTERM 뒤 tmux 정리에서 한 번 더 온다) 같은 종료를 기다린다. 바로
   // 돌아오면 호출자의 process.exit 이 종료를 끊어 core 의 종료를 기다리지 못했다 (2026-10-11 실측)
   let closing: Promise<void> | null = null;

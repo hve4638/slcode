@@ -66,5 +66,6 @@ export abstract class AgentSession {
   abstract interrupt(): Promise<void>;
   abstract approve(requestId: string, decision: ApprovalDecision, opts?: ApproveOpts): boolean;
   abstract rewind(seq: number, conversation: boolean, files: boolean): Promise<string[] | null>;
-  abstract close(reason?: string): Promise<void>;
+  /** quiet 면 session.exit·exited 를 남기지 않는다 — core 교체로 내릴 때 (세션은 새 core 에서 이어진다) */
+  abstract close(reason?: string, quiet?: boolean): Promise<void>;
 }

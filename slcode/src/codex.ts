@@ -420,16 +420,21 @@ export class CodexSession extends AgentSession {
   async reconnectMcp(): Promise<McpStatus[]> { throw new Error('mcp reconnect is not supported for codex sessions'); }
   async rewind(): Promise<string[] | null> { throw new Error('rewind is not supported for codex sessions'); }
 
-  async close(reason = 'closed') {
+  async close(reason = 'closed', quiet = false) {
     if (this.ended) return;
     this.ended = true;
     this.cancelPending('session closed');
     // 진행 턴은 끊되 2초 안에 답이 없으면 그냥 죽인다 (t3code 도 2초 뒤 강제 종료) — Ctrl-C 가 여기서 멈춰 프로세스가 안 내려가던 실측 2026-09-30
     try { if (this.threadId && this.turnId) await Promise.race([this.request('turn/interrupt', { threadId: this.threadId, turnId: this.turnId }), new Promise((r) => setTimeout(r, 2000))]); } catch {}
     // stdio 파이프를 우리 쪽에서 닫는다 — 열린 채 두면 부모 프로세스가 안 끝난다 (테스트 실측 2026-09-30)
+    const gone = quiet && this.proc && this.proc.exitCode === null && this.proc.signalCode === null ? new Promise((r) => this.proc!.once('exit', r)) : null;
     try { this.proc?.stdin?.end(); this.proc?.stdout?.destroy(); this.proc?.stderr?.destroy(); this.proc?.kill(); } catch {}
-    this.emit({ kind: 'session.exit', reason });
-    this.emit({ kind: 'session.state', state: 'exited' });
+    // 교체 — 새 core 가 같은 thread 를 resume 하기 전에 codex 가 내려가 있게 (상한은 core 의 CLOSE_DEADLINE_MS)
+    if (gone) await gone;
+    if (!quiet) {
+      this.emit({ kind: 'session.exit', reason });
+      this.emit({ kind: 'session.state', state: 'exited' });
+    }
     this.log.close();
   }
 }

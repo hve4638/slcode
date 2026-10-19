@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { EventLog, type SessionMeta } from './eventLog.js';
-import { connectSession } from './client.js';
+import { connectSession, replacing } from './client.js';
 import { sockAlive } from './live.js';
 import { CoreError, ERR, type Mail } from './protocol.js';
 
@@ -39,10 +39,10 @@ export function newMail(p: Omit<Mail, 'id' | 'ts'> & { id?: string; ts?: number 
   return { ...p, id: p.id || randomUUID().slice(0, 8), ts: p.ts || Date.now() };
 }
 
-/** 켜진 세션 중에서 id 또는 제목으로 — 없으면 no_session, 같은 제목이 여럿 켜져 있으면 후보를 담아 bad_request */
+/** 켜진 세션 중에서 id 또는 제목으로 — 교체 중인 세션도 켜진 것 (소켓이 잠깐 없다), 없으면 no_session, 같은 제목이 여럿 켜져 있으면 후보를 담아 bad_request */
 export async function findLive(sessionsDir: string, s: string): Promise<{ sock: string; meta: SessionMeta }> {
   const hits = EventLog.list(sessionsDir).filter((m) => m.id === s || m.title === s).map((m) => ({ meta: m, sock: new EventLog(sessionsDir, m).sockPath }));
-  const alive = await Promise.all(hits.map((h) => sockAlive(h.sock)));
+  const alive = await Promise.all(hits.map(async (h) => replacing(h.sock) || (await sockAlive(h.sock))));
   const live = hits.filter((_, i) => alive[i]);
   const one = live.find((h) => h.meta.id === s) ?? (live.length === 1 ? live[0] : null);
   if (one) return one;
@@ -50,12 +50,17 @@ export async function findLive(sessionsDir: string, s: string): Promise<{ sock: 
   throw new CoreError(ERR.noSession, `no session ${s}`);
 }
 
-/** 켜진 세션을 찾아 그 소켓에 session.deliver — 받는 core 가 다음 idle 에 한 턴으로 넣는다 */
+/** 켜진 세션을 찾아 그 소켓에 session.deliver — 받는 core 가 다음 idle 에 한 턴으로 넣는다.
+ *  받는 core 가 교체 중이라 retiring 으로 거절하면 새 core 에 한 번 더 (connectSession 이 교체 표시를 보고 기다린다, 같은 id 라 두 번 들어가지 않는다) */
 export async function sendMail(sessionsDir: string, to: string, p: Omit<Mail, 'id' | 'ts' | 'to'>): Promise<{ id: string; to: string }> {
   const target = await findLive(sessionsDir, to);
   const m = newMail({ ...p, to: target.meta.id });
-  let client;
-  try { client = await connectSession(target.sock); } catch { throw new CoreError(ERR.noSession, `no session ${to}`); }
-  try { await client.request('session.deliver', { id: target.meta.id, mail: m }); } finally { client.close(); }
+  for (let attempt = 0; ; attempt++) {
+    let client;
+    try { client = await connectSession(target.sock); } catch { throw new CoreError(ERR.noSession, `no session ${to}`); }
+    try { await client.request('session.deliver', { id: target.meta.id, mail: m }); break; }
+    catch (e) { if ((e as CoreError).code !== ERR.retiring || attempt) throw e; }
+    finally { client.close(); }
+  }
   return { id: m.id, to: target.meta.id };
 }

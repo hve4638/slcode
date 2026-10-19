@@ -157,8 +157,12 @@ export type Methods = {
    *  그 전까지 serve 는 다른 요청을 막고 core 의 프레임을 넘기지 않는다 */
   'core.auth': { params: { token?: string; remote?: boolean }; result: { ok: true; pid: number; protocol: number; session: string } };
   /** 이 연결이 세션 소유자가 된다 (protocol 3). 살아 있는 소유자가 따로 있으면 owned, takeover 면 빼앗고 옛 소유자에게 core.owner 를 보낸다.
-   *  소유자가 session.close 없이 끊기면 core 는 SLCODE_OWNER_GRACE_SECS(기본 10초) 동안 새 소유자를 기다리고, 없으면 닫는다 (기동 직후도 같다) */
-  'core.own': { params: { pid?: number; takeover?: boolean }; result: { ok: true } };
+   *  소유자가 session.close 없이 끊기면 core 는 SLCODE_OWNER_GRACE_SECS(기본 10초) 동안 새 소유자를 기다리고, 없으면 닫는다 (기동 직후도 같다).
+   *  follows 는 이 소유자가 core.replaced 를 받으면 같은 소켓에 다시 붙는다는 뜻 — 없는 소유자가 있으면 core 는 교체를 거절한다 (3단계) */
+  'core.own': { params: { pid?: number; takeover?: boolean; follows?: boolean }; result: { ok: true } };
+  /** 새 코드의 serve 가 core 에 교체를 청한다 (ticket slcode-core-serve-split 3단계). pkg 는 그 serve 의 설치 폴더 — core 는 그 폴더의 새 빌드가 도는지 확인하고
+   *  (깨졌으면 bad_request) idle 을 기다렸다가 그 폴더의 coreMain 으로 새 core 를 띄우고 내려간다. 보낸 연결이 그 전에 끊기면 취소된다 */
+  'core.retire': { params: { pkg: string }; result: { ok: true } };
   /** serve 가 자기 TCP 웹 주소를 알린다 (protocol 3). 이 연결이 끊기면 지운다. url 은 core 가 토큰을 붙여 만든다 */
   'serve.register': { params: { host: string; port: number; version: string }; result: { url: string } };
   /** 이 core 가 쥔 세션과 웹 주소. host·port·url 은 처음 등록된 웹 serve 의 것, 없으면 null */
@@ -250,6 +254,8 @@ export type Broadcasts = {
   'session.closed': { id: string; reason: string };
   /** 소유권을 빼앗긴 연결에만 — 새 소유자의 pid (protocol 3) */
   'core.owner': { pid: number | null };
+  /** 내려가는 core 가 연결을 끊기 직전에 모든 연결에 — 새 core 의 pid·version. 받은 쪽은 닫힘이 아니라 같은 소켓에 다시 붙기로 다룬다 (3단계) */
+  'core.replaced': { pid: number; version: string };
   /** 설정 파일이 바뀌었다 (어느 serve 가 썼든, 손으로 고쳤든) — 각 serve 가 파일을 감시해 그 입구로 들어온 자기 화면 연결에만 보낸다 */
   'settings.changed': Settings;
 };
@@ -270,6 +276,8 @@ export const ERR = {
   notLive: 'not_live',
   badRequest: 'bad_request',
   owned: 'owned',
+  /** 내려가기로 정한 core 가 그 뒤 온 요청에 — 새 core 에 다시 보내면 된다 (3단계) */
+  retiring: 'retiring',
 } as const;
 
 export class CoreError extends Error {

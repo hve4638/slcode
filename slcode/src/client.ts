@@ -1,4 +1,4 @@
-// JSON 줄 RPC 클라이언트 — 세션 소켓(sessions/<슬러그>/<id>/sock)에 붙는다. 세션 소켓은 띄우지 않는다 — core 는 serve 가 띄운다 (serve.ts spawnCore).
+// JSON 줄 RPC 클라이언트 — 세션 소켓(sessions/<슬러그>/<id>/sock)에 붙는다. 세션 소켓은 띄우지 않는다 — core 는 serve 가 띄운다 (live.ts spawnCore).
 import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,6 +24,20 @@ function tryConnect(p: string): Promise<net.Socket> {
     s.once('connect', () => resolve(s));
     s.once('error', reject);
   });
+}
+
+/** core 교체 중 표시 — 소켓 옆 파일, 내용은 기한(ms). 내리는 core 가 소켓을 지우기 전에 쓰고, 새 core 가 뜨면 지운다 (ticket slcode-core-serve-split 3단계) */
+export const replacingMark = (sockPath: string) => `${sockPath}.replacing`;
+export function replacing(sockPath: string): boolean {
+  try { return Number(fs.readFileSync(replacingMark(sockPath), 'utf8')) > Date.now(); } catch { return false; }
+}
+/** 세션 소켓에 붙는다. 교체 중이면 새 core 가 소켓을 열 때까지 다시 붙어 본다 — 표시가 없으면 기다리지 않는다 (꺼진 세션의 오류가 늦어지지 않게) */
+export async function connectSock(sockPath: string): Promise<net.Socket> {
+  for (;;) {
+    try { return await tryConnect(sockPath); }
+    catch { if (!replacing(sockPath)) throw new CoreError('no_session', `no live session at ${sockPath}`); }
+    await new Promise((r) => setTimeout(r, 100));
+  }
 }
 
 /** 타입 있는 JSON 줄 RPC — 요청 id 매칭 + 이벤트 구독. M 은 Methods */
@@ -70,9 +84,7 @@ export class RpcClient<M extends Record<string, { params: unknown; result: unkno
   close() { this.sock.end(); }
 }
 
-/** 세션 소켓에 붙는다 — 없으면 no_session (세션 프로세스가 떠 있지 않다) */
+/** 세션 소켓에 붙는다 — 없으면 no_session (세션 프로세스가 떠 있지 않다). 교체 중이면 기다린다 (connectSock) */
 export async function connectSession(sockPath: string): Promise<RpcClient<Methods>> {
-  let sock: net.Socket;
-  try { sock = await tryConnect(sockPath); } catch { throw new CoreError('no_session', `no live session at ${sockPath}`); }
-  return new RpcClient<Methods>(sock);
+  return new RpcClient<Methods>(await connectSock(sockPath));
 }

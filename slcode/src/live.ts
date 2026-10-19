@@ -3,7 +3,13 @@
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { EventLog, type SessionMeta } from './eventLog.js';
+import { PKG } from './client.js';
+import { corePaths, ensureDir } from './paths.js';
+import { CoreError, type SessionInfo } from './protocol.js';
+import type { CoreOptions } from './core.js';
 
 export const isLoopback = (host: string) => ['127.0.0.1', 'localhost', '::1'].includes(host);
 /** 0.0.0.0 으로 열었으면 접속 가능한 주소로 바꾼다 — 첫 비내부 IPv4, 없으면 localhost. CLI 출력·--stdio hello·server.info 가 같은 값을 낸다 */
@@ -30,4 +36,34 @@ export async function closedSessions(sessionsDir: string, cwd: string): Promise<
   const out: SessionMeta[] = [];
   for (const m of EventLog.list(sessionsDir, cwd)) if (m.cwd === cwd && !(await sockAlive(new EventLog(sessionsDir, m).sockPath))) out.push(m);
   return out.sort((a, b) => closedTime(b) - closedTime(a));
+}
+
+/** core 의 준비 줄 — pid·version 은 3단계부터 (옛 core 엔 없다) */
+export type CoreHello = { id: string; sock: string; session: SessionInfo; pid?: number; version?: string };
+
+/** <pkg>/dist/coreMain.js(기본 이 설치)를 detached 로 띄우고 stdout 첫 줄(준비·실패)을 기다린다. 그 뒤 파이프를 놓아 core 가 이 프로세스와 따로 산다.
+ *  serve 가 세션을 열 때, 내리는 core 가 새 core 를 띄울 때(pkg 는 core.retire 를 보낸 serve 의 설치 폴더) 같이 쓴다.
+ *  setsid 라 serve 의 프로세스 그룹 밖이다 — 터미널 Ctrl-C·superlite 서비스 중지(그룹 SIGTERM)가 core 에 닿지 않는다 */
+export function spawnCore(opts: CoreOptions & { dir: string }, pkg = PKG): Promise<CoreHello> {
+  const P = corePaths(opts.dir);
+  ensureDir(P.dir);
+  const err = fs.openSync(P.coreLog, 'a');
+  const child = spawn(process.execPath, [path.join(pkg, 'dist', 'coreMain.js'), JSON.stringify(opts)], { detached: true, stdio: ['ignore', 'pipe', err], windowsHide: true });
+  fs.closeSync(err);
+  return new Promise((resolve, reject) => {
+    let buf = '', settled = false;
+    const settle = (f: () => void) => { if (settled) return; settled = true; child.stdout!.destroy(); child.unref(); f(); };
+    child.stdout!.setEncoding('utf8');
+    child.stdout!.on('data', (d: string) => {
+      buf += d;
+      const i = buf.indexOf('\n');
+      if (i < 0) return;
+      let m: Partial<CoreHello> & { error?: string; code?: string };
+      try { m = JSON.parse(buf.slice(0, i)); } catch { m = { error: `bad core hello: ${buf.slice(0, i)}` }; }
+      settle(() => (m.error ? reject(new CoreError(m.code ?? 'error', m.error)) : resolve(m as CoreHello)));
+    });
+    child.once('error', (e) => settle(() => reject(e)));
+    // exit 가 아니라 close — stdout 이 다 읽힌 뒤라 core 가 낸 실패 사유({error})가 일반 문구에 묻히지 않는다
+    child.once('close', (code) => settle(() => reject(new CoreError('core_exit', `core exited (${code}) before it was ready — see ${P.coreLog}`))));
+  });
 }

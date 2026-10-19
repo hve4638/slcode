@@ -59,7 +59,7 @@ export class CodexSession {
   export fn rewind(seq, conversation, files) {
     role: 미지원 — 오류
   }
-  export fn close(reason) {
-    role: 진행 턴 interrupt → 프로세스 종료 → session.exit·exited
+  export fn close(reason, quiet) {
+    role: 진행 턴 interrupt → 프로세스 종료 → session.exit·exited (quiet 면 남기지 않는다 — core 교체)
   }
 }

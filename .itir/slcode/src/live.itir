@@ -1,4 +1,7 @@
 import { EventLog } from './eventLog'
+import { PKG } from './client'
+import { corePaths, ensureDir } from './paths'
+import { CoreError } from './protocol'
 
 role: 세션이 살아 있는지·어느 세션을 이을지·웹 주소 — core·serve·cli 공용 (ticket slcode-core-serve-split). Agent SDK 를 싣지 않는 가벼운 모듈이라 중계만 하는 serve 가 벤더 어댑터(session·codex)까지 불러오지 않는다.
 
@@ -15,3 +18,7 @@ export fn closedTime(meta) -> Int {
 export fn closedSessions(sessionsDir, cwd) -> SessionMeta[] {
   role: 그 cwd 슬러그 폴더의 저장 세션 중 meta.cwd 가 그 cwd 와 같고(슬러그가 같은 다른 폴더 제외) 소켓이 살아 있지 않은 것을 closedTime 내림차순으로 — continue 대상과 id 없는 resume 목록
 }
+export fn spawnCore(opts, pkg) {
+  role: <pkg>/dist/coreMain.js(기본 이 설치 PKG)를 detached 로 띄우고 stderr 는 $SLCODE_DIR/core.log 에 잇는다. stdout 첫 줄(준비 {id, sock, session} 또는 {error, code})을 기다린 뒤 파이프를 놓고 unref — core 가 띄운 쪽과 따로 산다. 첫 줄 없이 끝나면(close — stdout 을 다 읽은 뒤) core.log 를 가리키는 오류. serve 가 세션을 열 때, 내리는 core 가 새 core 를 띄울 때(pkg 는 core.retire 를 보낸 serve 의 설치 폴더) 같이 쓴다 — 이 모듈이 SDK 를 싣지 않아 core 도 serve 도 부를 수 있다
+}
+type CoreHello

@@ -65,6 +65,8 @@ export class ClaudeSession extends AgentSession {
   private q: Query | null = null;
   private pending = new Map<string, Pending>();
   private ended = false;
+  /** close(quiet) — core 교체로 내렸다. 끝난 뒤의 exited 도 남기지 않는다 */
+  private quiet = false;
   private opts: SessionOptions;
   private running: Promise<void> = Promise.resolve();
   private restarting = false;
@@ -253,14 +255,19 @@ export class ClaudeSession extends AgentSession {
     this.running = this.run({ ...this.opts, resume: null });
   }
 
-  async close(reason = 'closed') {
+  async close(reason = 'closed', quiet = false) {
     if (this.ended) return;
     this.ended = true;
+    this.quiet = quiet;
     this.cancelPending('session closed');
     try { await this.q?.interrupt(); } catch {}
     try { (this.q as any)?.return?.(); } catch {}
-    this.emit({ kind: 'session.exit', reason });
-    this.emit({ kind: 'session.state', state: 'exited' });
+    if (!quiet) {
+      this.emit({ kind: 'session.exit', reason });
+      this.emit({ kind: 'session.state', state: 'exited' });
+    }
+    // 교체 — 새 core 가 같은 대화를 resume 하기 전에 claude 자식이 내려가 있게 (상한은 core 의 CLOSE_DEADLINE_MS)
+    else await this.running.catch(() => {});
     this.log.close();
   }
 
@@ -316,7 +323,7 @@ export class ClaudeSession extends AgentSession {
       if (this.restarting) { this.restarting = false; return; } // rewind 의 재기동 — 세션은 계속 산다
       this.ended = true;
       this.cancelPending('session ended');
-      if (this.state !== 'exited') this.emit({ kind: 'session.state', state: 'exited' });
+      if (this.state !== 'exited' && !this.quiet) this.emit({ kind: 'session.state', state: 'exited' });
       this.log.close();
     }
   }

@@ -5,6 +5,8 @@
 // 보관함은 없다 — 꺼진 세션에는 보내지 않는다 (ticket slcode-p2p-messaging, 사용자 2026-10-19).
 // 수명: session.close·벤더 종료 → 세션을 닫고 소켓을 지우고 끝난다. 소유자(core.own 을 보낸 연결 하나)가 close 없이 끊기면
 // OWNER_GRACE 동안 새 소유자를 기다리고 없으면 닫는다 (기동 직후도 같다). 로그는 남아 --resume 으로 이어간다.
+// 교체 (3단계): 새 코드의 serve 가 core.retire {pkg} 를 보내면 idle 을 기다렸다가 그 설치 폴더의 coreMain 으로 새 core 를 띄우고, core.replaced 를 알린 뒤 내려간다.
+// 상태는 넘기지 않는다 — idle 이면 세션 내용은 디스크에 있고, 메모리에만 있는 입력 초안은 세션 폴더의 draft 파일로 넘긴다.
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -14,8 +16,8 @@ import { ClaudeSession } from './session.js';
 import { CodexSession } from './codex.js';
 import type { AgentSession } from './base.js';
 import { EventLog, historyPage, summarize, type SessionMeta } from './eventLog.js';
-import { isLoopback, reachable, sockAlive } from './live.js';
-import { BUILD, VERSION } from './client.js';
+import { isLoopback, reachable, sockAlive, spawnCore } from './live.js';
+import { BUILD, VERSION, replacingMark } from './client.js';
 import { corePaths, ensureDir, readOrCreateToken } from './paths.js';
 import { formatMail, newMail, parseMails, sendMail, sessionMeta } from './mail.js';
 import { blockInspect, inspectBlocked, inspectEnv, keepsFirstParty, sdkVersion, startInspect, turnCalls, upstreamOf, type InspectProxy } from './inspect.js';
@@ -41,6 +43,10 @@ const SDK_ENV = stripEnv(process.env);
 const OWNER_GRACE_MS = (Number(process.env.SLCODE_OWNER_GRACE_SECS) > 0 ? Number(process.env.SLCODE_OWNER_GRACE_SECS) : 10) * 1000;
 /** 벤더 종료를 기다리는 상한 — core 는 detached 라 superlite 의 SIGKILL(서비스 중지 3초 뒤)이 닿지 않는다. 넘으면 정리하고 끝낸다 */
 const CLOSE_DEADLINE_MS = 5000;
+/** 교체 중 표시의 기한 — 그동안 붙으려는 쪽(CLI·serve)이 새 core 를 기다린다. 벤더 종료(CLOSE_DEADLINE_MS)와 새 core 기동이 이 안에 든다 */
+const REPLACE_MS = 30000;
+/** 교체 때 입력 초안을 넘기는 세션 폴더의 파일 — 새 core 가 읽고 지운다 */
+const DRAFT_FILE = 'draft';
 
 /** serve 가 core 에 넘기는 것 — 세션을 고르고 띄우는 데 필요한 최소한 (어느 세션을 이을지는 CLI·serve 가 이미 골랐다) */
 export type CoreOptions = {
@@ -160,11 +166,14 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
 
   // ---- 디스패치 (UDS 연결마다 — CLI 동사, serve 의 중계 연결과 제어 연결)
   type Web = { host: string; port: number; url: string; version: string };
-  type Conn = { detach: (() => void) | null; send: (o: unknown) => void; ownerPid: number | null; web: Web | null };
+  type Conn = { detach: (() => void) | null; send: (o: unknown) => void; ownerPid: number | null; web: Web | null; follows: boolean };
   const conns = new Set<Conn>();
   let owner: Conn | null = null;
   let closed = false;
-  let draft = ''; // 웹 입력창 초안 (session.setDraft) — 메모리만
+  // 웹 입력창 초안 (session.setDraft) — 메모리만. 교체로 뜬 core 면 옛 core 가 남긴 파일을 읽고 지운다
+  const draftFile = path.join(logFile.dir, DRAFT_FILE);
+  let draft = '';
+  try { draft = fs.readFileSync(draftFile, 'utf8'); fs.unlinkSync(draftFile); } catch {}
   const mine = (id: unknown) => { if (id !== sid) throw new CoreError(ERR.badRequest, `this process serves session ${sid} only`); return session; };
   const webs = () => [...conns].flatMap((c) => (c.web ? [c.web] : []));
   type Handler<K extends MethodName> = (conn: Conn, params: Methods[K]['params']) => Promise<Methods[K]['result']> | Methods[K]['result'];
@@ -179,8 +188,21 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
         if (!p?.takeover) throw new CoreError(ERR.owned, `session ${sid} is owned by pid ${owner.ownerPid ?? '?'}`);
         owner.send({ event: 'core.owner', params: { pid: p.pid ?? null } });
       }
-      owner = conn; conn.ownerPid = p?.pid ?? null;
+      owner = conn; conn.ownerPid = p?.pid ?? null; conn.follows = !!p?.follows;
       disarmOwnerGrace();
+      return { ok: true };
+    },
+    'core.retire': async (conn, p) => {
+      if (typeof p?.pkg !== 'string' || !p.pkg) throw new CoreError(ERR.badRequest, 'pkg required');
+      if (owner && !owner.follows) throw new CoreError(ERR.badRequest, 'the session owner cannot follow a core replacement (an older slcode started it)');
+      // 새 빌드가 깨졌으면 교체하지 않고 이 core 가 계속 일한다 (사용자 결정 2026-10-19) — 내린 뒤에는 되돌릴 core 가 없다
+      await new Promise<void>((resolve, reject) => execFile(process.execPath, [path.join(p.pkg, 'dist', 'cli.js'), '--version', '--json'], { timeout: 15000 }, (e, out) => {
+        if (e) { reject(new CoreError(ERR.badRequest, `the new build does not run: ${e.message.split('\n')[0]}`)); return; }
+        try { JSON.parse(out); resolve(); } catch { reject(new CoreError(ERR.badRequest, 'the new build does not run: bad --version output')); }
+      }));
+      retire = { conn, pkg: p.pkg };
+      log(`replacement requested (${p.pkg}) — waiting for idle`);
+      setImmediate(maybeRetire); // 응답이 먼저 나가게
       return { ok: true };
     },
     'serve.register': (conn, p) => {
@@ -298,6 +320,8 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     let msg: RequestFrame;
     try { msg = JSON.parse(line); } catch { return; }
     if (msg.id === undefined || typeof msg.method !== 'string') return;
+    // 내려가기로 정했다 — 받은 척하고 버리지 않는다. 보낸 쪽이 새 core 에 다시 보낸다 (serve 의 중계·sendMail)
+    if (retiring) { conn.send({ id: msg.id, error: { code: ERR.retiring, message: 'this core is being replaced — send it again' } }); return; }
     try {
       const h = (handlers as Record<string, Handler<MethodName>>)[msg.method];
       if (!h) throw new CoreError(ERR.badRequest, `unknown method ${msg.method}`);
@@ -313,6 +337,8 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     if (e.ev.kind === 'session.state') broadcast('session.changed', session.info());
     if (e.ev.kind === 'session.state' && (e.ev.state === 'idle' || e.ev.state === 'starting')) flushMail();
     if (e.ev.kind === 'session.exit') { broadcast('session.closed', { id: sid, reason: e.ev.reason }); const r = `session exited: ${e.ev.reason}`; if (closeFn) void closeFn(r); else earlyExit = r; }
+    if (e.ev.kind === 'task') { if (e.ev.phase === 'ended') bg.delete(e.ev.taskId); else if (e.ev.background) bg.add(e.ev.taskId); }
+    if (retire) setImmediate(maybeRetire); // idle 에서 밀린 메시지가 턴으로 들어갔는지 본 뒤에
   });
 
   // ---- 소유권 — 소유자가 없는 동안은 유예 시계가 돈다 (기동 직후, 소유자가 close 없이 끊긴 뒤)
@@ -330,7 +356,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   const socks = new Set<net.Socket>();
   const uds = net.createServer((sock) => {
     socks.add(sock);
-    const conn: Conn = { detach: null, send: (o) => { if (!sock.destroyed) sock.write(JSON.stringify(o) + '\n'); }, ownerPid: null, web: null };
+    const conn: Conn = { detach: null, send: (o) => { if (!sock.destroyed) sock.write(JSON.stringify(o) + '\n'); }, ownerPid: null, web: null, follows: false };
     conns.add(conn);
     let buf = '';
     sock.setEncoding('utf8'); // 청크 경계에 걸린 한글이 깨지지 않게 — 웹·stdio 프레임이 모두 이 스트림을 거친다
@@ -338,6 +364,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     sock.on('close', () => {
       socks.delete(sock); conn.detach?.(); conns.delete(conn);
       if (owner === conn) { owner = null; armOwnerGrace(); }
+      if (retire?.conn === conn && !retiring) { retire = null; log('replacement cancelled: the requester is gone'); }
     });
     sock.on('error', () => {});
   });
@@ -377,7 +404,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   const done = new Promise<void>((r) => (resolveDone = r));
   // 닫는 중에 다시 부르면 같은 종료를 기다린다. 바로 돌아오면 호출자의 process.exit 이 종료를 끊어 closedAt·session.exit 가 남지 않았다 (2026-10-11 실측)
   let closing: Promise<void> | null = null;
-  const close = (reason = 'closed'): Promise<void> => (closing ??= (async () => {
+  const close = (reason = 'closed'): Promise<void> => (closing ??= retiring ? done : (async () => {
     closed = true;
     disarmOwnerGrace();
     log(`closing: ${reason}`);
@@ -396,6 +423,53 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     resolveDone();
   })());
   closeFn = close;
+
+  // ---- 교체 (ticket slcode-core-serve-split 3단계, 설계 "core 교체", 사용자 2026-10-19)
+  let retire: { conn: Conn; pkg: string } | null = null;
+  let retiring = false;
+  /** 돌고 있는 background task — 끝날 때까지 교체를 미룬다 */
+  const bg = new Set<string>();
+  /** 내려도 잃는 것이 초안뿐인 때 — 진행 턴·대기 승인·줄 선 턴·밀린 메시지·대기 ask·background task·inspect 토글이 없다 */
+  const calm = () => !closed && !switching && session.state === 'idle' && !session.pendingApprovals().length
+    && !(session instanceof ClaudeSession && session.queued) && !pending.length && !asks.size && !bg.size;
+  function maybeRetire() {
+    if (!retire || retiring || !calm()) return;
+    if (owner && !owner.follows) { log('replacement cancelled: the session owner cannot follow it'); retire = null; return; }
+    void replace(retire.pkg);
+  }
+  async function replace(pkg: string) {
+    retiring = true; closed = true;
+    disarmOwnerGrace();
+    log(`replacing this core with ${pkg}`);
+    // 소켓을 지우기 전에 표시부터 — 그 사이 붙으려는 쪽이 꺼진 세션으로 보지 않고 기다린다
+    const mark = replacingMark(sockPath);
+    try { fs.writeFileSync(mark, String(Date.now() + REPLACE_MS)); } catch {}
+    uds.close();
+    try { fs.unlinkSync(sockPath); } catch {}
+    if (draft) try { fs.writeFileSync(draftFile, draft); } catch {}
+    let deadline: NodeJS.Timeout | undefined;
+    await Promise.race([session.close('replaced', true), new Promise<void>((r) => { deadline = setTimeout(() => { log(`vendor did not close in ${CLOSE_DEADLINE_MS / 1000}s — leaving it`); r(); }, CLOSE_DEADLINE_MS); })]);
+    clearTimeout(deadline);
+    await inspect?.close();
+    if (sweeper) clearInterval(sweeper);
+    store?.close();
+    try {
+      // 권한 모드·모델·inspect 는 meta 를 따른다 — 기동 때의 opts.permissionMode 를 넘기면 그 뒤 바꾼 모드가 되돌아간다
+      const next = await spawnCore({ dir: P.dir, cwd, resume: sid, raw: opts.raw }, pkg);
+      log(`replaced by core ${next.pid}`);
+      broadcast('core.replaced', { pid: next.pid ?? 0, version: next.version ?? '' });
+    } catch (e) {
+      // 벤더는 이미 내렸다 — 되돌릴 core 가 없어 세션을 닫는다 (빌드는 core.retire 에서 확인했으니 띄운 뒤의 실패다)
+      const reason = `core replacement failed: ${(e as Error).message}`;
+      log(reason);
+      try { logFile.updateMeta({ closedAt: Date.now() }); } catch {}
+      try { fs.unlinkSync(draftFile); } catch {}
+      broadcast('session.closed', { id: sid, reason });
+    }
+    try { fs.unlinkSync(mark); } catch {}
+    for (const s of socks) s.end();
+    resolveDone();
+  }
   if (earlyExit) { await close(earlyExit); throw new CoreError('vendor_exit', earlyExit); }
   armOwnerGrace();
   return { sock: sockPath, session: session.info(), close, done };
