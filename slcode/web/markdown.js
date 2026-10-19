@@ -9,6 +9,9 @@ const unesc = (s) => s.replace(/&(amp|lt|gt|quot);/g, (_, e) => ({ amp: '&', lt:
 // 로컬 파일은 serve 의 file 경로로 — 상대 주소라 superlite /svc/<토큰>/ 아래에서도 돈다. 루프백 밖 웹이면 토큰을 붙인다 (index.html 이 넣는다)
 let fileToken = '';
 export function setFileToken(t) { fileToken = t; }
+// 카드 모드(card.html)는 주소가 없다 — href 를 비우고(이미지는 src 없이) 화면이 data-open 경로로 file.get 을 불러 채운다
+let fileUrls = true;
+export function setNoFileUrls() { fileUrls = false; }
 // <…> 는 공백까지 받는다 (이스케이프된 꼴로 맞춘다). 꺾쇠 없는 주소는 공백·) 에서 끝난다 — 문장 속 괄호는 대개 공백이 있어 원문으로 남는다
 const URL_RE = String.raw`(?:&lt;(.*?)&gt;|([^)\s]+))`;
 let cwd = '';
@@ -32,7 +35,7 @@ function target(raw) {
   try { p = decodeURI(p); } catch {}
   if (!abs) p = resolve(p);
   // open 동사는 줄 번호를 받지 않는다 — Codex 꼴 a.ts:12 는 떼고 연다 (serve 의 file 은 스스로 뗀다)
-  return { href: esc(`file?path=${encodeURIComponent(p)}${fileToken ? `&token=${encodeURIComponent(fileToken)}` : ''}`), open: esc(p.replace(/:\d+(:\d+)?$/, '')) };
+  return { href: fileUrls ? esc(`file?path=${encodeURIComponent(p)}${fileToken ? `&token=${encodeURIComponent(fileToken)}` : ''}`) : '', open: esc(p.replace(/:\d+(:\d+)?$/, '')) };
 }
 const IMG = new RegExp(String.raw`!\[([^\]]*)\]\(${URL_RE}\)`, 'g');
 const LINK = new RegExp(String.raw`\[([^\]]+)\]\(${URL_RE}\)`, 'g');
@@ -45,7 +48,7 @@ function inline(s) {
     out += esc(part)
       .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
       .replace(/(^|[^*\w])\*([^*\n]+)\*/g, '$1<em>$2</em>')
-      .replace(IMG, (m, alt, a, b) => { const t = target(a ?? b); if (!t) return m; return `<a class="img" href="${t.href}" data-open="${t.open}" target="_blank" rel="noopener"><img src="${t.href}" alt="${alt}"></a>`; })
+      .replace(IMG, (m, alt, a, b) => { const t = target(a ?? b); if (!t) return m; return `<a class="img" href="${t.href}" data-open="${t.open}" target="_blank" rel="noopener"><img${t.href ? ` src="${t.href}"` : ''} alt="${alt}"></a>`; })
       .replace(LINK, (m, s, a, b) => { const t = target(a ?? b); if (!t) return m; return `<a href="${t.href}" data-open="${t.open}" target="_blank" rel="noopener">${s}</a>`; });
   }
   return out;

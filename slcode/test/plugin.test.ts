@@ -217,7 +217,10 @@ test('slcode.new 동사: 요청자 터미널 옆(near)에 카드를 열고, 폴�
     services: {
       onMessage: (_id: string, f: (m: unknown) => void) => { cb = f; return () => {}; },
       open: async (_id: string, o: any) => { started.push(o); queueMicrotask(() => cb?.({ url: null, id: 'sess-9', sock: '/s' })); return { onClose: () => () => {}, webUrl: async () => '/svc/x/', close: async () => {} }; },
-      send: async (_id: string, m: any) => { if (m.method === 'session.attach') queueMicrotask(() => cb?.({ id: m.id, result: { info: { state: 'idle', title: null }, pending: [] } })); },
+      send: async (_id: string, m: any) => {
+        if (m.method === 'session.attach') queueMicrotask(() => cb?.({ id: m.id, result: { info: { state: 'idle', title: null }, pending: [] } }));
+        else if (m.method === 'web.files') queueMicrotask(() => cb?.({ id: m.id, result: { html: '<!doctype html>', files: {} } }));
+      },
     },
   });
   const restore = stubGithub([]);

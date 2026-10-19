@@ -42,11 +42,14 @@ export function mountAgentFront(root, transport, opts = {}) {
   // 오른쪽 사이드바는 기본으로 닫혀 있고 헤더 오른쪽 끝 버튼으로 연다. 연 상태는 브라우저에 기억한다 (사용자 2026-10-13).
   // 좁으면(820px 이하) 본문 위에 겹쳐 여는데 이건 기억하지 않는다 — 카드가 다시 로드될 때마다 피드를 덮지 않게. 본문을 누르면 닫힌다
   const SIDE_KEY = 'slcode.side';
+  // 화면 상태(사이드바 열림·inspect 남은 공간)의 저장소 — 웹은 브라우저 localStorage. 카드는 opts.store: sandbox 화면엔 저장소가 없어
+  // 플러그인이 superlite 페이지에 대신 둔다 (card.html, ticket slcode-card-svc-token-dead)
+  const store = opts.store ?? { get: (k) => localStorage.getItem(k), set: (k, v) => localStorage.setItem(k, v) };
   const sideBtn = h('button', { class: 'ico side-tg', title: '사이드바', 'aria-label': '사이드바', onclick: () => {
     if (root.clientWidth <= 820) el.classList.toggle('peek');
-    else localStorage.setItem(SIDE_KEY, el.classList.toggle('side-open') ? 'open' : 'closed');
+    else store.set(SIDE_KEY, el.classList.toggle('side-open') ? 'open' : 'closed');
   } });
-  if (localStorage.getItem(SIDE_KEY) === 'open') el.classList.add('side-open');
+  if (store.get(SIDE_KEY) === 'open') el.classList.add('side-open');
   // 설정 — 헤더 오른쪽, 사이드바 버튼 왼쪽 (ticket slcode-web-settings). 같은 입구(브라우저·superlite 탭)의 다른 화면에서 바꿔도 settings.changed 로 온다
   // 바꾼 화면은 응답으로 바로 그린다 — 다른 화면은 settings.changed 로 (serve 의 파일 감시가 늦거나 못 걸려도 여기는 바로)
   // 세션 종료 (사용자 2026-10-11) — 카드는 두고 세션만 끈다(카드를 제거하면 세션도 끝난다). 꺼진 세션은 resume 으로 다시 띄운다.
@@ -343,7 +346,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   }
   // inspect (ticket slcode-inspect-proxy, 사용자 결정 2026-10-18) — 턴 마지막 응답 아래 '복사' 옆 버튼이 그 턴 동안 나간 API 호출 모달(inspect.js)을 연다.
   // 버튼은 inspect 를 한 번이라도 켠 세션에서만 보인다 (.inspectable). 응답 글이 없는 턴(오류·중단)은 버튼만 한 줄로
-  const inspectUi = inspectDialog(h, rpc, () => status?.context?.max ?? null, (text) => iconBtn('copy', '복사', copyOf(text)));
+  const inspectUi = inspectDialog(h, rpc, () => status?.context?.max ?? null, (text) => iconBtn('copy', '복사', copyOf(text)), store);
   el.append(inspectUi.el);
   const inspectBtn = (endSeq) => { const b = iconBtn('inspect', '이 턴의 API 호출 보기', () => inspectUi.open(current, endSeq)); b.classList.add('insp'); return b; };
   const syncInspect = () => el.classList.toggle('inspectable', info?.inspect != null);
@@ -854,7 +857,7 @@ export function mountAgentFront(root, transport, opts = {}) {
       rpc('settings.get').then(setSettings, () => {}); // 옛 serve 엔 없다 — 기본값으로 그린다
       // 다시 붙은 serve 가 이 페이지를 낸 serve 와 다르면(serve 교체) 새 웹으로 다시 로드한다 — 초안은 core 가 들고 있다. 옛 serve 엔 serve.info 가 없다
       rpc('serve.info').then((si) => {
-        if (page.build && (si.version !== page.version || String(si.build) !== page.build)) { location.reload(); return; }
+        if (page.build && (si.version !== page.version || String(si.build) !== page.build)) { (opts.reload ?? (() => location.reload()))(); return; }
         if (si.update && !update) { update = si.update; paintUpd(); }
         settingsUi.inspectBlocked(si.inspectBlocked);
       }, () => {});

@@ -4,8 +4,9 @@
 // card id: 터미널 카드처럼 카드를 제거하면 세션도 끝나고 deck 을 닫는 것으로는 끝나지 않는다 — 사용자 2026-10-11, 2026-10-04 의 "카드를
 // 제거해도 세션은 산다" 를 바꿈. 카드를 두고 세션만 끄는 길은 slcode 웹의 "세션 종료"·사이드바 우클릭 "Force close"·팔레트
 // "slcode: Close session"·터미널 `slcode close`). (2) 화면 — slcode 가 stdout 첫 줄로
-// 보내는 hello {id,sock} 로 세션을 알고, 화면은 서비스 웹(매니페스트 web — slcode 가 SUPERLITE_SERVICE_WEB 에 연다)을 conn.webUrl() 의
-// superlite /svc 주소로 iframe 에 넣는다 — 포트를 따로 열지 않아 웹 모드·원격에서도 열린다 (ticket plugin-service-web). (3) 상태 — 같은 stdio 통로가 UDS 와 같은
+// 보내는 hello {id,sock} 로 세션을 알고, 화면은 serve 가 stdio 로 준 화면 파일(web.files)을 주소 없는 sandbox iframe 에 넣는다. 화면은 이 플러그인이
+// 건넨 MessagePort 로만 말하고 플러그인이 stdio 로 중계한다 — /svc 토큰 주소가 없어 토큰이 폐기돼 멈추는 일이 없다 (ticket slcode-card-svc-token-dead).
+// web.files 가 없는 옛 serve 는 서비스 웹(매니페스트 web)을 conn.webUrl() 의 superlite /svc 주소로 iframe 에 넣는다 (ticket plugin-service-web). (3) 상태 — 같은 stdio 통로가 UDS 와 같은
 // 프레임 연결이라 session.attach 로 이벤트를 받아 배지·알림 센터에 반영한다. 선구독 services.onMessage 를 start 전에 걸어 첫 줄을
 // 놓치지 않는다. 카드의 서비스·플랫폼·deploy 는 카드 ctx 의 것(카드 세션에 묶인다 — superlite ticket plugin-api-card-session)이라
 // 사용자가 다른 세션 탭을 보는 동안에도 카드가 자기 세션의 데몬과 주고받는다. ctx 에 services 가 없는 옛 superlite 는 api 의 것(활성 세션).
@@ -17,6 +18,8 @@ const SVC = 'session';
 const DEFAULT_NAME = 'SLCode'; // 이름 없는 세션의 카드 제목 (slcode 웹의 기본 이름과 같다)
 const PICK_NAME = 'Resume'; // 고르기 전 resume 카드의 제목 — deck 에서 이름 없는 세션 카드와 갈리게
 const FAR = Number.MAX_SAFE_INTEGER; // attach since — 이력은 iframe 이 그린다, 여기선 pending 만
+// 이 창의 표 — 카드 서비스의 stdio 는 같은 폴더를 연 모든 superlite 창에 방송된다. 요청 id 앞에 붙여 다른 창의 응답을 가려낸다 (ticket slcode-card-svc-token-dead)
+const WIN = Math.random().toString(36).slice(2, 8);
 
 // ---- 바이너리 자가 설치 (ticket slcode-plugin-selfinstall) — 순수 함수. export 는 slcode/test/plugin.test.ts 용
 // plugin.json binary {repo, version} 의 version 은 semver 조건: `1.2.3`(고정)·`^1.2.3`·`~1.2.3`(범위, 정식 release 만).
@@ -186,7 +189,7 @@ export function activate(api) {
 
   // ---- 프레임 (slcode 프로토콜과 같은 꼴)
   function request(c, method, params) {
-    const id = c.nextId++;
+    const id = `${WIN}.${c.nextId++}`;
     return new Promise((resolve, reject) => {
       c.pending.set(id, { resolve, reject });
       apiOf(c).services.send(SVC, { id, method, params }, { owner: ownerOf(c) }).catch((e) => { c.pending.delete(id); reject(e); });
@@ -200,7 +203,8 @@ export function activate(api) {
       handedOver(c);
       return;
     }
-    if (m.event) { onEvent(c, m.event, m.params); return; }
+    if (m.event) { onEvent(c, m.event, m.params); c.port?.postMessage(m); return; }
+    if (m.id !== undefined && c.fwd?.has(m.id)) { const id = c.fwd.get(m.id); c.fwd.delete(m.id); c.port?.postMessage({ ...m, id }); return; }
     if (m.id !== undefined && c.pending.has(m.id)) {
       const p = c.pending.get(m.id); c.pending.delete(m.id);
       m.error ? p.reject(new Error(m.error.message ?? 'error')) : p.resolve(m.result);
@@ -233,18 +237,23 @@ export function activate(api) {
     // state 는 {key, id} 만 — 보존 card 라 보관소에 적혀 모든 브라우저가 같이 본다. url(/svc 토큰)은 연결마다 새로 받는다
     if (c.ctx && c.savedId !== c.id) { c.savedId = c.id; c.ctx.setState({ key: c.key, id: c.id }); }
     applyTitle(c);
-    if (c.el && c.shown !== c.url) render(c); // 같은 주소면 iframe 을 다시 만들지 않는다 (다시 로드된다)
+    if (c.el && c.shown !== shownKey(c)) render(c); // 같은 주소면 iframe 을 다시 만들지 않는다 (다시 로드된다)
   }
+  /** iframe 이 무엇을 띄우는가 — 카드 모드 화면(web.files, 주소 없음)이면 'port', 아니면 /svc 주소 */
+  const shownKey = (c) => (c.web ? 'port' : c.url);
   function render(c) {
     const el = c.el; if (!el) return;
-    c.shown = c.url;
+    c.shown = shownKey(c);
     el.innerHTML = '';
     const wrap = document.createElement('div');
     wrap.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;background:var(--vscode-editor-background,#1e1e1e);color:var(--vscode-foreground,#ccc)';
     if (c.pick && !c.id) renderPicker(c, wrap);
-    else if (c.url) {
+    else if (c.web || c.url) {
       const f = document.createElement('iframe');
-      f.src = c.url; f.title = 'slcode';
+      f.title = 'slcode';
+      // 카드 모드 화면 (ticket slcode-card-svc-token-dead) — 주소 없이 serve 가 준 card.html 을 sandbox(출처 없음)로. 화면은 slcode.ready 로
+      // 포트를 청하고 그 포트로만 말한다. 모델 출력을 그리는 화면이라 superlite 화면에 닿지 않게 allow-same-origin 은 주지 않는다
+      if (c.web) { f.sandbox = 'allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals'; f.srcdoc = c.web.html; } else f.src = c.url;
       c.frame = f; // 링크 열기 요청(slcode.open)의 출처 확인
       f.allow = 'clipboard-read; clipboard-write';
       // 배경은 slcode 웹과 같은 색(시스템 라이트·다크) — 숨겼다 다시 보일 때 안쪽이 그려지기 전 흰 화면이 번쩍였다
@@ -316,6 +325,7 @@ export function activate(api) {
           // 연결이 끊기면 /svc 토큰도 폐기된다 — 다시 붙어 새 주소를 받는다 (세션 재접속·서비스 재기동). url 은 비운다: 그 사이 다시
           // 그리면 죽은 토큰 주소로 iframe 을 만들어 relay 의 404 본문이 보였다
           c.conn = null; c.attached = false; c.url = null; c.lost = true; dropped = true; badge(c);
+          portStatus(c, false); // 카드 모드 화면은 그대로 두고 끊겼다고만 — 다시 붙으면 같은 포트로 이어진다
           // 기다리던 응답(server.info·session.attach)은 이 연결로 오지 않는다 — 풀지 않으면 ensure 가 끝나지 않아 다시 붙지 못했다
           for (const p of c.pending.values()) p.reject(new Error('연결이 끊겼습니다'));
           c.pending.clear();
@@ -326,7 +336,10 @@ export function activate(api) {
           c.id = info.session; void remember(c);
           handedOver(c); // 다른 브라우저가 먼저 새 카드의 서비스를 띄웠다 — 소유권은 이미 넘어왔다
         }
-        c.url = await conn.webUrl(); applyUrl(c);
+        // 카드 모드 화면 파일 — 이 serve 가 고정한 것. 옛 serve(web.files 없음)는 /svc 주소로
+        const web = await request(c, 'web.files', {}).catch((e) => { if (dropped) throw e; return null; });
+        if (web) c.web = web; else { c.web = null; c.url = await conn.webUrl(); }
+        applyUrl(c); portStatus(c, true);
         void countLive();
         if (!c.attached) await attach(c); // 연결마다 한 번 — url·id 를 이미 알아도(새로고침 복원) 이벤트 구독은 새 연결에 걸어야 한다
       } catch (e) {
@@ -363,6 +376,45 @@ export function activate(api) {
     c.pending.clear();
   }
 
+  // ---- 카드 모드 화면의 포트 (ticket slcode-card-svc-token-dead) — 화면 ↔ 이 플러그인 ↔ 서비스 stdio. 화면이 (다시) 로드될 때마다 새 포트를 준다
+  // (브라우저가 숨은 iframe 을 다시 로드해도 스스로 살아난다). 화면 요청의 id 는 이 창의 표를 붙여 stdio 로 보내고, 응답은 원래 id 로 돌려준다
+  function openPort(c) {
+    c.port?.close();
+    const ch = new MessageChannel();
+    c.port = ch.port1; c.fwd = new Map(); c.portSeq = (c.portSeq ?? 0) + 1;
+    const gen = c.portSeq;
+    ch.port1.onmessage = (e) => {
+      const m = e.data;
+      if (m?.ui && typeof m.ui.key === 'string') { uiSet(m.ui.key, m.ui.value); return; }
+      if (!m || m.id === undefined || typeof m.method !== 'string') return;
+      if (!c.conn) { ch.port1.postMessage({ id: m.id, error: { code: 'closed', message: 'not connected' } }); return; }
+      const id = `${WIN}.p${gen}.${m.id}`;
+      c.fwd.set(id, m.id);
+      apiOf(c).services.send(SVC, { id, method: m.method, params: m.params }, { owner: ownerOf(c) }).catch((err) => { c.fwd.delete(id); ch.port1.postMessage({ id: m.id, error: { code: 'closed', message: String(err?.message ?? err) } }); });
+    };
+    c.frame.contentWindow.postMessage({ type: 'slcode.port', files: c.web.files, ui: uiAll() }, '*', [ch.port2]);
+    if (c.conn && c.web) ch.port1.postMessage({ status: { connected: true } });
+  }
+  // 카드 화면의 상태(사이드바 열림·inspect 남은 공간) — sandbox 화면 대신 이 superlite 페이지의 localStorage 에 (브라우저마다, 웹 모드와 같다)
+  const UI_PREFIX = 'slcode.card.';
+  const uiAll = () => {
+    const out = {};
+    try { const ls = globalThis.localStorage; for (let i = 0; i < ls.length; i++) { const k = ls.key(i); if (k?.startsWith(UI_PREFIX)) out[k.slice(UI_PREFIX.length)] = ls.getItem(k); } } catch {}
+    return out;
+  };
+  const uiSet = (k, v) => { try { globalThis.localStorage.setItem(UI_PREFIX + k, String(v)); } catch {} };
+  function portStatus(c, connected) {
+    if (!c.port) return;
+    if (!connected) { for (const id of c.fwd.values()) c.port.postMessage({ id, error: { code: 'closed', message: 'connection closed' } }); c.fwd.clear(); }
+    c.port.postMessage({ status: { connected } });
+  }
+  /** 화면이 다시 붙은 serve 가 자기를 낸 serve 와 다르다고 알렸다 — 연결마다 받아 둔 새 화면 파일(c.web)로 iframe 을 다시 만든다 */
+  function reloadWeb(c) {
+    if (!c.web) return;
+    c.port?.close(); c.port = null;
+    render(c);
+  }
+
   // ---- serve 교체 (ticket slcode-core-serve-split 2단계, 사용자 확정 2026-10-14·2026-10-19) — 카드 화면의 [업데이트]·[restart required] 가 postMessage 로 부른다.
   // serve 의 stdio 를 거치지 않는 것은 그 카드를 띄운 모든 브라우저의 플러그인이 stdio 메시지를 받아 핸드오프가 여러 번 일어나기 때문이다
   /** [업데이트] — 지금 쓸 slcode(받기·원격 올리기 포함)에 version·build 를 물어 카드 serve 의 것(화면이 보낸 값)과 견준다.
@@ -397,7 +449,7 @@ export function activate(api) {
    *  state·shared 에 남겨 새로고침·다른 브라우저에서도 다시 붙지 않는다. 옛 superlite 는 플러그인 카드를 닫지 못해 안내만 남는다 */
   async function moveOut(a) {
     const at = apiOf(a), owner = ownerOf(a), ctx = a.ctx;
-    a.moved = true; a.url = null; a.waits.clear();
+    a.moved = true; a.url = null; a.web = null; a.waits.clear();
     detach(a); render(a); badge(a);
     ctx?.setState({ key: a.key, id: a.id, moved: true });
     void ctx?.shared?.set('moved', true).catch(() => {});
@@ -418,7 +470,7 @@ export function activate(api) {
       if (st.takeover && c.takeover === undefined) c.takeover = true; // 핸드오프의 새 카드 (다른 브라우저가 먼저 mount 해도 소유권을 가져온다)
       c.ctx = ctx; c.el = el; c.cardId = ctx.card; c.savedId = st.id ?? null;
       // 다른 브라우저에서 옮겨졌다 (moveOut 의 shared) — 이 창의 연결도 끊고 안내만
-      c.unshared?.(); c.unshared = ctx.shared?.on((k, v) => { if (k === 'moved' && v && !c.moved) { c.moved = true; c.url = null; detach(c); render(c); badge(c); } }) ?? null;
+      c.unshared?.(); c.unshared = ctx.shared?.on((k, v) => { if (k === 'moved' && v && !c.moved) { c.moved = true; c.url = null; c.web = null; detach(c); render(c); badge(c); } }) ?? null;
       c.onMount?.(); c.onMount = null;
       el.style.position = 'relative'; el.style.height = '100%';
       render(c); applyTitle(c); badge(c);
@@ -591,7 +643,7 @@ export function activate(api) {
       const [bin, dir] = await Promise.all([resolveBin(), setting('dir', '')]);
       const r = await api.proc.run(`${bin.cmd} close ${shq(id)} --force${dir ? ` --dir ${shq(dir)}` : ''}`);
       if (r.code !== 0) throw new Error(r.stderr.trim() || `exit ${r.code}`);
-      for (const c of mine) { c.state = 'exited'; c.url = null; c.waits.clear(); badge(c); render(c); }
+      for (const c of mine) { c.state = 'exited'; c.url = null; c.web = null; c.waits.clear(); badge(c); render(c); }
     } catch (e) { api.notify('error', `slcode: ${e?.message ?? e}`); }
     finally { for (const c of mine) c.closing = false; }
     void renderList(el);
@@ -641,6 +693,8 @@ export function activate(api) {
   const onOpen = (e) => {
     const c = [...cards.values()].find((x) => x.frame?.contentWindow === e.source);
     if (!c) return;
+    if (e.data?.type === 'slcode.ready' && c.web) { openPort(c); return; }
+    if (e.data?.type === 'slcode.reload') { reloadWeb(c); return; }
     const host = HOST[e.data?.type];
     if (host) {
       const answer = (o) => e.source.postMessage({ re: e.data.id, ...o }, '*');

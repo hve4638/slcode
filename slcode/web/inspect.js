@@ -50,7 +50,7 @@ export function responseOf(rec) {
 }
 
 /** h: app.js 의 요소 생성기, rpc: transport.request, ctxMax: 지금 세션의 컨텍스트 창 크기(session.status, 모르면 null), copyBtn(text): 복사 아이콘 버튼 */
-export function inspectDialog(h, rpc, ctxMax, copyBtn) {
+export function inspectDialog(h, rpc, ctxMax, copyBtn, store) {
   const title = h('h2', {}, 'inspect');
   const list = h('div', { class: 'ilist' });
   const tabs = h('div', { class: 'itabs' });
@@ -61,7 +61,7 @@ export function inspectDialog(h, rpc, ctxMax, copyBtn) {
   dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); }); // 바깥(backdrop)을 누르면 닫는다
   const dim = (t) => h('div', { class: 'dim' }, t);
   const errEl = (t) => h('div', { class: 'err' }, t);
-  let sid = null, tab = '요약', gen = 0, showFree = localStorage.getItem(FREE_KEY) !== 'hide';
+  let sid = null, tab = '요약', gen = 0, showFree = store.get(FREE_KEY) !== 'hide';
   const recs = new Map();
 
   async function open(id, end) {
@@ -256,7 +256,7 @@ export function inspectDialog(h, rpc, ctxMax, copyBtn) {
         ...Object.entries(sums).map(([cat, n]) => h('span', {}, h('i', { class: `seg k-${cat}` }), `${CATS[cat]} ${num(n)} (${pct(n)})`)),
         free ? h('span', {}, h('i', { class: 'seg k-free' }), `남은 공간 ${num(max - total)} (${pct(max - total)})`) : null,
         h('span', { class: 'dim' }, `합계 ${num(total)} / ${num(max)} 토큰${u?.input_tokens != null ? '' : ' (응답이 없어 길이로 추정)'}`),
-        max > total ? h('button', { class: 'ghost freebtn', onclick: () => { showFree = !showFree; localStorage.setItem(FREE_KEY, showFree ? 'show' : 'hide'); draw(); } }, showFree ? '남은 공간 숨기기' : '남은 공간 보기') : null));
+        max > total ? h('button', { class: 'ghost freebtn', onclick: () => { showFree = !showFree; store.set(FREE_KEY, showFree ? 'show' : 'hide'); draw(); } }, showFree ? '남은 공간 숨기기' : '남은 공간 보기') : null));
     };
     draw();
     const sent = rec.reqFull ? parse(rec.reqBody) : null;

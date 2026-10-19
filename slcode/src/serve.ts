@@ -33,7 +33,7 @@ const TYPES: Record<string, string> = {
 /** 화면 연결(웹·stdio)에서는 부를 수 없는 제어 메서드 — 소유권·웹 주소 등록(토큰이 붙은 url 을 돌려준다)·core 교체는 serve 의 제어 연결만 */
 const CONTROL_ONLY = new Set(['core.own', 'serve.register', 'core.retire']);
 /** serve 가 답하는 메서드 (ServeMethods) — core 로 넘기지 않는다 */
-const SERVE_METHODS = new Set(['settings.get', 'settings.set', 'serve.info', 'update.run', 'serve.restart']);
+const SERVE_METHODS = new Set(['settings.get', 'settings.set', 'serve.info', 'update.run', 'serve.restart', 'web.files', 'file.get']);
 /** 프레임의 요청·응답 id — 앞머리만 본다 (첨부가 실린 큰 프레임을 해석하지 않게). 화면·core 는 id 를 맨 앞에 쓴다 ({id, method, params}·{id, result}). 아니면 null */
 const idOf = (line: string): string | null => /^\{"id":(-?\d+|"(?:[^"\\]|\\.)*")[,}]/.exec(line)?.[1] ?? null;
 /** 인증 전 줄 세워 둘 수 있는 요청 수 — 인증 안 된 원격 클라이언트가 serve 메모리를 키우지 못하게 */
@@ -97,13 +97,46 @@ export function staticHandler(req: http.IncomingMessage, res: http.ServerRespons
   const body = web.get(name);
   if (!body) { res.writeHead(404); res.end('not found'); return; }
   res.writeHead(200, { 'content-type': TYPES[path.extname(name)] ?? 'application/octet-stream', 'cache-control': 'no-cache' });
-  if (dir && name === 'index.html') {
-    const { theme } = readSettings(dir, kind);
-    const attr = (/^[\w-]+$/.test(theme) ? ` data-theme="${theme}"` : '') + ` data-version="${VERSION}" data-build="${BUILD}" data-kind="${kind}"`;
-    res.end(body.toString('utf8').replace('<html lang="ko">', `<html lang="ko"${attr}>`));
-    return;
-  }
+  if (dir && name === 'index.html') { res.end(withPageAttrs(body.toString('utf8'), dir, kind)); return; }
   res.end(body);
+}
+
+/** 화면 html 의 <html> 에 테마·serve 버전·빌드·입구를 넣는다 (staticHandler 의 index.html, 카드 모드 web.files 의 card.html) */
+function withPageAttrs(html: string, dir: string, kind: SettingsKind): string {
+  const { theme } = readSettings(dir, kind);
+  const attr = (/^[\w-]+$/.test(theme) ? ` data-theme="${theme}"` : '') + ` data-version="${VERSION}" data-build="${BUILD}" data-kind="${kind}"`;
+  return html.replace('<html lang="ko">', `<html lang="ko"${attr}>`);
+}
+
+/** 카드 모드 화면 파일 (ticket slcode-card-svc-token-dead) — superlite 플러그인이 stdio 로 받아 주소 없는 iframe(srcdoc)에 넣는다.
+ *  html 은 card.html(테마·버전을 넣은), files 는 그 밖의 글 파일 전부 (모듈·css) */
+export function webFiles(web: Map<string, Buffer>, dir: string, kind: SettingsKind): { html: string; files: Record<string, string> } {
+  const files: Record<string, string> = {};
+  for (const [name, body] of web) if (/\.(js|css)$/.test(name)) files[name] = body.toString('utf8');
+  return { html: withPageAttrs(web.get('card.html')?.toString('utf8') ?? '', dir, kind), files };
+}
+
+/** 답변 속 로컬 파일 경로 → 실제 파일과 content-type. Codex 꼴 줄 번호(a.ts:12)는 그 경로가 없으면 떼고. 없으면 null */
+function localFile(want: string): { path: string; type: string } | null {
+  const p = [want, want.replace(/:\d+(:\d+)?$/, '')].find((c) => { try { return fs.statSync(c).isFile(); } catch { return false; } });
+  if (!p) return null;
+  let type = TYPES[path.extname(p).toLowerCase()];
+  if (!type) { // 소스·로그 같은 글은 브라우저에 보이게, 나머지는 내려받기
+    const head = Buffer.alloc(8192), fd = fs.openSync(p, 'r');
+    try { type = head.subarray(0, fs.readSync(fd, head, 0, head.length, 0)).includes(0) ? 'application/octet-stream' : 'text/plain; charset=utf-8'; } finally { fs.closeSync(fd); }
+  }
+  return { path: p, type };
+}
+
+/** 카드 모드의 file (file.get) — 화면이 포트로 받아 blob 주소로 그린다. 범위는 fileHandler 와 같다 */
+const FILE_GET_MAX = 32 * 1024 * 1024;
+export function fileGet(want: unknown): { mediaType: string; size: number; data: string } {
+  if (typeof want !== 'string' || !path.isAbsolute(want)) throw new CoreError(ERR.badRequest, 'absolute path required');
+  const f = localFile(want);
+  if (!f) throw new CoreError(ERR.badRequest, 'not found');
+  const size = fs.statSync(f.path).size;
+  if (size > FILE_GET_MAX) throw new CoreError(ERR.badRequest, `file too large (${size} bytes)`);
+  return { mediaType: f.type, size, data: fs.readFileSync(f.path).toString('base64') };
 }
 
 /** 로컬 파일 — 답변의 마크다운 링크·이미지가 가리키는 절대 경로를 `file?path=` 로 (ticket slcode-append-system-prompt, 사용자 결정 2026-10-17).
@@ -117,13 +150,9 @@ export function fileHandler(req: http.IncomingMessage, res: http.ServerResponse,
   const want = u.searchParams.get('path') ?? '';
   if (!path.isAbsolute(want)) { end(400, 'absolute path required'); return true; }
   // Codex 는 파일 링크에 줄 번호를 붙인다 ([a.ts:12](/abs/a.ts:12)) — 그 경로가 없으면 떼고 다시
-  const p = [want, want.replace(/:\d+(:\d+)?$/, '')].find((c) => { try { return fs.statSync(c).isFile(); } catch { return false; } });
-  if (!p) { end(404, 'not found'); return true; }
-  let type = TYPES[path.extname(p).toLowerCase()];
-  if (!type) { // 소스·로그 같은 글은 브라우저에 보이게, 나머지는 내려받기
-    const head = Buffer.alloc(8192), fd = fs.openSync(p, 'r');
-    try { type = head.subarray(0, fs.readSync(fd, head, 0, head.length, 0)).includes(0) ? 'application/octet-stream' : 'text/plain; charset=utf-8'; } finally { fs.closeSync(fd); }
-  }
+  const f = localFile(want);
+  if (!f) { end(404, 'not found'); return true; }
+  const { path: p, type } = f;
   // 같은 출처로 열린 html·svg 가 스크립트로 화면의 토큰(localStorage)이나 /ws 에 닿지 못하게 sandbox
   res.writeHead(200, { 'content-type': type, 'content-security-policy': 'sandbox', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'cache-control': 'no-cache' });
   fs.createReadStream(p).on('error', () => res.destroy()).pipe(res);
@@ -215,6 +244,8 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
         case 'update.run':
           if (kind !== 'web') throw new CoreError(ERR.badRequest, 'update.run is for the web entry — a card asks the plugin');
           return checkUpdate();
+        case 'web.files': return webFiles(web, P.dir, kind);
+        case 'file.get': return fileGet((m.params as { path?: unknown } | undefined)?.path);
         case 'serve.restart':
           if (!opts.onRestart) throw new CoreError(ERR.badRequest, 'this serve cannot restart itself');
           await opts.onRestart();

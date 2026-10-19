@@ -243,6 +243,11 @@ export type ServeMethods = {
   'update.run': { params: Record<string, never>; result: UpdateCheck };
   /** [restart required] — 웹 모드 진입 프로세스가 같은 포트로 새 serve 를 띄우고 이 serve 를 내린다. 새 serve 가 준비된 뒤 답한다(못 뜨면 그 사유로 오류) */
   'serve.restart': { params: Record<string, never>; result: { ok: true } };
+  /** 카드 모드 화면 파일 (ticket slcode-card-svc-token-dead) — superlite 플러그인이 받아 주소 없는 sandbox iframe 에 넣는다. html 은 card.html
+   *  (index.html 처럼 data-theme·version·build·kind 를 넣은), files 는 web/ 의 .js·.css 전부 (상대 경로 → 내용) */
+  'web.files': { params: Record<string, never>; result: { html: string; files: Record<string, string> } };
+  /** 카드 모드의 로컬 파일 — 웹의 file?path= 와 같은 범위(절대 경로, 줄 번호 꼬리는 없으면 뗀다). 본문은 base64, 32MB 까지 */
+  'file.get': { params: { path: string }; result: { mediaType: string; size: number; data: string } };
 };
 
 /** 새 버전 확인 결과 — restart-required 면 새 것의 version·build, failed 면 reason */

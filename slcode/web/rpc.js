@@ -1,6 +1,7 @@
 // 캐리어 추상 — 프런트는 { request, onEvent, onStatus } 만 본다.
-// WsTransport: 웹 모드. 끊기면 1s→5s 백오프로 재접속하고 core.auth 를 다시 한다. superlite 카드 모드는 같은 표면을
-// apps.connect(또는 후속 background-service 통로) 위에 구현한다.
+// WsTransport: 웹 모드. 끊기면 1s→5s 백오프로 재접속하고 core.auth 를 다시 한다.
+// PortTransport: superlite 카드 모드 (ticket slcode-card-svc-token-dead). 카드 플러그인(main.js)이 건넨 MessagePort 로만 말하고, 플러그인이
+// 서비스 stdio 로 중계한다 — 주소·토큰이 없다. 연결 상태는 플러그인이 {status} 로 알린다.
 
 export class WsTransport {
   constructor(url, token) {
@@ -52,4 +53,29 @@ export class WsTransport {
   onEvent(h) { this.eventHandlers.add(h); return () => this.eventHandlers.delete(h); }
   onStatus(h) { this.statusHandlers.add(h); if (this.ready) h({ connected: true, first: true }); return () => this.statusHandlers.delete(h); }
   close() { this.closed = true; this.ws?.close(); }
+}
+
+export class PortTransport {
+  constructor(port) {
+    this.port = port; this.nextId = 1; this.pending = new Map(); this.eventHandlers = new Set(); this.statusHandlers = new Set();
+    this.ready = false; this.first = true;
+    port.onmessage = (e) => {
+      const m = e.data;
+      if (m?.status) {
+        const was = this.ready; this.ready = !!m.status.connected;
+        if (!this.ready) { for (const p of this.pending.values()) p.reject(Object.assign(new Error('connection closed'), { code: 'closed' })); this.pending.clear(); }
+        if (this.ready !== was) { for (const h of this.statusHandlers) h({ connected: this.ready, first: this.ready && this.first }); if (this.ready) this.first = false; }
+      } else if (m?.id !== undefined && this.pending.has(m.id)) { const p = this.pending.get(m.id); this.pending.delete(m.id); m.error ? p.reject(Object.assign(new Error(m.error.message), { code: m.error.code })) : p.resolve(m.result); }
+      else if (m?.event) for (const h of this.eventHandlers) h(m);
+    };
+  }
+  request(method, params) {
+    if (!this.ready) return Promise.reject(Object.assign(new Error('not connected'), { code: 'closed' }));
+    const id = this.nextId++;
+    this.port.postMessage({ id, method, params });
+    return new Promise((resolve, reject) => this.pending.set(id, { resolve, reject }));
+  }
+  onEvent(h) { this.eventHandlers.add(h); return () => this.eventHandlers.delete(h); }
+  onStatus(h) { this.statusHandlers.add(h); if (this.ready) { h({ connected: true, first: true }); this.first = false; } return () => this.statusHandlers.delete(h); }
+  close() { this.port.close(); }
 }

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>slcode</title>
+<style id="css"></style>
+</head>
+<body>
+<div id="root"></div>
+<script type="module">
+// 카드 모드 캐리어 (ticket slcode-card-svc-token-dead). superlite 카드 플러그인이 이 파일을 serve 의 web.files 로 받아 주소 없는 sandbox
+// iframe(srcdoc)에 넣는다. 준비되면 slcode.ready 를 알리고, 플러그인이 MessagePort 와 나머지 화면 파일(모듈·css)을 넘긴다.
+// 모듈은 상대 경로 import 를 blob 주소로 바꿔 잇는다 — srcdoc 엔 상대 경로가 풀릴 주소가 없다.
+// 화면 상태(사이드바 열림 등)는 출처가 없어 localStorage 를 못 쓴다 — 플러그인이 넘긴 값(ui)으로 시작하고, 바꾸면 포트로 {ui} 를 보내 플러그인이 저장한다.
+addEventListener('message', async function boot(e) {
+  if (e.source !== parent || e.data?.type !== 'slcode.port' || !e.ports[0]) return;
+  removeEventListener('message', boot);
+  const files = e.data.files;
+  document.getElementById('css').textContent = files['style.css'] ?? '';
+  const urls = {};
+  const mod = (name) => (urls[name] ??= URL.createObjectURL(new Blob([files[name].replace(/from '\.\/([\w.-]+\.js)'/g, (_, d) => `from '${mod(d)}'`)], { type: 'text/javascript' })));
+  const { PortTransport } = await import(mod('rpc.js'));
+  const { setNoFileUrls } = await import(mod('markdown.js'));
+  const { mountAgentFront } = await import(mod('app.js'));
+  setNoFileUrls();
+  const port = e.ports[0], ui = e.data.ui ?? {};
+  const transport = new PortTransport(port);
+  const store = { get: (k) => ui[k] ?? null, set: (k, v) => { ui[k] = v; port.postMessage({ ui: { key: k, value: v } }); } };
+  const root = document.getElementById('root');
+  mountAgentFront(root, transport, { store, reload: () => parent.postMessage({ type: 'slcode.reload' }, '*') }); // serve 가 바뀌었다 — 플러그인이 새 화면 파일로 다시 그린다
+  // 답변 속 로컬 이미지 — 주소가 없으니 file.get 으로 받아 blob 주소로. 스트리밍 중 다시 그려도 같은 경로는 한 번만 받는다
+  const blobs = new Map();
+  const fill = (img) => {
+    const p = img.parentElement?.dataset.open;
+    if (!p) return;
+    if (!blobs.has(p)) blobs.set(p, transport.request('file.get', { path: p }).then(async (r) => URL.createObjectURL(await (await fetch(`data:${r.mediaType};base64,${r.data}`)).blob()), () => { blobs.delete(p); return null; }));
+    blobs.get(p).then((u) => { if (u && !img.src) img.src = u; });
+  };
+  const scan = () => { for (const img of root.querySelectorAll('a[data-open] > img:not([src])')) fill(img); };
+  new MutationObserver(scan).observe(root, { childList: true, subtree: true });
+  transport.onStatus((s) => { if (s.connected) scan(); }); // 끊긴 사이 못 받은 이미지
+});
+parent.postMessage({ type: 'slcode.ready' }, '*');
+</script>
+</body>
+</html>
