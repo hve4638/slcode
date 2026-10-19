@@ -82,26 +82,28 @@ test('inspect codex: WebSocket 을 그대로 잇고 response.create 하나를 �
     assert.equal(a.path, `${CODEX_ROUTE}/responses`);
     assert.equal(a.model, 'fake-model');
     assert.equal(a.error, undefined);
-    assert.equal(a.reqFull, undefined, '첫 요청은 그대로가 전체');
+    assert.equal(a.requestFull, undefined, '첫 요청은 그대로가 전체');
     assert.equal(a.reqHeaders.authorization, 'Bearer …(redacted)');
     assert.equal(a.reqHeaders['chatgpt-account-id'], '…(redacted)');
-    assert.match(a.resBody, /^event: response.created\ndata: /);
-    assert.deepEqual(JSON.parse(b.reqBody).input, [{ type: 'function_call_output', call_id: 'c1', output: 'ok' }], 'reqBody 는 보낸 그대로');
-    const full = JSON.parse(b.reqFull!);
+    assert.match(a.raw!.res, /^event: response.created\ndata: /);
+    assert.deepEqual(JSON.parse(b.raw!.req).input, [{ type: 'function_call_output', call_id: 'c1', output: 'ok' }], 'raw 는 보낸 그대로');
+    assert.deepEqual(JSON.parse(b.request), JSON.parse(b.raw!.req), 'request 도 보낸 메시지');
+    const full = JSON.parse(b.requestFull!);
     assert.deepEqual(full.input.map((x: any) => x.type), ['message', 'message', 'function_call_output'], '앞 input + 서버가 낸 항목 + 증분');
     assert.equal(full.input[1].content[0].text, 'reply r1');
-    const res = sseMessage(b.resBody)!;
+    const res = JSON.parse(b.response);
+    assert.deepEqual(res, sseMessage(b.raw!.res), '파싱된 응답은 이벤트를 메시지 하나로');
     assert.equal(res.id, 'r2');
     assert.equal(res.output[0].content[0].text, 'reply r2', '끝 이벤트의 output 이 비면 모은 항목');
     assert.equal(res.usage.input_tokens_details.cached_tokens, 80);
     assert.ok(proxy.seen.has(`${CODEX_ROUTE}/responses`));
 
-    // compact 뒤에도 전체 요청과 응답 메시지가 남는다
-    store.compactOldest(5);
+    // raw 를 지운 뒤에도 전체 요청과 응답 메시지가 남는다
+    store.compact(Date.now() + 1);
     const c = store.read(2)!;
-    assert.equal(c.compacted, true);
-    assert.deepEqual(JSON.parse(c.reqFull!), full);
-    assert.equal(JSON.parse(c.resBody).output[0].content[0].text, 'reply r2');
+    assert.equal(c.raw, undefined);
+    assert.deepEqual(JSON.parse(c.requestFull!), full);
+    assert.equal(JSON.parse(c.response).output[0].content[0].text, 'reply r2');
 
     // 끊으면 열린 호출은 오류로 닫힌다
     ws.send(JSON.stringify({ type: 'response.create', model: 'x', input: [] }));
@@ -128,10 +130,10 @@ test('inspect codex: HTTP 요청 본문의 zstd 는 업스트림엔 그대로, �
     assert.deepEqual(Buffer.from(up.seen[0].body!, 'base64'), z, '압축된 바이트를 그대로');
     await until(() => store.read(1) !== null);
     const rec = store.read(1)!;
-    assert.equal(rec.reqBody, body);
+    assert.equal(rec.raw!.req, body);
     assert.equal(rec.model, 'fake-model');
     assert.equal(rec.reqBytes, z.length);
-    assert.equal(sseMessage(rec.resBody)!.usage.input_tokens, 5);
+    assert.equal(JSON.parse(rec.response).usage.input_tokens, 5);
   } finally {
     await proxy.close();
     up.wss.close(); up.srv.close();
@@ -192,7 +194,7 @@ test('inspect codex: 프레임 읽기 — 마스크를 풀고, 청크에 걸치�
   assert.deepEqual(got, ['hello', big]);
 });
 
-test('inspect codex: req_full 칸이 없던 DB 도 열어 쓴다', { skip: !sqlite() }, () => {
+test('inspect codex: req_full 칸이 없던 옛 DB 도 열어 새 꼴로 쓴다', { skip: !sqlite() }, () => {
   const dir = tmp();
   const db = new (sqlite()!.DatabaseSync)(path.join(dir, 'inspect.db'));
   db.exec(`CREATE TABLE calls (n INTEGER PRIMARY KEY, at INTEGER NOT NULL, ms INTEGER NOT NULL, method TEXT NOT NULL, path TEXT NOT NULL, model TEXT, status INTEGER,
@@ -201,7 +203,7 @@ test('inspect codex: req_full 칸이 없던 DB 도 열어 쓴다', { skip: !sqli
   db.close();
   const store = InspectStore.open(dir);
   store.add({ n: 1, at: 1, ms: 1, method: 'WS', path: '/r', model: null, status: 101, reqBytes: 1, resBytes: 1, reqHeaders: {}, reqBody: '{}', reqFull: '{"input":[]}', resHeaders: {}, resBody: '' });
-  assert.equal(store.read(1)!.reqFull, '{"input":[]}');
+  assert.equal(store.read(1)!.requestFull, '{"input":[]}');
   store.close();
 });
 
@@ -233,7 +235,7 @@ test('inspect codex: core 가 app-server 에 proxy 주소를 주고 WebSocket �
     assert.deepEqual(calls.map((x) => x.method), ['WS', 'WS'], `WebSocket 호출 둘: ${JSON.stringify(calls)}`);
     assert.ok(up.seen.every((x) => x.path === '/gw/responses'), '사용자가 정한 openai_base_url 로 넘긴다');
     const rec = await c.request('session.inspectCall', { id, n: calls[1].n });
-    assert.equal(JSON.parse(rec.reqFull!).input.length, 3);
+    assert.equal(JSON.parse(rec.requestFull!).input.length, 3);
 
     await c.request('session.setInspect', { id, on: false });
     assert.equal(stored().meta.inspect, false);

@@ -5,12 +5,12 @@
 //   중계 연결        화면 연결(WS·stdio·서비스 웹) 하나마다 세션 소켓 연결 하나. 프레임은 해석하지 않고 그대로 넘긴다
 //                    (화면 설정 settings.get·set 만 serve 가 답한다 — 설정은 세션이 아니라 입구(웹·superlite)의 것, ticket slcode-web-settings)
 // 루프백 밖 웹은 core.auth 가 통과할 때까지 다른 요청을 막고 core 의 프레임도 넘기지 않는다 (토큰 검사는 core).
-// 세션 파일은 건드리지 않는다. 직접 다루는 파일은 자기 설치 폴더의 web/ 정적 파일(시작 때 한 번 읽어 고정)과 상태 폴더의 settings-*.json(읽기·쓰기·감시)뿐이다.
+// 세션 파일은 inspect 캐시 정리(꺼진 세션의 inspect/) 말고는 건드리지 않는다. 직접 다루는 파일은 자기 설치 폴더의 web/ 정적 파일(시작 때 한 번 읽어 고정)과 상태 폴더의 settings-*.json(읽기·쓰기·감시)뿐이다.
 // 수명: 소유자 serve 가 닫히면(Ctrl-C·SIGTERM) session.close 를 보내고 core 가 끝나기를 기다린다. core 가 끝나면 serve 도 끝난다.
 // attach 면 이미 떠 있는 core 에 붙는 중계일 뿐이다 (소유자 아님 — superlite 카드가 떠 있는 세션에 붙는 길). stdin 이 닫히면 끝난다.
 // attach.takeover 면 떠 있는 core 의 소유권을 빼앗는다 — 카드 핸드오프의 새 카드. 그 뒤로는 소유자 serve 와 같다.
 // 웹 모드(터미널의 slcode new)에서는 진입 프로세스(entry.ts)가 포트를 쥐고 들어온 연결을 넘긴다(feed) — 이 serve 는 그 자식이고 소유자가 아니다.
-// serve 가 답하는 것: settings.get·set(화면 설정), serve.info·update.run·serve.restart(serve 교체, 2단계) — 그 밖은 core 로 그대로 넘긴다.
+// serve 가 답하는 것: settings.get·set(화면 설정), serve.info·update.run·serve.restart(serve 교체, 2단계), inspect.usage·clean(inspect 캐시 정리) — 그 밖은 core 로 그대로 넘긴다.
 import http from 'node:http';
 import fs from 'node:fs';
 import net from 'node:net';
@@ -23,6 +23,7 @@ import { closedSessions, isLoopback, spawnCore } from './live.js';
 import { readSettings, watchSettings, writeSettings } from './settings.js';
 import { CoreError, ERR, FILES, type SessionInfo, type SettingsKind, type SettingsPatch, type UpdateCheck } from './protocol.js';
 import { inspectBlocked } from './inspect.js';
+import { cleanInspect, inspectUsage } from './inspectDb.js';
 
 export const WEB_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'web');
 const TYPES: Record<string, string> = {
@@ -33,7 +34,7 @@ const TYPES: Record<string, string> = {
 /** 화면 연결(웹·stdio)에서는 부를 수 없는 제어 메서드 — 소유권·웹 주소 등록(토큰이 붙은 url 을 돌려준다)·core 교체는 serve 의 제어 연결만 */
 const CONTROL_ONLY = new Set(['core.own', 'serve.register', 'core.retire']);
 /** serve 가 답하는 메서드 (ServeMethods) — core 로 넘기지 않는다 */
-const SERVE_METHODS = new Set(['settings.get', 'settings.set', 'serve.info', 'update.run', 'serve.restart', 'web.files', 'file.get']);
+const SERVE_METHODS = new Set(['settings.get', 'settings.set', 'serve.info', 'update.run', 'serve.restart', 'inspect.usage', 'inspect.clean', 'web.files', 'file.get']);
 /** 프레임의 요청·응답 id — 앞머리만 본다 (첨부가 실린 큰 프레임을 해석하지 않게). 화면·core 는 id 를 맨 앞에 쓴다 ({id, method, params}·{id, result}). 아니면 null */
 const idOf = (line: string): string | null => /^\{"id":(-?\d+|"(?:[^"\\]|\\.)*")[,}]/.exec(line)?.[1] ?? null;
 /** 인증 전 줄 세워 둘 수 있는 요청 수 — 인증 안 된 원격 클라이언트가 serve 메모리를 키우지 못하게 */
@@ -233,7 +234,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
   /** ServeMethods 면 답하고 true — 메서드 이름이 들어 있을 때만 해석한다 */
   function serveCall(line: string, send: (line: string) => void, kind: SettingsKind): boolean {
     if (![...SERVE_METHODS].some((n) => line.includes(`"${n}"`))) return false;
-    let m: { id?: unknown; method?: unknown; params?: { settings?: SettingsPatch } };
+    let m: { id?: unknown; method?: unknown; params?: { settings?: SettingsPatch; what?: unknown } };
     try { m = JSON.parse(line); } catch { return false; }
     if (typeof m?.method !== 'string' || !SERVE_METHODS.has(m.method)) return false;
     const answer = async () => {
@@ -250,6 +251,13 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
           if (!opts.onRestart) throw new CoreError(ERR.badRequest, 'this serve cannot restart itself');
           await opts.onRestart();
           return { ok: true };
+        // inspect 캐시 정리 (ticket slcode-inspect-storage, 사용자 확정 2026-10-20) — 상태 폴더의 꺼진 세션 inspect/ 만. 입구와 상관없다
+        case 'inspect.usage': return inspectUsage(P.sessionsDir);
+        case 'inspect.clean': {
+          const what = m.params?.what;
+          if (what !== 'old' && what !== 'compact' && what !== 'all') throw new CoreError(ERR.badRequest, 'inspect.clean what must be old, compact or all');
+          return cleanInspect(P.sessionsDir, what, Date.now(), log);
+        }
       }
     };
     answer().then((result) => send(JSON.stringify({ id: m.id, result })), (e) => send(JSON.stringify({ id: m.id, error: { code: (e as CoreError).code, message: (e as Error).message } })));

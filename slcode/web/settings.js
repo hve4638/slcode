@@ -1,4 +1,4 @@
-// 화면 설정 — 테마·context 경고 (ticket slcode-web-settings, 사용자 확정 2026-10-16. 글꼴 고르기는 사용자가 뺐다)·새 세션 inspect (ticket slcode-inspect-default-on).
+// 화면 설정 — 테마·context 경고 (ticket slcode-web-settings, 사용자 확정 2026-10-16. 글꼴 고르기는 사용자가 뺐다)·새 세션 inspect (ticket slcode-inspect-default-on)·inspect 캐시 정리 (ticket slcode-inspect-storage).
 // 값은 상태 폴더에 입구마다 한 벌: 브라우저로 연 slcode 와 superlite 안의 slcode 탭이 따로 쓴다. 어느 벌인지는 serve 가 연결의 입구로 정하므로
 // 이 파일은 모른다. serve 가 읽고 쓰고(settings.get·set), 파일이 바뀌면 같은 입구의 떠 있는 화면 모두에 settings.changed.
 // 브라우저 저장소(localStorage)엔 두지 않는다. 고르면 바로 저장되고 모든 화면이 settings.changed 로 바뀐다 — 저장 버튼이 없다.
@@ -17,6 +17,14 @@ const CATS = [['light', '라이트'], ['dark', '다크'], ['other', '기타']];
 /** serve 의 DEFAULT_SETTINGS 와 같다 — 옛 serve(settings.get 이 없다)에 붙었을 때 이것으로 그린다 */
 export const DEFAULTS = { theme: 'system', context: { warn: true, yellow: 30, red: 50 }, inspect: false };
 
+/** 바깥(배경)을 누르면 닫는다 — 누른 곳과 뗀 곳이 둘 다 배경일 때만. click 은 둘의 공통 조상에서 나므로, 창 안에서 끌다가 밖에서 떼도 target 이 dialog 라 닫혔다 (사용자 2026-10-20) */
+export function closeOnBackdrop(dlg) {
+  let down = null, up = null;
+  dlg.addEventListener('pointerdown', (e) => { down = e.target; });
+  dlg.addEventListener('pointerup', (e) => { up = e.target; });
+  dlg.addEventListener('click', (e) => { if (e.target === dlg && down === dlg && up === dlg) dlg.close(); });
+}
+
 const known = (id) => (THEMES.some((x) => x.id === id) ? id : 'system');
 
 /** 문서에 입힌다 — <html data-theme>. 모르는 id(손으로 고친 파일·새 버전이 쓴 값)는 system */
@@ -29,11 +37,21 @@ export function ctxLevel(pct, c) {
   return p < c.yellow ? 'ok' : p < c.red ? 'warn' : 'err';
 }
 
+const size = (n) => (n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(2)} GB` : n >= 1048576 ? `${(n / 1048576).toFixed(n >= 100 * 1048576 ? 0 : 1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`);
+/** 캐시 정리 줄 — what, 이름, 버튼, 미리보기(InspectUsage) → [지울 것이 있는가, 이름 아래 양, 확인 창 물음 (세션 종료처럼 한 줄 — 사용자 2026-10-20)] */
+const CLEANS = [
+  ['old', '오래된 캐시', '삭제', (u) => [u.old.sessions > 0, `세션 ${u.old.sessions}개 · ${size(u.old.bytes)}`, `오래된 캐시 ${size(u.old.bytes)} 를 삭제할까요?`]],
+  ['compact', 'raw 압축', '압축', (u) => [u.compact.calls > 0, `raw 호출 ${u.compact.calls}개 · ${size(u.compact.bytes)}`, `raw ${size(u.compact.bytes)} 를 압축할까요?`]],
+  ['all', '모든 캐시', '삭제', (u) => [u.all.sessions > 0, `세션 ${u.all.sessions}개 · ${size(u.all.bytes)}`, `캐시 ${size(u.all.bytes)} 를 모두 삭제할까요?`]],
+];
+
 /** 설정 창 — <dialog>. set(patch) 는 settings.set 을 부르고, 바뀐 값은 settings.changed 로 와서 update 가 다시 그린다.
- *  end 는 세션 종료 (확인 창에서 '종료'를 눌렀을 때). h 는 app.js 의 요소 도우미 */
-export function settingsDialog(h, set, end) {
+ *  end 는 세션 종료 (확인 창에서 '종료'를 눌렀을 때), rpc 는 serve 요청 (inspect 캐시). h 는 app.js 의 요소 도우미 */
+export function settingsDialog(h, set, end, rpc) {
   const close = h('button', { class: 'ghost x', title: '닫기', 'aria-label': '닫기', onclick: () => dlg.close() }, '✕');
   const err = h('div', { class: 'meta err', hidden: '' });
+  /** 설정 한 줄 — [이름 ··· 버튼] (사용자 2026-10-20) */
+  const row = (name, control) => h('div', { class: 'row' }, name, control);
   const save = (patch) => set(patch).then(() => { err.hidden = true; }, (e) => { err.textContent = `저장하지 못했습니다: ${e.message}`; err.hidden = false; });
 
   // 테마 — 위의 분류(라이트·다크·기타)를 누르면 그 분류의 테마만. 테마가 없는 분류는 보이지 않는다.
@@ -79,33 +97,94 @@ export function settingsDialog(h, set, end) {
   const inspNote = h('p', { class: 'note' }, '새로 여는 세션이 API 요청·응답을 세션 폴더에 기록합니다. 지금 세션은 사이드바에서 켜고 끕니다.');
   let inspBlocked = null;
 
+  // inspect 캐시 정리 (사용자 확정 2026-10-20) — 전체 용량, 줄마다 이름 아래 지울 양을 늘 보이고 누르면 확인 창을 한 번 더. inspect 창을 열 때마다 serve 에 묻는다 (inspect.usage).
+  // 대상은 상태 폴더의 모든 세션이고, 떠 있는 세션(이 창의 세션·다른 창·카드)은 뺀다
+  const total = h('span', { class: 'total' });
+  const liveNote = h('p', { class: 'note', hidden: '' });
+  const cleanRows = CLEANS.map(([what, label, act]) => {
+    const amt = h('span', { class: 'amt' });
+    const btn = h('button', { onclick: () => askClean(what) }, act);
+    return { what, btn, amt, el: row(h('div', { class: 'name' }, h('h3', {}, label), amt), btn) };
+  });
+  let usage = null, cleaning = false;
+  function paintUsage(err) {
+    total.textContent = err ? `용량을 읽지 못했습니다: ${err}` : usage ? `${size(usage.bytes)} · 세션 ${usage.sessions}개` : '계산 중…';
+    for (const r of cleanRows) {
+      const [any, text] = usage ? CLEANS.find(([w]) => w === r.what)[3](usage) : [false, ''];
+      r.amt.textContent = cleaning ? '지우는 중…' : text;
+      r.btn.disabled = !any || cleaning;
+    }
+    liveNote.hidden = !usage?.live;
+    liveNote.textContent = usage?.live ? `실행 중인 세션 ${usage.live}개는 정리되지 않습니다.` : '';
+  }
+  const loadUsage = () => { usage = null; paintUsage(); rpc('inspect.usage').then((u) => { usage = u; paintUsage(); }, (e) => paintUsage(e.message)); };
+  let cleanWhat = null;
+  const cleanMsg = h('p', {});
+  const cleanGo = h('button', { class: 'danger solid', onclick: () => { confirmClean.close(); clean(cleanWhat); } });
+  const confirmClean = h('dialog', { class: 'confirm' }, cleanMsg, h('div', { class: 'btns' },
+    h('button', { onclick: () => confirmClean.close() }, '취소'), cleanGo));
+  closeOnBackdrop(confirmClean);
+  /** 확인 창의 양은 누를 때 다시 묻는다 — 창을 연 뒤에 다른 세션이 기록하거나 꺼졌을 수 있다 */
+  function askClean(what) {
+    if (!usage) return;
+    cleanWhat = what;
+    rpc('inspect.usage').then((u) => {
+      usage = u; paintUsage();
+      const [, , act, of] = CLEANS.find(([w]) => w === what);
+      const [any, , msg] = of(u);
+      if (!any) return;
+      cleanMsg.textContent = msg; cleanGo.textContent = act;
+      confirmClean.showModal();
+    }, (e) => paintUsage(e.message));
+  }
+  function clean(what) {
+    cleaning = true; paintUsage();
+    rpc('inspect.clean', { what }).then((u) => { usage = u; err.hidden = true; }, (e) => { err.textContent = `지우지 못했습니다: ${e.message}`; err.hidden = false; })
+      .finally(() => { cleaning = false; paintUsage(); });
+  }
+
   // 세션 종료 — 맨 아래 줄, 왼쪽 이름 · 오른쪽 끝 빨간 '종료' (context 경고 줄과 같은 꼴). 누르면 확인 창을 한 번 더 (사용자 2026-10-16). 끝난 세션이면 숨긴다(endable)
   const confirmEnd = h('dialog', { class: 'confirm' }, h('p', {}, '세션을 종료할까요?'), h('div', { class: 'btns' },
     h('button', { onclick: () => confirmEnd.close() }, '취소'),
     h('button', { class: 'danger solid', onclick: () => { confirmEnd.close(); dlg.close(); end(); } }, '종료')));
-  confirmEnd.addEventListener('click', (e) => { if (e.target === confirmEnd) confirmEnd.close(); });
-  const endRow = h('section', { class: 'end' }, h('div', { class: 'row' }, h('h3', {}, '세션 종료'), h('button', { class: 'danger solid', onclick: () => confirmEnd.showModal() }, '종료')));
+  closeOnBackdrop(confirmEnd);
+  const endRow = h('section', { class: 'end' }, row(h('h3', {}, '세션 종료'), h('button', { class: 'danger solid', onclick: () => confirmEnd.showModal() }, '종료')));
 
   // 버전 — 맨 아래 오른쪽 구석에 흐리게 (사용자 2026-10-18, ticket slcode-web-version-display). 화면(serve)과 세션(core)이 같으면 하나, 다르면 core 를 괄호로 (사용자 2026-10-18 — '화면·세션' 이름은 뺐다).
   // 업데이트는 떠 있는 core 를 두므로 다시 연 카드가 옛 세션에 붙으면 갈린다. 벤더(Claude Code·Codex) 버전과 디스크 최신 안내는 두지 않는다 (사용자 결정)
   const ver = h('div', { class: 'ver' });
   const sec = (title, ...kids) => h('section', {}, h('h3', {}, title), ...kids);
+  // Inspect 는 설정 안의 하위 창 (사용자 2026-10-20) — 설정의 'inspect' 줄을 누르면 본문이 바뀌고 머리의 ‹ 로 돌아온다. 새 세션 inspect 토글과 캐시 정리를 둔다.
+  // 들어가는 줄은 줄 전체가 버튼이고 오른쪽 끝에 지금 값(새 세션 inspect 켜짐·꺼짐)과 › — iOS·macOS 설정의 하위 창 줄과 같은 꼴 (사용자 2026-10-20)
+  const inspState = h('span', { class: 'val' });
+  const title = h('h2', {}, '설정');
+  const back = h('button', { class: 'ghost x', title: '뒤로', 'aria-label': '뒤로', hidden: '', onclick: () => show(false) }, '‹');
+  const mainBody = h('div', { class: 'body' },
+    sec('테마', cats, themes),
+    h('section', {}, h('label', { class: 'switch' }, h('h3', {}, 'context 경고'), warn), ctxBody),
+    h('section', { class: 'nav' }, h('button', { class: 'nav', onclick: () => show(true) }, h('h3', {}, 'inspect'), h('span', { class: 'go' }, inspState, h('span', { class: 'chev', 'aria-hidden': 'true' }, '›')))),
+    endRow,
+    err,
+    ver);
+  const inspBody = h('div', { class: 'body', hidden: '' },
+    h('section', {}, h('label', { class: 'switch' }, h('h3', {}, '새 세션 inspect'), insp), inspNote),
+    h('section', { class: 'cache' }, row(h('h3', {}, '캐시 사용량'), total), ...cleanRows.map((r) => r.el), liveNote));
+  function show(inspect) {
+    mainBody.hidden = inspect; inspBody.hidden = !inspect; back.hidden = !inspect;
+    title.textContent = inspect ? 'inspect' : '설정';
+    if (inspect) loadUsage();
+  }
   const dlg = h('dialog', { class: 'settings' },
-    h('header', {}, h('h2', {}, '설정'), close),
-    h('div', { class: 'body' },
-      sec('테마', cats, themes),
-      h('section', {}, h('label', { class: 'switch' }, h('h3', {}, 'context 경고'), warn), ctxBody),
-      h('section', {}, h('label', { class: 'switch' }, h('h3', {}, '새 세션 inspect'), insp), inspNote),
-      endRow,
-      err,
-      ver),
-    confirmEnd);
-  dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); }); // 바깥(배경) 클릭
+    h('header', {}, back, title, close),
+    mainBody, inspBody,
+    confirmEnd, confirmClean);
+  closeOnBackdrop(dlg);
 
   function update(s) {
     cur = known(s.theme); mark();
     warn.checked = s.context.warn; ctxBody.classList.toggle('off', !s.context.warn); lo.disabled = hi.disabled = !s.context.warn;
     insp.checked = !!s.inspect && !inspBlocked;
+    inspState.textContent = insp.checked ? '켜짐' : '꺼짐';
     // 손잡이를 잡고 끌고 있으면 그 값을 그대로 둔다
     if (!range.matches(':active')) { lo.value = s.context.yellow; hi.value = s.context.red; paintRange(); }
   }
@@ -116,7 +195,7 @@ export function settingsDialog(h, set, end) {
   const inspectBlocked = (sdk) => {
     inspBlocked = sdk ?? null;
     insp.disabled = !!inspBlocked;
-    if (inspBlocked) { insp.checked = false; inspNote.textContent = `이 Claude Code(Agent SDK ${inspBlocked})는 inspect proxy 를 1st party 로 보지 않아 프롬프트 캐시 등 일부 기능이 꺼집니다. 그래서 이 버전에서는 inspect 를 켜지 않습니다.`; }
+    if (inspBlocked) { insp.checked = false; inspState.textContent = '꺼짐'; inspNote.textContent = `이 Claude Code(Agent SDK ${inspBlocked})는 inspect proxy 를 1st party 로 보지 않아 프롬프트 캐시 등 일부 기능이 꺼집니다. 그래서 이 버전에서는 inspect 를 켜지 않습니다.`; }
   };
-  return { el: dlg, open: () => { showCat(catOf(cur)); dlg.showModal(); }, update, endable: (on) => { endRow.hidden = !on; }, version, inspectBlocked };
+  return { el: dlg, open: () => { showCat(catOf(cur)); show(false); dlg.showModal(); }, update, endable: (on) => { endRow.hidden = !on; }, version, inspectBlocked };
 }

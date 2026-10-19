@@ -95,7 +95,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   // 벤더 자식(과 그 Bash 도구가 띄우는 명령)이 자기 세션을 알게 — 세션 안의 `slcode mail/check/ask/reply` 가 이걸 읽는다 (사용자 확정 2026-10-02)
   const env: NodeJS.ProcessEnv = { ...SDK_ENV, SLCODE_SESSION: logFile.meta.id };
   // inspect (ticket slcode-inspect-proxy·slcode-inspect-default-on) — 켜져 있으면 벤더를 띄우기 전에 proxy 를 세우고 벤더 env 의 ANTHROPIC_BASE_URL 을 그리로.
-  // 기록은 세션 폴더 inspect/inspect.db. proxy 를 띄운 core 는 3일마다 상태 폴더 전체를 정리한다 (기록이 늘어나는 것은 proxy 가 떠 있을 때뿐)
+  // 기록은 세션 폴더 inspect/inspect.db. proxy 를 띄운 core 는 3일마다 상태 폴더의 꺼진 세션 raw 를 정리한다 (기록이 늘어나는 것은 proxy 가 떠 있을 때뿐)
   const inspectDir = path.join(logFile.dir, 'inspect');
   const blockedFile = path.join(P.dir, FILES.inspectBlocked);
   let inspect: InspectProxy | null = null;
@@ -301,7 +301,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     'session.inspectCall': (_c, p) => {
       mine(p?.id);
       const rec = readStore()?.read(Number(p.n)) ?? null;
-      if (!rec) throw new CoreError(ERR.badRequest, `no inspect call ${p.n} (dropped by the size cap or never recorded)`);
+      if (!rec) throw new CoreError(ERR.badRequest, `no inspect call ${p.n} (cleared or never recorded)`);
       return rec;
     },
     'session.setDraft': (_c, p) => { mine(p?.id); if (typeof p.text !== 'string') throw new CoreError(ERR.badRequest, 'text required'); draft = p.text; return { ok: true }; },

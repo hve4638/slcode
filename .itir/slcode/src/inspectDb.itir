@@ -1,73 +1,84 @@
-import { InspectCall, InspectRecord } from './protocol'
+import { InspectCall, InspectRecord, InspectUsage } from './protocol'
 import { pidAlive } from './lock'
+import { sockAlive } from './live'
+import { EventLog } from './eventLog'
 
-role: inspect 기록 저장 (ticket slcode-inspect-default-on, 사용자 결정 2026-10-19) — 세션 폴더 inspect/inspect.db, node 내장 node:sqlite(Node 22.5+, 없으면 inspect 를 못 켠다; 처음 읽을 때의 ExperimentalWarning 은 삼킨다). 호출 하나가 calls 한 행(작은 칸을 본문 앞에 — 큰 본문 뒤의 칸을 읽으면 overflow 페이지를 다 따라가 SUM(size) 가 원본 전체를 읽는다) — 처음엔 원본(raw): 요청 본문 텍스트와 압축을 푼 응답 텍스트(SSE 는 도착한 그대로). codex 의 WebSocket 호출(ticket slcode-inspect-codex)은 다시 만든 전체 요청을 req_full 칸(맨 뒤, 없던 DB 는 열 때 덧붙인다)에 더 둔다. compact 는 원본만 지운다: 요청(과 req_full)의 system·tools·messages·input 원소를 cache_control 을 뺀 내용의 sha256 으로 parts 에 한 번만 두고({$p 해시, $c 캐시 표시 자리와 값} — Claude Code 는 캐시 표시를 매 호출 마지막 메시지로 옮긴다), 호출과 조각의 연결은 refs. SSE 응답(과 WebSocket 이벤트, method WS)은 메시지 하나로 다시 조립한다(web/inspect.js responseOf 와 같은 규칙). 읽을 때 다시 조립하므로 요약·request·response 는 원본과 같은 JSON 이 보이고 raw 는 키 순서만 다를 수 있다. 언제: raw 가 7일(RAW_AGE_MS)을 넘거나 세션의 raw 합이 RAW_CAP(100MB)를 넘으면 — 쓰는 core 가 쓸 때마다(tidy, 한 번에 20 개까지 — 나머지는 다음 기록 때; DatabaseSync 는 동기라 그동안 proxy 스트림이 멈춘다). 다시 쓰지 못하는 본문(이상한 SSE 등)은 그대로 두고 compact 로 표시한다 — 한 행이 늘 가장 오래된 raw 로 남아 정리를 막지 않게. 전체: 상태 폴더의 모든 세션 inspect.db 사용량 합이 TOTAL_CAP(10GB)을 넘으면 세션을 가로질러 시각 순으로 오래된 raw 부터 compact, 그래도 넘으면 오래된 호출부터 지운다 — 지운 호출은 행(요약)만 남아 카드에 '지움', 본문·헤더·아무도 안 쓰는 조각은 지운다. 3일(SWEEP_EVERY_MS)마다 잠금 파일을 잡은 프로세스 하나가(maybeSweep) — DB 는 하나씩 열고 닫고, 열거나 다루다 실패한 세션은 그 정리에서 뺀다. checkpoint 는 PASSIVE(다른 프로세스를 기다리지 않는다). 여러 프로세스(세션의 core·전체 정리)가 같은 DB 를 써도 된다 — WAL·busy_timeout, 쓰기는 BEGIN IMMEDIATE 트랜잭션 하나씩, compact·지우기는 이미 된 행엔 할 일이 없다(멱등). 지운 자리는 auto_vacuum=INCREMENTAL 로 파일에서 돌려받는다. 전체 정리는 한 트랜잭션에 20 호출씩, 사이사이 이벤트 루프를 놓는다(같은 core 의 proxy 스트림을 막지 않게). 크기는 메모리에 들지 않고 DB 에 묻는다(다른 프로세스가 지워도 틀어지지 않게)
+role: inspect 기록 저장 (ticket slcode-inspect-default-on 2026-10-19, 저장 나눔 ticket slcode-inspect-storage 2026-10-20) — 세션 폴더 inspect/inspect.db, node 내장 node:sqlite(Node 22.5+, 없으면 inspect 를 못 켠다; 처음 읽을 때의 ExperimentalWarning 은 삼킨다). 저장할 때부터 파싱된 정보와 raw(원본)를 나눈다(사용자 확정 2026-10-20). calls 한 행이 호출 하나의 파싱된 정보 — 요약 칸(작은 칸을 앞에 — 큰 칸 뒤의 칸을 읽으면 overflow 페이지를 다 따라간다)·헤더(인증은 가린 것)·req(요청: system·tools·messages(Anthropic)·input(OpenAI Responses) 원소를 cache_control 을 뺀 내용의 sha256 으로 parts 에 한 번만 둔 조각 참조 {$p 해시, $c 캐시 표시 자리·값·키 순서} — Claude Code 는 캐시 표시를 매 호출 마지막 메시지로 옮긴다; JSON 객체가 아니면 본문 그대로)·req_full(codex 증분 요청을 다시 만든 전체 요청, 같은 꼴)·res(SSE 응답과 WebSocket 이벤트(method WS)는 메시지 하나로 조립한 JSON, 그 밖은 본문 그대로). raw 표는 보낸 요청 본문과 압축을 푼 응답 본문(SSE 는 도착한 그대로) — calls.raw_size 가 그 바이트 합이고 지웠으면 NULL. 화면(요약·request·response)은 늘 파싱된 정보로 그리고, raw 를 지운 호출의 raw 탭은 'raw 삭제됨' 만. 조각은 지우지 않는다 — 호출 하나를 지우는 길이 없고 세션 정리는 폴더째다. compact 는 raw 를 지우는 일이다: raw 가 RAW_AGE_MS(7일)를 넘거나 세션의 raw 합이 RAW_CAP(100MB)를 넘으면 오래된 것부터 — 쓰는 core 가 쓸 때마다(tidy), 꺼진 세션은 3일(SWEEP_EVERY_MS)마다 잠금 파일을 잡은 core 하나가(maybeSweep). 전체 상한 자동 삭제는 없다 — 사용자가 설정 창의 캐시 정리로 지운다(사용자 확정 2026-10-20): 오래된 캐시 제거(마지막 기록에서 STALE_MS(7일)가 지난 세션의 inspect 폴더째)·압축(COMPACT_AGE_MS(하루) 지난 raw)·모든 캐시 제거. 정리·자동 정리 모두 떠 있는 세션(소켓에 붙는다)은 뺀다 — 그 DB 는 자기 core 만 연다. 마이그레이션: 옛 꼴(raw/compacted 한 표, b928bfa·6e5145a — 열에 compacted 가 있다)은 열 때 트랜잭션 하나로 바꾼다 — raw 행은 원본에서 파싱된 정보를 만들고 원본은 raw 표로, compacted 행은 저장된 조각 꼴 그대로(옛 캐시 표시 자리엔 키 순서가 없어 끝에 붙는다 — 옛 화면과 같다), 10GB 상한으로 지운 행('지움' 카드)과 refs 표는 지운다. 여러 프로세스가 같은 DB 를 열어도 된다 — WAL·busy_timeout, 쓰기는 BEGIN IMMEDIATE 트랜잭션 하나씩, raw 지우기는 이미 지운 행엔 할 일이 없다(멱등). 지운 자리는 auto_vacuum=INCREMENTAL 로 파일에서 돌려받는다
 
 export val RAW_CAP
 export val RAW_AGE_MS
-export val TOTAL_CAP
+export val COMPACT_AGE_MS
+export val STALE_MS
 export val SWEEP_EVERY_MS
 export val INSPECT_DB
 export fn sqlite() -> SqliteModule? {
   role: node:sqlite 를 한 번 읽어 둔다 — 없으면 null. 읽는 동안만 SQLite ExperimentalWarning 을 거른다
 }
 export fn compactRequest(body, put) -> Text? {
-  role: JSON 객체 요청의 system·tools·messages·input(OpenAI Responses) 원소를 조각 참조로 — 조각은 put(hash, json). JSON 객체가 아니면 null
+  role: JSON 객체 요청의 system·tools·messages·input(OpenAI Responses) 원소를 조각 참조로 — 조각은 put(hash, json), 캐시 표시는 자리·값·키 순서를 참조에. JSON 객체가 아니면 null
 }
 export fn expandRequest(body, get) -> Text {
-  role: 조각 참조를 get(hash) 로 풀고 캐시 표시를 제자리에 되돌린다 — 조각이 없으면 그 원소는 null
+  role: 조각 참조를 get(hash) 로 풀고 캐시 표시를 제자리(키 순서가 있으면 그 순서, 없으면 끝)에 되돌린다 — 조각이 없으면 그 원소는 null
 }
 export fn sseMessage(text) -> Message? {
   role: SSE 를 메시지 하나로 — message_start 에 content_block_*·message_delta 를 이어 붙인다, error 이벤트는 error 로. OpenAI Responses 는 response.created 의 response 에 output_item.done 항목을 index 자리에 모으고 끝 이벤트(completed·incomplete·failed)의 response 로 덮는다(그 output 이 비면 모은 항목). 메시지가 없으면 null
 }
+export type InspectCapture
 export class InspectStore {
   role: 세션 하나의 DB
   export fn exists(dir) -> Bool {
     role: inspect.db 가 있는가 — 켠 적 없는 세션엔 만들지 않으려고
   }
   export fn open(dir) -> InspectStore {
-    role: 없으면 만든다(폴더 0700, 파일 0600). node:sqlite 가 없으면 사유를 담아 throw
+    role: 없으면 만든다(폴더 0700, 파일 0600), 옛 꼴이면 마이그레이션. node:sqlite 가 없으면 사유를 담아 throw
   }
   export fn lastN() -> Int
   export fn add(rec) {
-    role: 원본 그대로 한 행 — size 는 두 본문(과 reqFull)의 바이트 합
+    role: proxy 가 잡은 호출 하나(InspectCapture)를 파싱된 정보(calls·parts)와 raw 로 나눠 트랜잭션 하나에. 다시 쓰지 못하는 본문은 그대로 파싱된 칸에
   }
   export fn calls(from, to) -> InspectCall[] {
-    role: at 이 (from, to] 인 호출 요약, 번호 순 — 지운 것은 dropped
+    role: at 이 (from, to] 인 호출 요약, 번호 순
   }
   export fn read(n) -> InspectRecord? {
-    role: 호출 하나 — compact 된 것은 다시 조립하고 compacted 를 붙인다. 지웠거나 없으면 null
-  }
-  export fn compactOldest(k) {
-    role: 오래된 raw 부터 k 개 compact
-  }
-  export fn dropOldest(k) {
-    role: 오래된 호출부터 k 개 지운다 — 행은 남기고 본문·헤더·안 쓰는 조각만
-  }
-  export fn oldestAt(raw) -> Int? {
-    role: 남은(지우지 않은) 호출 중 가장 오래된 시각 — raw 면 compact 안 된 것 중에서
+    role: 호출 하나 — 요청은 조각으로 다시 조립한다. raw 는 남아 있을 때만. 없으면 null
   }
   export fn rawSize() -> Int
-  export fn used() -> Int {
-    role: 쓰고 있는 바이트 — (page_count - freelist_count) × page_size, 파일이 줄기 전에도 바로 준다
+  export fn compact(before) -> Int[] {
+    role: at 이 before 앞인 호출의 raw 를 지운다 — 지운 호출 수와 바이트 [calls, bytes]
   }
-  export fn tidy(now, cap, age, limit) -> Int {
-    role: age 보다 오래된 raw 를, 그다음 raw 합이 cap 을 넘는 만큼 오래된 raw 를 합쳐 limit 개까지 compact. 했으면 vacuum. compact 한 수
+  export fn compactable(before) -> Int[] {
+    role: compact(before) 가 지울 호출 수와 바이트 [calls, bytes] — 미리보기
+  }
+  export fn tidy(now, cap, age) -> Int {
+    role: age 보다 오래된 raw 를, 그다음 raw 합이 cap 을 넘는 만큼 오래된 raw 를 지운다. 했으면 vacuum. 지운 수
   }
   export fn vacuum() {
     role: incremental_vacuum 과 wal_checkpoint(PASSIVE)
   }
   export fn close()
 }
-export fn sweepInspect(sessionsDir, now, cap, log) {
-  role: sessions/<cwd>/<id>/inspect 의 DB 를 하나씩 열어 tidy 를 할 일이 없을 때까지(사이사이 이벤트 루프를 놓는다) — 사용량·가장 오래된 시각을 적어 둔다. 합이 cap 을 넘으면 가장 오래된 raw 가 있는 세션을 열어 20 개 compact → 그래도 넘으면 가장 오래된 호출이 있는 세션에서 20 개씩 지운다(세션을 가로질러 시각 순). 실패한 세션은 빼고 log
+export fn inspectUsage(sessionsDir, now) -> InspectUsage {
+  role: 캐시 정리 미리보기 — 전체 용량·세션 수(stat), 떠 있는 세션 수, 버튼마다 지울 양: old 는 꺼진 세션 중 마지막 기록(inspect 폴더 파일의 가장 늦은 mtime)이 STALE_MS 지난 것의 폴더 크기, compact 는 꺼진 세션 DB 를 하나씩 열어 COMPACT_AGE_MS 지난 raw(사이사이 이벤트 루프를 놓는다), all 은 꺼진 세션 전부. 열지 못한 DB 는 compact 에서 뺀다
+}
+export fn cleanInspect(sessionsDir, what, now) -> InspectUsage {
+  role: 캐시 정리 — old·all 은 꺼진 세션의 inspect 폴더를 지우기 직전에 다시 떠 있는지 보고 지운다, compact 는 꺼진 세션 DB 마다 compact(now - COMPACT_AGE_MS) 와 vacuum. 끝난 뒤의 inspectUsage
+}
+export fn sweepInspect(sessionsDir, now, log) {
+  role: 꺼진 세션의 DB 를 하나씩 열어 tidy(사이사이 이벤트 루프를 놓는다) — 떠 있는 세션은 자기 core 가 쓸 때마다 한다. 실패한 세션은 빼고 log
 }
 export fn maybeSweep(stamp, lock, sessionsDir, opts) -> Bool {
-  role: stamp 의 마지막 정리에서 every(기본 3일)가 지났고 잠금(O_EXCL, 내용 pid — 죽은 pid 의 잠금은 한 번 치운다)을 잡으면, stamp 를 다시 읽어(그사이 다른 core 가 끝냈으면 그만) sweepInspect 하고 stamp 를 쓴다. 잠금은 끝나면 푼다. opts: now·every·cap·log. 정리했으면 true
+  role: stamp 의 마지막 정리에서 every(기본 3일)가 지났고 잠금(O_EXCL, 내용 pid — 죽은 pid 의 잠금은 한 번 치운다)을 잡으면, stamp 를 다시 읽어(그사이 다른 core 가 끝냈으면 그만) sweepInspect 하고 stamp 를 쓴다. 잠금은 끝나면 푼다. opts: now·every·log. 정리했으면 true
 }
 fn strip(v, at, marks)
 fn unstrip(v, marks)
-fn inspectDirs(sessionsDir) -> Text[]
-fn statOf(dir, store) -> Stat
-type Stat
+fn responseOf(method, resHeaders, resBody) -> Text {
+  role: 파싱된 응답 — SSE·WebSocket 이벤트면 sseMessage 의 JSON, 못 만들거나 그 밖이면 본문 그대로
+}
+fn migrate(db) {
+  role: 옛 꼴 DB 를 새 꼴로 — 트랜잭션 안에서 다시 확인한다(같이 연 프로세스가 먼저 끝냈을 수 있다)
+}
+fn sessionInspects(sessionsDir) -> Entry[] {
+  role: sessions/<cwd>/<id>/inspect 중 inspect.db 가 있는 것 — 폴더 크기·마지막 기록 시각(mtime)·떠 있는지(meta 의 소켓에 붙어 본다)
+}
+type Entry
 fn takeLock(file) -> Bool

@@ -1,8 +1,11 @@
 // inspect 모달 (ticket slcode-inspect-proxy, 사용자 결정 2026-10-18) — 턴 마지막 응답 아래 inspect 버튼이 연다.
 // 왼쪽은 그 턴 동안 나간 API 호출 카드, 오른쪽은 고른 호출의 탭 요약 | request | response | raw.
 // 메시지 호출(요청 본문에 messages 가 있는 Anthropic, input 이 있는 OpenAI Responses — codex, ticket slcode-inspect-codex)이 아니면 요약과 raw 만 — 모르는 경로도 raw 는 늘 보인다.
-// codex 의 WebSocket 호출(method WS)은 보낸 메시지 하나와 받은 이벤트들이고, 증분 요청은 core 가 다시 만든 전체 요청(reqFull)으로 그린다 (raw 는 보낸 그대로).
-// 원본은 카드를 고를 때 받는다 — 요청 하나가 수 MB 다.
+// codex 의 WebSocket 호출(method WS)은 보낸 메시지 하나와 받은 이벤트들이고, 증분 요청은 core 가 다시 만든 전체 요청(requestFull)으로 그린다 (raw 는 보낸 그대로).
+// 요약·request·response 는 core 가 저장할 때 만든 파싱된 정보(request·response — SSE 는 메시지 하나로)로, raw 탭만 원본으로 그린다 (ticket slcode-inspect-storage).
+// 호출 하나는 카드를 고를 때 받는다 — 요청 하나가 수 MB 다.
+
+import { closeOnBackdrop } from './settings.js';
 
 const CTX_DEFAULT = 200000; // 컨텍스트 창을 모르는 호출(부수 호출 등)의 막대 끝
 const FREE_KEY = 'slcode.inspect.free'; // request 막대에 남은 공간을 보일지 — 브라우저에 기억한다
@@ -16,39 +19,6 @@ const hdr = (o, k) => { const v = o?.[k]; return Array.isArray(v) ? v.join(', ')
 const heads = (o) => Object.entries(o ?? {}).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`).join('\n');
 const ok = (c) => !c.error && c.status != null && c.status < 400;
 
-/** 응답 본문을 메시지 하나로 — SSE(와 WebSocket 이벤트)면 message_start 에 블록·delta 를 이어 붙이고, 아니면 JSON 그대로. compact 된 호출은 이미 메시지 하나의 JSON.
- *  OpenAI Responses 는 response.created 에 output_item.done 의 항목을 모으고 끝 이벤트의 response 로 덮는다 (src/inspectDb.ts sseMessage 와 같은 규칙) */
-export function responseOf(rec) {
-  if (rec.compacted) { const m = parse(rec.resBody); if (m) return m; }
-  if (rec.method !== 'WS' && !String(hdr(rec.resHeaders, 'content-type') ?? '').includes('event-stream')) return parse(rec.resBody);
-  let msg = null, limits = null;
-  const json = [];
-  for (const chunk of rec.resBody.split(/\r?\n\r?\n/)) {
-    const ev = parse(chunk.split(/\r?\n/).filter((l) => l.startsWith('data:')).map((l) => l.slice(5)).join('\n'));
-    if (!ev) continue;
-    if (ev.type === 'codex.rate_limits') limits = ev;
-    else if (ev.type === 'response.created' || ev.type === 'response.in_progress') msg = { ...ev.response, output: msg?.output ?? [] };
-    else if (ev.type === 'response.output_item.done') { msg ??= { output: [] }; msg.output[ev.output_index ?? msg.output.length] = ev.item; }
-    else if (ev.type === 'response.completed' || ev.type === 'response.incomplete' || ev.type === 'response.failed') msg = { ...msg, ...ev.response, output: ev.response?.output?.length ? ev.response.output : msg?.output ?? [] };
-    else if (ev.type === 'message_start') msg = { ...ev.message, content: [] };
-    else if (ev.type === 'error') msg = { ...msg, error: ev.error };
-    else if (!msg) continue;
-    else if (ev.type === 'content_block_start') msg.content[ev.index] = { ...ev.content_block };
-    else if (ev.type === 'content_block_delta') {
-      const b = msg.content[ev.index], d = ev.delta;
-      if (!b) continue;
-      if (d.type === 'text_delta') b.text = (b.text ?? '') + d.text;
-      else if (d.type === 'thinking_delta') b.thinking = (b.thinking ?? '') + d.thinking;
-      else if (d.type === 'signature_delta') b.signature = d.signature;
-      else if (d.type === 'input_json_delta') json[ev.index] = (json[ev.index] ?? '') + d.partial_json;
-      else if (d.type === 'citations_delta') (b.citations ??= []).push(d.citation);
-    } else if (ev.type === 'content_block_stop' && json[ev.index] && msg.content[ev.index]) msg.content[ev.index].input = parse(json[ev.index]) ?? json[ev.index];
-    else if (ev.type === 'message_delta') { Object.assign(msg, ev.delta); msg.usage = { ...msg.usage, ...ev.usage }; }
-  }
-  if (msg && limits) msg.codex_rate_limits = { plan_type: limits.plan_type, ...limits.rate_limits, credits: limits.credits };
-  return msg;
-}
-
 /** h: app.js 의 요소 생성기, rpc: transport.request, ctxMax: 지금 세션의 컨텍스트 창 크기(session.status, 모르면 null), copyBtn(text): 복사 아이콘 버튼 */
 export function inspectDialog(h, rpc, ctxMax, copyBtn, store) {
   const title = h('h2', {}, 'inspect');
@@ -58,7 +28,7 @@ export function inspectDialog(h, rpc, ctxMax, copyBtn, store) {
   const dlg = h('dialog', { class: 'inspect' },
     h('header', {}, title, h('button', { class: 'ghost x', title: '닫기', 'aria-label': '닫기', onclick: () => dlg.close() }, '✕')),
     h('div', { class: 'ibody' }, list, h('div', { class: 'idetail' }, tabs, pane)));
-  dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); }); // 바깥(backdrop)을 누르면 닫는다
+  closeOnBackdrop(dlg);
   const dim = (t) => h('div', { class: 'dim' }, t);
   const errEl = (t) => h('div', { class: 'err' }, t);
   let sid = null, tab = '요약', gen = 0, showFree = store.get(FREE_KEY) !== 'hide';
@@ -73,18 +43,17 @@ export function inspectDialog(h, rpc, ctxMax, copyBtn, store) {
       const { calls } = await rpc('session.inspectTurn', { id, end });
       if (my !== gen) return;
       title.textContent = `inspect · 호출 ${calls.length}개`;
-      if (!calls.length) { list.replaceChildren(dim('이 턴에 기록된 호출이 없습니다. inspect 가 꺼져 있던 턴입니다.')); return; }
+      if (!calls.length) { list.replaceChildren(dim('이 턴에 기록된 호출이 없습니다. inspect 가 꺼져 있었거나 캐시 정리로 지운 턴입니다.')); return; }
       const cards = calls.map((c) => card(c));
       list.replaceChildren(...cards);
-      const first = cards.find((b) => !b.disabled);
-      if (first) first.click();
+      cards[0].click();
     } catch (e) { if (my === gen) list.replaceChildren(errEl(e.message)); }
   }
 
   function card(c) {
     const path = c.path.split('?')[0];
-    const st = c.dropped ? h('span', { class: 'st' }, '지움') : ok(c) ? h('span', { class: 'st ok' }, `${c.status} 성공`) : h('span', { class: 'st bad', title: c.error ?? '' }, `${c.status ?? ''} 실패`.trim());
-    const b = h('button', { class: 'icard', title: c.dropped ? '전체 상한(10GB)을 넘어 지운 호출입니다' : c.path, disabled: c.dropped ? '' : null },
+    const st = ok(c) ? h('span', { class: 'st ok' }, `${c.status} 성공`) : h('span', { class: 'st bad', title: c.error ?? '' }, `${c.status ?? ''} 실패`.trim());
+    const b = h('button', { class: 'icard', title: c.path },
       h('div', { class: 'top' }, h('span', { class: 'path' }, `${c.method} ${path}`), st),
       c.model ? h('div', { class: 'model' }, c.model) : null,
       h('div', { class: 'bot' }, h('span', {}, stamp(c.at)), h('span', {}, `${(c.ms / 1000).toFixed(1)}s ↑${kb(c.reqBytes)} ↓${kb(c.resBytes)}`)),
@@ -103,10 +72,10 @@ export function inspectDialog(h, rpc, ctxMax, copyBtn, store) {
       recs.set(c.n, rec);
     }
     if (my !== gen) return;
-    const req = parse(rec.reqFull ?? rec.reqBody);
+    const req = parse(rec.requestFull ?? rec.request);
     const oa = Array.isArray(req?.input) && !Array.isArray(req?.messages);
     const isMsg = Array.isArray(req?.messages) || oa;
-    const v = { rec, req: isMsg ? req : null, res: isMsg ? responseOf(rec) : null, oa };
+    const v = { rec, req: isMsg ? req : null, res: isMsg ? parse(rec.response) : null, oa };
     const views = { 요약: summary, ...(isMsg ? { request, response } : {}), raw };
     if (!views[tab]) tab = '요약';
     const show = (name) => { tab = name; for (const t of tabs.children) t.setAttribute('aria-pressed', String(t.textContent === name)); pane.replaceChildren(...views[name](v).filter((x) => x != null)); pane.scrollTop = 0; };
@@ -171,7 +140,7 @@ export function inspectDialog(h, rpc, ctxMax, copyBtn, store) {
     const out = [];
     const counts = {};
     for (const it of req.input) counts[kindOf(it)] = (counts[kindOf(it)] ?? 0) + 1;
-    const sent = rec.reqFull ? parse(rec.reqBody) : null;
+    const sent = rec.requestFull ? parse(rec.request) : null;
     const r = req.reasoning;
     const known = new Set(['type', 'model', 'instructions', 'input', 'tools', 'reasoning', 'stream', 'store', 'tool_choice', 'parallel_tool_calls', 'include', 'prompt_cache_key', 'previous_response_id', 'text', 'client_metadata']);
     out.push(sec('요청', kv([
@@ -259,7 +228,7 @@ export function inspectDialog(h, rpc, ctxMax, copyBtn, store) {
         max > total ? h('button', { class: 'ghost freebtn', onclick: () => { showFree = !showFree; store.set(FREE_KEY, showFree ? 'show' : 'hide'); draw(); } }, showFree ? '남은 공간 숨기기' : '남은 공간 보기') : null));
     };
     draw();
-    const sent = rec.reqFull ? parse(rec.reqBody) : null;
+    const sent = rec.requestFull ? parse(rec.request) : null;
     return [wrap, sent ? dim(`WebSocket 증분 요청입니다. 실제로 보낸 input 은 마지막 ${(sent.input ?? []).length}개이고, 앞부분은 같은 연결의 앞 요청과 응답으로 다시 만든 것입니다.`) : null, cardsEl];
   }
 
@@ -279,18 +248,17 @@ export function inspectDialog(h, rpc, ctxMax, copyBtn, store) {
     return out;
   }
 
-  // ---- raw — HTTP 요청·응답 전문. 응답 본문은 기록할 때 압축을 푼 것이다. compact 된 호출(보관 기간·용량 상한을 넘은 뒤)은 원본이 없어 다시 조립한 본문을 보인다
+  // ---- raw — HTTP 요청·응답 전문. 응답 본문은 기록할 때 압축을 푼 것이다. raw 를 지운 호출(7일·세션 100MB·캐시 정리)은 'raw 삭제됨' 만 (사용자 확정 2026-10-20)
   function raw({ rec }) {
-    const re = rec.compacted ? ' (재구성)' : '';
+    if (!rec.raw) return [dim('raw 삭제됨')];
     // WebSocket 호출의 헤더는 연결을 연 업그레이드 요청·101 응답의 것이고, 본문은 보낸 메시지·받은 이벤트다
     const ws = rec.method === 'WS';
     return [
-      rec.compacted ? dim('raw 삭제됨') : null,
       ws ? dim('WebSocket 메시지입니다. 헤더는 연결을 연 업그레이드 요청과 응답의 것입니다.') : null,
-      h('section', {}, h('h4', {}, `요청${re}`), !rec.compacted && rec.reqHeaders?.['content-encoding'] ? dim(`본문은 ${rec.reqHeaders['content-encoding']} 압축을 푼 것입니다.`) : null,
-        h('pre', { class: 'raw' }, `${ws ? 'GET' : rec.method} ${rec.path} HTTP/1.1\n${heads(rec.reqHeaders)}${rec.reqBody ? `\n\n${rec.reqBody}` : ''}`)),
-      h('section', {}, h('h4', {}, `응답${re}`), !rec.compacted && rec.resHeaders?.['content-encoding'] ? dim(`본문은 ${rec.resHeaders['content-encoding']} 압축을 푼 것입니다.`) : null,
-        h('pre', { class: 'raw' }, `HTTP/1.1 ${rec.status ?? '—'}${rec.error ? ` (${rec.error})` : ''}\n${heads(rec.resHeaders)}${rec.resBody ? `\n\n${rec.resBody}` : ''}`)),
+      h('section', {}, h('h4', {}, '요청'), rec.reqHeaders?.['content-encoding'] ? dim(`본문은 ${rec.reqHeaders['content-encoding']} 압축을 푼 것입니다.`) : null,
+        h('pre', { class: 'raw' }, `${ws ? 'GET' : rec.method} ${rec.path} HTTP/1.1\n${heads(rec.reqHeaders)}${rec.raw.req ? `\n\n${rec.raw.req}` : ''}`)),
+      h('section', {}, h('h4', {}, '응답'), rec.resHeaders?.['content-encoding'] ? dim(`본문은 ${rec.resHeaders['content-encoding']} 압축을 푼 것입니다.`) : null,
+        h('pre', { class: 'raw' }, `HTTP/1.1 ${rec.status ?? '—'}${rec.error ? ` (${rec.error})` : ''}\n${heads(rec.resHeaders)}${rec.raw.res ? `\n\n${rec.raw.res}` : ''}`)),
     ];
   }
 

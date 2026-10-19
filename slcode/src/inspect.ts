@@ -1,6 +1,6 @@
 // inspect 모드 (ticket slcode-inspect-proxy, 사용자 결정 2026-10-17) — Claude 벤더의 ANTHROPIC_BASE_URL 을 이 프로세스 안의 로컬 proxy 로 돌려
 // API 요청·응답 원본을 세션 폴더 inspect/ 에 남긴다. proxy 는 받은 바이트를 도착하는 대로 그대로 넘긴다 (SSE 지연·순서, 압축 그대로) — 기록 사본만 끝난 뒤 푼다.
-// 저장·compact·전체 상한은 inspectDb.ts (ticket slcode-inspect-default-on — 세션별 SQLite).
+// 저장·compact(raw 삭제)·캐시 정리는 inspectDb.ts (ticket slcode-inspect-default-on — 세션별 SQLite, slcode-inspect-storage — 파싱된 정보와 raw 를 나눠 저장).
 // Codex (ticket slcode-inspect-codex, 사용자 결정 2026-10-19): app-server 에 -c openai_base_url 로 같은 proxy 를 준다. HTTP 는 같은 길(요청 본문 zstd 는 기록 사본만 푼다),
 // Responses API 의 WebSocket 은 그대로 중계하고 기록 사본에서 프레임을 풀어 요청 메시지 하나를 호출 하나로 남긴다.
 // 1st party 감시 (사용자 결정 2026-10-19): 내부 플래그를 넣은 세션에서 tool 목록이 있는 첫 /v1/messages 요청에 x-claude-code-request-class 헤더가
@@ -13,8 +13,8 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
-import type { InspectCall, InspectRecord, LoggedEvent } from './protocol.js';
-import { RAW_CAP, type InspectStore } from './inspectDb.js';
+import type { InspectCall, LoggedEvent } from './protocol.js';
+import { RAW_CAP, type InspectCapture, type InspectStore } from './inspectDb.js';
 
 const FIRST_PARTY = 'https://api.anthropic.com';
 const ASSUME = '_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL';
@@ -91,7 +91,7 @@ async function decode(buf: Buffer, encoding: string | undefined): Promise<string
 }
 
 export type InspectOptions = {
-  /** 세션의 raw 합 상한 (기본 RAW_CAP) — 넘으면 오래된 raw 부터 compact */
+  /** 세션의 raw 합 상한 (기본 RAW_CAP) — 넘으면 오래된 raw 부터 지운다 */
   rawCap?: number;
   /** 들어온 경로에서 떼고 업스트림 경로에 잇는 앞부분 — codex 는 CODEX_ROUTE */
   prefix?: string;
@@ -127,7 +127,7 @@ export async function startInspect(store: InspectStore, upstream: Upstream, opts
   const seen = new Set<string>();
   // 디스크 오류로 벤더 호출을 막지 않는다. 쓰기는 동기(트랜잭션 하나)라 순서가 섞이지 않는다. 실패는 처음 한 번만 로그에
   let failed = false;
-  const save = (rec: InspectRecord) => {
+  const save = (rec: InspectCapture) => {
     try { store.add(rec); store.tidy(Date.now(), opts.rawCap ?? RAW_CAP); }
     catch (e) { if (!failed) { failed = true; opts.log?.(`inspect could not record call ${rec.n}: ${(e as Error).message}`); } }
   };
@@ -276,7 +276,7 @@ const WS_END = new Set(['response.completed', 'response.failed', 'response.incom
 
 /** WebSocket 연결 하나의 호출들 — 클라이언트 메시지(response.create) 하나부터 그 응답의 끝 이벤트까지가 호출 하나. 응답은 SSE 꼴(event·data 줄)로 남겨 HTTP 기록과 같이 읽는다.
  *  codex 는 같은 연결에서 앞 응답을 잇는 요청에 previous_response_id 와 증분 input 만 보낸다 — 앞 요청 input + 서버가 낸 항목 + 증분으로 전체 요청을 다시 만들어 reqFull 에 (codex-cli 0.159 get_incremental_items) */
-export function wsCalls(c: { path: string; status: number | null; reqHeaders: Record<string, string | string[]>; resHeaders: Record<string, string | string[]>; next: () => number; save: (rec: InspectRecord) => void }) {
+export function wsCalls(c: { path: string; status: number | null; reqHeaders: Record<string, string | string[]>; resHeaders: Record<string, string | string[]>; next: () => number; save: (rec: InspectCapture) => void }) {
   type Open = { n: number; at: number; req: string; full: string | null; model: string | null; events: string[]; up: number; down: number };
   let open: Open | null = null;
   let chain: { input: unknown[]; output: unknown[]; id: string | null } | null = null;

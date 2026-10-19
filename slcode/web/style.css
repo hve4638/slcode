@@ -353,8 +353,20 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf button.danger.solid { background: var(--acf-err); border-color: var(--acf-err); color: #fff; }
 .acf button.danger.solid:hover { background: var(--acf-err); filter: brightness(1.08); }
 .acf dialog.settings section.end[hidden] { display: none; }
-.acf dialog.settings section.end .row { display: flex; align-items: center; justify-content: space-between; }
-.acf dialog.settings section.end h3 { margin: 0; }
+/* 설정 한 줄 — [이름 ··· 버튼] (사용자 2026-10-20). 캐시 정리 줄은 이름 아래 지울 양 */
+.acf dialog.settings .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.acf dialog.settings .row h3 { margin: 0; }
+.acf dialog.settings .body[hidden] { display: none; }
+.acf dialog.settings button.nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: calc(100% + 16px); margin: -6px -8px; padding: 6px 8px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; text-align: left; }
+.acf dialog.settings section.nav { padding-bottom: 14px; } /* 줄의 바탕이 위아래로 6px 나가므로 위(14px)와 같은 간격을 아래에도 둔다 */
+.acf dialog.settings button.nav:hover { background: var(--acf-soft); }
+.acf dialog.settings button.nav h3 { margin: 0; }
+.acf dialog.settings button.nav .go { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--acf-muted); }
+.acf dialog.settings button.nav .chev { font-size: 20px; line-height: 1; }
+.acf dialog.settings > header button.x[hidden] { display: none; }
+.acf dialog.settings section.cache .row + .row { margin-top: 10px; }
+.acf dialog.settings section.cache .total, .acf dialog.settings section.cache .amt { font-size: 13px; color: var(--acf-muted); font-variant-numeric: tabular-nums; }
+.acf dialog.settings section.cache .amt { display: block; margin-top: 2px; }
 .acf dialog.settings .ver { margin-top: 10px; text-align: right; font-size: 11px; color: var(--acf-muted); opacity: .7; user-select: text; }
 .acf dialog.confirm { min-width: 260px; padding: 16px 18px 14px; border: 1px solid var(--acf-line); border-radius: 12px; background: var(--acf-panel); color: var(--acf-fg); box-shadow: 0 16px 48px var(--acf-shadow); font: 14px/1.45 var(--acf-sans); }
 .acf dialog.confirm::backdrop { background: rgba(0,0,0,.2); }

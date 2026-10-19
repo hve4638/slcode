@@ -53,16 +53,24 @@ export type SessionInfo = {
   inspect?: boolean;
 };
 
-/** inspect 기록의 호출 하나 요약 (inspect/inspect.db 의 calls 한 행). at 은 요청이 들어온 시각, ms 는 응답이 끝날 때까지. 전체 상한으로 지웠으면 dropped */
+/** inspect 기록의 호출 하나 요약 (inspect/inspect.db 의 calls 한 행). at 은 요청이 들어온 시각, ms 는 응답이 끝날 때까지 */
 export type InspectCall = {
   n: number; at: number; ms: number; method: string; path: string; model: string | null; status: number | null;
-  reqBytes: number; resBytes: number; error?: string; dropped?: boolean;
+  reqBytes: number; resBytes: number; error?: string;
 };
-/** 호출 하나의 원본 — 인증 헤더는 가렸다. resBody 는 압축을 푼 텍스트 (SSE 는 도착한 그대로).
- *  method 'WS' 는 WebSocket 메시지 하나(codex) — reqBody 는 보낸 메시지, resBody 는 받은 이벤트를 SSE 꼴로 이은 것, reqFull 은 증분 요청을 다시 만든 전체 요청.
- *  compacted 면 원본은 지웠다 — reqBody·reqFull 은 저장한 조각으로 다시 조립한 JSON, SSE 응답은 메시지 하나의 JSON */
+/** 호출 하나 — 인증 헤더는 가렸다. 저장할 때부터 파싱된 정보와 raw 를 나눠 두고 화면은 늘 파싱된 정보로 그린다 (ticket slcode-inspect-storage, 사용자 확정 2026-10-20).
+ *  request 는 요청 JSON (JSON 이 아니면 본문 그대로), requestFull 은 codex 증분 요청(method 'WS')을 다시 만든 전체 요청, response 는 SSE 응답·WebSocket 이벤트를
+ *  메시지 하나로 조립한 JSON (그 밖은 본문 그대로). raw 는 보낸 요청 본문과 압축을 푼 응답 본문 (SSE 는 도착한 그대로, WS 는 보낸 메시지와 받은 이벤트를 SSE 꼴로 이은 것)
+ *  — 7일·세션 100MB·캐시 정리로 지웠으면 없다 */
 export type InspectRecord = InspectCall & {
-  reqHeaders: Record<string, string | string[]>; reqBody: string; reqFull?: string; resHeaders: Record<string, string | string[]>; resBody: string; compacted?: true;
+  reqHeaders: Record<string, string | string[]>; resHeaders: Record<string, string | string[]>;
+  request: string; requestFull?: string; response: string; raw?: { req: string; res: string };
+};
+/** inspect 캐시 정리 미리보기 (ticket slcode-inspect-storage, 사용자 확정 2026-10-20) — 상태 폴더의 모든 세션. bytes·sessions 는 떠 있는 세션까지 센 전체,
+ *  live 는 떠 있어 정리에서 빼는 세션 수. 버튼마다 지울 양은 꺼진 세션만 — old: 마지막 기록에서 7일 지난 세션(폴더 크기), compact: 하루 지난 raw(호출 수·바이트), all: 꺼진 세션 전부 */
+export type InspectUsage = {
+  bytes: number; sessions: number; live: number;
+  old: { sessions: number; bytes: number }; compact: { calls: number; bytes: number }; all: { sessions: number; bytes: number };
 };
 
 /** 턴에 딸린 파일 — 웹 프런트의 붙여넣기·끌어놓기. data 는 base64. 이미지·PDF 는 벤더 블록으로, 텍스트류는 본문에 인라인 */
@@ -243,6 +251,10 @@ export type ServeMethods = {
   'update.run': { params: Record<string, never>; result: UpdateCheck };
   /** [restart required] — 웹 모드 진입 프로세스가 같은 포트로 새 serve 를 띄우고 이 serve 를 내린다. 새 serve 가 준비된 뒤 답한다(못 뜨면 그 사유로 오류) */
   'serve.restart': { params: Record<string, never>; result: { ok: true } };
+  /** inspect 캐시 정리 미리보기 — 설정 창을 열 때 */
+  'inspect.usage': { params: Record<string, never>; result: InspectUsage };
+  /** inspect 캐시 정리 — old: 오래된 캐시 제거, compact: 압축(하루 지난 raw), all: 모든 캐시 제거. 떠 있는 세션은 뺀다. 결과는 정리 뒤의 미리보기 */
+  'inspect.clean': { params: { what: 'old' | 'compact' | 'all' }; result: InspectUsage };
   /** 카드 모드 화면 파일 (ticket slcode-card-svc-token-dead) — superlite 플러그인이 받아 주소 없는 sandbox iframe 에 넣는다. html 은 card.html
    *  (index.html 처럼 data-theme·version·build·kind 를 넣은), files 는 web/ 의 .js·.css 전부 (상대 경로 → 내용) */
   'web.files': { params: Record<string, never>; result: { html: string; files: Record<string, string> } };

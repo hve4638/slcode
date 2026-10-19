@@ -4,7 +4,7 @@
 // 세션 목록·새 세션은 이 화면에 없다 — 새 세션은 새 `slcode` 명령(또는 superlite 의 새 카드).
 // transport = { request(method, params), onEvent(fn), onStatus(fn) } (rpc.js 표면).
 import { renderMarkdown } from './markdown.js';
-import { DEFAULTS, applySettings, ctxLevel, settingsDialog } from './settings.js';
+import { DEFAULTS, applySettings, closeOnBackdrop, ctxLevel, settingsDialog } from './settings.js';
 import { inspectDialog } from './inspect.js';
 
 const STATE_LABEL = { starting: '시작 중', idle: '대기', running: '실행 중', requires_action: '응답 필요', exited: '종료', disconnected: '연결 끊김' };
@@ -55,7 +55,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   // 세션 종료 (사용자 2026-10-11) — 카드는 두고 세션만 끈다(카드를 제거하면 세션도 끝난다). 꺼진 세션은 resume 으로 다시 띄운다.
   // 자리는 설정 창 맨 아래 줄의 빨간 '종료', 누르면 확인 창을 한 번 더 (사용자 2026-10-16 — 전엔 헤더 사이드바 버튼 옆)
   const endSession = () => { if (current) rpc('session.close', { id: current }).catch((e) => push(h('div', { class: 'meta err' }, e.message))); };
-  const settingsUi = settingsDialog(h, (patch) => rpc('settings.set', { settings: patch }).then(setSettings), endSession);
+  const settingsUi = settingsDialog(h, (patch) => rpc('settings.set', { settings: patch }).then(setSettings), endSession, (m, p) => rpc(m, p));
   const gearBtn = h('button', { class: 'ico gear', title: '설정', 'aria-label': '설정', onclick: () => settingsUi.open() });
   // 업데이트 — 헤더 오른쪽, 설정 버튼 왼쪽 (ticket slcode-core-serve-split 2단계, 사용자 2026-10-19). 누를 때만 새 버전을 확인한다(폴링 없음).
   // 새 버전이 있으면 'restart required' — 누르면 serve 를 바꾼다. 웹은 serve 가 확인하고 같은 주소로 다시 붙은 뒤 새로고침된다(아래 onStatus 의 serve.info),
@@ -359,7 +359,7 @@ export function mountAgentFront(root, transport, opts = {}) {
       confirmInspect.close();
       rpc('session.setInspect', { id: current, on: inspectTo }).catch((e) => { push(h('div', { class: 'meta err' }, e.message)); renderSide(); });
     } }, '계속')));
-  confirmInspect.addEventListener('click', (e) => { if (e.target === confirmInspect) confirmInspect.close(); });
+  closeOnBackdrop(confirmInspect);
   el.append(confirmInspect);
   const askInspect = (on) => {
     inspectTo = on;
@@ -957,7 +957,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   const viewImg = h('img', { alt: '' });
   let viewing = null;
   const viewer = h('dialog', { class: 'imgview' }, h('div', { class: 'bar' }, iconBtn('download', '다운로드', () => viewing && download(viewing)), iconBtn('x', '닫기', () => viewer.close())), viewImg);
-  viewer.addEventListener('click', (e) => { if (e.target === viewer) viewer.close(); }); // 이미지 밖(배경)을 누르면 닫는다, Esc 는 dialog 가
+  closeOnBackdrop(viewer); // 이미지 밖(배경)을 누르면 닫는다, Esc 는 dialog 가
   el.append(viewer);
   el.addEventListener('click', (e) => {
     const a = e.target.closest?.('a[data-open]');

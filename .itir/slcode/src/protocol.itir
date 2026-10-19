@@ -41,3 +41,4 @@ type Frame
 type Mail
 type InspectCall
 type InspectRecord
+type InspectUsage

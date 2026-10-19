@@ -3,12 +3,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { blockInspect, inspectBlocked, inspectEnv, keepsFirstParty, sdkVersion, startInspect, turnCalls, upstreamOf } from '../src/inspect.ts';
-import { InspectStore, maybeSweep, sseMessage, sweepInspect } from '../src/inspectDb.ts';
-import type { InspectRecord, LoggedEvent } from '../src/protocol.ts';
+import { cleanInspect, InspectStore, inspectUsage, maybeSweep, sseMessage, sweepInspect, type InspectCapture } from '../src/inspectDb.ts';
+import type { LoggedEvent } from '../src/protocol.ts';
 import { EventLog } from '../src/eventLog.ts';
 import { corePaths } from '../src/paths.ts';
 
@@ -72,11 +73,12 @@ test('inspect: 응답을 도착하는 대로 그대로 넘기고, 기록은 풀�
 
   await until(() => store.read(1) !== null);
   const rec = store.read(1)!;
-  assert.equal(rec.resBody, up.sse, '기록은 압축을 푼 SSE 원문');
-  assert.equal(rec.reqBody, body);
+  assert.equal(rec.raw!.res, up.sse, 'raw 는 압축을 푼 SSE 원문');
+  assert.equal(rec.raw!.req, body);
+  assert.deepEqual(JSON.parse(rec.response), sseMessage(up.sse), '파싱된 응답은 메시지 하나');
+  assert.equal(rec.request, JSON.stringify(JSON.parse(body)), '파싱된 요청은 원본과 같은 JSON');
   assert.equal(rec.model, 'claude-haiku-4-5');
   assert.equal(rec.status, 200);
-  assert.equal(rec.compacted, undefined);
   assert.equal(rec.reqHeaders.authorization, 'Bearer sk-ant-oat01-…(redacted)');
   assert.equal(rec.resHeaders['anthropic-ratelimit-unified-5h-utilization'], '0.09');
   await proxy.close();
@@ -99,13 +101,13 @@ test('inspect: 재기동해도 번호를 잇고, 턴 귀속은 앞 turn.end 뒤�
   await until(() => store.lastN() === 3);
   await proxy.close();
   up.srv.close();
-  assert.equal(store.read(3)!.reqBody, 'z');
+  assert.equal(store.read(3)!.request, 'z');
   assert.deepEqual(turnCalls(store, [turnEnd(9, Date.now() + 1000)], 9).map((c) => c.n), [1, 2, 3]);
   store.close();
 
   const t = tmp();
   const s2 = InspectStore.open(t);
-  const rec = (n: number, at: number): InspectRecord => ({ n, at, ms: 1, method: 'POST', path: '/v1/messages', model: null, status: 200, reqBytes: 1, resBytes: 1, reqHeaders: {}, reqBody: '{}', resHeaders: {}, resBody: '{}' });
+  const rec = (n: number, at: number): InspectCapture => ({ n, at, ms: 1, method: 'POST', path: '/v1/messages', model: null, status: 200, reqBytes: 1, resBytes: 1, reqHeaders: {}, reqBody: '{}', resHeaders: {}, resBody: '{}' });
   for (const [n, at] of [[1, 5], [2, 15], [3, 20], [4, 25], [5, 40]]) s2.add(rec(n, at));
   const evs: LoggedEvent[] = [{ seq: 1, at: 10, ev: { kind: 'turn.start', text: 'a', origin: null } }, turnEnd(2, 20), turnEnd(3, 30)];
   assert.deepEqual(turnCalls(s2, evs, 2).map((c) => c.n), [1, 2, 3], '첫 턴은 기동 호출까지');
@@ -116,11 +118,11 @@ test('inspect: 재기동해도 번호를 잇고, 턴 귀속은 앞 turn.end 뒤�
 });
 
 /** 에이전트 루프처럼 앞 대화를 다시 보내고 캐시 표시를 마지막 메시지로 옮기는 요청들 */
-function agentCalls(k: number, pad = 2000): InspectRecord[] {
+function agentCalls(k: number, pad = 2000): InspectCapture[] {
   const sys = [{ type: 'text', text: 'billing' }, { type: 'text', text: 'S'.repeat(pad), cache_control: { type: 'ephemeral', ttl: '1h' } }];
   const tools = [{ name: 'Bash', input_schema: { type: 'object' }, description: 'T'.repeat(pad) }];
   const msgs: any[] = [];
-  const out: InspectRecord[] = [];
+  const out: InspectCapture[] = [];
   for (let i = 1; i <= k; i++) {
     msgs.push({ role: 'user', content: [{ type: 'text', text: `q${i} ${'u'.repeat(pad)}` }] });
     const body = { model: 'claude-x', stream: true, system: sys, tools, messages: msgs.map((m, j) => (j === msgs.length - 1 ? { ...m, content: m.content.map((b: any) => ({ ...b, cache_control: { type: 'ephemeral' } })) } : m)) };
@@ -136,82 +138,117 @@ function agentCalls(k: number, pad = 2000): InspectRecord[] {
   return out;
 }
 
-test('inspect compact: 원본만 지운다 — 요청은 조각으로 다시 조립해 같고, SSE 는 메시지 하나로, 반복은 한 번만 저장', () => {
+test('inspect 저장: 파싱된 정보와 raw 를 나눈다 — 요청은 조각으로 다시 조립해 원본과 같은 JSON(키 순서까지), SSE 는 메시지 하나로, 반복은 한 번만', () => {
   const dir = tmp();
   const store = InspectStore.open(dir);
   const calls = agentCalls(12);
   for (const c of calls) store.add(c);
   const raw = store.rawSize();
-  store.tidy(1000 + 7 * 24 * 3600 * 1000 + 100); // 모두 7일이 지났다
+  assert.equal(raw, calls.reduce((t, c) => t + Buffer.byteLength(c.reqBody) + Buffer.byteLength(c.resBody), 0));
+  const check = (r: ReturnType<InspectStore['read']>, c: InspectCapture) => {
+    assert.equal(r!.request, JSON.stringify(JSON.parse(c.reqBody)), `요청 ${c.n} 은 원본과 같은 JSON (캐시 표시 자리·키 순서까지)`);
+    assert.deepEqual(JSON.parse(r!.response), sseMessage(c.resBody));
+    assert.equal(JSON.parse(r!.response).content[0].text, 'ab'.repeat(50));
+    assert.deepEqual(r!.reqHeaders, c.reqHeaders, '헤더는 그대로');
+  };
+  for (const c of calls) { const r = store.read(c.n)!; check(r, c); assert.deepEqual(r.raw, { req: c.reqBody, res: c.resBody }); }
+  assert.equal(store.tidy(1000 + 7 * 24 * 3600 * 1000 + 100), 12, '모두 7일이 지났다 — raw 를 지운다');
   assert.equal(store.rawSize(), 0);
-  for (const c of calls) {
-    const r = store.read(c.n)!;
-    assert.equal(r.compacted, true);
-    assert.deepEqual(JSON.parse(r.reqBody), JSON.parse(c.reqBody), `요청 ${c.n} 은 원본과 같은 JSON (캐시 표시 자리까지)`);
-    assert.deepEqual(JSON.parse(r.resBody), sseMessage(c.resBody));
-    assert.equal(JSON.parse(r.resBody).content[0].text, 'ab'.repeat(50));
-    assert.deepEqual(r.reqHeaders, c.reqHeaders, '헤더는 그대로');
-  }
+  for (const c of calls) { const r = store.read(c.n)!; check(r, c); assert.equal(r.raw, undefined, 'raw 는 없다'); }
   const db = (sql: string) => (store as any).db.prepare(sql).get();
-  const stored = Number(db('SELECT SUM(size) AS s FROM calls').s) + Number(db('SELECT SUM(LENGTH(body)) AS s FROM parts').s);
+  assert.equal(Number(db('SELECT COUNT(*) AS c FROM raw').c), 0);
+  const stored = Number(db('SELECT SUM(LENGTH(req) + LENGTH(res)) AS s FROM calls').s) + Number(db('SELECT SUM(LENGTH(body)) AS s FROM parts').s);
   assert.ok(stored * 4 < raw, `반복을 한 번만: raw ${raw}B → ${stored}B`);
   // 질문 12개(캐시 표시가 붙은 마지막 질문도 같은 조각) + 답 1개(11번 모두 같은 글) + system 2 + tools 1
   assert.equal(Number(db('SELECT COUNT(*) AS c FROM parts').c), 12 + 1 + 3);
-  store.tidy(1e15); // 이미 된 것엔 할 일이 없다
-  assert.deepEqual(JSON.parse(store.read(12)!.reqBody), JSON.parse(calls[11].reqBody));
+  assert.equal(store.tidy(1e15), 0, '이미 지운 것엔 할 일이 없다');
   store.close();
 });
 
-test('inspect compact: 다시 쓰지 못하는 응답(이상한 SSE)도 compact 로 표시하고 다음으로 — 한 행이 정리를 막지 않는다, 한 번에 BATCH 개까지', () => {
+test('inspect 저장: 다시 쓰지 못하는 본문은 그대로 파싱된 칸에, 세션 raw 합이 상한을 넘으면 오래된 raw 부터', () => {
   const store = InspectStore.open(tmp());
   const bad = 'event: error\ndata: {"type":"error","error":{"type":"overloaded_error"}}\n\nevent: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\nevent: content_block_delta\ndata: {"type":"content_block_delta","index":0}\n\n';
   assert.deepEqual(sseMessage(bad), { content: [{ type: 'text', text: '' }], error: { type: 'overloaded_error' } }, '던지지 않는다');
-  const calls = agentCalls(30, 10);
-  store.add({ ...calls[0], n: 99, at: 1, resBody: bad });
-  for (const c of calls) store.add(c);
-  assert.equal(store.tidy(1e15), 20, '한 번에 BATCH(20) 개까지 — 나머지는 다음 기록 때');
-  assert.equal(store.read(99)!.compacted, true);
-  assert.equal(store.tidy(1e15), 11);
-  assert.equal(store.rawSize(), 0);
-  store.close();
-});
-
-test('inspect compact: 세션 raw 합이 상한을 넘으면 오래된 것부터, JSON 이 아닌 본문은 그대로', () => {
-  const store = InspectStore.open(tmp());
   const calls = agentCalls(6);
   for (const c of calls) store.add(c);
   store.add({ ...calls[0], n: 7, at: 999, reqBody: 'not json', resHeaders: {}, resBody: 'plain' });
+  store.add({ ...calls[0], n: 8, at: 2000, resBody: 'event: ping\ndata: nope\n\n' });
+  assert.equal(store.read(7)!.request, 'not json');
+  assert.equal(store.read(7)!.response, 'plain');
+  assert.equal(store.read(8)!.response, 'event: ping\ndata: nope\n\n', '메시지가 안 나오는 SSE 는 본문 그대로');
   const total = store.rawSize();
-  store.tidy(2000, total - 1); // 7일 전은 없다 — 상한만
-  assert.equal(store.read(7)!.compacted, true, '가장 오래된 것(at 999)부터');
-  assert.equal(store.read(7)!.reqBody, 'not json');
-  assert.equal(store.read(7)!.resBody, 'plain');
-  assert.equal(store.read(1)!.compacted, undefined, '상한 안으로 들어오면 멈춘다');
+  assert.equal(store.tidy(2000, total - 1), 1, '7일 전은 없다 — 상한만, 넘는 만큼만');
+  assert.equal(store.read(7)!.raw, undefined, '가장 오래된 것(at 999)부터');
+  assert.equal(store.read(7)!.request, 'not json', '파싱된 정보는 남는다');
+  assert.ok(store.read(1)!.raw, '상한 안으로 들어오면 멈춘다');
+  assert.deepEqual(store.compactable(1003), { calls: 2, bytes: Buffer.byteLength(calls[0].reqBody) + Buffer.byteLength(calls[0].resBody) + Buffer.byteLength(calls[1].reqBody) + Buffer.byteLength(calls[1].resBody) });
+  assert.equal(store.compact(1003).calls, 2);
+  assert.equal(store.read(2)!.raw, undefined);
+  assert.ok(store.read(3)!.raw);
   store.close();
 });
 
-test('inspect 전체 정리: 세션을 가로질러 오래된 raw 부터 compact, 그래도 넘으면 오래된 호출부터 지우고 안 쓰는 조각도 지운다', async () => {
-  const P = corePaths(tmp());
-  const mk = (id: string, shift: number) => {
-    const d = path.join(P.sessionsDir, '-w', id, 'inspect');
-    const s = InspectStore.open(d);
-    for (const c of agentCalls(5, 4000)) s.add({ ...c, at: c.at + shift });
-    return s;
-  };
-  const a = mk('aaaa', 0), b = mk('bbbb', 100); // a 가 오래됐다
-  fs.mkdirSync(path.join(P.sessionsDir, '-w', 'cccc'), { recursive: true }); // 기록 없는 세션
-  const used = a.used() + b.used();
-  await sweepInspect(P.sessionsDir, 2000, used - 1);
-  assert.equal(a.read(1)!.compacted, true, '오래된 세션의 raw 부터');
-  assert.equal(b.read(5)!.compacted, undefined, '상한 안이면 새 것은 둔다');
-  assert.ok(!fs.existsSync(path.join(P.sessionsDir, '-w', 'cccc', 'inspect')), '기록 없는 세션엔 만들지 않는다');
+/** 세션 폴더 — meta.json 과 inspect 기록. live 면 세션 소켓에 듣는 서버를 띄운다 (떠 있는 core 처럼) */
+async function fakeSession(P: ReturnType<typeof corePaths>, id: string, at: number, k = 3) {
+  const log = EventLog.create(P.sessionsDir, { id, cwd: '/w', vendor: 'claude', createdAt: 0, updatedAt: 0 } as any);
+  const dir = path.join(log.dir, 'inspect');
+  const s = InspectStore.open(dir);
+  for (const c of agentCalls(k, 4000)) s.add({ ...c, at: at + c.n });
+  s.close();
+  return { dir, sock: log.sockPath, live: () => new Promise<net.Server>((r) => { const srv = net.createServer().listen(log.sockPath, () => r(srv)); }) };
+}
 
-  await sweepInspect(P.sessionsDir, 2000, 1); // 다 compact 해도 넘는다 → 지운다
-  assert.equal(a.read(1), null);
-  assert.deepEqual(turnCalls(a, [turnEnd(1, 1e12)], 1).map((c) => !!c.dropped), [true, true, true, true, true], '지운 호출은 카드로 남는다');
-  const parts = (s: InspectStore) => Number((s as any).db.prepare('SELECT COUNT(*) AS c FROM parts').get().c);
-  assert.equal(parts(a), 0, '아무도 안 쓰는 조각은 지운다');
-  a.close(); b.close();
+test('inspect 캐시 정리: 전체 용량과 버튼마다 지울 양을 보이고, 떠 있는 세션은 빼고 지운다', async () => {
+  const P = corePaths(tmp());
+  const day = 24 * 3600 * 1000, now = 100 * day;
+  const old = await fakeSession(P, 'old1', now - 10 * day);
+  const fresh = await fakeSession(P, 'new1', now - 2 * day);
+  const today = await fakeSession(P, 'tod1', now - 3600 * 1000);
+  const liveOld = await fakeSession(P, 'live', now - 10 * day);
+  fs.mkdirSync(path.join(P.sessionsDir, '-w', 'none'), { recursive: true }); // 기록 없는 세션
+  const srv = await liveOld.live();
+  try {
+    const u = await inspectUsage(P.sessionsDir, now);
+    const size = (d: string) => fs.readdirSync(d).reduce((t, f) => t + fs.statSync(path.join(d, f)).size, 0);
+    assert.equal(u.sessions, 4);
+    assert.equal(u.live, 1);
+    assert.equal(u.bytes, [old, fresh, today, liveOld].reduce((t, x) => t + size(x.dir), 0), '전체는 떠 있는 세션까지');
+    assert.deepEqual(u.old, { sessions: 1, bytes: size(old.dir) }, '7일 넘게 기록이 없는 꺼진 세션만');
+    assert.deepEqual(u.all, { sessions: 3, bytes: size(old.dir) + size(fresh.dir) + size(today.dir) });
+    assert.equal(u.compact.calls, 6, '하루 지난 raw — 오늘 세션과 떠 있는 세션은 뺀다');
+    assert.ok(!fs.existsSync(path.join(P.sessionsDir, '-w', 'none', 'inspect')), '기록 없는 세션엔 만들지 않는다');
+
+    let after = await cleanInspect(P.sessionsDir, 'compact', now);
+    assert.equal(after.compact.calls, 0);
+    const read = (d: string, n: number) => { const s = InspectStore.open(d); try { return s.read(n); } finally { s.close(); } };
+    assert.equal(read(fresh.dir, 1)!.raw, undefined, '압축은 raw 만');
+    assert.ok(read(fresh.dir, 1)!.request.includes('claude-x'), '파싱된 정보는 남는다');
+    assert.ok(read(today.dir, 1)!.raw, '하루 안의 raw 는 둔다');
+
+    after = await cleanInspect(P.sessionsDir, 'old', now);
+    assert.ok(!fs.existsSync(old.dir), '오래된 세션의 inspect 폴더째');
+    assert.ok(fs.existsSync(fresh.dir) && fs.existsSync(liveOld.dir), '최근 세션·떠 있는 세션은 둔다');
+    assert.deepEqual(after.old, { sessions: 0, bytes: 0 });
+
+    after = await cleanInspect(P.sessionsDir, 'all', now);
+    assert.ok(!fs.existsSync(fresh.dir) && !fs.existsSync(today.dir));
+    assert.ok(read(liveOld.dir, 1)!.raw, '떠 있는 세션은 모든 캐시 제거에서도 뺀다');
+    assert.deepEqual([after.sessions, after.live, after.all.sessions], [1, 1, 0]);
+  } finally { srv.close(); }
+});
+
+test('inspect 자동 정리: 꺼진 세션의 7일 지난 raw 만 지우고, 떠 있는 세션은 그 core 에 맡긴다', async () => {
+  const P = corePaths(tmp());
+  const day = 24 * 3600 * 1000, now = 100 * day;
+  const a = await fakeSession(P, 'aaaa', now - 10 * day), b = await fakeSession(P, 'bbbb', now - 10 * day), c = await fakeSession(P, 'cccc', now - day);
+  const srv = await b.live();
+  try {
+    await sweepInspect(P.sessionsDir, now);
+    const raw = (d: string) => { const s = InspectStore.open(d); try { return s.rawSize(); } finally { s.close(); } };
+    assert.equal(raw(a.dir), 0);
+    assert.ok(raw(b.dir) > 0, '떠 있는 세션은 열지 않는다');
+    assert.ok(raw(c.dir) > 0, '7일 안의 raw 는 둔다');
+  } finally { srv.close(); }
 });
 
 test('inspect 전체 정리: 3일이 지났을 때만, 잠금을 쥔 프로세스가 살아 있으면 건너뛴다', async () => {
@@ -322,10 +359,10 @@ test('inspect: core 가 claude 의 API 호출을 턴에 묶어 남기고, 끄고
     const msg = calls.find((x) => x.path.startsWith('/v1/messages') && x.status === 200 && x.reqBytes > 1000);
     assert.ok(msg, `messages 호출이 그 턴에 묶인다: ${calls.map((x) => x.path).join(', ')}`);
     const rec = await c.request('session.inspectCall', { id, n: msg!.n });
-    assert.match(rec.resBody, /event: message_stop/);
+    assert.match(rec.raw!.res, /event: message_stop/);
     assert.equal(rec.reqHeaders['x-api-key'], 'sk-ant-api03-…(redacted)');
     assert.ok(!JSON.stringify(rec).includes('FAKEKEY'), '키가 기록에 남지 않는다');
-    assert.match(JSON.parse(rec.reqBody).messages.map((m: any) => JSON.stringify(m.content)).join(''), /hello/);
+    assert.match(JSON.parse(rec.request).messages.map((m: any) => JSON.stringify(m.content)).join(''), /hello/);
     assert.ok(api.hits.some((x) => x.startsWith('POST /v1/messages')), '업스트림은 원래 ANTHROPIC_BASE_URL');
 
     // 끄면 claude 가 게이트웨이로 바로 간다 — 기록이 늘지 않는다
