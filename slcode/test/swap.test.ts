@@ -35,12 +35,13 @@ function bumpBuild(pkg: string): () => void {
 }
 
 /** cli 하나 — stdout 첫 줄을 기다린다. pkg 면 그 사본의 dist/cli.js 로 */
-function cli(dir: string, args: string[], stdin: 'ignore' | 'pipe' = 'ignore', pkg?: string): { child: ChildProcess; first: Promise<string>; exit: Promise<number | null> } {
-  const child = spawn(process.execPath, pkg ? [path.join(pkg, 'dist', 'cli.js'), ...args] : ['--import', TSX, CLI, ...args], { env: ENV(dir), stdio: [stdin, 'pipe', 'ignore'] });
+function cli(dir: string, args: string[], stdin: 'ignore' | 'pipe' = 'ignore', pkg?: string): { child: ChildProcess; first: Promise<string>; exit: Promise<number | null>; stderr: () => string } {
+  const child = spawn(process.execPath, pkg ? [path.join(pkg, 'dist', 'cli.js'), ...args] : ['--import', TSX, CLI, ...args], { env: ENV(dir), stdio: [stdin, 'pipe', 'pipe'] });
   child.stdout!.setEncoding('utf8');
+  let err = ''; child.stderr!.setEncoding('utf8'); child.stderr!.on('data', (d: string) => (err += d));
   const first = new Promise<string>((resolve) => { let buf = ''; child.stdout!.on('data', (d: string) => { buf += d; const i = buf.indexOf('\n'); if (i >= 0) resolve(buf.slice(0, i)); }); });
   const exit = new Promise<number | null>((resolve) => child.on('exit', (c) => resolve(c)));
-  return { child, first, exit };
+  return { child, first, exit, stderr: () => err };
 }
 const alive = (c: ChildProcess) => c.exitCode === null && c.signalCode === null;
 
@@ -120,7 +121,7 @@ test('웹: 교체 중이 아닐 때 serve 가 죽으면 한 번 다시 띄우고
   await sleep(1500); // 우체국 grace
 });
 
-test('카드: resume --stdio --takeover 는 떠 있는 세션의 소유권을 빼앗는다 — 옛 serve 가 SIGTERM 으로 끝나도 세션은 산다', async (t) => {
+test('카드: resume --stdio --takeover 는 떠 있는 세션의 소유권을 빼앗는다 — 옛 serve 가 SIGTERM 으로 끝나도 세션은 산다; 새 serve 가 SIGTERM 이면 owner gone 유예 없이 바로 닫는다', async (t) => {
   const dir = tmp('slcode-swap-');
   const a = cli(dir, ['new', tmp('slcode-work-'), '--vendor', 'codex', '--stdio', '--no-web'], 'pipe');
   t.after(() => { for (const x of [a, b]) if (x && alive(x.child)) x.child.kill('SIGKILL'); });
@@ -138,6 +139,9 @@ test('카드: resume --stdio --takeover 는 떠 있는 세션의 소유권을 �
   await b.exit;
   await c.done;
   assert.ok(!(await sockAlive(hello.sock)), '소유자가 끝나면 세션도 닫힌다');
+  const closing = fs.readFileSync(corePaths(dir).coreLog, 'utf8').split('\n').filter((l) => l.includes(`${hello.id}] closing: `)).map((l) => l.replace(/.*closing: /, ''));
+  assert.equal(closing[0], 'closed by client', 'core 는 owner gone 유예를 기다리지 않고 session.close 로 닫힌다');
+  assert.match(b.stderr(), /closing: signal/, '새 serve 는 시그널로 닫는다');
   await sleep(1500); // 우체국 grace
 });
 

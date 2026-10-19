@@ -315,6 +315,11 @@ async function attachStdio(log: EventLog) {
     webSock: process.env.SUPERLITE_SERVICE_WEB || undefined,
   });
   console.log(JSON.stringify({ url, id: log.meta.id, sock: log.sockPath }));
+  // 빼앗은 소유자면 serve() 처럼 시그널에 세션을 닫는다 — 없으면 superlite 가 카드를 멈출 때 core 가 owner gone 유예 뒤에야 닫았다
+  if (flags.takeover) {
+    const stop = () => void h.close('signal').then(() => process.exit(0));
+    process.on('SIGINT', stop); process.on('SIGTERM', stop); process.on('SIGHUP', stop);
+  }
   await h.done;
   process.exit(0);
 }
