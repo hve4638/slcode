@@ -3,8 +3,29 @@
 // turn/start 뒤 델타 → 명령 승인 요청 → 완료 알림을 낸다.
 // FAKE_CODEX_CALLS 면 thread/* 요청의 메서드·developerInstructions 를 그 파일에 한 줄씩 남긴다.
 // 본문이 auth-fail 이면 인증 실패 턴을 흉내 낸다. FAKE_CODEX_IGNORE_INTERRUPT 면 turn/interrupt 에 답하지 않는다 (느린 종료 — slcode 는 2초 기다린다)
+// inspect (ticket slcode-inspect-codex): config/read 는 -c openai_base_url 을 sessionFlags 층, FAKE_CODEX_USER_BASE 를 user 층으로 답한다.
+// 본문이 ws 면 -c 로 받은 주소(없으면 FAKE_CODEX_USER_BASE)의 /responses 에 WebSocket 으로 response.create 둘(둘째는 previous_response_id 로 증분)을 보내고 끝난 뒤 턴을 마친다.
+// no-call 이면 API 를 부르지 않고 성공한 턴으로 마친다
 import fs from 'node:fs';
 import readline from 'node:readline';
+import WebSocket from 'ws';
+const argBase = process.argv.join(' ').match(/openai_base_url="([^"]+)"/)?.[1] ?? null;
+/** 요청 하나 — response.completed 까지 받은 이벤트의 response id */
+const call = (ws, msg) => new Promise((resolve, reject) => {
+  const on = (data) => { const ev = JSON.parse(String(data)); if (ev.type === 'response.completed' || ev.type === 'response.failed') { ws.off('message', on); resolve(ev.response?.id); } };
+  ws.on('message', on); ws.once('error', reject);
+  ws.send(JSON.stringify(msg));
+});
+async function wsTurn(text) {
+  const base = argBase ?? process.env.FAKE_CODEX_USER_BASE;
+  if (!base || text === 'no-call') return;
+  const ws = new WebSocket(`${base.replace(/^http/, 'ws')}/responses`, { headers: { authorization: 'Bearer FAKETOKEN', 'chatgpt-account-id': 'acct-1' } });
+  await new Promise((r, j) => { ws.once('open', r); ws.once('error', j); });
+  const first = [{ type: 'message', role: 'user', content: [{ type: 'input_text', text }] }];
+  const id = await call(ws, { type: 'response.create', model: 'fake-model', instructions: 'be brief', input: first, tools: [{ type: 'function', name: 'shell' }], stream: true, store: false });
+  await call(ws, { type: 'response.create', model: 'fake-model', instructions: 'be brief', previous_response_id: id, input: [{ type: 'function_call_output', call_id: 'c1', output: 'ok' }], tools: [{ type: 'function', name: 'shell' }], stream: true, store: false });
+  ws.close();
+}
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 const notify = (method, params) => out({ jsonrpc: '2.0', method, params });
 let reqId = 100; const thread = { id: 'thr-1', cwd: process.cwd() };
@@ -22,6 +43,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   switch (m.method) {
     case 'initialize': return reply({ userAgent: 'fake/0.0.1 (test)', codexHome: '/tmp', platformFamily: 'unix', platformOs: 'linux' });
     case 'initialized': return;
+    case 'config/read': return reply({ config: {}, origins: {}, layers: [...(argBase ? [{ name: { type: 'sessionFlags' }, config: { openai_base_url: argBase } }] : []), { name: { type: 'user', file: '/tmp/config.toml' }, config: process.env.FAKE_CODEX_USER_BASE ? { openai_base_url: process.env.FAKE_CODEX_USER_BASE } : {} }] });
     case 'thread/start': case 'thread/resume': return reply({ thread: { id: m.method === 'thread/resume' ? m.params.threadId : thread.id, turns: [] }, model: m.params.model ?? 'fake-model', modelProvider: 'fake', cwd: m.params.cwd, approvalPolicy: m.params.approvalPolicy, sandbox: {}, reasoningEffort: 'medium' });
     case 'thread/fork': return reply({ thread: { id: `fork-${m.params.threadId}`, turns: [] }, model: m.params.model ?? 'fake-model', modelProvider: 'fake', cwd: m.params.cwd, approvalPolicy: m.params.approvalPolicy, sandbox: {}, reasoningEffort: 'medium' });
     case 'thread/read': return reply({ thread: { id: m.params.threadId, turns: process.env.FAKE_CODEX_TURNS ? JSON.parse(fs.readFileSync(process.env.FAKE_CODEX_TURNS, 'utf8')) : [] } });
@@ -44,6 +66,13 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
         for (const n of [1, 2]) notify('error', { threadId: thread.id, turnId: 't-1', willRetry: true, error: error(`Reconnecting... ${n}/5`) });
         notify('error', { threadId: thread.id, turnId: 't-1', willRetry: false, error: error('unexpected status 401 Unauthorized') });
         notify('turn/completed', { threadId: thread.id, turn: { id: 't-1', status: 'failed', error: error('unexpected status 401 Unauthorized'), durationMs: 5, items: [] } });
+        return;
+      }
+      if (text === 'ws' || text === 'no-call') {
+        wsTurn(text).then(() => {
+          notify('item/agentMessage/delta', { threadId: thread.id, turnId: 't-1', itemId: 'msg-1', delta: 'done' });
+          notify('turn/completed', { threadId: thread.id, turn: { id: 't-1', status: 'completed', error: null, durationMs: 3, items: [] } });
+        }, (e) => notify('turn/completed', { threadId: thread.id, turn: { id: 't-1', status: 'failed', error: { message: String(e) }, durationMs: 3, items: [] } }));
         return;
       }
       notify('item/reasoning/summaryTextDelta', { threadId: thread.id, turnId: 't-1', itemId: 'rs-1', delta: 'thinking', summaryIndex: 0 });

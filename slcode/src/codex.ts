@@ -17,6 +17,10 @@ export type CodexOptions = {
   env?: NodeJS.ProcessEnv;
   /** 실행 파일 — 기본 PATH 의 codex */
   bin?: string;
+  /** app-server 에 덧붙일 인자 — inspect 의 -c openai_base_url (ticket slcode-inspect-codex) */
+  args?: string[];
+  /** initialize 뒤 thread 를 열기 전에 한 번 — 사용자가 정한 openai_base_url (args 로 덮기 전 값, 없으면 null). 못 읽어도 null 로 부른다 */
+  onConfig?: (openaiBaseUrl: string | null) => void;
 };
 
 /** Codex 는 비용을 주지 않는다 — 공식 가격표(USD / 1M 토큰: 입력·캐시 입력·출력, developers.openai.com 2026-10-09)로 추정한다.
@@ -103,9 +107,16 @@ const isoOf = (secs: number | null | undefined) => (secs ? new Date(secs * 1000)
 const INIT = { clientInfo: { name: 'slcode', title: null, version: '0' }, capabilities: { experimentalApi: true, requestAttestation: false } };
 
 /** app-server 자식 — 실행 파일은 옵션 → SLCODE_CODEX_BIN(테스트의 가짜 서버, 공백으로 인자 분리) → PATH 의 codex */
-function spawnAppServer(spec: string | undefined, cwd: string, env: NodeJS.ProcessEnv): ChildProcess {
+function spawnAppServer(spec: string | undefined, cwd: string, env: NodeJS.ProcessEnv, args: string[] = []): ChildProcess {
   const [bin, ...pre] = (spec ?? process.env.SLCODE_CODEX_BIN ?? 'codex').split(' ');
-  return spawn(bin, [...pre, ...(pre.length ? [] : ['app-server'])], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+  return spawn(bin, [...pre, ...(pre.length ? [] : ['app-server']), ...args], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+}
+
+/** config/read 의 층들에서 사용자가 정한 openai_base_url — 우리가 -c 로 준 층(sessionFlags)은 뺀다. 층은 우선순위가 높은 것부터 온다 (codex-cli 0.159 실측) */
+export function userBaseUrl(layers: unknown): string | null {
+  if (!Array.isArray(layers)) return null;
+  for (const l of layers) if (l?.name?.type !== 'sessionFlags' && typeof l?.config?.openai_base_url === 'string' && l.config.openai_base_url.trim()) return l.config.openai_base_url;
+  return null;
 }
 
 /** app-server 를 잠깐 띄워 thread/read(includeTurns) 로 그 thread 의 턴들을 받고 내린다 — `slcode import` 가 이전 대화를 옮길 때 (세션 프로세스와 따로) */
@@ -154,7 +165,7 @@ export class CodexSession extends AgentSession {
   private modelList: any[] | null = null; // model/list 는 한 번만 — 목록은 세션 중 바뀌지 않는다
   private streamed = new Set<string>();
   private ready: Promise<void>;
-  private readonly opts: CodexOptions;
+  private opts: CodexOptions;
 
   constructor(opts: CodexOptions) {
     super(opts.log, opts.raw);
@@ -170,14 +181,23 @@ export class CodexSession extends AgentSession {
 
   // ---- 프로세스·RPC
   private async start() {
-    const proc = spawnAppServer(this.opts.bin, this.cwd, this.opts.env ?? process.env);
+    const proc = spawnAppServer(this.opts.bin, this.cwd, this.opts.env ?? process.env, this.opts.args);
     this.proc = proc;
     proc.stderr?.on('data', () => {}); // 진단 출력은 버린다 (ponytail: 필요하면 파일로)
-    readline.createInterface({ input: proc.stdout! }).on('line', (line) => this.onLine(line));
-    proc.on('exit', (code) => { for (const w of this.waits.values()) w.rej(new Error('codex exited')); this.waits.clear(); if (!this.ended) { this.emit({ kind: 'session.exit', reason: `codex exited (${code})` }); this.emit({ kind: 'session.state', state: 'exited' }); } });
+    readline.createInterface({ input: proc.stdout! }).on('line', (line) => { if (this.proc === proc) this.onLine(line); });
+    proc.on('exit', (code) => {
+      if (this.proc !== proc) return; // reopen 이 내린 옛 프로세스
+      for (const w of this.waits.values()) w.rej(new Error('codex exited')); this.waits.clear();
+      if (!this.ended) { this.emit({ kind: 'session.exit', reason: `codex exited (${code})` }); this.emit({ kind: 'session.state', state: 'exited' }); }
+    });
     try {
       const init = await this.request('initialize', INIT);
       this.notify('initialized', {});
+      if (this.opts.onConfig) {
+        let base: string | null = null;
+        try { base = userBaseUrl((await this.request('config/read', { includeLayers: true, cwd: this.cwd }))?.layers); } catch {}
+        this.opts.onConfig(base);
+      }
       const pol = policyOf(this.mode);
       const base = { cwd: this.cwd, approvalPolicy: pol.approvalPolicy, approvalsReviewer: pol.approvalsReviewer, sandbox: sandboxModeOf(this.mode), ...(this.model ? { model: this.model } : {}) };
       let r: any = null;
@@ -419,6 +439,29 @@ export class CodexSession extends AgentSession {
   async mcp(): Promise<McpStatus[]> { return []; }
   async reconnectMcp(): Promise<McpStatus[]> { throw new Error('mcp reconnect is not supported for codex sessions'); }
   async rewind(): Promise<string[] | null> { throw new Error('rewind is not supported for codex sessions'); }
+
+  /** 기동 전에 온 턴 수 — core 가 inspect 를 바꾸며 다시 띄우기 전에 본다 */
+  get queued(): number { return this.queue.length; }
+
+  /** app-server 를 같은 thread 로 인자만 바꿔 다시 띄운다 — inspect 토글 (ticket slcode-inspect-codex). thread/resume 으로 잇는다 */
+  async reopen(args: string[]) {
+    if (this.state !== 'idle' && this.state !== 'starting') throw new Error('reopen needs an idle session');
+    if (this.queue.length) throw new Error('reopen needs an idle session with no queued turn');
+    await this.ready.catch(() => {});
+    if (this.ended) return;
+    this.opts = { ...this.opts, args };
+    const old = this.proc;
+    this.proc = null;
+    for (const w of this.waits.values()) w.rej(new Error('codex restarted')); this.waits.clear();
+    if (old) {
+      const gone = new Promise<void>((r) => { if (old.exitCode !== null || old.signalCode !== null) r(); else old.once('exit', () => r()); });
+      try { old.stdin?.end(); old.kill(); } catch {}
+      await gone;
+    }
+    if (this.ended) return; // 내리는 사이에 닫혔다
+    this.ready = this.start();
+    await this.ready;
+  }
 
   async close(reason = 'closed', quiet = false) {
     if (this.ended) return;

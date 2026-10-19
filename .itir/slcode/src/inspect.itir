@@ -1,8 +1,19 @@
 import { InspectCall, InspectRecord, LoggedEvent } from './protocol'
 import { RAW_CAP, InspectStore } from './inspectDb'
 
-role: inspect 모드 (ticket slcode-inspect-proxy, 사용자 결정 2026-10-17) — Claude 벤더의 ANTHROPIC_BASE_URL 을 이 프로세스 안의 로컬 HTTP proxy 로 돌려 API 요청·응답 원본을 세션의 InspectStore(inspectDb.ts — 세션 폴더 inspect/inspect.db)에 남긴다. proxy 는 받은 바이트를 그대로 흘려보낸다 — 응답 청크는 도착하는 대로 쓰고(SSE 지연·순서 불변), 압축(gzip·br·zstd·deflate)도 풀지 않고 넘긴다. 기록 사본만 끝난 뒤 푼다(비동기). 업스트림 연결은 keep-alive 로 재사용한다(호출마다 TLS 를 새로 맺지 않게). 인증으로 보이는 헤더(이름에 auth·api-key·secret·cookie·access/session-token — 게이트웨이의 ANTHROPIC_CUSTOM_HEADERS 까지, 사용량 헤더는 남긴다)는 sk-ant-… 접두만 남기고 가려 저장한다. 쓰기는 동기 트랜잭션 하나씩이고 쓸 때마다 store.tidy(7일·세션 raw 상한 compact) — 디스크 오류로 벤더 호출을 막지 않고, 실패는 처음 한 번만 log. 1st party 판정: Claude Code 는 base URL host 가 api.anthropic.com 일 때만 1st party 로 본다 — 주소만 바꾸면 tool search·beta 헤더가 달라진다(2026-10-17 실측). 원래 1st party 였으면(keepsFirstParty: ANTHROPIC_BASE_URL 없음·api.anthropic.com·이미 플래그) 내부 env _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL=1 과, 사용자가 정하지 않았으면 공식 env ENABLE_TOOL_SEARCH=true 를 함께 준다 — 플래그가 버전이 바뀌어 사라져도 가장 큰 차이(tool search 꺼짐)는 공식 변수로 막는 안전망. 공식 변수만으로는 같아지지 않는다(2026-10-18 실측: global 프롬프트 캐시·eager_input_streaming·beta 2개·request-class 헤더가 빠진다, 공식 대안 env 는 없음). 다른 BASE_URL 이 있었으면 둘 다 없이 그 주소를 업스트림으로 쓴다. 1st party 감시(ticket slcode-inspect-default-on, 사용자 결정 2026-10-19): watch 면 tool 목록이 있는 첫 POST /v1/messages(count_tokens 제외 — 제목 생성 같은 부수 요청엔 tool 이 없다)에 x-claude-code-request-class 헤더가 없을 때 onLost 를 한 번 — 플래그가 듣지 않는다. onLost 는 HTTP 이벤트 처리 안에서 부르므로 던져도 잡아 log 한다(core 가 죽지 않게). 막힌 기록은 상태 폴더 파일 하나({sdk, at}) — 묶은 Agent SDK 버전이 같을 때만 막힌 것으로 본다(플래그가 사라지는 때는 SDK 가 바뀔 때뿐, 바뀌면 다시 검사). SDK 버전을 모르면(unknown) 남기지도 맞추지도 않는다. 턴 귀속: 시각으로 — turn.end 하나의 호출은 앞 turn.end 시각 뒤부터 그 turn.end 시각까지 시작한 것(턴은 FIFO 로 끝난다; 첫 턴 앞의 기동 호출은 첫 턴에, 턴 사이 호출은 다음 턴에)
+role: inspect 모드 (ticket slcode-inspect-proxy, 사용자 결정 2026-10-17) — Claude 벤더의 ANTHROPIC_BASE_URL 을 이 프로세스 안의 로컬 HTTP proxy 로 돌려 API 요청·응답 원본을 세션의 InspectStore(inspectDb.ts — 세션 폴더 inspect/inspect.db)에 남긴다. proxy 는 받은 바이트를 그대로 흘려보낸다 — 응답 청크는 도착하는 대로 쓰고(SSE 지연·순서 불변), 압축(gzip·br·zstd·deflate)도 풀지 않고 넘긴다. 기록 사본만 끝난 뒤 푼다(비동기). 업스트림 연결은 keep-alive 로 재사용한다(호출마다 TLS 를 새로 맺지 않게). 인증으로 보이는 헤더(이름에 auth·api-key·secret·cookie·access/session-token — 게이트웨이의 ANTHROPIC_CUSTOM_HEADERS 까지, 사용량 헤더는 남긴다)는 sk-ant-… 접두만 남기고 가려 저장한다. 쓰기는 동기 트랜잭션 하나씩이고 쓸 때마다 store.tidy(7일·세션 raw 상한 compact) — 디스크 오류로 벤더 호출을 막지 않고, 실패는 처음 한 번만 log. 1st party 판정: Claude Code 는 base URL host 가 api.anthropic.com 일 때만 1st party 로 본다 — 주소만 바꾸면 tool search·beta 헤더가 달라진다(2026-10-17 실측). 원래 1st party 였으면(keepsFirstParty: ANTHROPIC_BASE_URL 없음·api.anthropic.com·이미 플래그) 내부 env _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL=1 과, 사용자가 정하지 않았으면 공식 env ENABLE_TOOL_SEARCH=true 를 함께 준다 — 플래그가 버전이 바뀌어 사라져도 가장 큰 차이(tool search 꺼짐)는 공식 변수로 막는 안전망. 공식 변수만으로는 같아지지 않는다(2026-10-18 실측: global 프롬프트 캐시·eager_input_streaming·beta 2개·request-class 헤더가 빠진다, 공식 대안 env 는 없음). 다른 BASE_URL 이 있었으면 둘 다 없이 그 주소를 업스트림으로 쓴다. 1st party 감시(ticket slcode-inspect-default-on, 사용자 결정 2026-10-19): watch 면 tool 목록이 있는 첫 POST /v1/messages(count_tokens 제외 — 제목 생성 같은 부수 요청엔 tool 이 없다)에 x-claude-code-request-class 헤더가 없을 때 onLost 를 한 번 — 플래그가 듣지 않는다. onLost 는 HTTP 이벤트 처리 안에서 부르므로 던져도 잡아 log 한다(core 가 죽지 않게). 막힌 기록은 상태 폴더 파일 하나({sdk, at}) — 묶은 Agent SDK 버전이 같을 때만 막힌 것으로 본다(플래그가 사라지는 때는 SDK 가 바뀔 때뿐, 바뀌면 다시 검사). SDK 버전을 모르면(unknown) 남기지도 맞추지도 않는다. Codex (ticket slcode-inspect-codex, 사용자 결정 2026-10-19, codex-cli 0.159 실측·소스): app-server 는 env(OPENAI_BASE_URL 은 더 이상 안 읽는다)가 아니라 -c openai_base_url 로만 주소가 바뀐다. ChatGPT 로그인도 이 길을 탄다. 주소 끝이 /backend-api/codex 가 아니면 codex 가 ChatGPT 백엔드가 아니라고 보고 Plus/Pro 의 실험적 컨텍스트 관리·모델별 헤더·guardian credits·workspace routing 을 끈다 — 그래서 proxy 주소에 CODEX_ROUTE 를 붙이고 들어온 경로에서 떼어 넘긴다(origin 이 chatgpt.com 이 아니라 workspace routing 이 host 를 되돌리지 않는다). HTTP 요청 본문은 ChatGPT 로그인이면 zstd — 업스트림엔 그대로, 기록 사본만 푼다. Responses API 는 WebSocket 이 먼저 — 그대로 중계한다(codex 동작을 바꾸지 않는다): 업그레이드를 업스트림으로 넘기되 permessage-deflate 제안만 빼고(프레임이 압축되지 않아 사본을 풀 수 있다, codex 는 압축 없이도 붙는다), 101 이면 응답 머리를 그대로 돌려주고 두 소켓의 바이트를 잇는다. 기록 사본은 frames 로 텍스트 메시지를 꺼내 wsCalls 가 호출로 묶는다. 업스트림이 업그레이드를 거절하면 그 응답을 그대로 돌려주고 HTTP 호출 하나로 남긴다. 업그레이드된 소켓은 server.close 가 닫지 않으므로 따로 들고 close 때 닫는다. seen 은 proxy 가 받은 요청 경로(쿼리 뺀 것) — 기록은 응답이 끝난 뒤 비동기라 core 의 Codex 감시는 이것으로 본다. 턴 귀속: 시각으로 — turn.end 하나의 호출은 앞 turn.end 시각 뒤부터 그 turn.end 시각까지 시작한 것(턴은 FIFO 로 끝난다; 첫 턴 앞의 기동 호출은 첫 턴에, 턴 사이 호출은 다음 턴에)
 
+export val CODEX_ROUTE
+export fn codexArgs(url) -> Text[] {
+  role: app-server 인자 -c openai_base_url="<url>/backend-api/codex"
+}
+export fn codexUpstream(userBase, headers) -> Text {
+  role: codex 요청을 넘길 곳 — 사용자가 정한 openai_base_url, 없으면 chatgpt-account-id 헤더(ChatGPT 로그인)면 https://chatgpt.com/backend-api/codex, 아니면 https://api.openai.com/v1
+}
+export type Upstream
+export fn unrecorded(method, url) -> Bool {
+  role: 넘기기만 하고 남기지 않는 호출 — GET …/models(codex app-server 가 4분 30초마다 받는 모델 목록) 와 HEAD /api/hello(Claude Code 의 연결 확인). 턴과 상관없는 주기 호출이 세션 기록을 채워 턴 원본이 compact 되지 않게(사용자 2026-10-20)
+}
 export fn upstreamOf(env) -> Text {
   role: 넘길 곳 — env 의 ANTHROPIC_BASE_URL, 없으면 https://api.anthropic.com
 }
@@ -23,10 +34,16 @@ export fn blockInspect(file) {
 }
 export type InspectOptions
 export fn startInspect(store, upstream, opts) -> InspectProxy {
-  role: 127.0.0.1 임의 포트에 proxy 를 띄운다. 번호는 store.lastN 을 이어 매긴다(재기동·resume 뒤에도 단조). opts: rawCap(기본 RAW_CAP)·watch·onLost·log. close 는 서버와 남은 연결을 닫고 푸는 중인 기록을 기다린다
+  role: 127.0.0.1 임의 포트에 proxy 를 띄운다. 번호는 store.lastN 을 이어 매긴다(재기동·resume 뒤에도 단조). upstream 은 고정 주소나 요청마다 고르는 함수(Upstream, 비동기 가능). unrecorded 호출은 번호를 매기지 않고 남기지 않는다(seen 에는 넣는다). opts: rawCap(기본 RAW_CAP)·prefix(들어온 경로에서 뗄 앞부분 — codex 는 CODEX_ROUTE)·watch·onLost·log. 인증으로 보이는 헤더에 account-id(codex 의 chatgpt-account-id)도 든다. close 는 서버와 남은 연결을 닫고 푸는 중인 기록을 기다린다
 }
 export fn turnCalls(store, events, end) -> InspectCall[] {
   role: seq end 의 turn.end 에 귀속되는 호출들 — store 가 없으면(켠 적 없음) 빈 목록
+}
+export fn frames(onText) -> Fn {
+  role: WebSocket 프레임 읽기(기록 사본용) — 청크를 받아 마스크를 풀고 조각난 메시지를 이어 텍스트 메시지마다 onText(text, bytes). 제어·바이너리 프레임은 버린다. 프레임이 다 오기 전엔 잇지 않는다(수 MB 요청을 청크마다 복사하지 않게)
+}
+export fn wsCalls(c) {
+  role: WebSocket 연결 하나의 호출들 — up(클라이언트 메시지)이 호출을 열고(앞 호출이 열려 있으면 오류로 닫는다) down(서버 이벤트)을 SSE 꼴(event·data 줄)로 모아 response.completed(성공)·failed·incomplete·error 에서 닫는다, close 는 열린 호출을 'connection closed' 로. method WS, 헤더는 업그레이드의 것. 증분 요청(previous_response_id 가 직전 응답 id)이면 앞 요청 input + 서버가 낸 항목(output_item.done) + 증분으로 전체 요청을 reqFull 에 (codex-cli 0.159 get_incremental_items)
 }
 fn redact(headers) -> Headers
 fn decode(buf, encoding) -> Text

@@ -73,10 +73,10 @@ export function settingsDialog(h, set, end) {
   lo.onchange = hi.onchange = () => save({ context: { yellow: +lo.value, red: +hi.value } });
   const ctxBody = h('div', { class: 'ctxbody' }, range);
 
-  // 새 세션 inspect (사용자 2026-10-19) — 이 입구에서 여는 새 Claude 세션의 시작값. 떠 있는 세션은 사이드바의 inspect 로 켜고 끈다.
+  // 새 세션 inspect (사용자 2026-10-19) — 이 입구에서 여는 새 세션(Claude·Codex)의 시작값. 떠 있는 세션은 사이드바의 inspect 로 켜고 끈다.
   // 내부 플래그가 듣지 않는 SDK 로 기록돼 있으면(serve.info inspectBlocked) 끄고 사유를 보인다
   const insp = h('input', { type: 'checkbox', role: 'switch', onchange: () => save({ inspect: insp.checked }) });
-  const inspNote = h('p', { class: 'note' }, '새로 여는 Claude 세션이 API 요청·응답을 세션 폴더에 기록합니다. 지금 세션은 사이드바에서 켜고 끕니다.');
+  const inspNote = h('p', { class: 'note' }, '새로 여는 세션이 API 요청·응답을 세션 폴더에 기록합니다. 지금 세션은 사이드바에서 켜고 끕니다.');
   let inspBlocked = null;
 
   // 세션 종료 — 맨 아래 줄, 왼쪽 이름 · 오른쪽 끝 빨간 '종료' (context 경고 줄과 같은 꼴). 누르면 확인 창을 한 번 더 (사용자 2026-10-16). 끝난 세션이면 숨긴다(endable)

@@ -347,7 +347,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   el.append(inspectUi.el);
   const inspectBtn = (endSeq) => { const b = iconBtn('inspect', '이 턴의 API 호출 보기', () => inspectUi.open(current, endSeq)); b.classList.add('insp'); return b; };
   const syncInspect = () => el.classList.toggle('inspectable', info?.inspect != null);
-  // 사이드바 inspect 토글의 확인 창 (사용자 2026-10-19, ticket slcode-inspect-default-on) — 켜고 끄면 claude 를 다시 띄워 다음 호출의 캐시가 깨질 수 있다
+  // 사이드바 inspect 토글의 확인 창 (사용자 2026-10-19, ticket slcode-inspect-default-on) — 켜고 끄면 벤더를 다시 띄워 다음 호출의 캐시가 깨질 수 있다
   let inspectTo = false;
   const inspectMsg = h('p', {});
   const confirmInspect = h('dialog', { class: 'confirm' }, inspectMsg, h('div', { class: 'btns' },
@@ -360,7 +360,9 @@ export function mountAgentFront(root, transport, opts = {}) {
   el.append(confirmInspect);
   const askInspect = (on) => {
     inspectTo = on;
-    inspectMsg.textContent = `inspect 를 ${on ? '켜면' : '끄면'} Claude 를 같은 대화로 다시 띄웁니다. 다음 호출에서 프롬프트 캐시가 깨져 비용이 더 들 수 있고, 이 세션에서 '이번 세션만 허용' 한 승인 규칙은 사라집니다.`;
+    inspectMsg.textContent = info?.vendor === 'codex'
+      ? `inspect 를 ${on ? '켜면' : '끄면'} Codex 를 같은 대화로 다시 띄웁니다. 이 세션에서 '이번 세션만 허용' 한 승인은 사라집니다.`
+      : `inspect 를 ${on ? '켜면' : '끄면'} Claude 를 같은 대화로 다시 띄웁니다. 다음 호출에서 프롬프트 캐시가 깨져 비용이 더 들 수 있고, 이 세션에서 '이번 세션만 허용' 한 승인 규칙은 사라집니다.`;
     confirmInspect.showModal();
   };
   // 메시지 턴 — 내부적으로는 사용자 턴이지만 화면은 사용자 말풍선이 아니라 왼쪽의 봉투 카드 (프로토타입, 사용자 2026-09-27).
@@ -703,8 +705,8 @@ export function mountAgentFront(root, transport, opts = {}) {
     side.append(sec('session', '세션', kv([
       ['상태', STATE_LABEL[info?.state] ?? ''], ['id', current ? h('span', { class: 'idv' }, current, iconBtn('copy', '세션 id 복사', copyOf(current))) : null],['벤더 세션', info?.vendorSessionId ?? ready?.vendorSessionId], ['권한 모드', ready?.permissionMode ?? info?.permissionMode],
       ['연결', connected ? '연결됨' : '끊김'], ['raw', info?.raw ? '켬' : '끔'],
-      // inspect 토글 — 켜고 끄면 claude 를 같은 대화로 다시 띄운다 (idle 일 때만). 값은 session.changed 로 온다
-      ...(info?.vendor === 'claude' ? [['inspect', h('button', { class: 'ghost', title: '켜거나 끄면 claude 를 같은 대화로 다시 띄웁니다 (대기 중일 때만)', disabled: info.state === 'idle' || info.state === 'starting' ? null : '',
+      // inspect 토글 — 켜고 끄면 벤더(claude·codex)를 같은 대화로 다시 띄운다 (idle 일 때만). 값은 session.changed 로 온다
+      ...(info ? [['inspect', h('button', { class: 'ghost', title: `켜거나 끄면 ${info.vendor} 를 같은 대화로 다시 띄웁니다 (대기 중일 때만)`, disabled: info.state === 'idle' || info.state === 'starting' ? null : '',
         onclick: () => askInspect(!info.inspect) }, info.inspect ? '켬' : '끔')]] : []),
     ])));
     const pend = [...cards.entries()].filter(([, c]) => !c.classList.contains('resolved'));

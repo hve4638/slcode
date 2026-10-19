@@ -12,6 +12,9 @@ export fn toolOf, toolResult, collabTask {
 export fn isAuthError(info) -> Bool {
   role: codexErrorInfo 가 인증 실패인가 (unauthorized 또는 HTTP 401) — 실시간 turn.end 와 가져온 기록(history.codexEvents)이 같이 쓴다
 }
+export fn userBaseUrl(layers) -> Text? {
+  role: config/read 층들에서 사용자가 정한 openai_base_url — 우리가 -c 로 준 sessionFlags 층은 뺀다, 층은 우선순위가 높은 것부터
+}
 export fn readThread(id, cwd) -> Turn[] {
   role: app-server 를 잠깐 띄워 thread/read(includeTurns) 로 턴들을 받고 내린다 — `slcode import` 가 이전 대화를 옮길 때 (세션 프로세스와 따로, SLCODE_CODEX_BIN 을 같이 따른다)
 }
@@ -19,7 +22,7 @@ export fn estimateCostUsd(model, u) -> Float? {
   role: 공식 가격표(USD / 1M 토큰: 입력·캐시 입력·출력, 캐시 쓰기는 입력의 1.25배)로 토큰 수의 비용 추정. inputTokens 는 캐시 읽기·쓰기 포함. 272K 할증은 셈하지 않는다. 표에 없는 모델은 null (사용자 2026-10-09)
 }
 export class CodexSession {
-  role: AgentSession 구현 — 자식 프로세스 수명 = 세션 수명. turn 이 진행 중이면 send 는 큐에 넣어 turn/completed 뒤 다음 turn/start 로 (Claude 의 streaming input 과 같은 겉모습)
+  role: AgentSession 구현 — 자식 프로세스 수명 = 세션 수명(inspect 토글의 reopen 만 같은 thread 로 갈아 띄운다). 옵션 args 는 app-server 에 덧붙일 인자(inspect 의 -c openai_base_url), onConfig 는 initialize 뒤 thread 를 열기 전에 한 번 사용자가 정한 openai_base_url(config/read 의 userBaseUrl, 못 읽으면 null) — ticket slcode-inspect-codex. turn 이 진행 중이면 send 는 큐에 넣어 turn/completed 뒤 다음 turn/start 로 (Claude 의 streaming input 과 같은 겉모습)
   export fn send(text, origin, attachments) {
     role: turn.start 이벤트 뒤 turn/start — 이미지는 data URL 로 image 입력, 그 밖 첨부는 본문 인라인
   }
@@ -58,6 +61,9 @@ export class CodexSession {
   }
   export fn rewind(seq, conversation, files) {
     role: 미지원 — 오류
+  }
+  export fn reopen(args) {
+    role: app-server 를 같은 thread 로 인자만 바꿔 다시 띄운다(inspect 토글, ticket slcode-inspect-codex) — idle·줄 선 턴 없음일 때만, 옛 프로세스가 내려간 뒤 새로 띄워 thread/resume. 내리는 사이 닫혔으면 띄우지 않는다. 옛 프로세스의 줄·exit 은 무시한다
   }
   export fn close(reason, quiet) {
     role: 진행 턴 interrupt → 프로세스 종료 → session.exit·exited (quiet 면 남기지 않는다 — core 교체)

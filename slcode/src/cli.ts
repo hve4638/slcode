@@ -38,7 +38,7 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
   new [folder] [--web] [--host H] [--port N] [--no-web] [--raw] [--no-inspect] [--mode M] [--title T] [--vendor claude|codex] [--stdio]
                                  새 세션 (폴더 생략 시 현재 폴더)
                                  --no-inspect: 설정 창의 '새 세션 inspect' 가 켜져 있어도 끈 채로 시작한다 (resume 이면 켜져 있던 것을 끈다).
-                                 inspect 는 Claude 의 API 요청·응답 원본을 세션 폴더 inspect/ 에 남긴다 — 떠 있는 세션은 웹 사이드바에서 켜고 끈다
+                                 inspect 는 벤더(Claude·Codex)의 API 요청·응답 원본을 세션 폴더 inspect/ 에 남긴다 — 떠 있는 세션은 웹 사이드바에서 켜고 끈다
                                  --stdio: stdin/stdout 을 프레임 연결로 (첫 줄 {"url","id","sock"}; superlite 서비스용). resume·continue 도 받는다
                                  resume <s> --stdio --takeover: 살아 있는 세션의 소유권을 빼앗아 붙는다 (카드 핸드오프)
   resume [<s>]                   저장된 세션을 다시 띄운다. <s> 가 없으면 현재 폴더의 꺼진 세션 목록 (superlite 안이면 카드에서 고른다)
@@ -216,12 +216,12 @@ async function printWeb(log: EventLog) {
 }
 /** core 를 띄우고 그 소유자가 되어 끝까지 산다 — new·resume·continue. 웹 모드(--stdio·--no-web 없음)는 진입 프로세스가 되어 serve 를 자식으로
  *  띄우고 교체한다 (entry.ts). 카드 서비스(--stdio)·--no-web 은 이 프로세스가 곧 serve 다 */
-/** 세션의 inspect — --no-inspect 면 끔. 새 Claude 세션은 들어온 입구(--stdio 면 superlite 카드, 아니면 웹)의 설정을 따르되, 이 SDK 에서 막혔으면 끔.
+/** 세션의 inspect — --no-inspect 면 끔. 새 세션은 들어온 입구(--stdio 면 superlite 카드, 아니면 웹)의 설정을 따르되, Claude 는 이 SDK 에서 막혔으면 끔.
  *  이어받는 세션은 넘기지 않는다 (meta 를 따른다) */
 function inspectOf(resume: string | undefined): boolean | undefined {
   if (flags['no-inspect']) return false;
-  if (resume || flags.vendor === 'codex' || !readSettings(P.dir, flags.stdio ? 'superlite' : 'web').inspect) return undefined;
-  const blocked = inspectBlocked(path.join(P.dir, FILES.inspectBlocked));
+  if (resume || !readSettings(P.dir, flags.stdio ? 'superlite' : 'web').inspect) return undefined;
+  const blocked = flags.vendor === 'codex' ? null : inspectBlocked(path.join(P.dir, FILES.inspectBlocked));
   if (blocked) err(`warning: not recording with inspect — it is blocked for this Claude Code (Agent SDK ${blocked})`);
   return !blocked;
 }

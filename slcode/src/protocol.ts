@@ -59,9 +59,10 @@ export type InspectCall = {
   reqBytes: number; resBytes: number; error?: string; dropped?: boolean;
 };
 /** 호출 하나의 원본 — 인증 헤더는 가렸다. resBody 는 압축을 푼 텍스트 (SSE 는 도착한 그대로).
- *  compacted 면 원본은 지웠다 — reqBody 는 저장한 조각으로 다시 조립한 JSON, SSE 응답은 메시지 하나의 JSON */
+ *  method 'WS' 는 WebSocket 메시지 하나(codex) — reqBody 는 보낸 메시지, resBody 는 받은 이벤트를 SSE 꼴로 이은 것, reqFull 은 증분 요청을 다시 만든 전체 요청.
+ *  compacted 면 원본은 지웠다 — reqBody·reqFull 은 저장한 조각으로 다시 조립한 JSON, SSE 응답은 메시지 하나의 JSON */
 export type InspectRecord = InspectCall & {
-  reqHeaders: Record<string, string | string[]>; reqBody: string; resHeaders: Record<string, string | string[]>; resBody: string; compacted?: true;
+  reqHeaders: Record<string, string | string[]>; reqBody: string; reqFull?: string; resHeaders: Record<string, string | string[]>; resBody: string; compacted?: true;
 };
 
 /** 턴에 딸린 파일 — 웹 프런트의 붙여넣기·끌어놓기. data 는 base64. 이미지·PDF 는 벤더 블록으로, 텍스트류는 본문에 인라인 */

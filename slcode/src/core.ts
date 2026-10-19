@@ -20,7 +20,7 @@ import { isLoopback, reachable, sockAlive, spawnCore } from './live.js';
 import { BUILD, VERSION, replacingMark } from './client.js';
 import { corePaths, ensureDir, readOrCreateToken } from './paths.js';
 import { formatMail, newMail, parseMails, sendMail, sessionMeta } from './mail.js';
-import { blockInspect, inspectBlocked, inspectEnv, keepsFirstParty, sdkVersion, startInspect, turnCalls, upstreamOf, type InspectProxy } from './inspect.js';
+import { blockInspect, CODEX_ROUTE, codexArgs, codexUpstream, inspectBlocked, inspectEnv, keepsFirstParty, sdkVersion, startInspect, turnCalls, upstreamOf, type InspectProxy } from './inspect.js';
 import { InspectStore, maybeSweep } from './inspectDb.js';
 import { CoreError, ERR, FILES, PROTOCOL_VERSION, type ApprovalRequest, type LoggedEvent, type Mail, type MethodName, type Methods, type RequestFrame, type SessionInfo } from './protocol.js';
 
@@ -59,7 +59,7 @@ export type CoreOptions = {
   permissionMode?: string;
   /** 새 세션의 벤더 — 기본 claude. 이어받는 세션은 meta.vendor 를 따른다 */
   vendor?: 'claude' | 'codex';
-  /** 새 세션을 inspect 로 (Claude 만) — 입구 설정(Settings.inspect)을 CLI 가 읽어 넘긴다. 이어받는 세션은 meta.inspect 를 따르고, false 면 끈다 (--no-inspect) */
+  /** 새 세션을 inspect 로 — 입구 설정(Settings.inspect)을 CLI 가 읽어 넘긴다. 이어받는 세션은 meta.inspect 를 따르고, false 면 끈다 (--no-inspect) */
   inspect?: boolean;
   log?: (msg: string) => void;
 };
@@ -104,18 +104,30 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   let switching = false; // session.setInspect 가 벤더를 다시 띄우는 중 — 겹친 토글은 거절한다
   const sweep = () => void maybeSweep(path.join(P.dir, FILES.inspectSweep), path.join(P.dir, FILES.inspectSweepLock), P.sessionsDir, { log })
     .catch((e) => log(`inspect sweep failed: ${(e as Error).message}`));
+  // codex (ticket slcode-inspect-codex) — proxy 주소는 app-server 인자(-c openai_base_url)로. 사용자가 정한 openai_base_url 은 app-server 가 뜬 뒤
+  // config/read 로 알게 되므로(onConfig) 그 전에 proxy 에 온 요청은 기다렸다가 넘긴다
+  const codex = logFile.meta.vendor === 'codex';
+  let gotBase: (base: string | null) => void = () => {};
+  const userBase = new Promise<string | null>((r) => (gotBase = r));
+  let watching = false; // codex 감시 — proxy 를 세웠고 아직 성공한 턴이 없다
   const startProxy = async () => {
-    const blocked = inspectBlocked(blockedFile);
+    const blocked = codex ? null : inspectBlocked(blockedFile);
     if (blocked) throw new Error(`inspect is blocked for this Claude Code (Agent SDK ${blocked}): it does not treat the proxy as first party, so prompt caching and other features would be lost`);
     store ??= InspectStore.open(inspectDir);
-    inspect ??= await startInspect(store, upstreamOf(env), { watch: keepsFirstParty(env), onLost: firstPartyLost, log });
+    if (!inspect) {
+      inspect = codex
+        ? await startInspect(store, async (req) => codexUpstream(await userBase, req.headers), { prefix: CODEX_ROUTE, log })
+        : await startInspect(store, upstreamOf(env), { watch: keepsFirstParty(env), onLost: firstPartyLost, log });
+      watching = codex;
+    }
     if (!sweeper) { sweep(); sweeper = setInterval(sweep, 3600_000); sweeper.unref(); }
     return inspect;
   };
   const vendorEnv = async () => {
-    if (!logFile.meta.inspect || logFile.meta.vendor === 'codex') return env;
+    if (!logFile.meta.inspect || codex) return env;
     return inspectEnv(env, (await startProxy()).url);
   };
+  const vendorArgs = async () => (logFile.meta.inspect && codex ? codexArgs((await startProxy()).url) : []);
   /** 지난 기록을 읽는 DB — 켠 적 없는 세션엔 만들지 않는다 */
   const readStore = () => {
     if (!store && InspectStore.exists(inspectDir)) {
@@ -124,23 +136,31 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     return store;
   };
   // 첫 기동에서 못 켜면(이 SDK 에서 막힘·node:sqlite 없음) 끄고 띄운다 — 사유는 세션이 생긴 뒤 기록에 남긴다
-  let firstEnv = env, inspectFailed: string | null = null;
-  try { firstEnv = await vendorEnv(); } catch (e) { logFile.updateMeta({ inspect: false }); inspectFailed = (e as Error).message; }
-  const session: AgentSession = logFile.meta.vendor === 'codex'
-    ? new CodexSession({ log: logFile, env, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw })
+  let firstEnv = env, firstArgs: string[] = [], inspectFailed: string | null = null;
+  try { firstEnv = await vendorEnv(); firstArgs = await vendorArgs(); } catch (e) { logFile.updateMeta({ inspect: false }); inspectFailed = (e as Error).message; }
+  const session: AgentSession = codex
+    ? new CodexSession({ log: logFile, env, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, args: firstArgs, onConfig: (base) => gotBase(base) })
     : new ClaudeSession({ log: logFile, env: firstEnv, resume: logFile.meta.vendorSessionId, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw });
   const sid = session.id;
   if (inspectFailed) session.notice(`inspect 를 켜지 않았습니다: ${inspectFailed}`);
+  // codex 감시 (사용자 결정 2026-10-19) — proxy 를 세운 뒤 처음 성공한 턴까지 모델 호출(/responses)이 하나도 기록되지 않았으면 codex 가 proxy 를 거치지 않는다
+  // (openai 가 아닌 model_provider·workspace routing 등). 알리고 이 세션만 끈다 — 새 세션은 막지 않는다
+  if (codex) session.onEvent((e) => {
+    if (e.ev.kind !== 'turn.end' || !e.ev.ok || !watching) return;
+    watching = false;
+    if (!logFile.meta.inspect || !inspect || [...inspect.seen].some((p) => p.endsWith('/responses'))) return;
+    inspectOff('inspect 를 끕니다: 이 Codex 세션의 모델 호출이 proxy 를 거치지 않아 기록되지 않았습니다 (openai 가 아닌 model_provider 를 쓰는 설정 등). 지금 턴이 끝나면 proxy 없이 다시 띄웁니다.');
+  });
 
   /** 켤 때는 proxy 를 먼저 세우고, 끌 때는 옛 벤더가 내려간 뒤에 닫는다. 실패하면 meta 와 새 proxy 를 되돌린다 */
   async function setInspect(on: boolean) {
-    const s = session as ClaudeSession;
+    const s = session as ClaudeSession | CodexSession;
     if (on === !!logFile.meta.inspect) return;
     if (s.state !== 'idle' && s.state !== 'starting') throw new CoreError(ERR.badRequest, 'inspect can be switched only while idle');
     if (switching) throw new CoreError(ERR.badRequest, 'inspect is already being switched');
     switching = true;
     logFile.updateMeta({ inspect: on });
-    try { await s.reopen(await vendorEnv()); }
+    try { if (s instanceof CodexSession) await s.reopen(await vendorArgs()); else await s.reopen(await vendorEnv()); }
     catch (e) { logFile.updateMeta({ inspect: !on }); if (on) { await inspect?.close(); inspect = null; } throw new CoreError(ERR.badRequest, (e as Error).message); }
     finally { switching = false; }
     if (!on) { await inspect?.close(); inspect = null; if (sweeper) { clearInterval(sweeper); sweeper = null; } }
@@ -150,11 +170,15 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
    *  이 세션은 지금 턴이 끝나 idle 이 되면 proxy 없이 다시 띄운다 */
   function firstPartyLost() {
     blockInspect(blockedFile);
-    session.notice(`inspect 를 끕니다: 이 Claude Code(Agent SDK ${sdkVersion()})는 proxy 주소를 1st party 로 보지 않아 프롬프트 캐시 등 일부 기능이 꺼집니다. 지금 턴이 끝나면 proxy 없이 다시 띄우고, 이 버전에서는 새 세션도 inspect 없이 시작합니다.`);
+    inspectOff(`inspect 를 끕니다: 이 Claude Code(Agent SDK ${sdkVersion()})는 proxy 주소를 1st party 로 보지 않아 프롬프트 캐시 등 일부 기능이 꺼집니다. 지금 턴이 끝나면 proxy 없이 다시 띄우고, 이 버전에서는 새 세션도 inspect 없이 시작합니다.`);
+  }
+  /** 알리고, 이 세션을 다음 idle 에 proxy 없이 다시 띄운다 */
+  function inspectOff(message: string) {
+    session.notice(message);
     // 줄 선 턴까지 끝난 idle 에서만 — 실패하면(겹친 토글 등) 다음 idle 에 다시. 구독은 꺼진 뒤에 푼다
     let trying = false;
     const off = () => {
-      const s = session as ClaudeSession;
+      const s = session as ClaudeSession | CodexSession;
       if (trying || closed || s.state !== 'idle' || switching || s.queued) return;
       if (!logFile.meta.inspect) { stop(); return; } // 그사이 사이드바로 껐다
       trying = true;
@@ -269,7 +293,6 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     'session.rename': (_c, p) => { const s = mine(p?.id); s.log.updateMeta({ title: p.title ?? null }); broadcast('session.changed', s.info()); return { ok: true }; },
     'session.setInspect': async (_c, p) => {
       const s = mine(p?.id);
-      if (!(s instanceof ClaudeSession)) throw new CoreError(ERR.badRequest, 'inspect is for claude sessions only');
       if (typeof p.on !== 'boolean') throw new CoreError(ERR.badRequest, 'on required');
       await setInspect(p.on);
       return { ok: true };

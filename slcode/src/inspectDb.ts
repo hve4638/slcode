@@ -1,7 +1,7 @@
 // inspect 기록 저장 (ticket slcode-inspect-default-on, 사용자 결정 2026-10-19) — 세션 폴더 inspect/inspect.db (node 내장 node:sqlite).
 // 호출 하나가 calls 한 행. 처음엔 원본(raw) 그대로 — 요청 본문 텍스트, 압축을 푼 응답 텍스트 (SSE 는 도착한 그대로).
-// compact 는 원본만 지운다: 요청의 system·tools·messages 원소를 cache_control 을 뺀 내용의 해시로 parts 에 한 번만 두고 (Claude Code 는 캐시 표시를
-// 매 호출 마지막 메시지로 옮긴다 — 표시 위치는 호출에 따로), SSE 응답은 메시지 하나로 다시 조립한다. 요약·request·response 탭은 그대로 보인다.
+// compact 는 원본만 지운다: 요청의 system·tools·messages(Anthropic)·input(OpenAI Responses) 원소를 cache_control 을 뺀 내용의 해시로 parts 에 한 번만 두고
+// (Claude Code 는 캐시 표시를 매 호출 마지막 메시지로 옮긴다 — 표시 위치는 호출에 따로), SSE 응답은 메시지 하나로 다시 조립한다. 요약·request·response 탭은 그대로 보인다.
 // 언제: raw 가 7일을 넘거나 세션의 raw 합이 100MB 를 넘으면 (쓰는 core 가 쓸 때마다). 전체(상태 폴더의 모든 세션) 10GB 는 sweepInspect 가 3일마다 —
 // 오래된 raw 부터 compact, 그래도 넘으면 오래된 호출부터 지운다 (지운 호출은 카드에 '지움' 으로 남는다).
 // 여러 프로세스(세션의 core·전체 정리)가 같은 DB 를 써도 된다 — 쓰기는 트랜잭션 하나씩이고, compact·지우기는 이미 된 행엔 할 일이 없다.
@@ -20,7 +20,7 @@ export const RAW_AGE_MS = 7 * 24 * 3600 * 1000;
 export const TOTAL_CAP = 10 * 1024 ** 3;
 export const SWEEP_EVERY_MS = 3 * 24 * 3600 * 1000;
 export const INSPECT_DB = 'inspect.db';
-const PARTED = ['system', 'tools', 'messages'] as const;
+const PARTED = ['system', 'tools', 'messages', 'input'] as const;
 /** 한 번에 compact·지우는 호출 수 — 쓰는 core 는 호출을 남길 때마다 이만큼까지(나머지는 다음 호출 때), 전체 정리는 이만큼씩 하고 이벤트 루프를 놓는다.
  *  DatabaseSync 는 동기라 그동안 같은 core 의 proxy 스트림이 멈춘다 */
 const BATCH = 20;
@@ -30,7 +30,7 @@ const SCHEMA = `
 CREATE TABLE IF NOT EXISTS calls (
   n INTEGER PRIMARY KEY, at INTEGER NOT NULL, ms INTEGER NOT NULL, method TEXT NOT NULL, path TEXT NOT NULL, model TEXT, status INTEGER,
   req_bytes INTEGER NOT NULL, res_bytes INTEGER NOT NULL, error TEXT, size INTEGER NOT NULL, compacted INTEGER NOT NULL DEFAULT 0, dropped INTEGER NOT NULL DEFAULT 0,
-  req_headers TEXT NOT NULL, res_headers TEXT NOT NULL, req_body TEXT NOT NULL, res_body TEXT NOT NULL);
+  req_headers TEXT NOT NULL, res_headers TEXT NOT NULL, req_body TEXT NOT NULL, res_body TEXT NOT NULL, req_full TEXT);
 CREATE INDEX IF NOT EXISTS calls_at ON calls(at);
 CREATE TABLE IF NOT EXISTS parts (hash TEXT PRIMARY KEY, body TEXT NOT NULL) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS refs (hash TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (hash, n)) WITHOUT ROWID;
@@ -106,15 +106,21 @@ export function expandRequest(body: string, get: (hash: string) => string | null
   return JSON.stringify(req);
 }
 
-/** SSE 를 메시지 하나로 — message_start 에 블록·delta 를 이어 붙인다 (web/inspect.js responseOf 와 같은 규칙). 메시지가 없으면 null */
+/** SSE 를 메시지 하나로 — message_start 에 블록·delta 를 이어 붙인다 (web/inspect.js responseOf 와 같은 규칙). 메시지가 없으면 null.
+ *  OpenAI Responses(codex) 는 response.created 의 response 에 output_item.done 의 항목을 index 자리에 두고, 끝 이벤트(completed·incomplete·failed)의 response 로 덮는다
+ *  (끝 이벤트의 output 이 비어 있으면 모은 항목을 남긴다). codex 의 사용량 한도 이벤트(codex.rate_limits)는 codex_rate_limits 로 붙인다 */
 export function sseMessage(text: string): Record<string, any> | null {
   const parse = (t: string) => { try { return JSON.parse(t); } catch { return null; } };
-  let msg: Record<string, any> | null = null;
+  let msg = null as Record<string, any> | null, limits: Record<string, any> | null = null;
   const json: string[] = [];
   for (const chunk of text.split(/\r?\n\r?\n/)) {
     const ev = parse(chunk.split(/\r?\n/).filter((l) => l.startsWith('data:')).map((l) => l.slice(5)).join('\n'));
     if (!ev) continue;
-    if (ev.type === 'message_start') msg = { ...ev.message, content: [] };
+    if (ev.type === 'codex.rate_limits') limits = ev;
+    else if (ev.type === 'response.created' || ev.type === 'response.in_progress') msg = { ...ev.response, output: msg?.output ?? [] };
+    else if (ev.type === 'response.output_item.done') { msg ??= { output: [] }; msg.output[ev.output_index ?? msg.output.length] = ev.item; }
+    else if (ev.type === 'response.completed' || ev.type === 'response.incomplete' || ev.type === 'response.failed') msg = { ...msg, ...ev.response, output: ev.response?.output?.length ? ev.response.output : msg?.output ?? [] };
+    else if (ev.type === 'message_start') msg = { ...ev.message, content: [] };
     else if (ev.type === 'error') { const cur = msg as Record<string, any> | null; msg = { ...(cur ?? {}), content: cur?.content ?? [], error: ev.error }; }
     else if (!msg) continue;
     else if (ev.type === 'content_block_start') msg.content[ev.index] = { ...ev.content_block };
@@ -129,6 +135,7 @@ export function sseMessage(text: string): Record<string, any> | null {
     } else if (ev.type === 'content_block_stop' && json[ev.index] && msg.content[ev.index]) msg.content[ev.index].input = parse(json[ev.index]) ?? json[ev.index];
     else if (ev.type === 'message_delta') { Object.assign(msg, ev.delta ?? {}); msg.usage = { ...msg.usage, ...ev.usage }; }
   }
+  if (msg && limits) msg.codex_rate_limits = { plan_type: limits.plan_type, ...limits.rate_limits, credits: limits.credits };
   return msg;
 }
 
@@ -153,6 +160,8 @@ export class InspectStore {
       db.exec('PRAGMA auto_vacuum = INCREMENTAL'); // 표를 만들기 전에만 듣는다 — 지운 자리를 파일에서 돌려받게
       db.exec('PRAGMA journal_mode = WAL');
       db.exec(SCHEMA);
+      // codex 의 WebSocket 기록 전(b928bfa)에 만든 DB — 뒤에 붙인다 (큰 칸이 뒤에 오는 것은 같다)
+      if (!(db.prepare('PRAGMA table_info(calls)').all() as Row[]).some((c) => c.name === 'req_full')) db.exec('ALTER TABLE calls ADD COLUMN req_full TEXT');
     } catch (e) { db.close(); throw e; }
     try { fs.chmodSync(file, 0o600); } catch {}
     return new InspectStore(file, db);
@@ -168,10 +177,11 @@ export class InspectStore {
   lastN(): number { return Number((this.db.prepare('SELECT MAX(n) AS m FROM calls').get() as Row).m ?? 0); }
 
   add(rec: InspectRecord) {
-    this.db.prepare(`INSERT INTO calls (n, at, ms, method, path, model, status, req_bytes, res_bytes, error, req_headers, res_headers, req_body, res_body, size)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    this.db.prepare(`INSERT INTO calls (n, at, ms, method, path, model, status, req_bytes, res_bytes, error, req_headers, res_headers, req_body, res_body, req_full, size)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       rec.n, rec.at, rec.ms, rec.method, rec.path, rec.model, rec.status, rec.reqBytes, rec.resBytes, rec.error ?? null,
-      JSON.stringify(rec.reqHeaders), JSON.stringify(rec.resHeaders), rec.reqBody, rec.resBody, Buffer.byteLength(rec.reqBody) + Buffer.byteLength(rec.resBody));
+      JSON.stringify(rec.reqHeaders), JSON.stringify(rec.resHeaders), rec.reqBody, rec.resBody, rec.reqFull ?? null,
+      Buffer.byteLength(rec.reqBody) + Buffer.byteLength(rec.resBody) + Buffer.byteLength(rec.reqFull ?? ''));
   }
 
   /** at 이 (from, to] 인 호출 — 번호 순 */
@@ -188,9 +198,10 @@ export class InspectStore {
     const r = this.db.prepare('SELECT * FROM calls WHERE n = ?').get(n) as Row | undefined;
     if (!r || r.dropped) return null;
     const part = this.db.prepare('SELECT body FROM parts WHERE hash = ?');
-    const reqBody = r.compacted ? expandRequest(r.req_body, (h) => ((part.get(h) as Row | undefined)?.body ?? null)) : r.req_body;
+    const expand = (body: string) => (r.compacted ? expandRequest(body, (h) => ((part.get(h) as Row | undefined)?.body ?? null)) : body);
     return { n: r.n, at: r.at, ms: r.ms, method: r.method, path: r.path, model: r.model, status: r.status, reqBytes: r.req_bytes, resBytes: r.res_bytes,
-      ...(r.error != null ? { error: r.error } : {}), reqHeaders: JSON.parse(r.req_headers), reqBody, resHeaders: JSON.parse(r.res_headers), resBody: r.res_body,
+      ...(r.error != null ? { error: r.error } : {}), reqHeaders: JSON.parse(r.req_headers), reqBody: expand(r.req_body), ...(r.req_full != null ? { reqFull: expand(r.req_full) } : {}),
+      resHeaders: JSON.parse(r.res_headers), resBody: r.res_body,
       ...(r.compacted ? { compacted: true } : {}) };
   }
 
@@ -198,18 +209,20 @@ export class InspectStore {
    *  (이상한 행 하나가 늘 가장 오래된 raw 로 남아 정리를 막지 않게, 리뷰 2026-10-19) */
   private compactOne(n: number) {
     this.tx(() => {
-      const r = this.db.prepare('SELECT req_body, res_body, res_headers FROM calls WHERE n = ? AND compacted = 0 AND dropped = 0').get(n) as Row | undefined;
+      const r = this.db.prepare('SELECT method, req_body, res_body, req_full, res_headers FROM calls WHERE n = ? AND compacted = 0 AND dropped = 0').get(n) as Row | undefined;
       if (!r) return;
       const putPart = this.db.prepare('INSERT OR IGNORE INTO parts (hash, body) VALUES (?, ?)');
       const putRef = this.db.prepare('INSERT OR IGNORE INTO refs (hash, n) VALUES (?, ?)');
-      let req: string = r.req_body, res: string = r.res_body;
-      try { req = compactRequest(r.req_body, (h, json) => { putPart.run(h, json); putRef.run(h, n); }) ?? r.req_body; } catch {}
+      const parted = (body: string) => { try { return compactRequest(body, (h, json) => { putPart.run(h, json); putRef.run(h, n); }) ?? body; } catch { return body; } };
+      const req = parted(r.req_body), full: string | null = r.req_full == null ? null : parted(r.req_full);
+      let res: string = r.res_body;
       try {
         const type = String((JSON.parse(r.res_headers) as Record<string, unknown>)['content-type'] ?? '');
-        const msg = type.includes('event-stream') ? sseMessage(r.res_body) : null;
+        const msg = r.method === 'WS' || type.includes('event-stream') ? sseMessage(r.res_body) : null;
         if (msg) res = JSON.stringify(msg);
       } catch {}
-      this.db.prepare('UPDATE calls SET req_body = ?, res_body = ?, size = ?, compacted = 1 WHERE n = ?').run(req, res, Buffer.byteLength(req) + Buffer.byteLength(res), n);
+      this.db.prepare('UPDATE calls SET req_body = ?, res_body = ?, req_full = ?, size = ?, compacted = 1 WHERE n = ?')
+        .run(req, res, full, Buffer.byteLength(req) + Buffer.byteLength(res) + Buffer.byteLength(full ?? ''), n);
     });
   }
 
@@ -223,7 +236,7 @@ export class InspectStore {
     this.tx(() => {
       const ns = (this.db.prepare('SELECT n FROM calls WHERE dropped = 0 ORDER BY at LIMIT ?').all(k) as Row[]).map((r) => r.n as number);
       const refsOf = this.db.prepare('SELECT hash FROM refs WHERE n = ?');
-      const drop = this.db.prepare("UPDATE calls SET req_body = '', res_body = '', req_headers = '{}', res_headers = '{}', size = 0, dropped = 1 WHERE n = ?");
+      const drop = this.db.prepare("UPDATE calls SET req_body = '', res_body = '', req_full = NULL, req_headers = '{}', res_headers = '{}', size = 0, dropped = 1 WHERE n = ?");
       const unref = this.db.prepare('DELETE FROM refs WHERE n = ?');
       const gc = this.db.prepare('DELETE FROM parts WHERE hash = ? AND NOT EXISTS (SELECT 1 FROM refs WHERE hash = ?)');
       for (const n of ns) {
