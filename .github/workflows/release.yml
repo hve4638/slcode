@@ -57,7 +57,7 @@ jobs:
 
       - name: 연기 검사 (Linux zip)
         timeout-minutes: 5
-        # 빈 환경(env -i)에서 동봉 node 로 뜨는지 본다. 세션·우체국은 격리 --dir 에 둔다
+        # 빈 환경(env -i)에서 동봉 node 로 뜨는지 본다. 세션은 격리 --dir 에 둔다
         run: |
           d=$(mktemp -d)
           unzip -q "slcode/release/slcode-${TAG#v}-linux-x64.zip" -d "$d/app"
@@ -75,7 +75,6 @@ jobs:
           if [ -z "$id" ]; then cat "$d/new.log"; kill "$pid"; echo "::error::세션이 뜨지 않았다"; exit 1; fi
           slc close "$id" --dir "$d/state"
           wait "$pid"
-          slc post restart --dir "$d/state"
           cat "$d/new.log"
 
       - name: SHA256SUMS.txt

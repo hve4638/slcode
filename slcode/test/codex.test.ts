@@ -14,6 +14,16 @@ import { SLCODE_PROMPT } from '../src/prompt.ts';
 
 const FAKE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-codex.mjs');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** 그 세션의 n 번째 codex 기동이 끝날 때까지(로그에 session.ready 가 n 개) 기다려 그때의 로그를 준다. vendorSessionId 는 ready 보다 먼저 쓰인다.
+ *  고정 sleep(300) 은 전체 테스트를 병렬로 돌리는 부하에서 모자라 단언이 실패했고, 닫지 못한 세션 때문에 파일이 끝나지 않고 멈췄다 */
+async function untilReady(dir: string, id: string, n: number): Promise<EventLog> {
+  for (let i = 0; i < 100; i++) {
+    const log = EventLog.open(corePaths(dir).sessionsDir, id)!;
+    if (log.all.filter((x) => x.ev.kind === 'session.ready').length >= n) return log;
+    await sleep(100);
+  }
+  throw new Error(`codex start ${n} of ${id} not ready`);
+}
 
 test('codex: initialize→thread/start→turn/start, 델타·도구·승인(acceptForSession)·turn.end 매핑, models·status, resume 는 thread/resume', async () => {
   process.env.SLCODE_GRACE_SECS = '1';
@@ -23,17 +33,21 @@ test('codex: initialize→thread/start→turn/start, 델타·도구·승인(acce
   const h = await serveSession({ dir, cwd: work, vendor: 'codex', web: false });
   assert.equal(h.session.vendor, 'codex');
   const c = await connectSession(h.sock);
-  const att = await c.request('session.attach', { id: h.session.id });
   const evs: any[] = [];
-  // core 는 다른 프로세스 — turn.end 와 뒤따르는 session.state 가 따로 도착할 수 있어 state 까지 기다린다
+  // core 는 다른 프로세스 — turn.end 와 뒤따르는 session.state 가 따로 도착할 수 있어 state 까지 기다린다.
+  // attach 전에 듣는다: attach 응답과 같은 청크로 온 ready·idle 은 응답을 기다린 뒤 등록하면 이미 지나가 버린다
   let ended = false;
   const turnEnd = new Promise<void>((r) => c.onEvent((m) => { if (m.event !== 'session.event') return; const ev = (m.params as any).ev; evs.push(ev); if (ev.kind === 'approval.requested') void c.request('session.approve', { id: h.session.id, requestId: ev.requestId, decision: 'allow', remember: true }); if (ev.kind === 'turn.end') ended = true; if (ended && ev.kind === 'session.state') r(); }));
+  const att = await c.request('session.attach', { id: h.session.id });
   await c.request('session.send', { id: h.session.id, text: 'hello codex' });
   await Promise.race([turnEnd, sleep(8000).then(() => { throw new Error('turn timeout'); })]);
+  // turn.start 앞은 attach 뒤에 도착한 기동 이벤트(ready·idle)뿐이어야 한다
+  const early = evs.splice(0, evs.findIndex((e) => e.kind === 'turn.start'));
+  assert.ok(early.every((e) => e.kind === 'session.ready' || e.kind === 'session.state'), String(early.map((e) => e.kind)));
   const kinds = evs.map((e) => e.kind);
   assert.equal(kinds[0], 'turn.start');
-  // core 는 다른 프로세스라 attach 전에 기동을 마쳤으면 ready 는 기록(history) 쪽에 있다
-  assert.ok([...att.history.map((e) => e.ev), ...evs].some((e: any) => e.kind === 'session.ready' && e.vendor === 'codex'));
+  // core 는 다른 프로세스라 attach 전에 기동을 마쳤으면 ready 는 기록(history) 쪽에, 아니면 attach 직후 이벤트로 온다
+  assert.ok([...att.history.map((e) => e.ev), ...early, ...evs].some((e: any) => e.kind === 'session.ready' && e.vendor === 'codex'));
   assert.ok(kinds.includes('thinking.delta'));
   assert.ok(evs.some((e) => e.kind === 'text.delta' && e.text === 'echo:hello codex'));
   const ts = evs.find((e) => e.kind === 'tool.start'); assert.equal(ts.name, 'Bash'); assert.equal(ts.toolUseId, 'exec-1'); assert.equal(ts.input.command, 'touch x');
@@ -70,7 +84,7 @@ test('codex: initialize→thread/start→turn/start, 델타·도구·승인(acce
   const c2 = await connectSession(h2.sock);
   const r = await c2.request('session.attach', { id: h2.session.id });
   assert.equal(r.info.vendorSessionId, 'thr-1'); assert.equal(r.info.permissionMode, 'plan');
-  await sleep(300);
+  await untilReady(dir, h2.session.id, 2);
   const ready = (await c2.request('session.attach', { id: h2.session.id })).history.filter((e) => e.ev.kind === 'session.ready');
   assert.equal(ready.length, 2, '두 번째 기동의 ready 도 로그에');
   c2.close();
@@ -104,13 +118,9 @@ test('codex: meta.forkFrom(slcode import --fork) 이면 첫 기동이 thread/for
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
   EventLog.create(corePaths(dir).sessionsDir, { id: 'ffff0001', vendor: 'codex', cwd: work, title: null, vendorSessionId: null, forkFrom: 'thr-orig', createdAt: 1, permissionMode: null, raw: false }).close();
   const h = await serveSession({ dir, cwd: work, resume: 'ffff0001', web: false });
-  await sleep(300);
-  assert.equal(EventLog.open(corePaths(dir).sessionsDir, 'ffff0001')!.meta.vendorSessionId, 'fork-thr-orig');
-  await h.close('test');
+  try { assert.equal((await untilReady(dir, 'ffff0001', 1)).meta.vendorSessionId, 'fork-thr-orig'); } finally { await h.close('test'); }
   const h2 = await serveSession({ dir, cwd: work, resume: 'ffff0001', web: false });
-  await sleep(300);
-  assert.equal(EventLog.open(corePaths(dir).sessionsDir, 'ffff0001')!.meta.vendorSessionId, 'fork-thr-orig', '두 번째 기동은 fork 가 아니라 resume');
-  await h2.close('test');
+  try { assert.equal((await untilReady(dir, 'ffff0001', 2)).meta.vendorSessionId, 'fork-thr-orig', '두 번째 기동은 fork 가 아니라 resume'); } finally { await h2.close('test'); }
 });
 
 test('codex: slcode 고정 지시는 thread/start·thread/fork 의 developerInstructions 로, thread/resume 에는 넣지 않는다 (ticket slcode-append-system-prompt)', async () => {
@@ -121,10 +131,11 @@ test('codex: slcode 고정 지시는 thread/start·thread/fork 의 developerInst
   const calls = path.join(dir, 'calls.jsonl');
   process.env.FAKE_CODEX_CALLS = calls;
   try {
-    const launch = async (resume?: string) => { const h = await serveSession({ dir, cwd: work, vendor: 'codex', web: false, ...(resume ? { resume } : {}) }); await sleep(300); await h.close('test'); return h.session.id; };
-    await launch(await launch());
+    // n 은 그 세션의 몇 번째 기동인가 — 기동이 끝나야 thread 요청이 calls 에 남는다
+    const launch = async (n: number, resume?: string) => { const h = await serveSession({ dir, cwd: work, vendor: 'codex', web: false, ...(resume ? { resume } : {}) }); try { await untilReady(dir, h.session.id, n); } finally { await h.close('test'); } return h.session.id; };
+    await launch(2, await launch(1));
     EventLog.create(corePaths(dir).sessionsDir, { id: 'ffff0002', vendor: 'codex', cwd: work, title: null, vendorSessionId: null, forkFrom: 'thr-orig', createdAt: 1, permissionMode: null, raw: false }).close();
-    await launch('ffff0002');
+    await launch(1, 'ffff0002');
   } finally { delete process.env.FAKE_CODEX_CALLS; }
   const got = fs.readFileSync(calls, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.deepEqual(got.map((c) => [c.method, c.developerInstructions === SLCODE_PROMPT ? 'prompt' : c.developerInstructions]),
@@ -139,7 +150,7 @@ test('codex: auto 모드 = on-request + workspaceWrite + approvalsReviewer auto_
   const h = await serveSession({ dir, cwd: work, vendor: 'codex', web: false });
   const c = await connectSession(h.sock);
   await c.request('session.attach', { id: h.session.id });
-  await sleep(300);
+  await untilReady(dir, h.session.id, 1);
   const deltas: string[] = [];
   let ended: (() => void) | null = null;
   c.onEvent((m) => { if (m.event !== 'session.event') return; const ev = (m.params as any).ev; if (ev.kind === 'text.delta') deltas.push(ev.text); if (ev.kind === 'approval.requested') void c.request('session.approve', { id: h.session.id, requestId: ev.requestId, decision: 'allow' }); if (ev.kind === 'turn.end') ended?.(); });
@@ -168,7 +179,7 @@ test('codex: 비용은 가격표로 추정한 누계 — 표에 없는 모델은
   const h = await serveSession({ dir, cwd: work, vendor: 'codex', web: false });
   const c = await connectSession(h.sock);
   await c.request('session.attach', { id: h.session.id });
-  await sleep(300);
+  await untilReady(dir, h.session.id, 1);
   await c.request('session.setModel', { id: h.session.id, model: 'gpt-5.6-luna' });
   const turnEnd = new Promise<any>((r) => c.onEvent((m) => { if (m.event !== 'session.event') return; const ev = (m.params as any).ev; if (ev.kind === 'approval.requested') void c.request('session.approve', { id: h.session.id, requestId: ev.requestId, decision: 'allow' }); if (ev.kind === 'turn.end') r(ev); }));
   await c.request('session.send', { id: h.session.id, text: 'hi' });

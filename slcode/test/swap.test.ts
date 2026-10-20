@@ -27,11 +27,13 @@ function pkgCopy(): string {
   for (const n of ['web', 'node_modules']) fs.symlinkSync(path.join(PKG, n), path.join(d, n));
   return d;
 }
-/** 사본의 dist/cli.js mtime 을 올린다 — 이 뒤에 뜬 serve·core 의 BUILD 가 그 전 것보다 크다. 되돌리는 함수를 준다 */
+/** 사본의 dist/cli.js mtime 을 올린다 — 이 뒤에 뜬 serve·core 의 BUILD 가 그 전 것보다 크다. 되돌리는 함수를 준다.
+ *  되돌릴 때 st.mtime(Date)을 그대로 쓰면 초 단위 부동소수 변환으로 BUILD(ms 내림)가 1 어긋나는 일이 잦다 — 1ms 늦게 되돌아가면 다음 serve 가
+ *  core 교체를 청한다. 그 ms 의 한가운데로 되돌려 같은 BUILD 를 지킨다 */
 function bumpBuild(pkg: string): () => void {
   const cliJs = path.join(pkg, 'dist', 'cli.js'), st = fs.statSync(cliJs);
   fs.utimesSync(cliJs, st.atime, new Date(st.mtimeMs + 2000));
-  return () => fs.utimesSync(cliJs, st.atime, st.mtime);
+  return () => fs.utimesSync(cliJs, st.atime, (Math.floor(st.mtimeMs) + 0.5) / 1000);
 }
 
 /** cli 하나 — stdout 첫 줄을 기다린다. pkg 면 그 사본의 dist/cli.js 로 */
@@ -183,8 +185,9 @@ test('웹: 새 serve 가 core 교체를 청하면 진행 중인 턴이 끝난 �
   restore(); restore = () => {};
   assert.equal(closed, false, '화면 연결은 끊기지 않는다');
   assert.ok(!fs.existsSync(`/proc/${oldCore}`) || fs.readFileSync(`/proc/${oldCore}/stat`, 'utf8').split(' ')[2] === 'Z', '옛 core 는 끝났다');
-  const si = (await b.call('server.info')).result;
-  assert.equal(si.owner, e.child.pid, '진입 프로세스가 새 core 의 소유자로 다시 붙었다');
+  // 소유자는 core.replaced 를 받은 뒤 새 core 에 다시 붙어 core.own 을 보낸다 — 새 core 가 보인 직후엔 아직일 수 있다
+  const owner = await waitFor(async () => { const o = (await b.call('server.info')).result.owner; return o === e.child.pid && o; }, 5000).catch(() => null);
+  assert.equal(owner, e.child.pid, '진입 프로세스가 새 core 의 소유자로 다시 붙었다');
 
   // 같은 화면 연결로 다음 턴 — seq 가 이어지고, 옛 core 의 종료 줄은 없다
   const before = b.events.filter((m) => m.event === 'session.event').map((m) => m.params.seq);
@@ -234,8 +237,10 @@ test('카드: --takeover 로 붙은 새 serve 가 core 교체를 청하고, stdi
   const p2 = await waitFor(async () => { try { const x = await connectSession(hello.sock); const p = (await x.request('core.auth', {})).pid; x.close(); return p !== oldCore && p; } catch { return false; } });
   restore(); restore = () => {};
   assert.ok(p2);
-  const info = await ask(2, 'server.info', {});
-  assert.equal(info.result.owner, b.child.pid, '새 serve 가 새 core 의 소유자로 다시 붙었다');
+  // 새 serve 도 core.replaced 뒤에 다시 붙어 core.own 을 보낸다 — 붙을 때까지 묻는다 (요청 id 는 100 부터)
+  let n = 100;
+  const owner = await waitFor(async () => { const o = (await ask(++n, 'server.info', {})).result.owner; return o === b!.child.pid && o; }, 5000).catch(() => null);
+  assert.equal(owner, b.child.pid, '새 serve 가 새 core 의 소유자로 다시 붙었다');
   await ask(3, 'session.send', { id: hello.id, text: 'after' });
   await waitFor(async () => lines.find((m) => m.params?.ev?.kind === 'approval.requested'));
   c.close();
