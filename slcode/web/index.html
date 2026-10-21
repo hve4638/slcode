@@ -16,8 +16,13 @@ import { mountAgentFront } from './app.js';
 import { setFileToken } from './markdown.js';
 
 const q = new URLSearchParams(location.search);
-if (q.get('token')) { localStorage.setItem(`slcode.token.${location.host}`, q.get('token')); history.replaceState(null, '', location.pathname); }
-const token = localStorage.getItem(`slcode.token.${location.host}`) ?? '';
+// sandbox iframe(superlite 새 방식 카드 안의 /svc 화면)은 출처가 없어 localStorage 가 SecurityError — 그때는 URL 의 토큰만 쓴다
+let token = q.get('token') ?? '';
+try {
+  if (token) localStorage.setItem(`slcode.token.${location.host}`, token);
+  else token = localStorage.getItem(`slcode.token.${location.host}`) ?? '';
+} catch {}
+if (q.get('token')) history.replaceState(null, '', location.pathname);
 // 상대 경로 — superlite /svc/<토큰>/ 아래에서도 이 페이지 옆의 ws 로 (ticket plugin-service-web)
 const wsUrl = new URL('ws', location.href); wsUrl.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'; wsUrl.search = '';
 const transport = new WsTransport(wsUrl.href, token);

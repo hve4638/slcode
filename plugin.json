@@ -1,7 +1,41 @@
 {
   "id": "slcode",
   "version": "0.2.0",
+  "apiVersion": 2,
   "main": "main.js",
+  "renderer": "renderer.js",
+  "views": [
+    { "id": "session", "entry": "views/session.js", "title": "slcode", "icon": "hubot" },
+    { "id": "sessions", "entry": "views/sessions.js", "title": "slcode sessions", "icon": "hubot" }
+  ],
+  "verbs": [
+    {
+      "name": "slcode.new",
+      "help": "Open a slcode session card in the deck of this terminal; prints the session id",
+      "args": [
+        { "name": "cwd", "kind": "option", "value": "dir", "help": "session folder (default: this shell's cwd)" },
+        { "name": "vendor", "kind": "option", "help": "claude | codex" },
+        { "name": "title", "kind": "option" },
+        { "name": "mode", "kind": "option", "help": "default | acceptEdits | auto | bypassPermissions" }
+      ]
+    },
+    {
+      "name": "slcode.resume",
+      "help": "Open a saved slcode session as a card in the deck of this terminal; without --id, pick a closed session of --cwd",
+      "args": [
+        { "name": "id", "kind": "option", "help": "session id" },
+        { "name": "cwd", "kind": "option", "value": "dir", "help": "folder whose closed sessions to pick from (default: this shell's cwd)" }
+      ]
+    }
+  ],
+  "settings": {
+    "title": "slcode",
+    "description": "slcode 세션 카드. 카드를 닫아도 세션은 산다. 종료는 팔레트의 \"slcode: Close session\".",
+    "items": [
+      { "key": "bin", "type": "string", "label": "slcode command", "description": "비우면 플러그인이 받은 slcode. 넣으면 그것을 쓴다 (PATH 의 이름 또는 데몬 머신의 절대 경로)", "default": "" },
+      { "key": "dir", "type": "string", "label": "SLCODE_DIR", "description": "비우면 slcode 기본 폴더 (~/.local/state/slcode)", "default": "" }
+    ]
+  },
   "binary": { "repo": "hve4638/slcode", "version": "^0.2.0" },
   "services": [
     { "id": "session", "command": "slcode new --stdio --no-web", "unit": "card", "lifetime": "owned", "channel": "stdio", "web": true }

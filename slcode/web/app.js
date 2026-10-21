@@ -43,8 +43,9 @@ export function mountAgentFront(root, transport, opts = {}) {
   // 좁으면(820px 이하) 본문 위에 겹쳐 여는데 이건 기억하지 않는다 — 카드가 다시 로드될 때마다 피드를 덮지 않게. 본문을 누르면 닫힌다
   const SIDE_KEY = 'slcode.side';
   // 화면 상태(사이드바 열림·inspect 남은 공간)의 저장소 — 웹은 브라우저 localStorage. 카드는 opts.store: sandbox 화면엔 저장소가 없어
-  // 플러그인이 superlite 페이지에 대신 둔다 (card.html, ticket slcode-card-svc-token-dead)
-  const store = opts.store ?? { get: (k) => localStorage.getItem(k), set: (k, v) => localStorage.setItem(k, v) };
+  // 플러그인이 superlite 저장소(세션 머신)에 대신 둔다 (card.html, ticket slcode-card-svc-token-dead·slcode-plugin-v2)
+  // sandbox 안(출처 없음)에서 opts.store 없이 뜨면 localStorage 가 SecurityError — 기억하지 않고 기본값으로
+  const store = opts.store ?? { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
   const sideBtn = h('button', { class: 'ico side-tg', title: '사이드바', 'aria-label': '사이드바', onclick: () => {
     if (root.clientWidth <= 820) el.classList.toggle('peek');
     else store.set(SIDE_KEY, el.classList.toggle('side-open') ? 'open' : 'closed');
