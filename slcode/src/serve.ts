@@ -141,12 +141,13 @@ export function fileGet(want: unknown): { mediaType: string; size: number; data:
 }
 
 /** 로컬 파일 — 답변의 마크다운 링크·이미지가 가리키는 절대 경로를 `file?path=` 로 (ticket slcode-append-system-prompt, 사용자 결정 2026-10-17).
- *  범위는 serve 사용자가 읽을 수 있는 모든 파일 — 토큰을 통과한 화면은 이미 에이전트로 무엇이든 읽힐 수 있다. token 이 있으면(루프백 밖 웹) 같은 토큰만.
+ *  범위는 serve 사용자가 읽을 수 있는 모든 파일 — 토큰을 통과한 화면은 이미 에이전트로 무엇이든 읽힐 수 있다. token 이 있으면(루프백 밖 웹) 같은 토큰만, allow 가 있으면(루프백 웹) 그것이 통과시킨 요청만.
  *  file 경로가 아니면 false — 정적 파일로 넘긴다 */
-export function fileHandler(req: http.IncomingMessage, res: http.ServerResponse, token: string | null): boolean {
+export function fileHandler(req: http.IncomingMessage, res: http.ServerResponse, token: string | null, allow?: (req: http.IncomingMessage) => boolean): boolean {
   const u = new URL(req.url ?? '/', 'http://x');
   if (u.pathname !== '/file') return false;
   const end = (code: number, msg: string) => { res.writeHead(code, { 'content-type': 'text/plain; charset=utf-8' }); res.end(msg); };
+  if (allow && !allow(req)) { end(403, 'forbidden'); return true; }
   if (token !== null && u.searchParams.get('token') !== token) { end(401, 'unauthorized'); return true; }
   const want = u.searchParams.get('path') ?? '';
   if (!path.isAbsolute(want)) { end(400, 'absolute path required'); return true; }
@@ -158,6 +159,17 @@ export function fileHandler(req: http.IncomingMessage, res: http.ServerResponse,
   res.writeHead(200, { 'content-type': type, 'content-security-policy': 'sandbox', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'cache-control': 'no-cache' });
   fs.createReadStream(p).on('error', () => res.destroy()).pipe(res);
   return true;
+}
+
+/** 루프백 TCP 웹의 요청이 자기 화면에서 왔는가 (ticket slcode-loopback-origin-check, 사용자 결정 2026-10-21) — 토큰이 없는 루프백 웹에 같은 PC 브라우저의 다른 사이트가 닿지 못하게.
+ *  Host 는 루프백 이름 + 이 포트만 (DNS rebinding 은 Origin 도 공격 도메인이라 Host 로만 막힌다). Origin 은 없거나(브라우저 밖 클라이언트, 링크·이미지로 연 /file) 같은 규칙의 http 출처만 */
+const LOOPBACK_NAMES = ['127.0.0.1', 'localhost', '[::1]'];
+export function loopbackAllowed(req: http.IncomingMessage, port: number): boolean {
+  const ours = (origin: string) => {
+    try { const u = new URL(origin); return u.protocol === 'http:' && !u.username && !u.password && u.pathname === '/' && !u.search && LOOPBACK_NAMES.includes(u.hostname) && Number(u.port || 80) === port; } catch { return false; }
+  };
+  const { host, origin } = req.headers;
+  return !!host && ours(`http://${host}`) && (origin === undefined || ours(origin));
 }
 
 /** 서비스 웹 소켓 주소에 listen — `/` 로 시작하면 uds(0600), 아니면 host:port */
@@ -382,8 +394,9 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
   }
 
   // ---- http + ws
-  const wsOn = (server: http.Server, gate: boolean, kind: SettingsKind) => {
-    const w = new WebSocketServer({ server, path: '/ws' });
+  /** allow 가 있으면(루프백 TCP 웹) 업그레이드 전에 거른다 — 거절은 403 */
+  const wsOn = (server: http.Server, gate: boolean, kind: SettingsKind, allow?: (req: http.IncomingMessage) => boolean) => {
+    const w = new WebSocketServer({ server, path: '/ws', ...(allow ? { verifyClient: ({ req }: { req: http.IncomingMessage }, cb: (ok: boolean, code?: number) => void) => cb(allow(req), 403) } : {}) });
     w.on('error', () => {});
     w.on('connection', (ws: WebSocket) => {
       const r = relay((l) => { if (ws.readyState === ws.OPEN) ws.send(l); }, () => ws.close(), gate, kind);
@@ -407,8 +420,9 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
   let url: string | null = opts.attach?.url ?? null;
   const host = opts.host ?? '127.0.0.1';
   if (opts.web !== false && !opts.attach) {
-    const srv = http.createServer((q, r) => { if (!fileHandler(q, r, isLoopback(host) ? null : readOrCreateToken(P))) staticHandler(q, r, web, P.dir, 'web'); });
-    const wss = wsOn(srv, !isLoopback(host), 'web');
+    const allow = isLoopback(host) ? (q: http.IncomingMessage) => loopbackAllowed(q, (srv.address() as net.AddressInfo).port) : undefined;
+    const srv = http.createServer((q, r) => { if (!fileHandler(q, r, allow ? null : readOrCreateToken(P), allow)) staticHandler(q, r, web, P.dir, 'web'); });
+    const wss = wsOn(srv, !allow, 'web', allow);
     stopAll.push(() => { for (const c of wss.clients) c.close(); wss.close(); srv.close(); });
     const port = await new Promise<number>((resolve, reject) => { srv.once('error', reject); srv.listen(opts.port ?? 0, host, () => resolve((srv.address() as net.AddressInfo).port)); }).catch(fail);
     url = (await control.request('serve.register', { host, port, version: VERSION }).catch(fail)).url;
@@ -416,9 +430,10 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
   }
   if (opts.feed) {
     // 진입 프로세스가 넘긴 연결 — listen 은 진입 프로세스가 한다. 이 serve 가 끝나면 받은 연결을 모두 끊어 화면이 다음 serve 로 다시 붙게 한다
-    const fh = opts.feed.host;
-    const srv = http.createServer((q, r) => { if (!fileHandler(q, r, isLoopback(fh) ? null : readOrCreateToken(P))) staticHandler(q, r, web, P.dir, 'web'); });
-    const wss = wsOn(srv, !isLoopback(fh), 'web');
+    const fh = opts.feed.host, fp = opts.feed.port;
+    const allow = isLoopback(fh) ? (q: http.IncomingMessage) => loopbackAllowed(q, fp) : undefined;
+    const srv = http.createServer((q, r) => { if (!fileHandler(q, r, allow ? null : readOrCreateToken(P), allow)) staticHandler(q, r, web, P.dir, 'web'); });
+    const wss = wsOn(srv, !allow, 'web', allow);
     const socks = new Set<net.Socket>();
     opts.feed.onConn((c) => { if (down) { c.destroy(); return; } socks.add(c); c.on('close', () => socks.delete(c)); srv.emit('connection', c); });
     stopAll.push(() => { for (const c of wss.clients) c.close(1012, 'serve restart'); wss.close(); for (const c of socks) c.end(); setTimeout(() => { for (const c of socks) c.destroy(); }, 200).unref(); });

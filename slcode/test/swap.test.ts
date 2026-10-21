@@ -260,3 +260,33 @@ test('교체 중 표시가 있으면 connectSession 이 새 소켓을 기다리�
   c.close();
   srv.close();
 });
+
+test('웹(진입 프로세스가 넘긴 연결): 다른 출처 페이지의 WS·Host 를 바꾼 /file 은 거절, 자기 화면은 그대로 (ticket slcode-loopback-origin-check)', async (t) => {
+  const dir = tmp('slcode-swap-'), work = tmp('slcode-work-');
+  const secret = path.join(work, 'secret.txt');
+  fs.writeFileSync(secret, 'TOP-SECRET');
+  const e = cli(dir, ['new', work, '--vendor', 'codex']);
+  t.after(() => { if (alive(e.child)) e.child.kill('SIGKILL'); });
+  const url = await e.first, port = Number(new URL(url).port);
+  const { WebSocket: WS } = await import('ws');
+  const upgrade = (headers: { origin?: string; host?: string }) => new Promise<number>((resolve, reject) => {
+    const ws = new WS(`ws://127.0.0.1:${port}/ws`, { ...(headers.origin ? { origin: headers.origin } : {}), headers: headers.host ? { host: headers.host } : {} });
+    ws.on('open', () => { ws.close(); resolve(101); });
+    ws.on('unexpected-response', (_q, r) => { resolve(r.statusCode ?? 0); r.resume(); });
+    ws.on('error', (er) => { if (!/Unexpected server response/.test(er.message)) reject(er); });
+  });
+  assert.equal(await upgrade({ origin: `http://127.0.0.1:${port + 1}` }), 403);
+  assert.equal(await upgrade({ host: `evil.example:${port}` }), 403);
+  assert.equal(await upgrade({ origin: `http://localhost:${port}`, host: `localhost:${port}` }), 101);
+  const http = await import('node:http');
+  const file = (headers: Record<string, string>) => new Promise<number>((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: `/file?path=${encodeURIComponent(secret)}`, headers }, (r) => { r.resume(); resolve(r.statusCode!); }).on('error', reject);
+  });
+  assert.equal(await file({ host: `evil.example:${port}` }), 403);
+  assert.equal(await file({}), 200);
+  const a = await screen(url);
+  assert.ok((await a.call('server.info')).result.session, '자기 화면은 그대로');
+  a.close();
+  e.child.kill('SIGTERM');
+  await e.exit;
+});

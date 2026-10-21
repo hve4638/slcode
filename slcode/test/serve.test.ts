@@ -227,6 +227,67 @@ test('루프백 밖 호스트는 토큰 필수; --no-web 은 소켓만', async (
   await h2.close('test');
 });
 
+/** /ws 업그레이드를 Origin·Host 를 정해 시도한다 — 열리면 그 연결의 응답들, 거절되면 HTTP 상태 */
+async function wsTry(url: string, headers: { origin?: string; host?: string }, calls: { method: string; params?: unknown }[] = []): Promise<{ status: number } | { out: any[] }> {
+  const { WebSocket: WS } = await import('ws');
+  const u = new URL(url); u.protocol = 'ws:'; u.pathname = '/ws'; u.search = '';
+  return new Promise((resolve, reject) => {
+    const ws = new WS(u.toString(), { ...(headers.origin !== undefined ? { origin: headers.origin } : {}), headers: headers.host ? { host: headers.host } : {} });
+    const out: any[] = []; let i = 0;
+    const next = () => { if (i < calls.length) ws.send(JSON.stringify({ id: i + 1, ...calls[i] })); else { ws.close(); resolve({ out }); } };
+    ws.on('open', next);
+    ws.on('message', (d) => { const m = JSON.parse(String(d)); if (m.id === undefined) return; out.push(m); i++; next(); });
+    ws.on('unexpected-response', (_q, r) => { resolve({ status: r.statusCode ?? 0 }); r.resume(); });
+    ws.on('error', (e) => { if (!/Unexpected server response/.test(e.message)) reject(e); });
+  });
+}
+
+test('루프백 웹은 자기 출처만: 다른 출처 페이지의 WS(setMode·send)·Host 를 바꾼 /file 은 거절, 같은 출처·Origin 없는 클라이언트는 그대로; 루프백 밖(토큰)은 출처를 보지 않는다 (ticket slcode-loopback-origin-check)', async (t) => {
+  const dir = isolated();
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
+  // 공격이 통과하면 턴이 돈다 — 가짜 codex 로 (API 호출 없음)
+  process.env.SLCODE_CODEX_BIN = `${process.execPath} ${path.resolve(import.meta.dirname, 'fixtures', 'fake-codex.mjs')}`;
+  t.after(() => { delete process.env.SLCODE_CODEX_BIN; });
+  const secret = path.join(work, 'secret.txt');
+  fs.writeFileSync(secret, 'TOP-SECRET');
+  const h = await serveSession({ dir, cwd: work, vendor: 'codex' });
+  t.after(() => h.close('test'));
+  const port = Number(new URL(h.url!).port);
+  const attack = [{ method: 'core.auth', params: { token: null } }, { method: 'session.setMode', params: { id: h.session.id, mode: 'bypassPermissions' } }, { method: 'session.send', params: { id: h.session.id, text: 'pwn' } }];
+  // REPRO.md 1: 다른 포트·다른 이름의 페이지, sandbox(null), DNS rebinding(Host 가 공격 도메인)
+  for (const hd of [{ origin: `http://127.0.0.1:${port + 1}` }, { origin: `http://localhost:${port + 1}` }, { origin: 'http://evil.example' }, { origin: `https://127.0.0.1:${port}` }, { origin: 'null' },
+    { origin: `http://evil.example:${port}`, host: `evil.example:${port}` }, { host: `evil.example:${port}` }, { origin: `http://127.0.0.1:${port}`, host: `127.0.0.1:${port + 1}` }])
+    assert.equal((await wsTry(h.url!, hd, attack) as { status?: number }).status, 403, JSON.stringify(hd));
+  const c = await connectSession(h.sock);
+  assert.notEqual((await c.request('session.attach', { id: h.session.id })).info.permissionMode, 'bypassPermissions', '권한 모드는 그대로');
+  c.close();
+  // 자기 화면 (127.0.0.1·localhost 둘 다), Origin 없는 브라우저 밖 클라이언트
+  for (const hd of [{ origin: `http://127.0.0.1:${port}` }, { origin: `http://localhost:${port}`, host: `localhost:${port}` }, { origin: `http://LOCALHOST:${port}`, host: `LocalHost:${port}` }, {}]) {
+    const r = await wsTry(h.url!, hd, [{ method: 'core.auth', params: { token: null } }, { method: 'server.info' }]) as { out?: any[] };
+    assert.equal(r.out?.[1]?.result?.session, h.session.id, JSON.stringify(hd));
+  }
+  // /file — 링크·이미지는 Origin 을 안 붙인다. Host 로 DNS rebinding 을 막는다
+  const http = await import('node:http');
+  const get = (p: string, headers: Record<string, string>) => new Promise<{ status: number; body: string }>((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: p, headers }, (res) => { let b = ''; res.on('data', (d) => (b += d)); res.on('end', () => resolve({ status: res.statusCode!, body: b })); }).on('error', reject);
+  });
+  const fileGet = (headers: Record<string, string>) => get(`/file?path=${encodeURIComponent(secret)}`, headers);
+  assert.deepEqual(await fileGet({}), { status: 200, body: 'TOP-SECRET' });
+  assert.equal((await fileGet({ host: `localhost:${port}`, origin: `http://localhost:${port}` })).status, 200);
+  for (const hd of [{ host: `evil.example:${port}` }, { origin: `http://127.0.0.1:${port + 1}` }, { origin: 'null' }, { host: `127.0.0.1:${port + 1}` }]) {
+    const r = await fileGet(hd);
+    assert.equal(r.status, 403, JSON.stringify(hd)); assert.ok(!r.body.includes('TOP-SECRET'));
+  }
+  // 정적 화면은 검사 밖 (내용이 없다)
+  assert.equal((await get('/', { host: `evil.example:${port}` })).status, 200);
+  // 루프백 밖(토큰) — 출처는 보지 않고 토큰이 막는다
+  const h2 = await serveSession({ dir, cwd: work, vendor: 'codex', host: '0.0.0.0' });
+  t.after(() => h2.close('test'));
+  const local = h2.url!.replace('0.0.0.0', '127.0.0.1');
+  const r2 = await wsTry(local, { origin: 'http://evil.example' }, [{ method: 'core.auth', params: { token: null } }]) as { out?: any[] };
+  assert.equal(r2.out?.[0]?.error?.code, 'unauthorized');
+});
+
 test('입력 초안: setDraft 의 글을 다음 attach 가 draft 로 돌려준다 — 다른 연결에서 붙어도 (ticket slcode-card-periodic-reload)', async () => {
   const dir = isolated();
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
