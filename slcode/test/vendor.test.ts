@@ -63,12 +63,12 @@ test('vendorResumeCommand: 폴더는 홑따옴표로', () => {
 });
 
 function run(dir: string, env: Record<string, string>, args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
-  return new Promise((resolve) => execFile(process.execPath, ['--import', 'tsx', CLI, ...args], { env: { ...process.env, ...env, SLCODE_DIR: dir, SLCODE_GRACE_SECS: '1', SLCODE_SESSION: undefined } }, (e, stdout, stderr) => resolve({ code: (e as { code?: number } | null)?.code ?? 0, stdout, stderr })));
+  return new Promise((resolve) => execFile(process.execPath, ['--import', 'tsx', CLI, ...args], { env: { ...process.env, ...env, SLCODE_DIR: dir, SLCODE_GRACE_SECS: '1', SLCODE_SESSION_ID: undefined } }, (e, stdout, stderr) => resolve({ code: (e as { code?: number } | null)?.code ?? 0, stdout, stderr })));
 }
 
 /** import 세션 하나를 띄우고(첫 stdout 줄까지, until 이 있으면 그것까지) SIGINT 로 내린 뒤 세션 소켓이 닫히기를 기다린다 — stderr 를 돌려준다 */
 async function importOnce(t: { after: (f: () => void) => void }, dir: string, env: Record<string, string>, args: string[], until?: () => boolean): Promise<string> {
-  const child = spawn(process.execPath, ['--import', 'tsx', CLI, 'import', ...args, '--no-web'], { env: { ...process.env, ...env, SLCODE_DIR: dir, SLCODE_GRACE_SECS: '1', SLCODE_SESSION: undefined }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['--import', 'tsx', CLI, 'import', ...args, '--no-web'], { env: { ...process.env, ...env, SLCODE_DIR: dir, SLCODE_GRACE_SECS: '1', SLCODE_SESSION_ID: undefined }, stdio: ['ignore', 'pipe', 'pipe'] });
   t.after(() => { if (child.exitCode === null) child.kill('SIGINT'); });
   let out = '', err = '';
   child.stdout!.on('data', (d) => (out += d)); child.stderr!.on('data', (d) => (err += d));

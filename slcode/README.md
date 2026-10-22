@@ -15,7 +15,7 @@ slcode prompt <s> <text> | interrupt <s>
 slcode status <s> | pending <s> | last <s> [--turn N] | log <s> [--since N] [--tail N]   # 조회: 평문 기본, --json
 slcode respond <s> <req> allow|deny [--remember] | respond <s> <req> --answer <text> | respond <s> <req> --json '<updatedInput>'
 slcode mail <to> <text> [--from X] [--re <id>]                            # 켜진 세션에만 (꺼진 세션은 no session)
-slcode check | ask <to> <text> [--timeout S] | reply <메시지 id> <text>      # 세션 안에서(SLCODE_SESSION)
+slcode check | ask <to> <text> [--timeout S] | reply <메시지 id> <text>      # 세션 안에서(SLCODE_SESSION_ID)
 pnpm test                               # 잠금·로그·세션 프로세스·교체·CLI 동사 테스트
 ```
 
@@ -30,7 +30,7 @@ new·resume·continue 는 superlite 터미널 안이면 그 터미널의 deck �
 - 파일은 `$SLCODE_DIR`(기본 `~/.local/state/slcode`): `sessions/<cwd 슬러그>/<id>/{meta.json,events.jsonl,sock,inspect.db}`(소켓 경로가 유닉스 상한을 넘는 긴 폴더는 `sock/<id>`), `core.log`(core 들의 stderr), `settings-web.json`·`settings-superlite.json`(화면 설정), `slcode.token`. 옛 평탄 구조 `sessions/<id>/` 는 처음 뜰 때 옮긴다.
 - 인증: UDS 는 소켓 권한(0600)이 전부. 웹은 루프백 바인드면 없음, 루프백 밖이면 `slcode.token`(URL 의 `?token=`, WS 첫 프레임 `core.auth` — serve 가 넘기고 core 가 검사한다).
 - 메시지: 보내는 쪽은 켜진 세션 중 id·제목으로 받는 이를 찾아 그 세션 소켓에 `session.deliver` 한다. 받는 core 는 메모리에 두었다가 다음 idle 에 한 턴(origin `mail`, 여러 통은 한 본문)으로 넣는다. 꺼진 세션에는 보내지 않고 보관하지도 않는다.
-- 메시징(세션 사이): 벤더 자식 프로세스에 `SLCODE_SESSION=<세션 id>` 가 들어가 세션 안의 에이전트가 `slcode mail/check/ask/reply` 로 자기 이름을 안다. 받은 메시지는 `<slcode-message id from name kind at [via] [re]>` 머리표로 감싸고, 그 뜻과 답장 방법은 고정 지시(`src/prompt.ts`)에 있다. `ask` 는 kind=ask 로 보내고 kind=reply(re=<그 id>)가 올 때까지 기다린다(기본 무기한, `--timeout`) — 답장은 턴이 아니라 ask 의 출력으로 온다. `check` 는 진행 중 턴 안에서 밀린 메시지를 지금 꺼낸다(꺼낸 것은 턴으로 다시 오지 않는다). superlite 등록부와의 연결은 없다(스탠드얼론, 사용자 2026-10-02).
+- 메시징(세션 사이): 벤더 자식 프로세스에 `SLCODE_SESSION_ID=<세션 id>` 가 들어가 세션 안의 에이전트가 `slcode mail/check/ask/reply` 로 자기 이름을 안다. 받은 메시지는 `<slcode-message id from name kind at [via] [re]>` 머리표로 감싸고, 그 뜻과 답장 방법은 고정 지시(`src/prompt.ts`)에 있다. `ask` 는 kind=ask 로 보내고 kind=reply(re=<그 id>)가 올 때까지 기다린다(기본 무기한, `--timeout`) — 답장은 턴이 아니라 ask 의 출력으로 온다. `check` 는 진행 중 턴 안에서 밀린 메시지를 지금 꺼낸다(꺼낸 것은 턴으로 다시 오지 않는다). superlite 등록부와의 연결은 없다(스탠드얼론, 사용자 2026-10-02).
 - 비용: Codex 는 턴 비용을 알려 주지 않아서 토큰 수와 `src/codex.ts` 의 가격표로 추정한다. 가격표에 없는 모델만 쓴 세션은 `status` 와 웹 사이드바의 비용이 `-` 로 보인다.
 - 웹 프런트 `web/` 는 빌드 없는 ES 모듈. 페이지는 서버에 `server.info` 로 세션 id 를 물어 그 세션에 붙는다. 세션 목록 화면은 없다. 이미지·PDF·텍스트 파일은 붙여넣기·끌어놓기·`+` 로 첨부한다 (`session.send.attachments`, 로그엔 이름만). 모델과 effort 는 작성창의 드롭다운으로 바꾼다 (`session.setModel`·`session.setEffort`, 다음 턴부터, `--resume` 뒤에도 유지). 말풍선에 마우스를 올리면 복사·돌아가기 버튼이 나온다. 돌아가기는 claude 의 Esc-Esc 로, 답변만·코드만·둘 다 중 고른다 (`session.rewind`).
 - 설계 근거·결정은 ws `docs/report/agent-core-spike.md`, `docs/report/agent-core-standalone.md`, `docs/report/agent-core-split.md`, `docs/report/slcode-core-serve-split.md`.

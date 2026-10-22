@@ -16,7 +16,7 @@ const TSX = import.meta.resolve('tsx');
 const FAKE = path.resolve(import.meta.dirname, 'fixtures', 'fake-codex.mjs');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const tmp = (p: string) => fs.mkdtempSync(path.join(os.tmpdir(), p));
-const ENV = (dir: string) => ({ ...process.env, SLCODE_DIR: dir, SLCODE_GRACE_SECS: '1', SLCODE_OWNER_GRACE_SECS: '1', SLCODE_CODEX_BIN: `${process.execPath} ${FAKE}`, SLCODE_SESSION: undefined, SUPERLITE_SOCK: undefined });
+const ENV = (dir: string) => ({ ...process.env, SLCODE_DIR: dir, SLCODE_GRACE_SECS: '1', SLCODE_OWNER_GRACE_SECS: '1', SLCODE_CODEX_BIN: `${process.execPath} ${FAKE}`, SLCODE_SESSION_ID: undefined, SUPERLITE_SOCK: undefined });
 
 /** 이 패키지의 사본 (dist 복사, web·node_modules 는 링크) — dist/cli.js 의 mtime 을 올려 '새 빌드' 를 만들어도 병렬로 도는 다른 테스트 파일의 serve·core 에 닿지 않게.
  *  새 빌드를 본 serve 는 core 교체를 청한다 (3단계) */

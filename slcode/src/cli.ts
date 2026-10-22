@@ -24,9 +24,9 @@ import { pullHistory } from './history.js';
 import { randomUUID } from 'node:crypto';
 import { FILES, type ApprovalRequest, type LoggedEvent, type Methods, type SessionInfo } from './protocol.js';
 
-type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; 'no-inspect'?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; re?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; takeover?: boolean; version?: boolean; help?: boolean };
+type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; model?: string; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; 'no-inspect'?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; re?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; takeover?: boolean; version?: boolean; help?: boolean };
 
-const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세션 id 또는 유일한 제목. * 는 세션 안(SLCODE_SESSION)에서만)
+const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세션 id 또는 유일한 제목. * 는 세션 안(SLCODE_SESSION_ID)에서만)
 
   slcode [--vendor --title --mode …]
                                  동사 없이 부르면 slcode new . — 첫 토큰이 옵션이면 전부 new 의 옵션. 폴더·세션 id 는 받지 않는다
@@ -35,7 +35,7 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
   new·resume·continue 는 superlite 터미널 안이면 그 터미널의 deck 에 카드로 연다. superlite 밖이거나 --web 이면 세션(core)을
   띄우고 이 프로세스가 웹을 연다 (Ctrl-C 로 닫는다). 이미 살아 있는 세션이면 그 카드로 가거나 웹 주소를 출력한다.
   --host H·--port N 은 웹으로 열 때 쓴다. --no-web 과는 함께 쓸 수 없고, superlite 안에서는 --web 과 함께 쓴다
-  new [folder] [--web] [--host H] [--port N] [--no-web] [--raw] [--no-inspect] [--mode M] [--title T] [--vendor claude|codex] [--stdio]
+  new [folder] [--web] [--host H] [--port N] [--no-web] [--raw] [--no-inspect] [--mode M] [--title T] [--vendor claude|codex] [--model M] [--stdio]
                                  새 세션 (폴더 생략 시 현재 폴더)
                                  --no-inspect: 설정 창의 '새 세션 inspect' 가 켜져 있어도 끈 채로 시작한다 (resume 이면 켜져 있던 것을 끈다).
                                  inspect 는 벤더(Claude·Codex)의 API 요청·응답 원본을 세션 폴더 inspect/ 에 남긴다 — 떠 있는 세션은 웹 사이드바에서 켜고 끈다
@@ -80,7 +80,7 @@ try {
   parsed = parseArgs({
     allowPositionals: true,
     options: {
-      port: { type: 'string' }, host: { type: 'string' }, stdio: { type: 'boolean' }, vendor: { type: 'string' }, mode: { type: 'string' }, title: { type: 'string' },
+      port: { type: 'string' }, host: { type: 'string' }, stdio: { type: 'boolean' }, vendor: { type: 'string' }, mode: { type: 'string' }, title: { type: 'string' }, model: { type: 'string' },
       since: { type: 'string' }, tail: { type: 'string' }, turn: { type: 'string' }, raw: { type: 'boolean' }, 'no-inspect': { type: 'boolean' }, all: { type: 'boolean' }, force: { type: 'boolean' }, json: { type: 'boolean' },
       remember: { type: 'boolean' }, from: { type: 'string' }, re: { type: 'string' }, timeout: { type: 'string' }, answer: { type: 'string' },
       'no-web': { type: 'boolean' }, web: { type: 'boolean' }, takeover: { type: 'boolean' }, version: { type: 'boolean' }, dir: { type: 'string' }, help: { type: 'boolean', short: 'h' },
@@ -113,10 +113,10 @@ function resolve(s: string | undefined): string {
   if (hits.length > 1) { err(`ambiguous title "${s}": ${hits.map((m) => `${m.id} (${m.cwd})`).join(', ')}`); process.exit(2); }
   return s;
 }
-/** check·ask·reply 는 세션 안에서만 — 벤더 자식 env 의 SLCODE_SESSION */
+/** check·ask·reply 는 세션 안에서만 — 벤더 자식 env 의 SLCODE_SESSION_ID */
 function inSession(): string {
-  const sid = process.env.SLCODE_SESSION;
-  if (!sid) { err(`${cmd} works only inside a slcode session (SLCODE_SESSION)`); process.exit(2); }
+  const sid = process.env.SLCODE_SESSION_ID;
+  if (!sid) { err(`${cmd} works only inside a slcode session (SLCODE_SESSION_ID)`); process.exit(2); }
   return sid;
 }
 function openLog(s: string | undefined) {
@@ -196,7 +196,7 @@ function turnSlice(history: LoggedEvent[], back: number): LoggedEvent[] | null {
 
 /** resume·continue·import — 꺼진 세션은 카드(superlite 안) 또는 core 를 띄우고 이 프로세스가 웹 서빙, 살아 있는 세션은 그 카드를
  *  활성화(superlite 안) 또는 웹 주소를 찍고 끝난다. --stdio 는 카드 서비스 자신 — 살아 있으면 소켓 중계(attach), 아니면 core 를 띄운 소유자 serve */
-async function resumeLog(log: EventLog, skip: (keyof Flags)[] = ['title', 'mode', 'raw', 'no-inspect', 'no-web', 'dir']) {
+async function resumeLog(log: EventLog, skip: (keyof Flags)[] = ['title', 'mode', 'model', 'raw', 'no-inspect', 'no-web', 'dir']) {
   let live = false;
   try { (await connectSession(log.sockPath)).close(); live = true; } catch {}
   if (live && flags.stdio) return attachStdio(log); // 살아 있는 세션의 소켓을 stdin/stdout 으로 중계 — superlite 카드가 떠 있는 세션에 붙는 길
@@ -209,7 +209,7 @@ async function printWeb(log: EventLog) {
   const client = await connectSession(log.sockPath);
   const url = webUrl(await client.request('server.info', {}));
   client.close();
-  unused(['host', 'port', 'no-web', 'title', 'mode', 'raw', 'no-inspect'], 'session is already live');
+  unused(['host', 'port', 'no-web', 'title', 'mode', 'model', 'raw', 'no-inspect'], 'session is already live');
   if (!url) { err(`session ${log.meta.id} is live but has no web address`); process.exit(1); }
   console.log(url);
   err(`session ${log.meta.id} is already live`);
@@ -230,10 +230,10 @@ async function serve(opts: { cwd: string; resume?: string }) {
     const entry = !flags.stdio && !flags['no-web'];
     const inspect = inspectOf(opts.resume);
     const h = entry ? await runEntry({
-      dir: flags.dir, ...opts, title: flags.title, raw: flags.raw, inspect, permissionMode: flags.mode, vendor: flags.vendor === 'codex' ? 'codex' : 'claude',
+      dir: flags.dir, ...opts, title: flags.title, raw: flags.raw, inspect, permissionMode: flags.mode, model: flags.model, vendor: flags.vendor === 'codex' ? 'codex' : 'claude',
       host: flags.host, port: flags.port ? Number(flags.port) : undefined, log: err,
     }) : await serveSession({
-      dir: flags.dir, ...opts, title: flags.title, raw: flags.raw, inspect, permissionMode: flags.mode, vendor: flags.vendor === 'codex' ? 'codex' : 'claude',
+      dir: flags.dir, ...opts, title: flags.title, raw: flags.raw, inspect, permissionMode: flags.mode, model: flags.model, vendor: flags.vendor === 'codex' ? 'codex' : 'claude',
       web: !flags['no-web'], host: flags.host, port: flags.port ? Number(flags.port) : undefined, stdio: flags.stdio, log: err,
       // superlite 서비스(serviceStart web)면 데몬이 정한 웹 소켓 주소 (ticket plugin-service-web)
       webSock: flags.stdio ? process.env.SUPERLITE_SERVICE_WEB || undefined : undefined,
@@ -281,7 +281,7 @@ function openCard(verb: string[], skip: (keyof Flags)[]): void {
 /** 새 세션 카드 — 폴더·벤더·제목·모드를 slcode.new 에 넘긴다 */
 function newCard(cwd: string): void {
   const args = ['slcode.new', '--cwd', cwd];
-  for (const k of ['vendor', 'title', 'mode'] as const) if (flags[k] !== undefined) args.push(`--${k}`, flags[k]!);
+  for (const k of ['vendor', 'title', 'mode', 'model'] as const) if (flags[k] !== undefined) args.push(`--${k}`, flags[k]!);
   openCard(args, ['no-web', 'raw', 'no-inspect', 'dir']);
 }
 /** id 없는 resume — 현재 폴더의 꺼진 세션을 꺼진 순서(최근 먼저)로. superlite 안이면 카드 안에서 고르고(slcode.resume --cwd), 밖이면
@@ -289,7 +289,7 @@ function newCard(cwd: string): void {
 async function pickClosed(cwd: string) {
   const rows = await closedSessions(P.sessionsDir, cwd);
   if (!rows.length) { err(`no closed session in ${cwd}`); process.exit(1); }
-  if (toCard()) openCard(['slcode.resume', '--cwd', cwd], ['title', 'mode', 'raw', 'no-inspect', 'no-web', 'dir']);
+  if (toCard()) openCard(['slcode.resume', '--cwd', cwd], ['title', 'mode', 'model', 'raw', 'no-inspect', 'no-web', 'dir']);
   const pad = (n: number) => String(n).padStart(2, '0');
   const stamp = (t: number) => { const d = new Date(t); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
   for (const m of rows) console.log(`${m.id}  ${stamp(closedTime(m))}  ${m.title ?? '-'}`);
@@ -399,7 +399,7 @@ try {
       const stored = EventLog.list(P.sessionsDir);
       const alive = await Promise.all(stored.map((m) => sockAlive(new EventLog(P.sessionsDir, m).sockPath)));
       const live = new Map(stored.flatMap((m, i) => (alive[i] ? [[m.id, m.pid ?? null] as const] : [])));
-      const me = process.env.SLCODE_SESSION ?? null;
+      const me = process.env.SLCODE_SESSION_ID ?? null;
       const rows = stored.map((m) => ({ id: m.id, vendor: m.vendor, cwd: m.cwd, title: m.title, createdAt: m.createdAt, updatedAt: m.updatedAt ?? m.createdAt, closedAt: m.closedAt ?? null, live: live.has(m.id), pid: live.get(m.id) ?? null, ...(m.id === me ? { me: true } : {}) }))
         .sort((a, b) => a.updatedAt - b.updatedAt);
       print(flags.all ? rows : rows.filter((r) => r.live));
@@ -508,11 +508,11 @@ try {
       print({ ok: true, requestId: req, decision: params.decision });
       break;
     }
-    // ---- 메시지 (ticket slcode-p2p-messaging, 사용자 결정 2026-10-19): 보낸 이는 --from, 없으면 SLCODE_SESSION, 둘 다 없으면 unknown.
+    // ---- 메시지 (ticket slcode-p2p-messaging, 사용자 결정 2026-10-19): 보낸 이는 --from, 없으면 SLCODE_SESSION_ID, 둘 다 없으면 unknown.
     // via 는 옵션으로 열지 않는다 — 세션 안에서 다른 이름으로 보내면 그 세션 id, 세션 밖이면 outside (env 를 바꿔 치는 것은 막지 않는다)
     case 'mail': {
       if (!rest[1]) usage('mail <to> <text> [--from X] [--re <id>]');
-      const me = process.env.SLCODE_SESSION;
+      const me = process.env.SLCODE_SESSION_ID;
       const from = flags.from ?? me ?? 'unknown';
       const via = !me ? 'outside' : from !== me ? me : undefined;
       const r = await sendMail(P.sessionsDir, rest[0], { from, kind: flags.re ? 'reply' : 'message', body: rest.slice(1).join(' '), ...(flags.re ? { re: flags.re } : {}), ...(via ? { via } : {}) });

@@ -20,7 +20,7 @@ const tmp = (p: string) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 
 /** serve(cli new) 하나 — 소유자 유예는 1초, 첫 stdout 줄은 세션 소켓 경로 */
 function serve(dir: string, work: string): { child: ChildProcess; sock: Promise<string>; exit: Promise<number | null> } {
-  const env = { ...process.env, SLCODE_DIR: dir, SLCODE_GRACE_SECS: '1', SLCODE_OWNER_GRACE_SECS: '1', SLCODE_CODEX_BIN: `${process.execPath} ${FAKE}`, SLCODE_SESSION: undefined, SUPERLITE_SOCK: undefined };
+  const env = { ...process.env, SLCODE_DIR: dir, SLCODE_GRACE_SECS: '1', SLCODE_OWNER_GRACE_SECS: '1', SLCODE_CODEX_BIN: `${process.execPath} ${FAKE}`, SLCODE_SESSION_ID: undefined, SUPERLITE_SOCK: undefined };
   const child = spawn(process.execPath, ['--import', TSX, CLI, 'new', work, '--no-web', '--vendor', 'codex'], { env, stdio: ['ignore', 'pipe', 'ignore'] });
   child.stdout!.setEncoding('utf8');
   const sock = new Promise<string>((resolve) => { let buf = ''; child.stdout!.on('data', (d: string) => { buf += d; const i = buf.indexOf('\n'); if (i >= 0) resolve(buf.slice(0, i)); }); });

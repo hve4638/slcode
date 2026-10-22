@@ -153,7 +153,7 @@ test('main command: 카드 서비스 명령 — new 는 폴더·옵션, resume �
   const files = { 'plugin.json': PLUGIN_JSON, 'bin/linux-x64/manifest.json': mf('0.1.0') };
   await withMain(files, { settings: { dir: '/d x' } }, async ({ exposed }) => {
     const bin = "'/remote/cache/slcode/abc123/bin/slcode'";
-    assert.equal(await exposed.host.command({ spawn: { cwd: '/w s', vendor: 'codex', title: 'T' } }), `${bin} new '/w s' --vendor 'codex' --title 'T' --stdio --no-web --dir '/d x'`);
+    assert.equal(await exposed.host.command({ spawn: { cwd: '/w s', vendor: 'codex', title: 'T', model: 'gpt-x' } }), `${bin} new '/w s' --vendor 'codex' --title 'T' --model 'gpt-x' --stdio --no-web --dir '/d x'`);
     assert.equal(await exposed.host.command({ id: 'sess-1', takeover: true }), `${bin} resume 'sess-1' --stdio --no-web --takeover --dir '/d x'`);
     assert.equal(await exposed.host.command({ takeover: true }), `${bin} new --stdio --no-web --dir '/d x'`, 'id 없는 takeover 는 무시');
   });

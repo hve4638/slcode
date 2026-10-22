@@ -16,7 +16,8 @@
         { "name": "cwd", "kind": "option", "value": "dir", "help": "session folder (default: this shell's cwd)" },
         { "name": "vendor", "kind": "option", "help": "claude | codex" },
         { "name": "title", "kind": "option" },
-        { "name": "mode", "kind": "option", "help": "default | acceptEdits | auto | bypassPermissions" }
+        { "name": "mode", "kind": "option", "help": "default | acceptEdits | auto | bypassPermissions" },
+        { "name": "model", "kind": "option", "help": "model of the new session (default: the vendor's default)" }
       ]
     },
     {

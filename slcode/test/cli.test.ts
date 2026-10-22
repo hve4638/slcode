@@ -13,10 +13,10 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 type Out = { code: number; stdout: string; stderr: string };
 const TSX = import.meta.resolve('tsx'); // 자식의 cwd 를 바꿔도 tsx 를 찾게
 function run(dir: string, args: string[], env: NodeJS.ProcessEnv = {}, cwd?: string): Promise<Out> {
-  return new Promise((resolve) => execFile(process.execPath, ['--import', TSX, CLI, ...args], { cwd, env: { ...process.env, SLCODE_DIR: dir, SLCODE_GRACE_SECS: '1', SLCODE_SESSION: undefined, SUPERLITE_SOCK: undefined, ...env } }, (e, stdout, stderr) => resolve({ code: (e as { code?: number } | null)?.code ?? 0, stdout, stderr })));
+  return new Promise((resolve) => execFile(process.execPath, ['--import', TSX, CLI, ...args], { cwd, env: { ...process.env, SLCODE_DIR: dir, SLCODE_GRACE_SECS: '1', SLCODE_SESSION_ID: undefined, SUPERLITE_SOCK: undefined, ...env } }, (e, stdout, stderr) => resolve({ code: (e as { code?: number } | null)?.code ?? 0, stdout, stderr })));
 }
 function start(dir: string, args: string[]): { child: ChildProcess; out: Promise<string>; line: (n: number) => Promise<string>; err: string[]; exit: Promise<number | null> } {
-  const child = spawn(process.execPath, ['--import', 'tsx', CLI, ...args], { env: { ...process.env, SLCODE_DIR: dir, SLCODE_GRACE_SECS: '1', SLCODE_SESSION: undefined, SUPERLITE_SOCK: undefined }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['--import', 'tsx', CLI, ...args], { env: { ...process.env, SLCODE_DIR: dir, SLCODE_GRACE_SECS: '1', SLCODE_SESSION_ID: undefined, SUPERLITE_SOCK: undefined }, stdio: ['pipe', 'pipe', 'pipe'] });
   const err: string[] = [];
   child.stderr!.setEncoding('utf8'); child.stderr!.on('data', (d: string) => err.push(d));
   const lines: string[] = []; let buf = '';
@@ -103,15 +103,16 @@ test('mail: 켜진 세션에만 — 꺼진 세션은 없는 이름과 같은 no 
   // 켜진 세션(가짜 codex)으로 보내면 턴 본문의 머리표에 from·via 가 실린다
   process.env.SLCODE_CODEX_BIN = `${process.execPath} ${path.resolve(import.meta.dirname, 'fixtures', 'fake-codex.mjs')}`;
   t.after(() => { delete process.env.SLCODE_CODEX_BIN; });
-  const live = start(dir, ['new', tmp('slcode-work-'), '--no-web', '--vendor', 'codex', '--title', 'beta']);
+  const live = start(dir, ['new', tmp('slcode-work-'), '--no-web', '--vendor', 'codex', '--title', 'beta', '--model', 'gpt-x']);
   t.after(() => { if (live.child.exitCode === null) live.child.kill('SIGTERM'); });
   await live.out;
+  assert.equal(EventLog.list(corePaths(dir).sessionsDir).find((m) => m.title === 'beta')?.model, 'gpt-x', '--model 은 새 세션의 meta.model');
   const out = await run(dir, ['mail', 'beta', 'hi', 'there']);
   assert.equal(out.code, 0, out.stderr);
   const sent = JSON.parse(out.stdout);
   assert.deepEqual(Object.keys(sent).sort(), ['id', 'to']);
-  await run(dir, ['mail', 'beta', 'as', 'orch', '--from', 'orchestrator'], { SLCODE_SESSION: 'aaaa1111' });
-  await run(dir, ['mail', 'beta', 'mine'], { SLCODE_SESSION: 'aaaa1111' });
+  await run(dir, ['mail', 'beta', 'as', 'orch', '--from', 'orchestrator'], { SLCODE_SESSION_ID: 'aaaa1111' });
+  await run(dir, ['mail', 'beta', 'mine'], { SLCODE_SESSION_ID: 'aaaa1111' });
   await run(dir, ['mail', 'beta', 'answer', '--re', 'q1', '--from', 'aaaa1111']);
   await sleep(300);
   // 첫 메시지 턴은 승인 대기(가짜 codex) — 허락하면 그 사이 온 세 통이 다음 턴 하나로 들어간다
@@ -271,7 +272,7 @@ test('닫는 중에 온 두 번째 시그널은 같은 종료를 기다린다 �
 
 test('프로세스 그룹 SIGTERM 으로 닫힌 claude 세션은 종료만 남기고 오류(exit 143)를 남기지 않는다 — superlite 서비스 중지·터미널 Ctrl-C 의 꼴', async (t) => {
   const dir = tmp('slcode-cli-');
-  const child = spawn(process.execPath, ['--import', 'tsx', CLI, 'new', tmp('slcode-work-'), '--no-web'], { detached: true, env: { ...process.env, SLCODE_DIR: dir, SLCODE_GRACE_SECS: '1', SLCODE_SESSION: undefined, SUPERLITE_SOCK: undefined }, stdio: ['ignore', 'pipe', 'ignore'] });
+  const child = spawn(process.execPath, ['--import', 'tsx', CLI, 'new', tmp('slcode-work-'), '--no-web'], { detached: true, env: { ...process.env, SLCODE_DIR: dir, SLCODE_GRACE_SECS: '1', SLCODE_SESSION_ID: undefined, SUPERLITE_SOCK: undefined }, stdio: ['ignore', 'pipe', 'ignore'] });
   t.after(() => { try { process.kill(-child.pid!, 'SIGKILL'); } catch {} });
   const exit = new Promise<number | null>((resolve) => child.on('exit', (c) => resolve(c)));
   await new Promise((r) => child.stdout!.once('data', r));

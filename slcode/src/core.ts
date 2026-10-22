@@ -57,6 +57,8 @@ export type CoreOptions = {
   title?: string;
   raw?: boolean;
   permissionMode?: string;
+  /** 새 세션의 모델 — meta.model 로 남겨 벤더가 기동 때 읽는다. 없으면 벤더 기본. 이어받는 세션은 meta 를 따른다 */
+  model?: string;
   /** 새 세션의 벤더 — 기본 claude. 이어받는 세션은 meta.vendor 를 따른다 */
   vendor?: 'claude' | 'codex';
   /** 새 세션을 inspect 로 — 입구 설정(Settings.inspect)을 CLI 가 읽어 넘긴다. 이어받는 세션은 meta.inspect 를 따르고, false 면 끈다 (--no-inspect) */
@@ -87,13 +89,13 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     const meta: SessionMeta = {
       id: randomUUID().slice(0, 8), vendor: opts.vendor ?? 'claude', cwd: opts.cwd, title: opts.title ?? null,
       vendorSessionId: null, createdAt: Date.now(), permissionMode: opts.permissionMode ?? null, raw: opts.raw ?? false,
-      ...(opts.inspect ? { inspect: true } : {}),
+      ...(opts.model ? { model: opts.model } : {}), ...(opts.inspect ? { inspect: true } : {}),
     };
     logFile = EventLog.create(P.sessionsDir, meta);
   }
   const cwd = logFile.meta.cwd;
   // 벤더 자식(과 그 Bash 도구가 띄우는 명령)이 자기 세션을 알게 — 세션 안의 `slcode mail/check/ask/reply` 가 이걸 읽는다 (사용자 확정 2026-10-02)
-  const env: NodeJS.ProcessEnv = { ...SDK_ENV, SLCODE_SESSION: logFile.meta.id };
+  const env: NodeJS.ProcessEnv = { ...SDK_ENV, SLCODE_SESSION_ID: logFile.meta.id };
   // inspect (ticket slcode-inspect-proxy·slcode-inspect-default-on) — 켜져 있으면 벤더를 띄우기 전에 proxy 를 세우고 벤더 env 의 ANTHROPIC_BASE_URL 을 그리로.
   // 기록은 세션 폴더 inspect/inspect.db. proxy 를 띄운 core 는 3일마다 상태 폴더의 꺼진 세션 raw 를 정리한다 (기록이 늘어나는 것은 proxy 가 떠 있을 때뿐)
   const inspectDir = path.join(logFile.dir, 'inspect');

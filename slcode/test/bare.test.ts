@@ -13,7 +13,7 @@ const TSX = import.meta.resolve('tsx'); // 자식의 cwd 를 바꿔도 tsx 를 �
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const tmp = (p: string) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 type Out = { code: number; stdout: string; stderr: string };
-const baseEnv = (dir: string): NodeJS.ProcessEnv => ({ ...process.env, SLCODE_DIR: dir, SLCODE_GRACE_SECS: '1', SLCODE_SESSION: undefined, SUPERLITE_SOCK: undefined });
+const baseEnv = (dir: string): NodeJS.ProcessEnv => ({ ...process.env, SLCODE_DIR: dir, SLCODE_GRACE_SECS: '1', SLCODE_SESSION_ID: undefined, SUPERLITE_SOCK: undefined });
 function run(dir: string, args: string[], opts: { cwd?: string; env?: NodeJS.ProcessEnv } = {}): Promise<Out> {
   return new Promise((resolve) => execFile(process.execPath, ['--import', TSX, CLI, ...args], { cwd: opts.cwd, env: { ...baseEnv(dir), ...opts.env } }, (e, stdout, stderr) => resolve({ code: (e as { code?: number } | null)?.code ?? 0, stdout, stderr })));
 }
@@ -63,13 +63,13 @@ test('superlite 안: slcode·slcode new 는 slcode.new 동사로 카드를 열�
   const dir = tmp('slcode-bare-');
   const work = tmp('slcode-work-');
   const shim = fakeShim('ok');
-  const a = await run(dir, ['--vendor', 'codex', '--title', 'T 1', '--mode', 'plan', '--raw'], { cwd: work, env: shim.env });
+  const a = await run(dir, ['--vendor', 'codex', '--title', 'T 1', '--mode', 'plan', '--model', 'gpt-x', '--raw'], { cwd: work, env: shim.env });
   assert.equal(a.code, 0, a.stderr); assert.equal(a.stdout.trim(), 's-card-1');
   assert.match(a.stderr, /warning: ignoring --raw \(opened as a card\)/);
   const b = await run(dir, ['new', work], { env: shim.env });
   assert.equal(b.code, 0); assert.equal(b.stdout.trim(), 's-card-1');
   const real = fs.realpathSync(work);
-  assert.deepEqual(shim.calls(), [`slcode.new --cwd ${real} --vendor codex --title T 1 --mode plan`, `slcode.new --cwd ${work}`]);
+  assert.deepEqual(shim.calls(), [`slcode.new --cwd ${real} --vendor codex --title T 1 --mode plan --model gpt-x`, `slcode.new --cwd ${work}`]);
   assert.deepEqual(EventLog.list(corePaths(dir).sessionsDir), [], '이 프로세스는 세션을 만들지 않는다');
 });
 

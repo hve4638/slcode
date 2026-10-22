@@ -134,7 +134,7 @@ export function activate(api) {
   async function command({ id = null, spawn = null, takeover = false } = {}) {
     const [bin, dir] = await Promise.all([resolveBin(), dirOpt()]);
     const sp = spawn ?? {};
-    const verb = id ? `resume ${shq(id)}` : `new${sp.cwd ? ` ${shq(sp.cwd)}` : ''}${['vendor', 'title', 'mode'].map((k) => (sp[k] ? ` --${k} ${shq(sp[k])}` : '')).join('')}`;
+    const verb = id ? `resume ${shq(id)}` : `new${sp.cwd ? ` ${shq(sp.cwd)}` : ''}${['vendor', 'title', 'mode', 'model'].map((k) => (sp[k] ? ` --${k} ${shq(sp[k])}` : '')).join('')}`;
     return `${bin.cmd} ${verb} --stdio --no-web${takeover && id ? ' --takeover' : ''}${dir}`;
   }
   /** `slcode list` 행 — all 이면 꺼진 세션까지 */
@@ -219,7 +219,7 @@ export function activate(api) {
     const done = new Promise((resolve, reject) => waits.set(key, { resolve, reject }));
     try {
       const w = await windowFor(ctx.tmux);
-      await w.call(CARDS, 'open', { key, spawn: { cwd: a.cwd ?? ctx.cwd, vendor: a.vendor, title: a.title, mode: a.mode }, title: a.title, tmux: ctx.tmux });
+      await w.call(CARDS, 'open', { key, spawn: { cwd: a.cwd ?? ctx.cwd, vendor: a.vendor, title: a.title, mode: a.mode, model: a.model }, title: a.title, tmux: ctx.tmux });
       return await done;
     } finally { waits.delete(key); }
   });

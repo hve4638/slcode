@@ -38,7 +38,7 @@ test('file.get: 절대 경로만, 줄 번호 꼬리는 없으면 떼고, 본문�
 test('--stdio 카드 서비스: web.files·file.get 을 serve 가 답하고, 창 표가 붙은 문자열 id 를 그대로 돌려준다', async (t) => {
   const dir = tmp('slcode-card-'), work = tmp('slcode-work-');
   fs.writeFileSync(path.join(work, 'x.txt'), 'hello');
-  const child = spawn(process.execPath, ['--import', 'tsx', CLI, 'new', work, '--no-web', '--stdio'], { env: { ...process.env, SLCODE_DIR: dir, SLCODE_GRACE_SECS: '1', SLCODE_SESSION: undefined, SUPERLITE_SOCK: undefined }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['--import', 'tsx', CLI, 'new', work, '--no-web', '--stdio'], { env: { ...process.env, SLCODE_DIR: dir, SLCODE_GRACE_SECS: '1', SLCODE_SESSION_ID: undefined, SUPERLITE_SOCK: undefined }, stdio: ['pipe', 'pipe', 'pipe'] });
   t.after(() => { if (child.exitCode === null) child.kill('SIGINT'); });
   const lines: string[] = []; let buf = '';
   child.stdout.setEncoding('utf8'); child.stdout.on('data', (d: string) => { buf += d; let i; while ((i = buf.indexOf('\n')) >= 0) { lines.push(buf.slice(0, i)); buf = buf.slice(i + 1); } });
