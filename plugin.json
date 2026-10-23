@@ -1,6 +1,6 @@
 {
   "id": "slcode",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "apiVersion": 2,
   "main": "main.js",
   "renderer": "renderer.js",
@@ -39,7 +39,7 @@
       { "key": "dir", "type": "string", "label": "SLCODE_DIR", "description": "비우면 slcode 기본 폴더 (~/.local/state/slcode)", "default": "" }
     ]
   },
-  "binary": { "repo": "hve4638/slcode", "version": "^0.2.0" },
+  "binary": { "repo": "hve4638/slcode", "version": "^0.3.0" },
   "services": [
     { "id": "session", "command": "slcode new --stdio --no-web", "unit": "card", "lifetime": "owned", "channel": "stdio", "web": true }
   ]
