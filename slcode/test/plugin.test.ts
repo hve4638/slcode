@@ -156,6 +156,9 @@ test('main command: 카드 서비스 명령 — new 는 폴더·옵션, resume �
     assert.equal(await exposed.host.command({ spawn: { cwd: '/w s', vendor: 'codex', title: 'T', model: 'gpt-x' } }), `${bin} new '/w s' --vendor 'codex' --title 'T' --model 'gpt-x' --stdio --no-web --dir '/d x'`);
     assert.equal(await exposed.host.command({ id: 'sess-1', takeover: true }), `${bin} resume 'sess-1' --stdio --no-web --takeover --dir '/d x'`);
     assert.equal(await exposed.host.command({ takeover: true }), `${bin} new --stdio --no-web --dir '/d x'`, 'id 없는 takeover 는 무시');
+    // effort 는 옵션, 첫 프롬프트는 맨 끝 -- 뒤에 (ticket slcode-new-effort-prompt) — resume 에는 싣지 않는다
+    assert.equal(await exposed.host.command({ spawn: { cwd: '/w', effort: 'high', prompt: "fix the 'login' bug\nnow" } }), `${bin} new '/w' --effort 'high' --stdio --no-web --dir '/d x' -- 'fix the '\\''login'\\'' bug\nnow'`);
+    assert.equal(await exposed.host.command({ id: 'sess-1', spawn: { prompt: 'x' } }), `${bin} resume 'sess-1' --stdio --no-web --dir '/d x'`);
   });
 });
 
@@ -207,6 +210,24 @@ test('slcode.new 동사: 요청자 창에 key·폴더·옵션으로 카드를 �
     assert.equal(arg2.spawn.cwd, '/home/me', '폴더 기본값은 요청자 cwd');
     exposed.host.failed(arg2.key, '받기 실패');
     await assert.rejects(bad, /받기 실패/);
+    // effort·첫 프롬프트는 spawn 으로, Claude 의 effort 이름 오타는 카드를 열기 전에 거절 (Codex 는 이름을 보지 않는다)
+    const n = calls.length;
+    await assert.rejects(verbs['slcode.new']({ effort: 'hgih' }, { cwd: '/w', tmux: '$3' }), /unknown effort 'hgih' for claude \(low\|medium\|high\|xhigh\|max\)/);
+    assert.equal(calls.length, n, '카드를 열지 않는다');
+    void verbs['slcode.new']({ vendor: 'codex', effort: 'turbo', prompt: 'go' }, { cwd: '/w', tmux: '$3' });
+    await new Promise((r) => setTimeout(r, 10));
+    const arg3 = JSON.parse(calls.filter((c) => c.startsWith('call w$3 slcode/cards.open ')).at(-1)!.slice('call w$3 slcode/cards.open '.length));
+    assert.deepEqual(arg3.spawn, { cwd: '/w', vendor: 'codex', effort: 'turbo', prompt: 'go' });
+    exposed.host.started(arg3.key, 'sess-3');
+    // model 의 공급자 앞머리는 벤더를 고르고 떼어 낸다 (임시) — 벤더가 어긋나면 카드를 열기 전에 거절
+    void verbs['slcode.new']({ model: 'openai:gpt-5.6-sol', effort: 'minimal' }, { cwd: '/w', tmux: '$3' });
+    await new Promise((r) => setTimeout(r, 10));
+    const arg4 = JSON.parse(calls.filter((c) => c.startsWith('call w$3 slcode/cards.open ')).at(-1)!.slice('call w$3 slcode/cards.open '.length));
+    assert.deepEqual(arg4.spawn, { cwd: '/w', vendor: 'codex', model: 'gpt-5.6-sol', effort: 'minimal' });
+    exposed.host.started(arg4.key, 'sess-4');
+    const m = calls.length;
+    await assert.rejects(verbs['slcode.new']({ vendor: 'claude', model: 'openai:gpt-x' }, { cwd: '/w', tmux: '$3' }), /is a codex model but --vendor is claude/);
+    assert.equal(calls.length, m);
   });
 });
 

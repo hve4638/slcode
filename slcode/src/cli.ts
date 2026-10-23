@@ -24,19 +24,24 @@ import { pullHistory } from './history.js';
 import { randomUUID } from 'node:crypto';
 import { FILES, type ApprovalRequest, type LoggedEvent, type Methods, type SessionInfo } from './protocol.js';
 
-type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; model?: string; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; 'no-inspect'?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; re?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; takeover?: boolean; version?: boolean; help?: boolean };
+type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; model?: string; effort?: string; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; 'no-inspect'?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; re?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; takeover?: boolean; version?: boolean; help?: boolean };
 
 const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세션 id 또는 유일한 제목. * 는 세션 안(SLCODE_SESSION_ID)에서만)
 
-  slcode [--vendor --title --mode …]
+  slcode [--vendor --title --mode …] [-- <첫 프롬프트>]
                                  동사 없이 부르면 slcode new . — 첫 토큰이 옵션이면 전부 new 의 옵션. 폴더·세션 id 는 받지 않는다
 
 세션 수명
   new·resume·continue 는 superlite 터미널 안이면 그 터미널의 deck 에 카드로 연다. superlite 밖이거나 --web 이면 세션(core)을
   띄우고 이 프로세스가 웹을 연다 (Ctrl-C 로 닫는다). 이미 살아 있는 세션이면 그 카드로 가거나 웹 주소를 출력한다.
   --host H·--port N 은 웹으로 열 때 쓴다. --no-web 과는 함께 쓸 수 없고, superlite 안에서는 --web 과 함께 쓴다
-  new [folder] [--web] [--host H] [--port N] [--no-web] [--raw] [--no-inspect] [--mode M] [--title T] [--vendor claude|codex] [--model M] [--stdio]
+  new [folder] [--web] [--host H] [--port N] [--no-web] [--raw] [--no-inspect] [--mode M] [--title T] [--vendor claude|codex] [--model M] [--effort E] [--stdio] [-- <첫 프롬프트>]
                                  새 세션 (폴더 생략 시 현재 폴더)
+                                 --model·--effort: 새 세션의 모델·effort (생략 시 벤더 기본). Claude effort 는 low|medium|high|xhigh|max.
+                                 --model anthropic:<모델>·openai:<모델> 은 벤더도 고른다 (claude·codex, --vendor 생략 가능)
+                                 모델에 없는 effort 는 세션에 경고를 남기고 벤더 기본으로 돈다
+                                 -- 뒤의 단어들은 첫 프롬프트 — 세션이 뜨자마자 첫 턴으로 들어간다 (예: slcode new -- "$(cat plan.md)")
+                                 --model·--effort·첫 프롬프트는 새 세션에만 — resume·import·꺼진 세션을 찾은 continue 에 주면 오류
                                  --no-inspect: 설정 창의 '새 세션 inspect' 가 켜져 있어도 끈 채로 시작한다 (resume 이면 켜져 있던 것을 끈다).
                                  inspect 는 벤더(Claude·Codex)의 API 요청·응답 원본을 세션 폴더 inspect/ 에 남긴다 — 떠 있는 세션은 웹 사이드바에서 켜고 끈다
                                  --stdio: stdin/stdout 을 프레임 연결로 (첫 줄 {"url","id","sock"}; superlite 서비스용). resume·continue 도 받는다
@@ -78,22 +83,40 @@ function usage(msg?: string): never {
 let parsed: ReturnType<typeof parseArgs>;
 try {
   parsed = parseArgs({
-    allowPositionals: true,
+    allowPositionals: true, tokens: true,
     options: {
-      port: { type: 'string' }, host: { type: 'string' }, stdio: { type: 'boolean' }, vendor: { type: 'string' }, mode: { type: 'string' }, title: { type: 'string' }, model: { type: 'string' },
+      port: { type: 'string' }, host: { type: 'string' }, stdio: { type: 'boolean' }, vendor: { type: 'string' }, mode: { type: 'string' }, title: { type: 'string' }, model: { type: 'string' }, effort: { type: 'string' },
       since: { type: 'string' }, tail: { type: 'string' }, turn: { type: 'string' }, raw: { type: 'boolean' }, 'no-inspect': { type: 'boolean' }, all: { type: 'boolean' }, force: { type: 'boolean' }, json: { type: 'boolean' },
       remember: { type: 'boolean' }, from: { type: 'string' }, re: { type: 'string' }, timeout: { type: 'string' }, answer: { type: 'string' },
       'no-web': { type: 'boolean' }, web: { type: 'boolean' }, takeover: { type: 'boolean' }, version: { type: 'boolean' }, dir: { type: 'string' }, help: { type: 'boolean', short: 'h' },
     },
   });
 } catch (e) { usage((e as Error).message); }
-const { values: flags, positionals } = parsed as { values: Flags; positionals: string[] };
+const { values: flags, positionals: words, tokens } = parsed as { values: Flags; positionals: string[]; tokens: NonNullable<ReturnType<typeof parseArgs>['tokens']> };
 // 플러그인의 [업데이트] 가 받아 둔 slcode 에 묻는다 — 디스크의 이 설치 (ticket slcode-core-serve-split 2단계)
 if (flags.version) { const b = diskBuild(); console.log(flags.json ? JSON.stringify(b) : `slcode ${b.version}`); process.exit(0); }
 // 동사 없는 호출 = new . (ticket slcode-bare-new, 사용자 2026-10-07) — 인자가 없거나 첫 토큰이 옵션이면. 위치 인자는 받지 않는다
 // (폴더·세션 id 를 동사로 잘못 읽지 않게, 다른 폴더는 new <folder>)
 const argv0 = process.argv[2];
 const bare = !flags.help && (argv0 === undefined || argv0.startsWith('-'));
+// 세션 수명 동사의 `--` 뒤는 새 세션의 첫 프롬프트 (ticket slcode-new-effort-prompt, 사용자 결정 2026-10-23) — 앞쪽 위치 인자(폴더·세션 id)와 나눈다.
+// 그 밖의 동사는 `--` 뒤도 지금처럼 위치 인자
+const dash = tokens.findIndex((t) => t.kind === 'option-terminator');
+const nBefore = dash < 0 ? words.length : tokens.slice(0, dash).filter((t) => t.kind === 'positional').length;
+const LIFE = new Set(['new', 'continue', 'resume', 'import']);
+const life = bare || LIFE.has(words[0]);
+const positionals = life ? words.slice(0, nBefore) : words;
+const firstPrompt = life ? words.slice(nBefore).join(' ').trim() || undefined : undefined;
+// --model <공급자>:<모델> 이면 공급자로 벤더를 고른다 (사용자 2026-10-23, 임시 — slcode 에 모델 목록이 없어 모델 이름만으로는 벤더를 모른다).
+// 다른 앞머리·앞머리 없음은 이름 전체가 모델 (Bedrock id 의 ':0' 등). 플러그인 main.js 의 PROVIDERS 와 같다
+const PROVIDERS: Record<string, 'claude' | 'codex'> = { anthropic: 'claude', openai: 'codex' };
+const colon = flags.model?.indexOf(':') ?? -1;
+const provider = colon > 0 && Object.hasOwn(PROVIDERS, flags.model!.slice(0, colon)) ? PROVIDERS[flags.model!.slice(0, colon)] : undefined;
+if (provider) {
+  if (flags.vendor !== undefined && flags.vendor !== provider) usage(`--model ${flags.model} is a ${provider} model but --vendor is ${flags.vendor}`);
+  flags.vendor = provider; flags.model = flags.model!.slice(colon + 1);
+  if (!flags.model) usage('--model <provider>:<model> needs a model name');
+}
 if (bare && positionals.length) usage(`동사 없는 slcode 는 옵션만 받는다: ${positionals.join(' ')} — 다른 폴더는 slcode new <folder>`);
 const [cmd, ...rest] = bare ? ['new'] : positionals;
 if (!cmd || flags.help) { console.log(HELP); process.exit(0); }
@@ -196,7 +219,7 @@ function turnSlice(history: LoggedEvent[], back: number): LoggedEvent[] | null {
 
 /** resume·continue·import — 꺼진 세션은 카드(superlite 안) 또는 core 를 띄우고 이 프로세스가 웹 서빙, 살아 있는 세션은 그 카드를
  *  활성화(superlite 안) 또는 웹 주소를 찍고 끝난다. --stdio 는 카드 서비스 자신 — 살아 있으면 소켓 중계(attach), 아니면 core 를 띄운 소유자 serve */
-async function resumeLog(log: EventLog, skip: (keyof Flags)[] = ['title', 'mode', 'model', 'raw', 'no-inspect', 'no-web', 'dir']) {
+async function resumeLog(log: EventLog, skip: (keyof Flags)[] = ['title', 'mode', 'raw', 'no-inspect', 'no-web', 'dir']) {
   let live = false;
   try { (await connectSession(log.sockPath)).close(); live = true; } catch {}
   if (live && flags.stdio) return attachStdio(log); // 살아 있는 세션의 소켓을 stdin/stdout 으로 중계 — superlite 카드가 떠 있는 세션에 붙는 길
@@ -209,7 +232,7 @@ async function printWeb(log: EventLog) {
   const client = await connectSession(log.sockPath);
   const url = webUrl(await client.request('server.info', {}));
   client.close();
-  unused(['host', 'port', 'no-web', 'title', 'mode', 'model', 'raw', 'no-inspect'], 'session is already live');
+  unused(['host', 'port', 'no-web', 'title', 'mode', 'raw', 'no-inspect'], 'session is already live');
   if (!url) { err(`session ${log.meta.id} is live but has no web address`); process.exit(1); }
   console.log(url);
   err(`session ${log.meta.id} is already live`);
@@ -230,10 +253,10 @@ async function serve(opts: { cwd: string; resume?: string }) {
     const entry = !flags.stdio && !flags['no-web'];
     const inspect = inspectOf(opts.resume);
     const h = entry ? await runEntry({
-      dir: flags.dir, ...opts, title: flags.title, raw: flags.raw, inspect, permissionMode: flags.mode, model: flags.model, vendor: flags.vendor === 'codex' ? 'codex' : 'claude',
+      dir: flags.dir, ...opts, title: flags.title, raw: flags.raw, inspect, permissionMode: flags.mode, model: flags.model, effort: flags.effort, prompt: firstPrompt, vendor: flags.vendor === 'codex' ? 'codex' : 'claude',
       host: flags.host, port: flags.port ? Number(flags.port) : undefined, log: err,
     }) : await serveSession({
-      dir: flags.dir, ...opts, title: flags.title, raw: flags.raw, inspect, permissionMode: flags.mode, model: flags.model, vendor: flags.vendor === 'codex' ? 'codex' : 'claude',
+      dir: flags.dir, ...opts, title: flags.title, raw: flags.raw, inspect, permissionMode: flags.mode, model: flags.model, effort: flags.effort, prompt: firstPrompt, vendor: flags.vendor === 'codex' ? 'codex' : 'claude',
       web: !flags['no-web'], host: flags.host, port: flags.port ? Number(flags.port) : undefined, stdio: flags.stdio, log: err,
       // superlite 서비스(serviceStart web)면 데몬이 정한 웹 소켓 주소 (ticket plugin-service-web)
       webSock: flags.stdio ? process.env.SUPERLITE_SERVICE_WEB || undefined : undefined,
@@ -278,10 +301,11 @@ function openCard(verb: string[], skip: (keyof Flags)[]): void {
   process.stdout.write(r.stdout);
   process.exit(0);
 }
-/** 새 세션 카드 — 폴더·벤더·제목·모드를 slcode.new 에 넘긴다 */
+/** 새 세션 카드 — 폴더·벤더·제목·모드·모델·effort·첫 프롬프트를 slcode.new 에 넘긴다 */
 function newCard(cwd: string): void {
   const args = ['slcode.new', '--cwd', cwd];
-  for (const k of ['vendor', 'title', 'mode', 'model'] as const) if (flags[k] !== undefined) args.push(`--${k}`, flags[k]!);
+  for (const k of ['vendor', 'title', 'mode', 'model', 'effort'] as const) if (flags[k] !== undefined) args.push(`--${k}`, flags[k]!);
+  if (firstPrompt) args.push('--prompt', firstPrompt);
   openCard(args, ['no-web', 'raw', 'no-inspect', 'dir']);
 }
 /** id 없는 resume — 현재 폴더의 꺼진 세션을 꺼진 순서(최근 먼저)로. superlite 안이면 카드 안에서 고르고(slcode.resume --cwd), 밖이면
@@ -289,11 +313,26 @@ function newCard(cwd: string): void {
 async function pickClosed(cwd: string) {
   const rows = await closedSessions(P.sessionsDir, cwd);
   if (!rows.length) { err(`no closed session in ${cwd}`); process.exit(1); }
-  if (toCard()) openCard(['slcode.resume', '--cwd', cwd], ['title', 'mode', 'model', 'raw', 'no-inspect', 'no-web', 'dir']);
+  if (toCard()) openCard(['slcode.resume', '--cwd', cwd], ['title', 'mode', 'raw', 'no-inspect', 'no-web', 'dir']);
   const pad = (n: number) => String(n).padStart(2, '0');
   const stamp = (t: number) => { const d = new Date(t); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
   for (const m of rows) console.log(`${m.id}  ${stamp(closedTime(m))}  ${m.title ?? '-'}`);
   err('resume one with: slcode resume <id>');
+}
+/** Claude 의 effort 이름 (SDK EffortLevel). Codex 는 모델마다 열려 있어 이름을 보지 않는다 — 모델에 없는 값은 벤더가 뜬 뒤 core 가 알린다 */
+const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+/** 새 세션 옵션 검사 — 아무것도 열기 전에 (ticket slcode-new-effort-prompt, 사용자 결정 2026-10-23: 이름 오타는 거절) */
+function checkNew(): void {
+  if (flags.effort === undefined) return;
+  if (!flags.effort || (flags.vendor !== 'codex' && !CLAUDE_EFFORTS.includes(flags.effort))) {
+    usage(`unknown effort '${flags.effort}' for ${flags.vendor === 'codex' ? 'codex' : 'claude'}${flags.vendor === 'codex' ? '' : ` (${CLAUDE_EFFORTS.join('|')})`}`);
+  }
+}
+/** 이어받는 세션에 새 세션 옵션을 주면 거절 — 세션은 자기 설정을 따른다 (사용자 결정 2026-10-23) */
+function onlyNew(): void {
+  const given = (['model', 'effort'] as const).filter((k) => flags[k] !== undefined).map((k) => `--${k}`);
+  if (firstPrompt) given.push('-- <prompt>');
+  if (given.length) usage(`${given.join(', ')} ${given.length > 1 ? 'are' : 'is'} only for a new session — a resumed session keeps its own settings (send a prompt with: slcode prompt <s> <text>)`);
 }
 function folderArg(a: string | undefined): string {
   const cwd = path.resolve(a ?? process.cwd());
@@ -328,6 +367,7 @@ try {
     // ---- 세션 수명
     case 'new': {
       const cwd = folderArg(rest[0]);
+      checkNew();
       if (toCard()) newCard(cwd);
       await serve({ cwd });
       break;
@@ -336,13 +376,15 @@ try {
       // 그 폴더에서 가장 최근에 꺼진 세션 (살아 있는 세션은 뺀다) — 없으면 새 세션
       const cwd = folderArg(rest[0]);
       const last = (await closedSessions(P.sessionsDir, cwd))[0];
-      if (last) { await resumeLog(openLog(last.id)); break; }
+      if (last) { onlyNew(); await resumeLog(openLog(last.id)); break; }
+      checkNew();
       err(`no closed session in ${cwd}, starting a new one`);
       if (toCard()) newCard(cwd);
       await serve({ cwd });
       break;
     }
     case 'resume':
+      onlyNew();
       if (rest[0] !== undefined) await resumeLog(openLog(rest[0]));
       else if (flags.stdio) usage('resume --stdio <s>');
       else await pickClosed(folderArg(undefined));
@@ -351,6 +393,7 @@ try {
       // 벤더 하네스의 세션을 복제해 slcode 세션으로 (ticket vendor-import 2026-10-07 → slcode-import-history 사용자 결정 2026-10-15: 원본은 벤더에 그대로)
       const vid = rest[0];
       if (!vid) usage('import <vendor session id>');
+      onlyNew();
       if (flags.vendor !== undefined && flags.vendor !== 'claude' && flags.vendor !== 'codex') usage('--vendor claude|codex');
       // slcode 세션이 이어 쓰는 벤더 세션(export 뒤 벤더에서 이어 간 복제본, 옛 import 의 원본)이면 복제하지 않고 늘어난 턴을 그 세션에 붙인다
       const own = EventLog.list(P.sessionsDir).find((m) => m.vendorSessionId === vid);

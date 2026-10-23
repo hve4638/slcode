@@ -29,7 +29,7 @@ export async function runEntry(opts: EntryOptions): Promise<EntryHandle> {
   const log = opts.log ?? (() => {});
   const dir = corePaths(opts.dir).dir;
   const host = opts.host ?? '127.0.0.1';
-  const { id, sock, session } = await spawnCore({ dir, cwd: opts.cwd, resume: opts.resume, title: opts.title, raw: opts.raw, inspect: opts.inspect, permissionMode: opts.permissionMode, model: opts.model, vendor: opts.vendor });
+  const { id, sock, session } = await spawnCore({ dir, cwd: opts.cwd, resume: opts.resume, title: opts.title, raw: opts.raw, inspect: opts.inspect, permissionMode: opts.permissionMode, model: opts.model, effort: opts.effort, prompt: opts.prompt, vendor: opts.vendor });
   let control = await connectSession(sock);
   const closeSession = async () => { await control.request('session.close', { id }).catch(() => {}); control.close(); };
   try { await control.request('core.own', { pid: process.pid, follows: true }); } catch (e) { control.close(); throw e; }

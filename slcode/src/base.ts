@@ -9,6 +9,15 @@ export type ContextUsage = { tokens: number; max: number; pct: number } | null;
 export type Command = { name: string; description: string; argumentHint: string };
 export type ApproveOpts = { remember?: boolean; updatedInput?: Record<string, unknown>; message?: string };
 
+/** effort 가 지금 모델에 없으면 그 모델의 efforts, 맞거나 알 수 없으면 null. 지금 모델 찾기는 화면(web/app.js)과 같고, 모르면 default.
+ *  벤더 기동 때 meta.effort 를 이것으로 보고 맞지 않으면 알린 뒤 벤더 기본으로 (ticket slcode-new-effort-prompt, 사용자 결정 2026-10-23) */
+export function effortMisfit(r: ModelsResult, effort: string): string[] | null {
+  const base = (v?: string | null) => (v ?? '').replace(/\[.*\]$/, '');
+  const cur = r.current == null ? r.models.find((m) => m.value === 'default')
+    : r.models.find((m) => m.value === r.current) ?? r.models.find((m) => m.value !== 'default' && base(m.resolvedModel) === base(r.current));
+  return cur?.efforts && !cur.efforts.includes(effort) ? cur.efforts : null;
+}
+
 export abstract class AgentSession {
   readonly id: string;
   readonly log: EventLog;

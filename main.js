@@ -12,6 +12,10 @@
 
 const SVC = 'session';
 const CARDS = 'slcode/cards'; // renderer 가 공개한 인터페이스 (scope own)
+/** Claude 의 effort 이름 — slcode/src/cli.ts CLAUDE_EFFORTS 와 같다 */
+const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+/** model 의 공급자 앞머리 → 벤더 (사용자 2026-10-23, 임시) — slcode/src/cli.ts PROVIDERS 와 같다 */
+const PROVIDERS = { anthropic: 'claude', openai: 'codex' };
 
 // ---- 바이너리 자가 설치 (ticket slcode-plugin-selfinstall) — 순수 함수. export 는 slcode/test/plugin.test.ts 용
 // plugin.json binary {repo, version} 의 version 은 semver 조건: `1.2.3`(고정)·`^1.2.3`·`~1.2.3`(범위, 정식 release 만).
@@ -130,12 +134,12 @@ export function activate(api) {
   const dirOpt = async () => { const dir = await setting('dir', ''); return dir ? ` --dir ${shq(dir)}` : ''; };
 
   /** 카드 서비스의 명령 — id 면 resume, 아니면 slcode.new 동사가 준 폴더·옵션으로 new (없으면 서비스 cwd = 워크스페이스 root).
-   *  --no-web: TCP 웹을 열지 않는다. --takeover: 핸드오프의 새 카드 — 떠 있는 세션의 소유권을 옛 카드의 serve 에서 가져온다 */
+   *  첫 프롬프트는 맨 끝 `--` 뒤에. --no-web: TCP 웹을 열지 않는다. --takeover: 핸드오프의 새 카드 — 떠 있는 세션의 소유권을 옛 카드의 serve 에서 가져온다 */
   async function command({ id = null, spawn = null, takeover = false } = {}) {
     const [bin, dir] = await Promise.all([resolveBin(), dirOpt()]);
     const sp = spawn ?? {};
-    const verb = id ? `resume ${shq(id)}` : `new${sp.cwd ? ` ${shq(sp.cwd)}` : ''}${['vendor', 'title', 'mode', 'model'].map((k) => (sp[k] ? ` --${k} ${shq(sp[k])}` : '')).join('')}`;
-    return `${bin.cmd} ${verb} --stdio --no-web${takeover && id ? ' --takeover' : ''}${dir}`;
+    const verb = id ? `resume ${shq(id)}` : `new${sp.cwd ? ` ${shq(sp.cwd)}` : ''}${['vendor', 'title', 'mode', 'model', 'effort'].map((k) => (sp[k] ? ` --${k} ${shq(sp[k])}` : '')).join('')}`;
+    return `${bin.cmd} ${verb} --stdio --no-web${takeover && id ? ' --takeover' : ''}${dir}${!id && sp.prompt ? ` -- ${shq(sp.prompt)}` : ''}`;
   }
   /** `slcode list` 행 — all 이면 꺼진 세션까지 */
   async function list(all = false) {
@@ -215,11 +219,22 @@ export function activate(api) {
   // 셸 동사 — superlite 터미널 안의 `slcode`·`slcode new` 가 부른다 (ticket slcode-bare-new). 요청자 터미널의 deck 끝에 카드를 붙이고
   // 그 카드로 포커스를 옮긴다. 세션 id 는 카드 화면이 서비스를 띄운 뒤 started 로 알린다 (심 stdout 한 줄)
   api.verbs.handle('slcode.new', async (a, ctx) => {
+    // model 이 <공급자>:<모델> 이면 벤더를 고르고 앞머리를 뗀다 — 다른 앞머리는 이름 전체가 모델
+    let { vendor, model } = a;
+    const colon = model?.indexOf(':') ?? -1;
+    const provider = colon > 0 && Object.hasOwn(PROVIDERS, model.slice(0, colon)) ? PROVIDERS[model.slice(0, colon)] : undefined;
+    if (provider) {
+      if (vendor !== undefined && vendor !== provider) throw new Error(`--model ${model} is a ${provider} model but --vendor is ${vendor}`);
+      vendor = provider; model = model.slice(colon + 1);
+      if (!model) throw new Error('--model <provider>:<model> needs a model name');
+    }
+    // effort 이름 오타는 카드를 열기 전에 거절 — slcode CLI 의 checkNew 와 같은 목록 (Codex 는 모델마다 열려 있어 보지 않는다)
+    if (a.effort !== undefined && vendor !== 'codex' && !CLAUDE_EFFORTS.includes(a.effort)) throw new Error(`unknown effort '${a.effort}' for claude (${CLAUDE_EFFORTS.join('|')})`);
     const key = newKey();
     const done = new Promise((resolve, reject) => waits.set(key, { resolve, reject }));
     try {
       const w = await windowFor(ctx.tmux);
-      await w.call(CARDS, 'open', { key, spawn: { cwd: a.cwd ?? ctx.cwd, vendor: a.vendor, title: a.title, mode: a.mode, model: a.model }, title: a.title, tmux: ctx.tmux });
+      await w.call(CARDS, 'open', { key, spawn: { cwd: a.cwd ?? ctx.cwd, vendor, title: a.title, mode: a.mode, model, effort: a.effort, prompt: a.prompt }, title: a.title, tmux: ctx.tmux });
       return await done;
     } finally { waits.delete(key); }
   });

@@ -33,7 +33,7 @@ export class CodexSession {
     role: 다음 turn/start 의 model. meta 에 남는다
   }
   export fn setEffort(effort) {
-    role: 다음 turn/start 의 effort. meta 에 남는다
+    role: 다음 turn/start 의 effort. meta 에 남는다. 기동 때 meta.effort 가 있으면 thread 를 받은 뒤·기동 전에 온 턴을 보내기 전에 model/list 로 effortMisfit 을 보고, 맞지 않으면 notice 뒤 effort 를 thread 의 reasoningEffort(벤더 기본)로, meta.effort 는 비운다
   }
   export fn setMode(mode) {
     role: 다음 turn/start 의 approvalPolicy·sandboxPolicy. meta.permissionMode 에 남는다

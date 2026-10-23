@@ -59,6 +59,10 @@ export type CoreOptions = {
   permissionMode?: string;
   /** 새 세션의 모델 — meta.model 로 남겨 벤더가 기동 때 읽는다. 없으면 벤더 기본. 이어받는 세션은 meta 를 따른다 */
   model?: string;
+  /** 새 세션의 effort — meta.effort 로 남겨 벤더가 기동 때 읽는다. 모델에 없는 값이면 어댑터가 알리고 벤더 기본으로 (effortMisfit) */
+  effort?: string;
+  /** 새 세션의 첫 프롬프트 — 세션을 만들자마자 넣는다. 벤더 준비 전이라도 첫 턴으로 돈다 (ticket slcode-new-effort-prompt) */
+  prompt?: string;
   /** 새 세션의 벤더 — 기본 claude. 이어받는 세션은 meta.vendor 를 따른다 */
   vendor?: 'claude' | 'codex';
   /** 새 세션을 inspect 로 — 입구 설정(Settings.inspect)을 CLI 가 읽어 넘긴다. 이어받는 세션은 meta.inspect 를 따르고, false 면 끈다 (--no-inspect) */
@@ -89,7 +93,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     const meta: SessionMeta = {
       id: randomUUID().slice(0, 8), vendor: opts.vendor ?? 'claude', cwd: opts.cwd, title: opts.title ?? null,
       vendorSessionId: null, createdAt: Date.now(), permissionMode: opts.permissionMode ?? null, raw: opts.raw ?? false,
-      ...(opts.model ? { model: opts.model } : {}), ...(opts.inspect ? { inspect: true } : {}),
+      ...(opts.model ? { model: opts.model } : {}), ...(opts.effort ? { effort: opts.effort } : {}), ...(opts.inspect ? { inspect: true } : {}),
     };
     logFile = EventLog.create(P.sessionsDir, meta);
   }
@@ -145,6 +149,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     : new ClaudeSession({ log: logFile, env: firstEnv, resume: logFile.meta.vendorSessionId, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw });
   const sid = session.id;
   if (inspectFailed) session.notice(`inspect 를 켜지 않았습니다: ${inspectFailed}`);
+  if (!opts.resume && opts.prompt?.trim()) session.send(opts.prompt);
   // codex 감시 (사용자 결정 2026-10-19) — proxy 를 세운 뒤 처음 성공한 턴까지 모델 호출(/responses)이 하나도 기록되지 않았으면 codex 가 proxy 를 거치지 않는다
   // (openai 가 아닌 model_provider·workspace routing 등). 알리고 이 세션만 끈다 — 새 세션은 막지 않는다
   if (codex) session.onEvent((e) => {

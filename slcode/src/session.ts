@@ -5,7 +5,7 @@ import { query, type Query, type SDKMessage, type SDKUserMessage, type Permissio
 import { randomUUID } from 'node:crypto';
 import type { ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, Usage, LimitWindow, McpStatus } from './protocol.js';
 import { EventLog, unrewound } from './eventLog.js';
-import { AgentSession } from './base.js';
+import { AgentSession, effortMisfit } from './base.js';
 import { SLCODE_PROMPT } from './prompt.js';
 
 /** push 와 비동기 순회를 잇는 무한 큐 — streaming input 의 프롬프트 공급원 */
@@ -165,6 +165,19 @@ export class ClaudeSession extends AgentSession {
     this.log.updateMeta({ effort });
   }
 
+  /** 기동 때 meta.effort 가 지금 모델에 없으면 알리고 모델 기본 effort 로 (effortMisfit). 첫 프롬프트와 나란히 돌아 첫 턴은 SDK 가
+   *  그 모델에 맞게 조용히 낮춘 값으로 돌 수 있다 */
+  private async fitEffort(q: Query) {
+    try {
+      const fit = this.effort ? effortMisfit(await this.models(), this.effort) : null;
+      if (!fit || this.q !== q) return;
+      this.notice(`effort ${this.effort} 는 ${this.model} 모델에서 쓸 수 없습니다 (${fit.join('|')}) — 벤더 기본 effort 로 돕니다`);
+      await q.applyFlagSettings({ effortLevel: null as any }); // null 은 모델 기본으로 (SDK applyFlagSettings)
+      this.effort = null;
+      this.log.updateMeta({ effort: null });
+    } catch { /* 벤더가 내려갔다 — 다음 기동 때 다시 본다 */ }
+  }
+
   /** 다음 턴부터 쓸 모델. meta 에 남겨 복원 때 options.model 로 넘긴다 */
   async setModel(model: string) {
     await this.q?.setModel(model);
@@ -308,6 +321,7 @@ export class ClaudeSession extends AgentSession {
     });
     this.q = q;
     this.resumeAt = null;
+    if (this.log.meta.effort) void this.fitEffort(q);
     try {
       for await (const m of q) this.onMessage(m);
       // ended 를 먼저 세운다 — session.exit 를 받은 serve 가 곧바로 close() 를 부르는데, 그때 ended 가 아니면 종료 줄이 한 번 더 남는다 (2026-10-08 실측)

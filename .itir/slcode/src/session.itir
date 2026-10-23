@@ -38,7 +38,7 @@ export class ClaudeSession {
     role: SDK reconnectMcpServer(name) 뒤 mcp() — 실패해도 던지지 않고 목록의 error 로 돌려준다(목록에 사유가 없으면 던진 메시지를 싣는다). 목록에 없는 이름·벤더 미기동이면 오류
   }
   export fn setEffort(effort) {
-    role: SDK applyFlagSettings({effortLevel}) — 세션 한정 설정층이라 설정 파일엔 안 쓴다. meta.effort 에 남겨 복원 때 options.effort 로 넘긴다. models() 가 지금 effort 와 모델별 supportedEffortLevels 를 같이 준다
+    role: SDK applyFlagSettings({effortLevel}) — 세션 한정 설정층이라 설정 파일엔 안 쓴다. meta.effort 에 남겨 복원 때 options.effort 로 넘긴다. models() 가 지금 effort 와 모델별 supportedEffortLevels 를 같이 준다. 기동 때 meta.effort 가 있으면 query 를 띄운 뒤 models() 로 effortMisfit 을 보고, 맞지 않으면 notice 뒤 applyFlagSettings({effortLevel: null})(모델 기본)·meta.effort 를 비운다 — 첫 프롬프트와 나란히 돌아 첫 턴은 SDK 가 그 모델에 맞게 낮춘 값으로 돌 수 있다
   }
   export fn rewind(seq, conversation, files) -> String[]? {
     role: idle 일 때만. files 면 SDK rewindFiles(그 턴의 userUuid), conversation 이면 생성기를 닫고(restarting 플래그로 exit 이벤트를 막는다) 앞 턴의 uuid 를 resumeSessionAt 으로 run 재기동(유지 지점은 그 턴보다 앞의 마지막 turn.end 또는 session.imported 표지의 uuid — 표지는 가져온 턴들 뒤에 서므로 대상보다 앞의 것만 본다. 없으면 새 벤더 세션, 표지의 uuid 가 없으면 가져온 대화를 지킬 수 없어 오류. 되돌림을 반영한 로그는 eventLog.unrewound). turn.rewound 이벤트

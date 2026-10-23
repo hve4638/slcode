@@ -6,7 +6,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import readline from 'node:readline';
 import { randomUUID } from 'node:crypto';
 import type { ApprovalDecision, ApprovalRequest, Attachment, LimitWindow, McpStatus, TaskEvent } from './protocol.js';
-import { AgentSession, type ApproveOpts, type Command, type ContextUsage, type Limits, type ModelsResult } from './base.js';
+import { AgentSession, effortMisfit, type ApproveOpts, type Command, type ContextUsage, type Limits, type ModelsResult } from './base.js';
 import type { EventLog } from './eventLog.js';
 import { SLCODE_PROMPT } from './prompt.js';
 
@@ -214,6 +214,7 @@ export class CodexSession extends AgentSession {
       this.log.updateMeta({ vendorSessionId: r.thread.id });
       this.model ??= r.model ?? null;
       this.effort ??= r.reasoningEffort ?? null;
+      if (this.log.meta.effort) await this.fitEffort(r.reasoningEffort ?? null);
       this.emit({ kind: 'session.ready', vendor: 'codex', model: this.model ?? r.model, cwd: r.cwd ?? this.cwd, vendorSessionId: r.thread.id, permissionMode: this.mode ?? 'default',
         tools: [], skills: [], plugins: [], mcp: [], slashCommands: [], agents: [], version: String(init?.userAgent ?? '').match(/\/(\S+)/)?.[1] ?? null }, this.rawOn ? r : undefined);
       this.emit({ kind: 'session.state', state: 'idle' });
@@ -417,8 +418,20 @@ export class CodexSession extends AgentSession {
   async models(): Promise<ModelsResult> {
     await this.ready;
     if (!this.modelList) { try { this.modelList = (await this.request('model/list', {}))?.data ?? []; } catch { this.modelList = null; } }
+    return this.listed();
+  }
+  private listed(): ModelsResult {
     const data: any[] = this.modelList ?? [];
     return { current: this.model, effort: this.effort, models: data.filter((m) => !m.hidden).map((m) => ({ value: m.id, resolvedModel: m.model, displayName: m.displayName, description: m.description ?? '', efforts: (m.supportedReasoningEfforts ?? []).map((e: any) => e.reasoningEffort ?? e) })) };
+  }
+  /** 기동 때 meta.effort 가 지금 모델에 없으면 알리고 thread 의 effort(벤더 기본)로 — 기동 전에 온 턴을 보내기 전에 (effortMisfit) */
+  private async fitEffort(fallback: string | null) {
+    if (!this.modelList) { try { this.modelList = (await this.request('model/list', {}))?.data ?? []; } catch { return; } }
+    const fit = this.effort ? effortMisfit(this.listed(), this.effort) : null;
+    if (!fit) return;
+    this.notice(`effort ${this.effort} 는 ${this.model} 모델에서 쓸 수 없습니다 (${fit.join('|')}) — 벤더 기본 effort 로 돕니다`);
+    this.effort = fallback;
+    this.log.updateMeta({ effort: null });
   }
   async setModel(model: string) { this.model = model; this.log.updateMeta({ model }); }
   async setEffort(effort: string) { this.effort = effort; this.log.updateMeta({ effort }); }
