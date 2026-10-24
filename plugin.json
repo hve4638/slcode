@@ -1,6 +1,6 @@
 {
   "id": "slcode",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "apiVersion": 2,
   "main": "main.js",
   "renderer": "renderer.js",
@@ -33,13 +33,13 @@
   ],
   "settings": {
     "title": "slcode",
-    "description": "slcode 세션 카드. 카드를 닫아도 세션은 산다. 종료는 팔레트의 \"slcode: Close session\".",
+    "description": "slcode 세션 카드. 카드를 닫으면 세션도 끝난다.",
     "items": [
       { "key": "bin", "type": "string", "label": "slcode command", "description": "비우면 플러그인이 받은 slcode. 넣으면 그것을 쓴다 (PATH 의 이름 또는 데몬 머신의 절대 경로)", "default": "" },
       { "key": "dir", "type": "string", "label": "SLCODE_DIR", "description": "비우면 slcode 기본 폴더 (~/.local/state/slcode)", "default": "" }
     ]
   },
-  "binary": { "repo": "hve4638/slcode", "version": "^0.3.0" },
+  "binary": { "repo": "hve4638/slcode", "version": "^0.4.0" },
   "bin": { "slcode": "bin/linux-x64/bin/slcode" },
   "services": [
     { "id": "session", "command": "slcode new --stdio --no-web", "unit": "card", "lifetime": "owned", "channel": "stdio", "web": true }
