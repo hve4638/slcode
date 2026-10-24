@@ -5,10 +5,11 @@
 // "slcode: Close session"·터미널 `slcode close`. (2) 화면 — slcode 가 stdout 첫 줄로 보내는 hello {id,sock} 로 세션을 알고, serve 가
 // stdio 로 준 화면 파일(web.files)의 card.html 을 이 iframe 안의 주소 없는 sandbox iframe 에 넣는다. 화면은 여기서 건넨 MessagePort 로만
 // 말하고 이 카드가 stdio 로 중계한다 (ticket slcode-card-svc-token-dead). web.files 가 없는 옛 serve 는 /svc 주소(conn.webUrl)로.
-// (3) 상태 — 같은 stdio 통로로 session.attach 를 걸어 배지·승인 알림에 반영한다. 선구독 services.onMessage 를 기동 전에 걸어 첫 줄을
+// (3) 상태 — 같은 stdio 통로로 session.attach 를 걸어 배지에 반영한다. 선구독 services.onMessage 를 기동 전에 걸어 첫 줄을
 // 놓치지 않는다. ctx 의 services 는 카드 세션에 묶여 배경 세션이어도 자기 데몬과 주고받는다.
-// 승인 알림은 main 에 알려 창 하나에만 (사용자 2026-10-21, main.js 머리말). 화면 상태(사이드바 열림·inspect 남은 공간)는 sandbox 라
-// localStorage 가 없어 storage 'ui' 에 — 세션 머신에 저장되어 그 머신의 카드·브라우저가 같은 값을 본다 (사용자 2026-10-21).
+// 승인 요청은 배지로만 — 알림은 띄우지 않는다 (사용자 2026-10-24, 그 카드에만 보이고 결정한 뒤에도 남았다).
+// 화면 상태(사이드바 열림·inspect 남은 공간)는 sandbox 라 localStorage 가 없어 storage 'ui' 에 — 세션 머신에 저장되어 그 머신의
+// 카드·브라우저가 같은 값을 본다 (사용자 2026-10-21).
 
 const VIEW = 'session';
 const SVC = 'session';
@@ -24,8 +25,6 @@ export function stamp(t) {
   const d = new Date(t), p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
-// 웹 화면(toolArg)과 같은 한 줄 — Bash 는 명령, 파일 도구는 경로. 그 밖은 JSON
-const summary = (input) => { try { const v = input?.command ?? input?.file_path ?? input?.pattern ?? input?.description; const s = typeof v === 'string' ? v : JSON.stringify(input ?? {}); return s.length > 80 ? s.slice(0, 80) + '…' : s; } catch { return ''; } };
 
 let cleanup = () => {};
 
@@ -91,15 +90,8 @@ export function mount(el, ctx) {
     if (event === 'session.closed') { c.state = 'exited'; c.waits.clear(); badge(); countLive(); return; }
     if (event !== 'session.event') return;
     const ev = p.ev;
-    if (ev.kind === 'approval.requested') {
-      c.waits.set(ev.requestId, ev); badge();
-      const isQ = ev.name === 'AskUserQuestion';
-      const what = isQ ? (ev.input?.questions?.[0]?.question ?? '질문') : `${ev.name} ${summary(ev.input)}`;
-      const message = `${isQ ? '질문' : '승인 대기'}: ${what}`;
-      // 창 하나에만 — main 이 같은 요청을 한 번만 띄운다. main 에 닿지 못하면 이 창에서라도
-      host('approval', { owner, requestId: ev.requestId, key: c.key, id: c.id, message })
-        .catch(() => ctx.notify('warning', message, { label: '열기', run: () => void ctx.views.open(VIEW, undefined, { as: 'card', key: c.key, preserve: true }) }, ctx.tabId ? { card: ctx.tabId } : undefined));
-    } else if (ev.kind === 'approval.resolved') { c.waits.delete(ev.requestId); badge(); }
+    if (ev.kind === 'approval.requested') { c.waits.set(ev.requestId, ev); badge(); }
+    else if (ev.kind === 'approval.resolved') { c.waits.delete(ev.requestId); badge(); }
     else if (ev.kind === 'session.state') { c.state = ev.state; badge(); }
   }
 

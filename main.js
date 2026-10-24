@@ -1,16 +1,12 @@
 // slcode 플러그인 main (새 방식 apiVersion 2, ticket slcode-plugin-v2) — 세션 머신의 node 에서 머신마다 한 번 돈다. 카드 하나 = slcode 세션 하나.
 //
 // 세 갈래 (사용자 확정 2026-10-21): main(이 파일) — 바이너리 받기·설치, `slcode list`·`close --force` 같은 명령, 셸 동사
-// slcode.new·slcode.resume, 승인 알림을 창 하나에, 다른 플러그인용 open·close·mail(activate 반환값). renderer.js — 창마다: 팔레트 명령, 액티비티바 사이드바·배지, 카드 열기(이 main 이
+// slcode.new·slcode.resume, 다른 플러그인용 open·close·mail(activate 반환값). renderer.js — 창마다: 팔레트 명령, 액티비티바 사이드바·배지, 카드 열기(이 main 이
 // 부른다). views/session.js — 카드마다: 서비스 기동·연결·배지·다시 붙기, slcode 화면 iframe 중계. views/sessions.js — 세션 목록 사이드바.
 // 카드 화면이 서비스를 띄우는 명령은 여기서 짓는다 (command) — 받은 바이너리의 경로가 이 머신의 것이라서다.
 // slcode.new: 이 main 이 key 를 정해 요청자 터미널의 메인 창 renderer 에 카드를 열게 하고, 카드 화면이 hello 로 세션 id 를 알면 started 로
 // 알려 동사가 끝난다 (결정 문서 plugin-architecture.md "slcode 이행용 빈 곳").
-// 승인 알림 (사용자 2026-10-21 — 창 하나에만): 같은 카드를 연 창마다 카드 화면이 approval 로 알린다. requestId 로 한 번만, 그 카드
-// 서비스의 메인 창(와이어 v48 — 서비스 tmux 로 고른다) renderer 가 '열기' 버튼과 함께 띄운다. 그 창을 고르지 못하는 superlite(v47 이하)는
-// 이 머신의 메인 창으로 간다.
 
-const SVC = 'session';
 const CARDS = 'slcode/cards'; // renderer 가 공개한 인터페이스 (scope own)
 /** Claude 의 effort 이름 — slcode/src/base.ts CLAUDE_EFFORTS 와 같다 (플러그인은 slcode 를 import 하지 못한다) */
 const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
@@ -202,21 +198,9 @@ export function activate(api) {
   }
   /** slcode.new 의 기다림 — key → {resolve, reject}. 같은 보존 카드를 두 창이 열면 started 가 두 번 올 수 있어 처음 것만 */
   const waits = new Map();
-  /** 승인 알림을 이미 보낸 요청 (카드 owner + requestId) — 같은 카드를 연 창마다 카드 화면이 알린다 */
-  const told = new Set();
-  async function approval({ owner, requestId, key, id, message }) {
-    const k = `${owner}\n${requestId}`;
-    if (told.has(k)) return;
-    told.add(k);
-    if (told.size > 1000) told.delete(told.values().next().value);
-    // 그 카드 서비스의 메인 창 — 서비스의 tmux 세션 id 로 고른다(v48). 고르지 못하면(옛 superlite·그 카드를 연 창 없음) 이 머신의 메인 창
-    const svc = (await api.services.list().catch(() => [])).find((s) => s.service === SVC && s.owner === owner);
-    const w = (svc ? await api.window.main({ tmux: svc.id }).catch(() => null) : null) ?? await api.window.main();
-    if (w) await w.call(CARDS, 'notify', { key, id, message });
-  }
 
   api.expose('host', {
-    command, list, closed, forceClose, checkUpdate, approval,
+    command, list, closed, forceClose, checkUpdate,
     started(key, id) { const w = waits.get(key); if (w) { waits.delete(key); w.resolve(id); } },
     failed(key, reason) { const w = waits.get(key); if (w) { waits.delete(key); w.reject(new Error(String(reason))); } },
   });

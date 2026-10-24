@@ -69,10 +69,10 @@ test('platformOf: api.platform 의 Rust 표기 → zip 플랫폼', () => {
 });
 
 
-// ---- 새 방식 main — 가짜 MainApi(folder·platform·proc·window·services)·fetch(GitHub). 카드 화면이 부르는 host 인터페이스와 셸 동사를 직접 부른다
+// ---- 새 방식 main — 가짜 MainApi(folder·platform·proc·window)·fetch(GitHub). 카드 화면이 부르는 host 인터페이스와 셸 동사를 직접 부른다
 type Call = string;
 const releases = [rel('v0.1.0', ['linux-x64', 'win-x64']), rel('v0.1.2', ['linux-x64', 'win-x64'])];
-function fakeApi(files: Record<string, string>, opts: { settings?: Record<string, string>; fetched?: unknown; services?: unknown[]; tmuxWin?: boolean; run?: (cmd: string) => { code: number; stdout: string; stderr: string } | undefined; windows?: Record<string, unknown> } = {}) {
+function fakeApi(files: Record<string, string>, opts: { settings?: Record<string, string>; fetched?: unknown; tmuxWin?: boolean; run?: (cmd: string) => { code: number; stdout: string; stderr: string } | undefined; windows?: Record<string, unknown> } = {}) {
   const calls: Call[] = [];
   const exposed: Record<string, any> = {}; const verbs: Record<string, any> = {};
   const win = (id: string) => ({ id, call: async (iface: string, method: string, arg: unknown) => { calls.push(`call ${id} ${iface}.${method} ${JSON.stringify(arg)}`); return opts.windows?.[id]; } });
@@ -80,7 +80,6 @@ function fakeApi(files: Record<string, string>, opts: { settings?: Record<string
     settings: { get: async (k: string) => opts.settings?.[k], onChange: () => () => {} },
     storage: { get: async () => undefined, set: async () => {} },
     proc: { run: async (cmd: string) => { calls.push(`proc ${cmd}`); return { code: 0, stdout: '[]', stderr: '', ...opts.run?.(cmd), truncated: false }; } },
-    services: { list: async () => opts.services ?? [] },
     verbs: { handle: (name: string, run: unknown) => { verbs[name] = run; } },
     expose: (name: string, impl: unknown) => { exposed[name] = impl; return () => {}; },
     notify: (sev: string, msg: string) => calls.push(`notify ${sev} ${msg}`),
@@ -234,22 +233,9 @@ test('slcode.new 동사: 요청자 창에 key·폴더·옵션으로 카드를 �
   });
 });
 
-// ---- 승인 알림 (사용자 2026-10-21 — 창 하나에만) — 같은 카드를 연 창마다 카드 화면이 알려도 한 번. 그 카드 서비스의 tmux 로 창을 고르고, 못 고르면 이 머신의 메인 창
-test('main approval: 같은 요청은 한 번만, 카드 서비스의 메인 창(없으면 머신의 메인 창) renderer 에', async () => {
-  const services = [{ service: 'session', owner: 'card-A', id: '$9' }, { service: 'session', owner: 'card-B', id: '$8' }];
-  const a = { owner: 'card-A', requestId: 'r1', key: 'sA', id: 'sess-A', message: '승인 대기: Bash ls' };
-  let calls = await withMain({ 'plugin.json': PLUGIN_JSON }, { services, tmuxWin: true }, async ({ exposed }) => {
-    await exposed.host.approval(a);
-    await exposed.host.approval(a); // 다른 창의 같은 카드
-    await exposed.host.approval({ ...a, owner: 'card-B' }); // 다른 카드의 같은 requestId 는 따로
-  });
-  assert.deepEqual(calls.filter((c) => c.startsWith('call ')), [
-    `call w$9 slcode/cards.notify ${JSON.stringify({ key: 'sA', id: 'sess-A', message: a.message })}`,
-    `call w$8 slcode/cards.notify ${JSON.stringify({ key: 'sA', id: 'sess-A', message: a.message })}`,
-  ]);
-  // 서비스 tmux 로 창을 고르지 못하는 superlite(v47 이하) — 이 머신의 메인 창
-  calls = await withMain({ 'plugin.json': PLUGIN_JSON }, { services }, async ({ exposed }) => { await exposed.host.approval(a); });
-  assert.deepEqual(calls.filter((c) => c.startsWith('window ') || c.startsWith('call ')), ['window $9', 'window -', `call wmain slcode/cards.notify ${JSON.stringify({ key: 'sA', id: 'sess-A', message: a.message })}`]);
+// ---- 승인 요청은 카드 배지로만 (사용자 2026-10-24) — main 은 승인 알림을 받지도 띄우지도 않는다
+test('main host: approval 이 없다', async () => {
+  await withMain({ 'plugin.json': PLUGIN_JSON }, {}, async ({ exposed }) => { assert.equal(exposed.host.approval, undefined); });
 });
 
 // ---- 다른 플러그인용 exports (ticket slcode-close-mail-verbs, 사용자 2026-10-24) — plugins.get('slcode').close·mail
