@@ -13,11 +13,11 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { ClaudeSession } from './session.js';
-import { CodexSession } from './codex.js';
+import { CodexSession, codexRunnable } from './codex.js';
 import type { AgentSession } from './base.js';
 import { EventLog, historyPage, summarize, type SessionMeta } from './eventLog.js';
 import { isLoopback, reachable, sockAlive, spawnCore } from './live.js';
-import { BUILD, VERSION, replacingMark } from './client.js';
+import { BUILD, PKG, VERSION, replacingMark } from './client.js';
 import { corePaths, ensureDir, readOrCreateToken } from './paths.js';
 import { formatMail, newMail, parseMails, sendMail, sessionMeta } from './mail.js';
 import { blockInspect, CODEX_ROUTE, codexArgs, codexUpstream, inspectBlocked, inspectEnv, keepsFirstParty, sdkVersion, startInspect, turnCalls, upstreamOf, type InspectProxy } from './inspect.js';
@@ -270,6 +270,25 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     'session.models': (_c, p) => mine(p?.id).models(),
     'session.setModel': async (_c, p) => { if (typeof p?.model !== 'string' || !p.model) throw new CoreError(ERR.badRequest, 'model required'); await mine(p.id).setModel(p.model); return { ok: true }; },
     'session.setEffort': async (_c, p) => { if (typeof p?.effort !== 'string' || !p.effort) throw new CoreError(ERR.badRequest, 'effort required'); await mine(p.id).setEffort(p.effort); return { ok: true }; },
+    'session.setVendor': async (_c, p) => {
+      const s = mine(p?.id);
+      if (p.vendor !== 'claude' && p.vendor !== 'codex') throw new CoreError(ERR.badRequest, 'vendor claude|codex');
+      if (p.vendor === logFile.meta.vendor) return { ok: true };
+      const check = () => {
+        if (s.log.all.some((e) => e.ev.kind === 'turn.start')) throw new CoreError(ERR.badRequest, 'the vendor is fixed after the first message');
+        if (closed || retire || switching || (s.state !== 'idle' && s.state !== 'starting') || s.pendingApprovals().length || pending.length || asks.size) throw new CoreError(ERR.badRequest, 'the vendor can be switched only while the session is idle');
+        if (owner && !owner.follows) throw new CoreError(ERR.badRequest, 'the session owner cannot follow a core replacement (an older slcode started it)');
+      };
+      check();
+      // 설치돼 있지 않은 codex 로 바꾸면 새 core 의 벤더 기동이 실패해 세션이 닫힌다 — 띄워 보고 못 뜨면 그대로 둔다
+      if (p.vendor === 'codex') { const why = await codexRunnable(env); if (why) throw new CoreError(ERR.badRequest, `codex is not available: ${why}`); }
+      check(); // 띄워 보는 사이 턴이 들어왔을 수 있다
+      // 벤더 세션·모델·effort 는 옛 벤더의 것이다 — 새 벤더 기본으로 (undefined 는 meta 파일에서 빠진다)
+      logFile.updateMeta({ vendor: p.vendor, vendorSessionId: null, model: undefined, effort: undefined });
+      log(`vendor switched to ${p.vendor} — replacing this core`);
+      void replace(PKG); // retiring 을 바로 세운다. 이 응답은 연결이 끝나기 전에 나간다
+      return { ok: true };
+    },
     'session.interrupt': async (_c, p) => { await mine(p?.id).interrupt(); return { ok: true }; },
     'session.setMode': async (_c, p) => { const s = mine(p?.id); if (!['default', 'acceptEdits', 'plan', 'bypassPermissions', 'auto'].includes(p.mode)) throw new CoreError(ERR.badRequest, 'mode default|acceptEdits|plan|bypassPermissions|auto'); await s.setMode(p.mode); broadcast('session.changed', s.info()); return { ok: true }; },
     'session.commands': (_c, p) => mine(p?.id).commands(),

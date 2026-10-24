@@ -112,6 +112,16 @@ function spawnAppServer(spec: string | undefined, cwd: string, env: NodeJS.Proce
   return spawn(bin, [...pre, ...(pre.length ? [] : ['app-server']), ...args], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
 }
 
+/** app-server 실행 파일이 뜨는지 — 띄워 보고 곧바로 내린다. 뜨면 null, 못 뜨면 사유. 벤더 전환(session.setVendor)이 codex 로 가기 전에 본다 */
+export function codexRunnable(env: NodeJS.ProcessEnv): Promise<string | null> {
+  return new Promise((resolve) => {
+    let proc: ChildProcess;
+    try { proc = spawnAppServer(undefined, process.cwd(), env); } catch (e) { resolve((e as Error).message); return; }
+    proc.once('spawn', () => { proc.kill(); resolve(null); });
+    proc.once('error', (e) => resolve(e.message));
+  });
+}
+
 /** config/read 의 층들에서 사용자가 정한 openai_base_url — 우리가 -c 로 준 층(sessionFlags)은 뺀다. 층은 우선순위가 높은 것부터 온다 (codex-cli 0.159 실측) */
 export function userBaseUrl(layers: unknown): string | null {
   if (!Array.isArray(layers)) return null;

@@ -3,6 +3,9 @@
 import type { ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, LoggedEvent, SessionInfo, SessionState, LimitWindow, McpStatus } from './protocol.js';
 import { EventLog } from './eventLog.js';
 
+/** Claude 의 effort 이름 (SDK EffortLevel) — 한 곳. CLI 의 --effort 검사와 supportedEffortLevels 를 주지 않는 모델의 efforts. 플러그인 main.js 는 따로 둔다 */
+export const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+
 export type ModelsResult = { current: string | null; effort: string | null; models: { value: string; resolvedModel?: string; displayName: string; description: string; efforts?: string[] }[] };
 export type Limits = { fiveHour: LimitWindow | null; sevenDay: LimitWindow | null } | null;
 export type ContextUsage = { tokens: number; max: number; pct: number } | null;

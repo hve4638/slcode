@@ -194,6 +194,9 @@ export type Methods = {
   'session.setModel': { params: { id: string; model: string }; result: { ok: true } };
   /** 다음 턴부터 쓸 effort (low·medium·high·xhigh·max, 모델마다 efforts 로 가능한 값) — 세션 한정 설정층(SDK applyFlagSettings)이라 설정 파일엔 안 남고 meta 에 남아 --resume 뒤에도 유지 */
   'session.setEffort': { params: { id: string; effort: string }; result: { ok: true } };
+  /** 세션의 벤더를 바꾼다 — 첫 메시지(turn.start) 전에만, 아니면 bad_request. 같은 세션 id 로 core 를 새 벤더로 다시 띄운다(core.replaced 뒤 중계가 다시 붙는다).
+   *  모델·effort 는 새 벤더 기본으로 비운다. codex 실행 파일이 뜨지 않으면 바꾸지 않고 bad_request (ticket slcode-vendor-model-picker, 사용자 결정 2026-10-23) */
+  'session.setVendor': { params: { id: string; vendor: Vendor }; result: { ok: true } };
   'session.interrupt': { params: { id: string }; result: { ok: true } };
   /** 권한 모드 전환 — 즉시 적용, meta 에 남아 --resume 뒤에도 유지. 현재 값은 SessionInfo.permissionMode (session.changed 로 갱신) */
   'session.setMode': { params: { id: string; mode: 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions' | 'auto' }; result: { ok: true } };

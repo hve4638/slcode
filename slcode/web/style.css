@@ -326,18 +326,25 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .composer button.add svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 .acf button.pill-btn { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 3px 8px 3px 10px; border-radius: 8px; background: var(--acf-soft); color: var(--acf-fg); }
 .acf button.pill-btn svg { width: 14px; height: 14px; fill: none; stroke: var(--acf-muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.acf button.effort { text-transform: capitalize; }
-.acf #acf-effort { min-width: 260px; padding: 10px 14px 14px; }
-.acf #acf-effort .lbl { text-align: center; text-transform: capitalize; font-size: 15px; margin-bottom: 10px; }
-.acf #acf-effort .track { position: relative; height: 32px; }
-.acf #acf-effort input[type=range] { position: absolute; inset: 0; width: 100%; margin: 0; -webkit-appearance: none; appearance: none; background: transparent; cursor: pointer; z-index: 1; }
-.acf #acf-effort input[type=range]::-webkit-slider-runnable-track { height: 32px; border-radius: 16px; background: linear-gradient(to right, var(--acf-accent) var(--p), var(--acf-soft) var(--p)); }
-.acf #acf-effort input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 32px; height: 32px; border-radius: 50%; background: #fff; border: 0; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
-.acf #acf-effort input[type=range]::-moz-range-track { height: 32px; border-radius: 16px; background: var(--acf-soft); }
-.acf #acf-effort input[type=range]::-moz-range-progress { height: 32px; border-radius: 16px; background: var(--acf-accent); }
-.acf #acf-effort input[type=range]::-moz-range-thumb { width: 32px; height: 32px; border-radius: 50%; background: #fff; border: 0; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
+.acf #acf-models { min-width: 260px; }
+/* 모델 메뉴 맨 위 벤더 토글 — 첫 메시지 뒤엔 지금 벤더만 칠한 채 흐리게 (ticket slcode-vendor-model-picker) */
+.acf #acf-models .vendor { display: flex; gap: 2px; padding: 2px; margin-bottom: 6px; border-radius: 8px; background: var(--acf-soft); }
+.acf #acf-models .vendor .seg { flex: 1; border: 0; padding: 5px 0; border-radius: 6px; background: transparent; color: var(--acf-muted); font-size: 13px; }
+.acf #acf-models .vendor .seg[aria-pressed=true] { background: var(--acf-panel); color: var(--acf-fg); box-shadow: 0 1px 2px var(--acf-shadow); }
+.acf #acf-models .vendor.locked { opacity: .5; }
+.acf #acf-models .vendor.locked .seg { cursor: default; }
+.acf #acf-models .note { padding: 7px 10px; color: var(--acf-muted); }
+.acf #acf-models .effort { border-top: 1px solid var(--acf-line); margin-top: 4px; padding: 10px 8px 8px; }
+.acf #acf-models .effort .lbl { text-align: center; text-transform: capitalize; font-size: 15px; margin-bottom: 10px; }
+.acf #acf-models .effort .track { position: relative; height: 32px; }
+.acf #acf-models .effort input[type=range] { position: absolute; inset: 0; width: 100%; margin: 0; -webkit-appearance: none; appearance: none; background: transparent; cursor: pointer; z-index: 1; }
+.acf #acf-models .effort input[type=range]::-webkit-slider-runnable-track { height: 32px; border-radius: 16px; background: linear-gradient(to right, var(--acf-accent) var(--p), var(--acf-soft) var(--p)); }
+.acf #acf-models .effort input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 32px; height: 32px; border-radius: 50%; background: #fff; border: 0; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
+.acf #acf-models .effort input[type=range]::-moz-range-track { height: 32px; border-radius: 16px; background: var(--acf-soft); }
+.acf #acf-models .effort input[type=range]::-moz-range-progress { height: 32px; border-radius: 16px; background: var(--acf-accent); }
+.acf #acf-models .effort input[type=range]::-moz-range-thumb { width: 32px; height: 32px; border-radius: 50%; background: #fff; border: 0; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
 /* 단계 점: 트랙 위에 n 개, 엄지 폭만큼 안쪽으로 */
-.acf #acf-effort .track i { position: absolute; top: 14px; width: 4px; height: 4px; border-radius: 50%; background: var(--acf-muted); opacity: .6; pointer-events: none; z-index: 2; }
+.acf #acf-models .effort .track i { position: absolute; top: 14px; width: 4px; height: 4px; border-radius: 50%; background: var(--acf-muted); opacity: .6; pointer-events: none; z-index: 2; }
 .acf .menu { position: fixed; margin: 0; inset: auto; min-width: 220px; max-height: 70vh; overflow-y: auto; padding: 6px; border: 1px solid var(--acf-line); border-radius: 12px; background: var(--acf-panel); color: var(--acf-fg); box-shadow: 0 8px 24px var(--acf-shadow); font: 14px/1.4 var(--acf-sans); }
 .acf .menu .item { display: flex; justify-content: space-between; align-items: center; width: 100%; text-align: left; border: 0; background: transparent; padding: 7px 10px; border-radius: 8px; }
 .acf .menu .item:hover { background: var(--acf-soft); }

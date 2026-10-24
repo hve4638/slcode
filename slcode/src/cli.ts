@@ -21,6 +21,7 @@ import { runEntry } from './entry.js';
 import { reachable, closedSessions, closedTime, sockAlive } from './live.js';
 import { findVendorSession, forkClaude, vendorResumeCommand } from './vendor.js';
 import { pullHistory } from './history.js';
+import { CLAUDE_EFFORTS } from './base.js';
 import { randomUUID } from 'node:crypto';
 import { FILES, type ApprovalRequest, type LoggedEvent, type Methods, type SessionInfo } from './protocol.js';
 
@@ -319,8 +320,7 @@ async function pickClosed(cwd: string) {
   for (const m of rows) console.log(`${m.id}  ${stamp(closedTime(m))}  ${m.title ?? '-'}`);
   err('resume one with: slcode resume <id>');
 }
-/** Claude 의 effort 이름 (SDK EffortLevel). Codex 는 모델마다 열려 있어 이름을 보지 않는다 — 모델에 없는 값은 벤더가 뜬 뒤 core 가 알린다 */
-const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+// Codex 의 effort 는 모델마다 열려 있어 이름을 보지 않는다 — 모델에 없는 값은 벤더가 뜬 뒤 core 가 알린다
 /** 새 세션 옵션 검사 — 아무것도 열기 전에 (ticket slcode-new-effort-prompt, 사용자 결정 2026-10-23: 이름 오타는 거절) */
 function checkNew(): void {
   if (flags.effort === undefined) return;

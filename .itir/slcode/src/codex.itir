@@ -12,6 +12,9 @@ export fn toolOf, toolResult, collabTask {
 export fn isAuthError(info) -> Bool {
   role: codexErrorInfo 가 인증 실패인가 (unauthorized 또는 HTTP 401) — 실시간 turn.end 와 가져온 기록(history.codexEvents)이 같이 쓴다
 }
+export fn codexRunnable(env) -> Text? {
+  role: app-server 실행 파일(SLCODE_CODEX_BIN 또는 PATH 의 codex — spawnAppServer 와 같은 해석)이 뜨는지 띄워 보고 곧바로 내린다. 뜨면 null, 못 뜨면(ENOENT 등) 사유. 벤더 전환(core session.setVendor)이 codex 로 가기 전에 본다 — 설치돼 있지 않은데 바꾸면 세션이 기동 실패로 닫힌다 (ticket slcode-vendor-model-picker)
+}
 export fn userBaseUrl(layers) -> Text? {
   role: config/read 층들에서 사용자가 정한 openai_base_url — 우리가 -c 로 준 sessionFlags 층은 뺀다, 층은 우선순위가 높은 것부터
 }

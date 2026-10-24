@@ -5,7 +5,7 @@ import { query, type Query, type SDKMessage, type SDKUserMessage, type Permissio
 import { randomUUID } from 'node:crypto';
 import type { ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, Usage, LimitWindow, McpStatus } from './protocol.js';
 import { EventLog, unrewound } from './eventLog.js';
-import { AgentSession, effortMisfit } from './base.js';
+import { AgentSession, CLAUDE_EFFORTS, effortMisfit } from './base.js';
 import { SLCODE_PROMPT } from './prompt.js';
 
 /** push 와 비동기 순회를 잇는 무한 큐 — streaming input 의 프롬프트 공급원 */
@@ -108,7 +108,7 @@ export class ClaudeSession extends AgentSession {
       const applied = (await (this.q as any).getSettings())?.applied ?? {}; // getSettings 는 0.3.282 의 Query 타입에 없다 (런타임엔 있다)
       this.model ??= applied.model ?? null; this.effort ??= applied.effort ?? null;
     }
-    return { current: this.model, effort: this.effort, models: list.map((m) => ({ value: m.value, resolvedModel: m.resolvedModel, displayName: m.displayName, description: m.description, ...(m.supportedEffortLevels ? { efforts: m.supportedEffortLevels as string[] } : {}) })) };
+    return { current: this.model, effort: this.effort, models: list.map((m) => ({ value: m.value, resolvedModel: m.resolvedModel, displayName: m.displayName, description: m.description, efforts: (m.supportedEffortLevels as string[] | undefined) ?? CLAUDE_EFFORTS })) };
   }
 
   /** 플랜 리밋 창 — SDK 의 /usage 자료(실험 메서드, 0.3.282). 벤더가 안 떠 있거나 플랜이 없으면 null. 한 번에 1.5초쯤 (2026-09-29 실측) */

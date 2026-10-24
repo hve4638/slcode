@@ -12,7 +12,7 @@
 
 const SVC = 'session';
 const CARDS = 'slcode/cards'; // renderer 가 공개한 인터페이스 (scope own)
-/** Claude 의 effort 이름 — slcode/src/cli.ts CLAUDE_EFFORTS 와 같다 */
+/** Claude 의 effort 이름 — slcode/src/base.ts CLAUDE_EFFORTS 와 같다 (플러그인은 slcode 를 import 하지 못한다) */
 const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 /** model 의 공급자 앞머리 → 벤더 (사용자 2026-10-23, 임시) — slcode/src/cli.ts PROVIDERS 와 같다 */
 const PROVIDERS = { anthropic: 'claude', openai: 'codex' };

@@ -37,8 +37,8 @@ function bumpBuild(pkg: string): () => void {
 }
 
 /** cli 하나 — stdout 첫 줄을 기다린다. pkg 면 그 사본의 dist/cli.js 로 */
-function cli(dir: string, args: string[], stdin: 'ignore' | 'pipe' = 'ignore', pkg?: string): { child: ChildProcess; first: Promise<string>; exit: Promise<number | null>; stderr: () => string } {
-  const child = spawn(process.execPath, pkg ? [path.join(pkg, 'dist', 'cli.js'), ...args] : ['--import', TSX, CLI, ...args], { env: ENV(dir), stdio: [stdin, 'pipe', 'pipe'] });
+function cli(dir: string, args: string[], stdin: 'ignore' | 'pipe' = 'ignore', pkg?: string, env: NodeJS.ProcessEnv = {}): { child: ChildProcess; first: Promise<string>; exit: Promise<number | null>; stderr: () => string } {
+  const child = spawn(process.execPath, pkg ? [path.join(pkg, 'dist', 'cli.js'), ...args] : ['--import', TSX, CLI, ...args], { env: { ...ENV(dir), ...env }, stdio: [stdin, 'pipe', 'pipe'] });
   child.stdout!.setEncoding('utf8');
   let err = ''; child.stderr!.setEncoding('utf8'); child.stderr!.on('data', (d: string) => (err += d));
   const first = new Promise<string>((resolve) => { let buf = ''; child.stdout!.on('data', (d: string) => { buf += d; const i = buf.indexOf('\n'); if (i >= 0) resolve(buf.slice(0, i)); }); });
@@ -247,6 +247,65 @@ test('카드: --takeover 로 붙은 새 serve 가 core 교체를 청하고, stdi
   b.child.kill('SIGTERM');
   await b.exit;
   await waitFor(async () => !(await sockAlive(hello.sock)));
+});
+
+// ---- 벤더 전환 (ticket slcode-vendor-model-picker) — 첫 메시지 전에만, core 교체와 같은 길로 같은 세션 id 의 core 를 새 벤더로
+test('벤더 전환: 첫 메시지 전 claude → codex 는 같은 세션 id 로 core 를 바꾼다 — 화면 연결·초안은 그대로, effort 는 비우고, 첫 메시지 뒤엔 거절', async (t) => {
+  const dir = tmp('slcode-vendor-');
+  const e = cli(dir, ['new', tmp('slcode-work-'), '--effort', 'high']);
+  t.after(() => { if (alive(e.child)) e.child.kill('SIGKILL'); });
+  const url = await e.first;
+  const a = await screen(url);
+  const id = (await a.call('server.info')).result.session;
+  assert.equal((await a.call('session.attach', { id, since: 0 })).result.info.vendor, 'claude');
+  await a.call('session.setDraft', { id, text: '쓰던 글' });
+  const oldCore = await corePid(a);
+  assert.deepEqual((await a.call('session.setVendor', { id, vendor: 'claude' })).result, { ok: true }, '같은 벤더는 아무것도 하지 않는다');
+  assert.equal(await corePid(a), oldCore);
+  await a.call('session.setVendor', { id, vendor: 'bogus' }).then((r) => assert.match(r.error.message, /claude\|codex/));
+
+  let closed = false;
+  void a.closed.then(() => (closed = true));
+  assert.deepEqual((await a.call('session.setVendor', { id, vendor: 'codex' })).result, { ok: true });
+  // 응답 뒤 바로 보낸 요청은 내려가는 core 가 retiring 으로 돌려보내고 중계가 새 core 에 다시 보낸다
+  const models = (await a.call('session.models', { id })).result;
+  assert.deepEqual(models.models.map((m: any) => [m.value, m.efforts]), [['fake-model', ['low', 'high']]], '새 벤더(가짜 codex)의 모델 목록');
+  const newCore = await corePid(a);
+  assert.notEqual(newCore, oldCore);
+  assert.equal(closed, false, '화면 연결은 끊기지 않는다');
+  const changed = await a.until((m) => m.event === 'session.changed' && m.params.vendor === 'codex');
+  assert.equal(changed.params.id, id, '세션 id 는 그대로');
+  const meta = EventLog.open(corePaths(dir).sessionsDir, id)!.meta;
+  assert.equal(meta.vendor, 'codex');
+  assert.equal(meta.effort, undefined, '옛 벤더의 effort 는 비운다');
+  assert.notEqual(meta.vendorSessionId, null, '새 벤더 세션(가짜 codex thread)');
+  assert.equal((await a.call('session.attach', { id, limit: 50 })).result.draft, '쓰던 글', '초안이 새 core 로 넘어갔다');
+  // 소유자(진입 프로세스의 serve)가 새 core 에 다시 붙었다
+  await waitFor(async () => (await a.call('server.info')).result.owner === e.child.pid, 5000);
+
+  await a.call('session.send', { id, text: 'hello' });
+  const r = await a.call('session.setVendor', { id, vendor: 'claude' });
+  assert.match(r.error?.message ?? '', /fixed after the first message/);
+  assert.equal(await corePid(a), newCore);
+  a.close();
+  e.child.kill('SIGINT');
+  assert.equal(await e.exit, 0);
+});
+
+test('벤더 전환: codex 실행 파일이 뜨지 않으면 바꾸지 않고 거절한다', async (t) => {
+  const dir = tmp('slcode-vendor-');
+  const e = cli(dir, ['new', tmp('slcode-work-')], 'ignore', undefined, { SLCODE_CODEX_BIN: path.join(dir, 'no-such-codex') });
+  t.after(() => { if (alive(e.child)) e.child.kill('SIGKILL'); });
+  const a = await screen(await e.first);
+  const id = (await a.call('server.info')).result.session;
+  const oldCore = await corePid(a);
+  const r = await a.call('session.setVendor', { id, vendor: 'codex' });
+  assert.match(r.error?.message ?? '', /codex is not available/);
+  assert.equal(await corePid(a), oldCore);
+  assert.equal(EventLog.open(corePaths(dir).sessionsDir, id)!.meta.vendor, 'claude');
+  a.close();
+  e.child.kill('SIGINT');
+  assert.equal(await e.exit, 0);
 });
 
 test('교체 중 표시가 있으면 connectSession 이 새 소켓을 기다리고, 없으면 바로 no_session', async () => {

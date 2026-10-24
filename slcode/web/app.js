@@ -127,13 +127,31 @@ export function mountAgentFront(root, transport, opts = {}) {
   // 모델 선택 — 작성창의 알약 버튼 + popover 메뉴 (네이티브 popover 라 바깥 클릭·Esc 로 닫힌다). 목록은 session.models, 고르면 session.setModel (다음 턴부터).
   // 위쪽엔 계열마다 버전이 가장 높은 것만, 나머지는 '더 많은 모델' 아래. 계열 = 표시 이름에서 버전 숫자를 뗀 것 ("Fable 5.1"→Fable, "GPT-5.6 Sol"→GPT Sol),
   // 버전 숫자가 없는 항목(Default, Opus (1M context))은 아래로. 벤더가 늘어도(Codex 등) 한 목록에 섞인다 (사용자 2026-09-27)
+  // 메뉴 맨 위는 벤더 토글, 목록 아래는 effort 슬라이더 — 작성창의 effort 버튼은 없앴고 알약이 'Opus 5.5 · high' 로 effort 를 함께 보인다 (ticket slcode-vendor-model-picker, 사용자 2026-10-23)
   const modelLbl = h('span', {}, '');
   const modelBtn = h('button', { class: 'ghost pill-btn model', popovertarget: 'acf-models', style: 'display:none' }, modelLbl);
   const modelMenu = h('div', { class: 'menu', id: 'acf-models', popover: '' });
-  // effort — 모델 옆 알약 + 메뉴 (session.setEffort, 다음 턴부터). 목록은 지금 모델의 efforts, 없으면 다섯 단계 전부
-  const effortLbl = h('span', {}, '');
-  const effortBtn = h('button', { class: 'ghost pill-btn effort', popovertarget: 'acf-effort', style: 'display:none' }, effortLbl);
-  const effortMenu = h('div', { class: 'menu', id: 'acf-effort', popover: '' });
+  let modelName = '', effortNow = null;
+  const paintModel = () => { modelLbl.textContent = effortNow ? `${modelName} · ${effortNow}` : modelName; };
+  // 벤더 토글 — 첫 메시지 전에만 바꾼다(session.setVendor: 같은 세션 id 로 core 를 새 벤더로 다시 띄운다). 그 뒤엔 지금 벤더만 칠한 채 흐리게 둔다
+  const vendorSeg = h('div', { class: 'vendor' });
+  let turned = false, switching = null; // turned: 이 세션에 첫 메시지가 들어갔다, switching: 바꾸는 중인 벤더
+  function paintVendor() {
+    const cur = switching ?? info?.vendor ?? 'claude', locked = turned || !!switching;
+    vendorSeg.classList.toggle('locked', locked);
+    vendorSeg.title = turned ? '첫 메시지 뒤에는 벤더를 바꿀 수 없습니다' : switching ? `${switching} 로 바꾸는 중…` : '';
+    vendorSeg.replaceChildren(...['claude', 'codex'].map((v) => h('button', { class: 'seg', 'aria-pressed': String(v === cur), 'aria-disabled': String(locked), onclick: () => switchVendor(v) }, v)));
+  }
+  function switchVendor(v) {
+    if (turned || switching || !current || v === (info?.vendor ?? 'claude')) return;
+    switching = v; paintVendor();
+    modelMenu.replaceChildren(vendorSeg, h('div', { class: 'note' }, `${v} 로 바꾸는 중…`));
+    // 응답 뒤 core 가 바뀐다 — 그 사이 보낸 요청은 serve 의 중계가 새 core 에 다시 보낸다. 모델 목록은 새 벤더가 뜬 뒤에 온다
+    rpc('session.setVendor', { id: current, vendor: v })
+      .then(() => { loadStatus(); loadCommands(); loadMcp(); return loadModels(); })
+      .catch((e) => { push(h('div', { class: 'meta err' }, e.message)); return loadModels(); })
+      .finally(() => { switching = null; paintVendor(); });
+  }
   // 권한 모드 — effort 옆 알약 + 메뉴 (session.setMode, 즉시). 현재 값은 info.permissionMode (session.changed 로 갱신)
   const REVIEW = { approved: '허용', denied: '거부', timedOut: '시간 초과', aborted: '중단' };
   const RISK = { low: '낮음', medium: '보통', high: '높음', critical: '심각' };
@@ -150,7 +168,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   }
   // start: 버튼 왼쪽 끝에 맞춘다 — 왼쪽 아래 권한 모드 메뉴가 오른쪽 끝에 맞추면 화면 왼쪽 밖으로 나간다
   const anchor = (menu, btn, start = false) => () => { if (menu.matches(':popover-open')) { const r = btn.getBoundingClientRect(); menu.style.left = `${start ? r.left : r.right - menu.offsetWidth}px`; menu.style.bottom = `${innerHeight - r.top + 6}px`; } };
-  modelMenu.ontoggle = anchor(modelMenu, modelBtn); effortMenu.ontoggle = anchor(effortMenu, effortBtn); modeMenu.ontoggle = anchor(modeMenu, modeBtn, true);
+  modelMenu.ontoggle = anchor(modelMenu, modelBtn); modeMenu.ontoggle = anchor(modeMenu, modeBtn, true);
   // 슬래시 명령 자동완성 — 입력이 `/` 로 시작하면 입력창 위에 목록. ↑↓ 고르고 Tab·Enter 로 넣는다. 목록은 session.commands (2026-09-30)
   let commands = [], slashSel = 0;
   const slashMenu = h('div', { class: 'menu slash', id: 'acf-slash', popover: 'manual' });
@@ -181,9 +199,9 @@ export function mountAgentFront(root, transport, opts = {}) {
   }
   function slashPick(c) { input.value = `/${c.name} `; input.focus(); slashDraw(); }
   async function loadCommands() { try { commands = await rpc('session.commands', { id: current }); } catch { commands = []; } }
-  // 작성창 = 입력칸 위, 아래 한 줄: 왼쪽 끝 첨부·권한 모드, 오른쪽 모델·effort·보내기 (Codex Desktop 꼴, 사용자 2026-10-13). 상자 밖 아래에 폴더·repo·리밋·context·비용 한 줄(stat)
+  // 작성창 = 입력칸 위, 아래 한 줄: 왼쪽 끝 첨부·권한 모드, 오른쪽 모델(effort 포함)·보내기 (Codex Desktop 꼴, 사용자 2026-10-13). 상자 밖 아래에 폴더·repo·리밋·context·비용 한 줄(stat)
   const stat = h('div', { class: 'stat' });
-  const composer = h('div', { class: 'composer' }, h('div', { class: 'box' }, chips, input, h('div', { class: 'row' }, addBtn, modeBtn, modeMenu, h('span', { class: 'gap' }), modelBtn, modelMenu, effortBtn, effortMenu, stopBtn, sendBtn), slashMenu, filePick), stat);
+  const composer = h('div', { class: 'composer' }, h('div', { class: 'box' }, chips, input, h('div', { class: 'row' }, addBtn, modeBtn, modeMenu, h('span', { class: 'gap' }), modelBtn, modelMenu, stopBtn, sendBtn), slashMenu, filePick), stat);
   const side = h('aside', { class: 'side' });
   const dock = h('div', { class: 'dock' });
   // 실행 중 표시 — 피드 맨 끝(내 요청 바로 아래)에 한 줄: 맥동 점 · 지금 하는 일 · 경과. state 가 running 일 때만, 새 항목이 와도 늘 마지막 (사용자 2026-09-30)
@@ -195,7 +213,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   let busySince = 0, busyTimer = null, busyTick = 0, skew = 0;
   const setBusy = (what) => { if (what && !replaying) busyWhat.textContent = `${what}…`; };
   const fmtDur = (ms) => { const s = Math.round(ms / 1000); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`; };
-  const busyRefresh = () => { busyGlyph.textContent = SPIN[busyTick++ % SPIN.length]; busyInfo.textContent = `(${[fmtDur(Math.max(0, Date.now() - skew - busySince)), effortLbl.textContent !== 'effort' ? `effort ${effortLbl.textContent}` : null, 'esc 중단'].filter(Boolean).join(' · ')})`; };
+  const busyRefresh = () => { busyGlyph.textContent = SPIN[busyTick++ % SPIN.length]; busyInfo.textContent = `(${[fmtDur(Math.max(0, Date.now() - skew - busySince)), effortNow ? `effort ${effortNow}` : null, 'esc 중단'].filter(Boolean).join(' · ')})`; };
   function showBusy(on) {
     busy.hidden = !on;
     if (on) { col.append(busy); if (follow) feed.scrollTop = feed.scrollHeight; }
@@ -337,7 +355,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   const pencil = iconBtn('pencil', '이름 바꾸기', editName);
   title.addEventListener('dblclick', editName);
   nameRow.append(pencil);
-  sendBtn.append(icon('up')); addBtn.append(icon('plus')); stopBtn.append(icon('stop')); modelBtn.append(icon('chevron')); effortBtn.append(icon('chevron')); modeBtn.prepend(icon('shield')); modeBtn.append(icon('chevron')); sideBtn.append(icon('panel')); gearBtn.append(icon('gear')); jumpBtn.prepend(icon('down'));
+  sendBtn.append(icon('up')); addBtn.append(icon('plus')); stopBtn.append(icon('stop')); modelBtn.append(icon('chevron')); modeBtn.prepend(icon('shield')); modeBtn.append(icon('chevron')); sideBtn.append(icon('panel')); gearBtn.append(icon('gear')); jumpBtn.prepend(icon('down'));
   // 보낼 게 없거나(빈 입력·첨부 없음) 세션이 끝났으면 보내기 버튼을 비활성처럼 (사용자 2026-09-27)
   // 실행 중엔 보내기 자리에 중단 (사용자 2026-10-09) — 입력이나 첨부가 생기면 다시 보내기, 작업 중에도 보낼 수 있으므로
   const canSend = () => {
@@ -427,7 +445,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     curSeq = e.seq;
     const ev = e.ev;
     switch (ev.kind) {
-      case 'turn.start': if (!replaying) busySince = e.at || Date.now(); setBusy('작업 중');
+      case 'turn.start': if (!turned) { turned = true; paintVendor(); } if (!replaying) busySince = e.at || Date.now(); setBusy('작업 중');
         endText(); main.acts = null; // 이 턴 마지막 응답의 아이콘 줄 — turn.end 가 inspect 버튼을 붙인다
         // main.turnEl: 이 턴의 내 요청(메시지 카드) — 그 바로 다음 항목이 '답변 시작으로' 가 가는 곳 (실행 중 줄은 늘 맨 끝으로 옮겨지므로 사이에 끼지 않는다)
         if (ev.origin === 'mail') { main.turnEl = push(mailCard(ev.text, e.seq)); break; }
@@ -715,7 +733,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     // claude 상태줄과 같은 줄거리 중 💻모델 (폴더·repo·리밋·context·비용은 작성창 아래). 값은 SDK 가 주는 때(attach·turn.end)만 갱신 (사용자 2026-09-30)
     const row = (name, ...kids) => h('div', { class: 'row' }, icon(name), ...kids);
     side.append(h('div', { class: 'top' },
-      row('cpu', h('span', {}, modelLbl.textContent || ready?.model || '—')),
+      row('cpu', h('span', {}, modelName || ready?.model || '—')),
     ));
     const kv = (rows) => h('div', { class: 'kv' }, ...rows.flatMap(([k, v]) => [h('span', { class: 'k' }, k), h('span', { class: 'v' }, v ?? '—')]));
     const sec = (key, label, body, extra) => {
@@ -810,6 +828,7 @@ export function mountAgentFront(root, transport, opts = {}) {
       else if (e.ev.kind === 'session.ready') { ready = e.ev; }
     }
     for (const e of evs.slice(cut)) render(e);
+    if (summary?.turns || history.some((e) => e.ev.kind === 'turn.start')) { turned = true; paintVendor(); } // 되돌린 턴·그리지 않은 앞 페이지도 첫 메시지다
     if (summary) { // 서버가 센 기록 전체 — 그린 페이지의 session.ready 보다 뒤의 것(되돌린 턴 안)일 수 있어 그린 뒤에
       const u = summary.usage;
       Object.assign(usage, { turns: summary.turns, input: u.input, output: u.output, cacheRead: u.cacheRead, cacheWrite: u.cacheWrite, cost: summary.costUsd ?? 0 });
@@ -872,7 +891,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   }
   transport.onEvent((m) => {
     if (m.event === 'session.event' && m.params.id === current) render(m.params, true);
-    else if (m.event === 'session.changed' && m.params.id === current) { info = m.params; setTitle(info.title); syncInspect(); renderMode(); renderSide(); }
+    else if (m.event === 'session.changed' && m.params.id === current) { info = m.params; setTitle(info.title); syncInspect(); renderMode(); renderSide(); paintVendor(); }
     else if (m.event === 'session.closed' && m.params.id === current) { /* session.exit 이벤트가 이미 그렸다 */ }
     else if (m.event === 'settings.changed') setSettings(m.params);
   });
@@ -915,20 +934,25 @@ export function mountAgentFront(root, transport, opts = {}) {
       const nums = base(m.resolvedModel).split('-').filter((p) => /^\d+$/.test(p) && p.length < 8);
       if (nums.length) m.displayName = m.displayName.replace(/^(\S+)/, `$1 ${nums.join('.')}`);
     }
-    const cur = r.models.find((m) => m.value === r.current) ?? r.models.find((m) => m.value !== 'default' && base(m.resolvedModel) === base(r.current));
-    modelLbl.textContent = cur?.displayName ?? r.current ?? '모델'; renderSide(); // 상단 요약의 모델 이름
+    // 지금 모델 찾기는 core 의 effortMisfit 과 같다 — 모르면(첫 턴 전) default
+    const cur = r.current == null ? r.models.find((m) => m.value === 'default')
+      : r.models.find((m) => m.value === r.current) ?? r.models.find((m) => m.value !== 'default' && base(m.resolvedModel) === base(r.current));
+    modelName = cur?.displayName ?? r.current ?? '모델'; effortNow = r.effort; paintModel(); renderSide(); // 상단 요약의 모델 이름
     modelBtn.style.display = r.models.length ? '' : 'none';
-    const efforts = cur?.efforts ?? ['low', 'medium', 'high', 'xhigh', 'max'];
-    effortLbl.textContent = r.effort ?? 'effort';
-    effortBtn.style.display = r.models.length ? '' : 'none';
-    // ChatGPT 꼴 슬라이더 (사용자 2026-09-27): 위에 단계 이름, 아래 range 한 칸 = 한 단계. 놓으면 session.setEffort
-    const idx = Math.max(0, efforts.indexOf(r.effort));
-    const lbl = h('div', { class: 'lbl' }, efforts[idx] ?? '');
-    const range = h('input', { type: 'range', min: 0, max: efforts.length - 1, step: 1, value: idx, style: `--n:${efforts.length}` });
-    const paint = () => { lbl.textContent = efforts[range.value]; range.style.setProperty('--p', `calc(16px + ${range.value / (efforts.length - 1)} * (100% - 32px))`); };
-    range.oninput = paint; paint();
-    range.onchange = () => { effortLbl.textContent = efforts[range.value]; renderSide(); return rpc('session.setEffort', { id: current, effort: efforts[range.value] }).then(loadModels).catch((e) => push(h('div', { class: 'meta err' }, e.message))); };
-    effortMenu.replaceChildren(lbl, h('div', { class: 'track' }, range, ...efforts.map((_, i) => h('i', { style: `left: calc(16px + ${i / (efforts.length - 1)} * (100% - 32px) - 2px)` }))));
+    // effort 슬라이더 — 단계는 고른 모델의 efforts(core 가 준다: Claude 는 supportedEffortLevels, 없으면 CLAUDE_EFFORTS · Codex 는 모델의 목록). 비었으면 없다
+    // ChatGPT 꼴 (사용자 2026-09-27): 위에 단계 이름, 아래 range 한 칸 = 한 단계. 놓으면 session.setEffort (다음 턴부터)
+    const efforts = cur?.efforts ?? [];
+    let effortBox = null;
+    if (efforts.length) {
+      const span = Math.max(1, efforts.length - 1);
+      const idx = Math.max(0, efforts.indexOf(r.effort));
+      const lbl = h('div', { class: 'lbl' }, efforts[idx] ?? '');
+      const range = h('input', { type: 'range', min: 0, max: efforts.length - 1, step: 1, value: idx, style: `--n:${efforts.length}` });
+      const paint = () => { lbl.textContent = efforts[range.value]; range.style.setProperty('--p', `calc(16px + ${range.value / span} * (100% - 32px))`); };
+      range.oninput = paint; paint();
+      range.onchange = () => { effortNow = efforts[range.value]; paintModel(); return rpc('session.setEffort', { id: current, effort: efforts[range.value] }).then(loadModels).catch((e) => push(h('div', { class: 'meta err' }, e.message))); };
+      effortBox = h('div', { class: 'effort' }, lbl, h('div', { class: 'track' }, range, ...efforts.map((_, i) => h('i', { style: `left: calc(16px + ${i / span} * (100% - 32px) - 2px)` }))));
+    }
     const VER = /-?\b(\d+(?:\.\d+)*)\b/;
     const ver = (m) => { const v = m.displayName.match(VER)?.[1]; return v ? v.split('.').map(Number) : []; };
     const fam = (m) => m.displayName.replace(VER, '').replace(/\s+/g, ' ').trim();
@@ -936,9 +960,12 @@ export function mountAgentFront(root, transport, opts = {}) {
     const best = new Map();
     for (const m of r.models) { if (!ver(m).length) continue; const f = fam(m); if (!best.has(f) || newer(ver(m), ver(best.get(f)))) best.set(f, m); }
     const top = r.models.filter((m) => best.get(fam(m)) === m), rest = r.models.filter((m) => !top.includes(m));
-    const item = (m) => h('button', { class: 'item', 'aria-checked': String(m === cur), onclick: () => { modelMenu.hidePopover(); modelLbl.textContent = m.displayName; renderSide(); rpc('session.setModel', { id: current, model: m.value }).then(loadModels).catch((e) => push(h('div', { class: 'meta err' }, e.message))); } }, m.displayName);
+    // 골라도 메뉴는 열어 둔다 — 이어서 effort 를 고를 수 있게. 닫기는 바깥 클릭·Esc (사용자 2026-10-24)
+    const item = (m) => h('button', { class: 'item', 'aria-checked': String(m === cur), onclick: (e) => { for (const b of modelMenu.querySelectorAll('.item[aria-checked]')) b.setAttribute('aria-checked', String(b === e.currentTarget)); modelName = m.displayName; paintModel(); renderSide(); rpc('session.setModel', { id: current, model: m.value }).then(loadModels).catch((e) => push(h('div', { class: 'meta err' }, e.message))); } }, m.displayName);
     const more = h('div', { class: 'more' }, ...rest.map(item));
-    modelMenu.replaceChildren(...top.map(item), h('button', { class: 'item toggle', onclick: () => more.classList.toggle('open') }, '더 많은 모델'), more);
+    if (modelMenu.querySelector('.more.open')) more.classList.add('open'); // 다시 그려도 펼친 채로
+    paintVendor();
+    modelMenu.replaceChildren(vendorSeg, ...top.map(item), h('button', { class: 'item toggle', onclick: () => more.classList.toggle('open') }, '더 많은 모델'), more, effortBox ?? '');
   }
 
   // ---- 작성창
