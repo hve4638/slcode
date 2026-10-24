@@ -1,5 +1,5 @@
 // slcode 플러그인 renderer (새 방식 apiVersion 2, ticket slcode-plugin-v2) — 창마다 보이지 않는 sandbox iframe 하나에서 돈다.
-// 팔레트 명령, 액티비티바 "slcode" 사이드바와 살아 있는 세션 수 배지, 카드 열기(main 의 셸 동사·승인 알림이 cards 인터페이스로 부른다).
+// 팔레트 명령, 액티비티바 "slcode" 사이드바와 살아 있는 세션 수 배지, 카드 열기·닫기 요청(main 의 셸 동사·승인 알림·다른 플러그인의 close 가 cards 인터페이스로 부른다).
 // 카드 화면·사이드바와는 메모리를 함께 쓰지 않는다 — 화면이 post 로 보낸 {type} 을 받고 views.post 로 돌려준다:
 //   카드 → tab(이 창의 탭 id 를 알림)·count(목록 다시 세기)·moveOut(핸드오프 — 옛 카드를 옮겨진 카드로)
 //   사이드바 → refresh·open·forceClose
@@ -39,6 +39,13 @@ export function activate(api) {
     notify({ key, id, message }) {
       const tab = tabs.get(key);
       api.notify('warning', message, { label: '열기', run: () => void open({ key, id }).catch(fail) }, tab ? { card: tab } : undefined);
+    },
+    /** 다른 플러그인의 close (main.js close) — 이 창에 그 세션의 카드가 있으면 card.close 닫기 요청([D]·삭제/거부 알림)을 걸고 true.
+     *  없거나 이미 닫힌 탭(tabs 는 지우지 않는다)이면 false — main 이 다음 창에 묻는다 */
+    async closeCard({ id }) {
+      const tab = tabs.get(await keyOf(id));
+      if (!tab) return false;
+      try { await api.verbs.run('card.close', [tab]); return true; } catch { return false; }
     },
   }, { scope: 'own' });
 

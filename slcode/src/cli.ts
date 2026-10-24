@@ -108,7 +108,7 @@ const LIFE = new Set(['new', 'continue', 'resume', 'import']);
 const life = bare || LIFE.has(words[0]);
 const positionals = life ? words.slice(0, nBefore) : words;
 const firstPrompt = life ? words.slice(nBefore).join(' ').trim() || undefined : undefined;
-// --model <공급자>:<모델> 이면 공급자로 벤더를 고른다 (사용자 2026-10-23, 임시 — slcode 에 모델 목록이 없어 모델 이름만으로는 벤더를 모른다).
+// --model <공급자>:<모델> 이면 공급자로 벤더를 고른다 (정식 형식, 사용자 2026-10-24 — slcode 에 모델 목록이 없어 모델 이름만으로는 벤더를 모른다).
 // 다른 앞머리·앞머리 없음은 이름 전체가 모델 (Bedrock id 의 ':0' 등). 플러그인 main.js 의 PROVIDERS 와 같다
 const PROVIDERS: Record<string, 'claude' | 'codex'> = { anthropic: 'claude', openai: 'codex' };
 const colon = flags.model?.indexOf(':') ?? -1;

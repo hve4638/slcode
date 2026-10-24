@@ -1,7 +1,7 @@
 // slcode 플러그인 main (새 방식 apiVersion 2, ticket slcode-plugin-v2) — 세션 머신의 node 에서 머신마다 한 번 돈다. 카드 하나 = slcode 세션 하나.
 //
 // 세 갈래 (사용자 확정 2026-10-21): main(이 파일) — 바이너리 받기·설치, `slcode list`·`close --force` 같은 명령, 셸 동사
-// slcode.new·slcode.resume, 승인 알림을 창 하나에. renderer.js — 창마다: 팔레트 명령, 액티비티바 사이드바·배지, 카드 열기(이 main 이
+// slcode.new·slcode.resume, 승인 알림을 창 하나에, 다른 플러그인용 open·close·mail(activate 반환값). renderer.js — 창마다: 팔레트 명령, 액티비티바 사이드바·배지, 카드 열기(이 main 이
 // 부른다). views/session.js — 카드마다: 서비스 기동·연결·배지·다시 붙기, slcode 화면 iframe 중계. views/sessions.js — 세션 목록 사이드바.
 // 카드 화면이 서비스를 띄우는 명령은 여기서 짓는다 (command) — 받은 바이너리의 경로가 이 머신의 것이라서다.
 // slcode.new: 이 main 이 key 를 정해 요청자 터미널의 메인 창 renderer 에 카드를 열게 하고, 카드 화면이 hello 로 세션 id 를 알면 started 로
@@ -14,7 +14,7 @@ const SVC = 'session';
 const CARDS = 'slcode/cards'; // renderer 가 공개한 인터페이스 (scope own)
 /** Claude 의 effort 이름 — slcode/src/base.ts CLAUDE_EFFORTS 와 같다 (플러그인은 slcode 를 import 하지 못한다) */
 const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
-/** model 의 공급자 앞머리 → 벤더 (사용자 2026-10-23, 임시) — slcode/src/cli.ts PROVIDERS 와 같다 */
+/** model 의 공급자 앞머리 → 벤더 (`<공급자>:<모델>`, 사용자 2026-10-24 정식 형식) — slcode/src/cli.ts PROVIDERS 와 같다 */
 const PROVIDERS = { anthropic: 'claude', openai: 'codex' };
 
 // ---- 바이너리 자가 설치 (ticket slcode-plugin-selfinstall) — 순수 함수. export 는 slcode/test/plugin.test.ts 용
@@ -155,6 +155,32 @@ export function activate(api) {
     const r = await api.proc.run(`${bin.cmd} close ${shq(id)} --force${dir}`);
     if (r.code !== 0) throw new Error(r.stderr.trim() || `exit ${r.code}`);
   }
+  /** 다른 플러그인용 close (ticket slcode-close-mail-verbs, 사용자 2026-10-24) — `slcode close` 로 정상 종료한 뒤 그 세션의 카드에 닫기
+   *  요청([D], 사용자가 삭제를 누르면 카드가 사라진다). 이미 꺼진 세션은 성공(already) — 카드가 남아 있으면 닫기 요청만. 없는 세션은 throw.
+   *  card: 닫기 요청을 건 창이 있었는가 (그 카드를 연 창이 없으면 세션만 끈다) */
+  async function close(id) {
+    const row = (await list(true)).find((s) => s.id === id);
+    if (!row) throw new Error(`no session ${id}`);
+    if (row.live) {
+      const [bin, dir] = await Promise.all([resolveBin(), dirOpt()]);
+      const r = await api.proc.run(`${bin.cmd} close ${shq(id)}${dir}`);
+      if (r.code !== 0) throw new Error(r.stderr.trim() || `exit ${r.code}`);
+    }
+    // 삭제/거부 알림은 요청을 처리한 창에만 뜬다 — 이 머신의 메인 창(사용자가 마지막에 쓴 창)부터 묻는다
+    const [main, all] = await Promise.all([api.window.main().catch(() => null), api.window.all(CARDS).catch(() => [])]);
+    let card = false;
+    for (const w of main ? [main, ...all.filter((x) => x.id !== main.id)] : all) if (await w.call(CARDS, 'closeCard', { id }).catch(() => false)) { card = true; break; }
+    return { ok: true, ...(row.live ? {} : { already: true }), card };
+  }
+  /** 다른 플러그인용 mail — `slcode mail --from <from> -- <to> <text>`. 세션 밖에서 보내 받는 화면에 via=outside("세션 밖에서 보냄").
+   *  from 이 없으면 CLI 처럼 unknown. 받는 이가 없거나 꺼져 있으면 throw (CLI 의 no session) */
+  async function mail({ to, text, from } = {}) {
+    if (typeof to !== 'string' || !to || typeof text !== 'string' || !text) throw new Error('mail needs {to, text}');
+    const [bin, dir] = await Promise.all([resolveBin(), dirOpt()]);
+    const r = await api.proc.run(`${bin.cmd} mail${from ? ` --from ${shq(from)}` : ''}${dir} -- ${shq(to)} ${shq(text)}`);
+    if (r.code !== 0) throw new Error(r.stderr.trim() || `exit ${r.code}`);
+    return JSON.parse(r.stdout);
+  }
   /** [업데이트] — 지금 쓸 slcode(받기 포함)에 version·build 를 물어 카드 serve 의 것(화면이 보낸 값)과 견준다.
    *  deploy 경로는 내용 해시라 serve 가 자기 폴더를 봐서는 새 버전을 모른다 */
   async function checkUpdate(d) {
@@ -227,6 +253,10 @@ export function activate(api) {
   return {
     /** 다른 플러그인용 (같은 머신 main 의 plugins.get) — 세션 id 로 카드 열기 (이 머신의 메인 창에) */
     open: async (id) => { await (await windowFor(null)).call(CARDS, 'open', { id }); },
+    /** 세션 끄기 + 그 카드에 닫기 요청 → {ok, already?, card} */
+    close,
+    /** 켜진 세션에 메시지 → {id, to} */
+    mail,
   };
 }
 

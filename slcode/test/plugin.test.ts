@@ -72,19 +72,22 @@ test('platformOf: api.platform 의 Rust 표기 → zip 플랫폼', () => {
 // ---- 새 방식 main — 가짜 MainApi(folder·platform·proc·window·services)·fetch(GitHub). 카드 화면이 부르는 host 인터페이스와 셸 동사를 직접 부른다
 type Call = string;
 const releases = [rel('v0.1.0', ['linux-x64', 'win-x64']), rel('v0.1.2', ['linux-x64', 'win-x64'])];
-function fakeApi(files: Record<string, string>, opts: { settings?: Record<string, string>; fetched?: unknown; services?: unknown[]; tmuxWin?: boolean } = {}) {
+function fakeApi(files: Record<string, string>, opts: { settings?: Record<string, string>; fetched?: unknown; services?: unknown[]; tmuxWin?: boolean; run?: (cmd: string) => { code: number; stdout: string; stderr: string } | undefined; windows?: Record<string, unknown> } = {}) {
   const calls: Call[] = [];
   const exposed: Record<string, any> = {}; const verbs: Record<string, any> = {};
-  const win = (id: string) => ({ id, call: async (iface: string, method: string, arg: unknown) => { calls.push(`call ${id} ${iface}.${method} ${JSON.stringify(arg)}`); } });
+  const win = (id: string) => ({ id, call: async (iface: string, method: string, arg: unknown) => { calls.push(`call ${id} ${iface}.${method} ${JSON.stringify(arg)}`); return opts.windows?.[id]; } });
   const api = {
     settings: { get: async (k: string) => opts.settings?.[k], onChange: () => () => {} },
     storage: { get: async () => undefined, set: async () => {} },
-    proc: { run: async (cmd: string) => { calls.push(`proc ${cmd}`); return { code: 0, stdout: '[]', stderr: '', truncated: false }; } },
+    proc: { run: async (cmd: string) => { calls.push(`proc ${cmd}`); return { code: 0, stdout: '[]', stderr: '', ...opts.run?.(cmd), truncated: false }; } },
     services: { list: async () => opts.services ?? [] },
     verbs: { handle: (name: string, run: unknown) => { verbs[name] = run; } },
     expose: (name: string, impl: unknown) => { exposed[name] = impl; return () => {}; },
     notify: (sev: string, msg: string) => calls.push(`notify ${sev} ${msg}`),
-    window: { main: async (u?: { tmux?: string }) => { calls.push(`window ${u?.tmux ?? '-'}`); return u?.tmux && !opts.tmuxWin ? null : win(u?.tmux ? `w${u.tmux}` : 'wmain'); } },
+    window: {
+      main: async (u?: { tmux?: string }) => { calls.push(`window ${u?.tmux ?? '-'}`); return u?.tmux && !opts.tmuxWin ? null : win(u?.tmux ? `w${u.tmux}` : 'wmain'); },
+      all: async () => Object.keys(opts.windows ?? {}).map(win),
+    },
     platform: async () => { calls.push('platform'); return { os: 'linux', arch: 'x86_64' }; },
     folder: {
       path: '/host/plugins/slcode',
@@ -110,10 +113,10 @@ function stubGithub(calls: Call[]) {
 }
 const PLUGIN_JSON = JSON.stringify({ id: 'slcode', binary: { repo: 'hve4638/slcode', version: '^0.1.0' } });
 /** activate 한 뒤 fn — 끝나면 deactivate */
-async function withMain(files: Record<string, string>, opts: Parameters<typeof fakeApi>[1], fn: (f: ReturnType<typeof fakeApi>) => Promise<void>) {
-  const f = fakeApi(files, opts);
+async function withMain(files: Record<string, string>, opts: Parameters<typeof fakeApi>[1], fn: (f: ReturnType<typeof fakeApi> & { exports?: any }) => Promise<void>) {
+  const f: ReturnType<typeof fakeApi> & { exports?: any } = fakeApi(files, opts);
   const restore = stubGithub(f.calls);
-  try { plugin.activate(f.api); await fn(f); } finally { restore(); plugin.deactivate(); }
+  try { f.exports = plugin.activate(f.api); await fn(f); } finally { restore(); plugin.deactivate(); }
   return f.calls;
 }
 const listed = (files: Record<string, string>, opts: Parameters<typeof fakeApi>[1] = {}) =>
@@ -247,4 +250,45 @@ test('main approval: 같은 요청은 한 번만, 카드 서비스의 메인 창
   // 서비스 tmux 로 창을 고르지 못하는 superlite(v47 이하) — 이 머신의 메인 창
   calls = await withMain({ 'plugin.json': PLUGIN_JSON }, { services }, async ({ exposed }) => { await exposed.host.approval(a); });
   assert.deepEqual(calls.filter((c) => c.startsWith('window ') || c.startsWith('call ')), ['window $9', 'window -', `call wmain slcode/cards.notify ${JSON.stringify({ key: 'sA', id: 'sess-A', message: a.message })}`]);
+});
+
+// ---- 다른 플러그인용 exports (ticket slcode-close-mail-verbs, 사용자 2026-10-24) — plugins.get('slcode').close·mail
+const BIN = '/opt/slcode'; // 설정 bin 은 셸에 그대로
+const rows = (live: boolean) => JSON.stringify([{ id: 'w1', live }, { id: 'other', live: true }]);
+
+test('exports.close: 켜진 세션은 slcode close 뒤 메인 창부터 카드가 있는 창을 찾을 때까지 closeCard, 결과 {ok, card}', async () => {
+  const calls = await withMain({ 'plugin.json': PLUGIN_JSON }, { settings: { bin: '/opt/slcode' }, run: (c) => (c.includes(' list --all') ? { code: 0, stdout: rows(true), stderr: '' } : undefined), windows: { wa: false, wmain: false, wb: true, wc: true } }, async ({ exports }) => {
+    assert.deepEqual(await exports.close('w1'), { ok: true, card: true });
+  });
+  assert.ok(calls.includes(`proc ${BIN} close 'w1'`));
+  const asked = calls.filter((c) => c.includes('closeCard')).map((c) => c.split(' ')[1]);
+  assert.deepEqual(asked, ['wmain', 'wa', 'wb'], '메인 창이 먼저, 닫기 요청은 한 창에만');
+});
+
+test('exports.close: 이미 꺼진 세션은 close 없이 성공(already) — 카드 닫기 요청은 건다, 카드를 연 창이 없으면 card false', async () => {
+  const calls = await withMain({ 'plugin.json': PLUGIN_JSON }, { settings: { bin: '/opt/slcode' }, run: (c) => (c.includes(' list --all') ? { code: 0, stdout: rows(false), stderr: '' } : undefined), windows: { wa: true } }, async ({ exports }) => {
+    assert.deepEqual(await exports.close('w1'), { ok: true, already: true, card: true });
+  });
+  assert.ok(!calls.some((c) => c.includes(' close ')));
+  await withMain({ 'plugin.json': PLUGIN_JSON }, { settings: { bin: '/opt/slcode' }, run: (c) => (c.includes(' list --all') ? { code: 0, stdout: rows(false), stderr: '' } : undefined) }, async ({ exports }) => {
+    assert.deepEqual(await exports.close('w1'), { ok: true, already: true, card: false });
+  });
+});
+
+test('exports.close: 없는 세션·close 실패는 reject', async () => {
+  await withMain({ 'plugin.json': PLUGIN_JSON }, { settings: { bin: '/opt/slcode' }, run: (c) => (c.includes(' list --all') ? { code: 0, stdout: rows(true), stderr: '' } : c.includes(' close ') ? { code: 1, stdout: '', stderr: '[slcode] boom\n' } : undefined) }, async ({ exports }) => {
+    await assert.rejects(exports.close('nope'), /^Error: no session nope$/);
+    await assert.rejects(exports.close('w1'), /\[slcode\] boom/);
+  });
+});
+
+test('exports.mail: slcode mail --from <from> -- <to> <text> (따옴표·대시로 시작하는 본문), 출력 {id, to}; 실패는 stderr 로 reject', async () => {
+  const calls = await withMain({ 'plugin.json': PLUGIN_JSON }, { settings: { bin: '/opt/slcode', dir: '/d' }, run: (c) => (c.includes(" 'gone' ") ? { code: 1, stdout: '', stderr: '[slcode] no session gone\n' } : c.includes(' mail') ? { code: 0, stdout: '{"id":"m1","to":"orch-id"}', stderr: '' } : undefined) }, async ({ exports }) => {
+    assert.deepEqual(await exports.mail({ to: 'orch', text: "--done: it's ok", from: 'w1' }), { id: 'm1', to: 'orch-id' });
+    assert.deepEqual(await exports.mail({ to: 'orch', text: 'hi' }), { id: 'm1', to: 'orch-id' });
+    await assert.rejects(exports.mail({ to: 'gone', text: 'x', from: 'w1' }), /no session gone/);
+    await assert.rejects(exports.mail({ to: 'orch' }), /mail needs \{to, text\}/);
+  });
+  assert.ok(calls.includes(`proc ${BIN} mail --from 'w1' --dir '/d' -- 'orch' '--done: it'\\''s ok'`));
+  assert.ok(calls.includes(`proc ${BIN} mail --dir '/d' -- 'orch' 'hi'`), 'from 이 없으면 CLI 가 unknown');
 });
