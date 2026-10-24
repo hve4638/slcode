@@ -22,7 +22,7 @@ import { corePaths, ensureDir, readOrCreateToken } from './paths.js';
 import { formatMail, newMail, parseMails, sendMail, sessionMeta } from './mail.js';
 import { blockInspect, CODEX_ROUTE, codexArgs, codexUpstream, inspectBlocked, inspectEnv, keepsFirstParty, sdkVersion, startInspect, turnCalls, upstreamOf, type InspectProxy } from './inspect.js';
 import { InspectStore, maybeSweep } from './inspectDb.js';
-import { CoreError, ERR, FILES, PROTOCOL_VERSION, type ApprovalRequest, type LoggedEvent, type Mail, type MethodName, type Methods, type RequestFrame, type SessionInfo } from './protocol.js';
+import { CoreError, ERR, FILES, PERMISSION_MODES, PROTOCOL_VERSION, type ApprovalRequest, type LoggedEvent, type Mail, type MethodName, type Methods, type RequestFrame, type SessionInfo } from './protocol.js';
 
 /** 벤더 자식(claude CLI·codex)에 넘기지 않을 env — 워커 Claude 세션 안에서 띄우면 그 세션의 표식(CLAUDECODE·CLAUDE_CODE_SESSION_ID·
  *  CLAUDE_CODE_CHILD_SESSION·CLAUDE_CODE_ENTRYPOINT·CLAUDE_CODE_MESSAGING_* 등, claude 2.1.282·2.1.300 실측)이 딸려 가 자식이 남의 세션 안이라 여긴다.
@@ -90,6 +90,8 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   if (migrated) log(`moved ${migrated} session(s) under cwd folders`);
 
   // ---- 세션 로그: 새로 / --resume
+  const isMode = (m: unknown) => (PERMISSION_MODES as readonly unknown[]).includes(m);
+  if (opts.permissionMode !== undefined && !isMode(opts.permissionMode)) throw new CoreError(ERR.badRequest, `mode ${PERMISSION_MODES.join('|')}`);
   let logFile: EventLog;
   if (opts.resume) {
     const found = EventLog.open(P.sessionsDir, opts.resume);
@@ -98,13 +100,16 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     if (opts.title !== undefined) found.updateMeta({ title: opts.title });
     // --no-inspect 는 켜져 있던 세션만 끈다 — 켠 적 없는 세션엔 값을 남기지 않는다 (inspect 버튼은 켠 적 있는 세션에만 보인다)
     if (opts.inspect === false && found.meta.inspect) found.updateMeta({ inspect: false });
+    // 메뉴에서 뺀 옛 모드(acceptEdits·plan)는 auto 로 고쳐 쓴다 — core 교체도 이 길이라 업데이트 뒤 첫 기동에서 바뀐다 (ticket slcode-permission-modes-three)
+    if (found.meta.permissionMode && !isMode(found.meta.permissionMode)) found.updateMeta({ permissionMode: 'auto' });
     logFile = found;
   } else {
     const meta: SessionMeta = {
       id: randomUUID().slice(0, 8), vendor: opts.vendor ?? 'claude', cwd: opts.cwd, title: opts.title ?? null,
-      vendorSessionId: null, createdAt: Date.now(), permissionMode: opts.permissionMode ?? null, raw: opts.raw ?? false,
+      vendorSessionId: null, createdAt: Date.now(), permissionMode: opts.permissionMode ?? 'auto', raw: opts.raw ?? false,
       ...(opts.model ? { model: opts.model } : {}), ...(opts.effort ? { effort: opts.effort } : {}), ...(opts.inspect ? { inspect: true } : {}),
     };
+    // 새 세션의 권한 모드는 생략하면 auto (사용자 2026-10-24) — 이미 있는 세션의 null(벤더 기본 = 승인 요청)은 건드리지 않는다
     logFile = EventLog.create(P.sessionsDir, meta);
   }
   const cwd = logFile.meta.cwd;
@@ -301,7 +306,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       return { ok: true };
     },
     'session.interrupt': async (_c, p) => { await mine(p?.id).interrupt(); return { ok: true }; },
-    'session.setMode': async (_c, p) => { const s = mine(p?.id); if (!['default', 'acceptEdits', 'plan', 'bypassPermissions', 'auto'].includes(p.mode)) throw new CoreError(ERR.badRequest, 'mode default|acceptEdits|plan|bypassPermissions|auto'); await s.setMode(p.mode); broadcast('session.changed', s.info()); return { ok: true }; },
+    'session.setMode': async (_c, p) => { const s = mine(p?.id); if (!isMode(p.mode)) throw new CoreError(ERR.badRequest, `mode ${PERMISSION_MODES.join('|')}`); await s.setMode(p.mode); broadcast('session.changed', s.info()); return { ok: true }; },
     'session.commands': (_c, p) => mine(p?.id).commands(),
     'session.status': async (_c, p) => {
       const s = mine(p?.id);

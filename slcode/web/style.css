@@ -349,6 +349,10 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .menu .item { display: flex; justify-content: space-between; align-items: center; width: 100%; text-align: left; border: 0; background: transparent; padding: 7px 10px; border-radius: 8px; }
 .acf .menu .item:hover { background: var(--acf-soft); }
 .acf .menu .item[aria-checked=true]::after { content: "✓"; color: var(--acf-accent); }
+/* 권한 모드 메뉴 — 항목 앞에 모드 아이콘 (사용자 2026-10-24) */
+#acf-mode .item { justify-content: flex-start; gap: 10px; }
+#acf-mode .item::after { margin-left: auto; padding-left: 12px; }
+#acf-mode .item svg { width: 16px; height: 16px; flex: none; fill: none; stroke: var(--acf-muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .acf .menu .item.toggle { border-top: 1px solid var(--acf-line); border-radius: 0; margin-top: 4px; padding-top: 10px; color: var(--acf-muted); }
 .acf .menu .item.toggle::after { content: "›"; }
 .acf .menu .more { display: none; } .acf .menu .more.open { display: block; }

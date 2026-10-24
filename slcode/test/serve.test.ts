@@ -143,8 +143,9 @@ test('메시지 → 턴: 켜진 세션에만 보낸다(꺼진 세션·없는 이
 test('벤더가 첫 턴 전에 죽으면 오류 한 줄 + 종료 한 줄 (serve 의 close 가 종료를 다시 내지 않는다)', { timeout: 30000 }, async () => {
   const dir = isolated();
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
-  // 없는 모드 — CLI 가 인자 검사에서 exit 1 (API 호출 없음). root 의 skip 플래그 거부와 같은 꼴
-  const h = await serveSession({ dir, cwd: work, web: false, permissionMode: 'bogus' });
+  // 없는 벤더 세션 — CLI 가 resume 할 대화를 못 찾아 exit 1 (API 호출 없음). 없는 모드로 CLI 를 죽이던 길은 core 가 모드를 먼저 거절해 막혔다 (ticket slcode-permission-modes-three)
+  EventLog.create(corePaths(dir).sessionsDir, { id: 'gone0001', vendor: 'claude', cwd: work, title: null, vendorSessionId: '00000000-0000-4000-8000-000000000000', createdAt: 1, permissionMode: null, raw: false }).close();
+  const h = await serveSession({ dir, cwd: work, resume: 'gone0001', web: false });
   const c = await connectSession(h.sock);
   await c.request('session.attach', { id: h.session.id });
   await c.request('session.send', { id: h.session.id, text: 'x' });

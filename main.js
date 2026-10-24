@@ -14,6 +14,8 @@ const SVC = 'session';
 const CARDS = 'slcode/cards'; // renderer 가 공개한 인터페이스 (scope own)
 /** Claude 의 effort 이름 — slcode/src/base.ts CLAUDE_EFFORTS 와 같다 (플러그인은 slcode 를 import 하지 못한다) */
 const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+/** 권한 모드 — slcode/src/protocol.ts PERMISSION_MODES 와 같다 */
+const PERMISSION_MODES = ['default', 'auto', 'bypassPermissions'];
 /** model 의 공급자 앞머리 → 벤더 (`<공급자>:<모델>`, 사용자 2026-10-24 정식 형식) — slcode/src/cli.ts PROVIDERS 와 같다 */
 const PROVIDERS = { anthropic: 'claude', openai: 'codex' };
 
@@ -233,6 +235,7 @@ export function activate(api) {
     }
     // effort 이름 오타는 카드를 열기 전에 거절 — slcode CLI 의 checkNew 와 같은 목록 (Codex 는 모델마다 열려 있어 보지 않는다)
     if (a.effort !== undefined && vendor !== 'codex' && !CLAUDE_EFFORTS.includes(a.effort)) throw new Error(`unknown effort '${a.effort}' for claude (${CLAUDE_EFFORTS.join('|')})`);
+    if (a.mode !== undefined && !PERMISSION_MODES.includes(a.mode)) throw new Error(`unknown mode '${a.mode}' (${PERMISSION_MODES.join('|')})`);
     const key = newKey();
     const done = new Promise((resolve, reject) => waits.set(key, { resolve, reject }));
     try {

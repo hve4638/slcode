@@ -32,6 +32,7 @@ test('codex: initialize→thread/start→turn/start, 델타·도구·승인(acce
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
   const h = await serveSession({ dir, cwd: work, vendor: 'codex', web: false });
   assert.equal(h.session.vendor, 'codex');
+  assert.equal(h.session.permissionMode, 'auto', '새 세션은 자동 승인으로 시작 (사용자 2026-10-24)');
   const c = await connectSession(h.sock);
   const evs: any[] = [];
   // core 는 다른 프로세스 — turn.end 와 뒤따르는 session.state 가 따로 도착할 수 있어 state 까지 기다린다.
@@ -62,7 +63,8 @@ test('codex: initialize→thread/start→turn/start, 델타·도구·승인(acce
   const st = await c.request('session.status', { id: h.session.id });
   assert.deepEqual(st.context, { tokens: 500, max: 200000, pct: 0.25 }, 'last(현재 컨텍스트), total(누계) 아님');
   assert.equal(st.limits.fiveHour.pct, 3); assert.equal(st.limits.sevenDay.pct, 40);
-  await c.request('session.setMode', { id: h.session.id, mode: 'plan' });
+  await assert.rejects(c.request('session.setMode', { id: h.session.id, mode: 'plan' }), /mode default\|auto\|bypassPermissions/, '메뉴에서 뺀 모드는 거절');
+  await c.request('session.setMode', { id: h.session.id, mode: 'bypassPermissions' });
   assert.deepEqual((await c.request('session.commands', { id: h.session.id })).map((x: any) => x.name), ['compact']);
   // /compact 는 turn/start 대신 thread/compact/start — 압축 턴이 manual 로 표시되고 turn.end 로 끝난다
   const n0 = evs.length;
@@ -78,12 +80,14 @@ test('codex: initialize→thread/start→turn/start, 델타·도구·승인(acce
   c.close();
   await h.close('test');
   
-  // --resume: 같은 세션을 다시 열면 thread/resume 로 같은 thread id, 모드는 meta 에서
+  // --resume: 같은 세션을 다시 열면 thread/resume 로 같은 thread id, 모드는 meta 에서 — 옛 모드(plan)는 auto 로 고쳐 쓴다 (ticket slcode-permission-modes-three)
+  const old = EventLog.open(corePaths(dir).sessionsDir, h.session.id)!; assert.equal(old.meta.permissionMode, 'bypassPermissions'); old.updateMeta({ permissionMode: 'plan' }); old.close();
   const h2 = await serveSession({ dir, cwd: work, resume: h.session.id, web: false });
   assert.equal(h2.session.vendor, 'codex');
   const c2 = await connectSession(h2.sock);
   const r = await c2.request('session.attach', { id: h2.session.id });
-  assert.equal(r.info.vendorSessionId, 'thr-1'); assert.equal(r.info.permissionMode, 'plan');
+  assert.equal(r.info.vendorSessionId, 'thr-1'); assert.equal(r.info.permissionMode, 'auto');
+  assert.equal(EventLog.open(corePaths(dir).sessionsDir, h.session.id)!.meta.permissionMode, 'auto', 'meta 까지');
   await untilReady(dir, h2.session.id, 2);
   const ready = (await c2.request('session.attach', { id: h2.session.id })).history.filter((e) => e.ev.kind === 'session.ready');
   assert.equal(ready.length, 2, '두 번째 기동의 ready 도 로그에');
@@ -160,9 +164,9 @@ test('codex: auto 모드 = on-request + workspaceWrite + approvalsReviewer auto_
   assert.ok(deltas.includes('policy=on-request reviewer=auto_review sandbox=workspaceWrite'), deltas.join(' | '));
   const rv = (await c.request('session.attach', { id: h.session.id })).history.map((e: any) => e.ev).find((e: any) => e.kind === 'review');
   assert.deepEqual(rv, { kind: 'review', toolUseId: 'exec-1', decision: 'denied', risk: 'high', action: 'touch x', rationale: 'too risky' });
-  await c.request('session.setMode', { id: h.session.id, mode: 'acceptEdits' });
+  await c.request('session.setMode', { id: h.session.id, mode: 'default' });
   await turn('b');
-  assert.ok(deltas.includes('policy=on-request reviewer=user sandbox=workspaceWrite'), 'resume·다음 턴에 이전 reviewer 가 남지 않게 늘 명시');
+  assert.ok(deltas.includes('policy=untrusted reviewer=user sandbox=readOnly'), 'resume·다음 턴에 이전 reviewer 가 남지 않게 늘 명시');
   c.close();
   await h.close('test');
 });
@@ -201,6 +205,7 @@ test('core: session.attach limit 은 끝 한 페이지·more·summary, session.h
     { kind: 'turn.end', ok: true, error: null, interrupted: false, costUsd: 0.01 * (t + 1), durationMs: 1, usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 } }]) log.append({ seq: ++seq, at: 0, ev: ev as any });
   log.close();
   const h = await serveSession({ dir, cwd: work, resume: 'pppp0001', web: false });
+  assert.equal(h.session.permissionMode, null, '모드를 바꾼 적 없는 옛 세션(null)은 그대로 — auto 는 새 세션만');
   const c = await connectSession(h.sock);
   try {
     const a = await c.request('session.attach', { id: h.session.id, limit: 10 });

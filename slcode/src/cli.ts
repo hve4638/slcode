@@ -23,7 +23,7 @@ import { findVendorSession, forkClaude, vendorResumeCommand } from './vendor.js'
 import { pullHistory } from './history.js';
 import { CLAUDE_EFFORTS } from './base.js';
 import { randomUUID } from 'node:crypto';
-import { FILES, type ApprovalRequest, type LoggedEvent, type Methods, type SessionInfo } from './protocol.js';
+import { FILES, PERMISSION_MODES, type ApprovalRequest, type LoggedEvent, type Methods, type SessionInfo } from './protocol.js';
 
 type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; model?: string; effort?: string; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; 'no-inspect'?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; re?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; takeover?: boolean; version?: boolean; help?: boolean };
 
@@ -40,6 +40,7 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
                                  새 세션 (폴더 생략 시 현재 폴더)
                                  --model·--effort: 새 세션의 모델·effort (생략 시 벤더 기본). Claude effort 는 low|medium|high|xhigh|max.
                                  --model anthropic:<모델>·openai:<모델> 은 벤더도 고른다 (claude·codex, --vendor 생략 가능)
+                                 --mode: 권한 모드 default|auto|bypassPermissions (화면의 승인 요청·자동 승인·전체 액세스), 생략 시 auto
                                  모델에 없는 effort 는 세션에 경고를 남기고 벤더 기본으로 돈다
                                  -- 뒤의 단어들은 첫 프롬프트 — 세션이 뜨자마자 첫 턴으로 들어간다 (예: slcode new -- "$(cat plan.md)")
                                  --model·--effort·첫 프롬프트는 새 세션에만 — resume·import·꺼진 세션을 찾은 continue 에 주면 오류
@@ -118,6 +119,8 @@ if (provider) {
   flags.vendor = provider; flags.model = flags.model!.slice(colon + 1);
   if (!flags.model) usage('--model <provider>:<model> needs a model name');
 }
+// 권한 모드는 셋만 — 메뉴에서 뺀 acceptEdits·plan 도 거절한다 (ticket slcode-permission-modes-three, 사용자 결정 2026-10-23)
+if (flags.mode !== undefined && !(PERMISSION_MODES as readonly string[]).includes(flags.mode)) usage(`unknown mode '${flags.mode}' (${PERMISSION_MODES.join('|')})`);
 if (bare && positionals.length) usage(`동사 없는 slcode 는 옵션만 받는다: ${positionals.join(' ')} — 다른 폴더는 slcode new <folder>`);
 const [cmd, ...rest] = bare ? ['new'] : positionals;
 if (!cmd || flags.help) { console.log(HELP); process.exit(0); }
@@ -418,7 +421,7 @@ try {
       const vsid = found.vendor === 'claude' ? await forkClaude(found.id, found.cwd) : null;
       const log = EventLog.create(P.sessionsDir, {
         id: randomUUID().slice(0, 8), vendor: found.vendor, cwd: found.cwd, title: flags.title ?? null,
-        vendorSessionId: vsid, createdAt: Date.now(), permissionMode: flags.mode ?? null, raw: flags.raw ?? false, forkFrom: found.id,
+        vendorSessionId: vsid, createdAt: Date.now(), permissionMode: flags.mode ?? 'auto', raw: flags.raw ?? false, forkFrom: found.id,
       });
       // 이전 대화를 옮겨 쓰고 그 뒤에 표지 — 읽지 못하면 반쯤 만든 세션을 남기지 않는다
       const r = await pullHistory(log, vsid ?? found.id, { vendorSessionId: found.id, fork: true }).catch((e: Error) => { log.close(); EventLog.remove(P.sessionsDir, log.meta.id); err(`could not read ${found.vendor} session ${found.id}: ${e.message}`); process.exit(1); });

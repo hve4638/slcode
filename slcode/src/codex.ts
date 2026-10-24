@@ -49,22 +49,20 @@ type Pending = ApprovalRequest & { rpcId: number | string; kind: 'command' | 'fi
 type Waiter = { res: (v: any) => void; rej: (e: Error) => void };
 
 /** 우리 권한 모드 → Codex 의 턴 파라미터 (t3code 의 runtimeMode 매핑 안에서, codex-ref 보고 §7):
- *  default = untrusted + readOnly(명령·편집 모두 묻는다, t3code approval-required), acceptEdits = on-request + workspaceWrite(t3code auto-accept-edits),
- *  plan = on-request + readOnly(쓰려면 묻는다), bypassPermissions = never + dangerFullAccess(t3code full-access),
- *  auto = acceptEdits 의 규칙 + approvalsReviewer auto_review(승인 요청을 사용자 대신 Codex 의 검토 서브에이전트가 판단 — Claude 의 auto 에 대응, 사용자 결정 2026-10-09).
+ *  default = untrusted + readOnly(명령·편집 모두 묻는다, t3code approval-required), bypassPermissions = never + dangerFullAccess(t3code full-access),
+ *  auto = on-request + workspaceWrite(t3code auto-accept-edits) + approvalsReviewer auto_review(승인 요청을 사용자 대신 Codex 의 검토 서브에이전트가 판단 — Claude 의 auto 에 대응, 사용자 결정 2026-10-09).
+ *  옛 acceptEdits·plan 은 core 가 resume 때 auto 로 고쳐 써서 오지 않는다 (ticket slcode-permission-modes-three).
  *  approvalsReviewer 는 늘 명시한다 — resume 에서 생략하면 이전 값이 남는다 */
 function policyOf(mode: string | null | undefined): { approvalPolicy: unknown; sandboxPolicy: unknown; approvalsReviewer: 'user' | 'auto_review' } {
   const ro = { type: 'readOnly', networkAccess: false };
   const ww = { type: 'workspaceWrite', writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false };
   switch (mode) {
-    case 'acceptEdits': return { approvalPolicy: 'on-request', sandboxPolicy: ww, approvalsReviewer: 'user' };
     case 'auto': return { approvalPolicy: 'on-request', sandboxPolicy: ww, approvalsReviewer: 'auto_review' };
-    case 'plan': return { approvalPolicy: 'on-request', sandboxPolicy: ro, approvalsReviewer: 'user' };
     case 'bypassPermissions': return { approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' }, approvalsReviewer: 'user' };
     default: return { approvalPolicy: 'untrusted', sandboxPolicy: ro, approvalsReviewer: 'user' };
   }
 }
-const sandboxModeOf = (mode: string | null | undefined) => (mode === 'acceptEdits' || mode === 'auto' ? 'workspace-write' : mode === 'bypassPermissions' ? 'danger-full-access' : 'read-only');
+const sandboxModeOf = (mode: string | null | undefined) => (mode === 'auto' ? 'workspace-write' : mode === 'bypassPermissions' ? 'danger-full-access' : 'read-only');
 
 /** ThreadItem → 도구 이름·입력 (Claude 어휘에 가깝게: 명령은 Bash, 패치는 Edit). 실시간 알림과 가져온 기록(history.ts)이 같이 쓴다 */
 export function toolOf(item: any): { name: string; input: unknown } | null {

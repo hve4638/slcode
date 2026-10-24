@@ -29,6 +29,10 @@ export const FILES = {
 
 export type Vendor = 'claude' | 'codex';
 
+/** 권한 모드 — 화면 이름 승인 요청·자동 승인·전체 액세스. acceptEdits·plan 은 뺐다: 옛 세션은 core 가 resume 때 auto 로 고쳐 쓴다 (ticket slcode-permission-modes-three) */
+export const PERMISSION_MODES = ['default', 'auto', 'bypassPermissions'] as const;
+export type PermissionMode = typeof PERMISSION_MODES[number];
+
 export type SessionState = 'starting' | 'idle' | 'running' | 'requires_action' | 'exited';
 
 /** 세션 한 장 (attach 응답 info·session.changed·CLI list 항목) */
@@ -199,7 +203,7 @@ export type Methods = {
   'session.setVendor': { params: { id: string; vendor: Vendor }; result: { ok: true } };
   'session.interrupt': { params: { id: string }; result: { ok: true } };
   /** 권한 모드 전환 — 즉시 적용, meta 에 남아 --resume 뒤에도 유지. 현재 값은 SessionInfo.permissionMode (session.changed 로 갱신) */
-  'session.setMode': { params: { id: string; mode: 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions' | 'auto' }; result: { ok: true } };
+  'session.setMode': { params: { id: string; mode: PermissionMode }; result: { ok: true } };
   /** 벤더 슬래시 명령 목록 — 입력창 `/` 자동완성. session.ready 전에도 답한다 */
   'session.commands': { params: { id: string }; result: { name: string; description: string; argumentHint: string }[] };
   /** 사이드바 상단(claude 상태줄과 같은 정보) — cwd 의 git repo 이름·브랜치, 벤더 플랜 리밋 창(5시간·7일, 0-100 %), 컨텍스트 창 사용량. 플랜이 없거나 벤더가 답을 못 주면 그 항목은 null. 폴링 없이 attach·turn.end 때 한 번씩 (사용자 2026-09-29) */

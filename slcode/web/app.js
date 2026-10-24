@@ -155,16 +155,19 @@ export function mountAgentFront(root, transport, opts = {}) {
   // 권한 모드 — effort 옆 알약 + 메뉴 (session.setMode, 즉시). 현재 값은 info.permissionMode (session.changed 로 갱신)
   const REVIEW = { approved: '허용', denied: '거부', timedOut: '시간 초과', aborted: '중단' };
   const RISK = { low: '낮음', medium: '보통', high: '높음', critical: '심각' };
-  const MODES = [['default', 'default', '도구마다 승인'], ['acceptEdits', 'acceptEdits', '파일 수정은 승인 없이'], ['auto', 'auto', 'AI 가 대신 승인'], ['bypassPermissions', 'bypass', '승인 없음']];
+  const MODES = [['default', '승인 요청', 'hand'], ['auto', '자동 승인', 'shieldCheck'], ['bypassPermissions', '전체 액세스', 'shieldAlert']];
   const modeLbl = h('span', {}, '');
+  const modeIco = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); modeIco.setAttribute('viewBox', '0 0 24 24');
   const modeBtn = h('button', { class: 'ghost pill-btn mode', popovertarget: 'acf-mode' }, modeLbl);
   const modeMenu = h('div', { class: 'menu', id: 'acf-mode', popover: '' });
-  // 모드별 색(auto 노랑·bypass 빨강, 2026-10-09)은 뺐다 (사용자 2026-10-13). plan 은 메뉴에서 뺐다(쓸 일이 없다) — 와이어는 옛 세션을 위해 계속 받는다
-  const paintMode = (v) => { modeLbl.textContent = MODES.find(([m]) => m === v)?.[1] ?? v; };
+  // 모드별 색(auto 노랑·bypass 빨강, 2026-10-09)은 뺐다 (사용자 2026-10-13). 메뉴는 승인 요청·자동 승인·전체 액세스 셋, 설명 없이 모드별 아이콘만 — 알약도 같은 아이콘 (사용자 2026-10-24) — 이름만 화면용이고 값은 그대로,
+  // 옛 acceptEdits·plan 세션은 core 가 resume 때 auto 로 고쳐 쓴다 (ticket slcode-permission-modes-three)
+  const modeName = (v) => MODES.find(([m]) => m === v)?.[1] ?? v;
+  const paintMode = (v) => { modeLbl.textContent = modeName(v); modeIco.innerHTML = ICONS[MODES.find(([m]) => m === v)?.[2] ?? 'shieldCheck']; };
   function renderMode() {
     const cur = info?.permissionMode ?? ready?.permissionMode ?? 'default';
     paintMode(cur);
-    modeMenu.replaceChildren(...MODES.map(([v, label, desc]) => h('button', { class: 'item', 'aria-checked': String(v === cur), onclick: () => { modeMenu.hidePopover(); paintMode(v); rpc('session.setMode', { id: current, mode: v }).catch((e) => { push(h('div', { class: 'meta err' }, e.message)); renderMode(); }); } }, h('span', {}, label), h('span', { class: 'desc' }, desc))));
+    modeMenu.replaceChildren(...MODES.map(([v, label, ico]) => h('button', { class: 'item', 'aria-checked': String(v === cur), onclick: () => { modeMenu.hidePopover(); paintMode(v); rpc('session.setMode', { id: current, mode: v }).catch((e) => { push(h('div', { class: 'meta err' }, e.message)); renderMode(); }); } }, icon(ico), h('span', {}, label))));
   }
   // start: 버튼 왼쪽 끝에 맞춘다 — 왼쪽 아래 권한 모드 메뉴가 오른쪽 끝에 맞추면 화면 왼쪽 밖으로 나간다
   const anchor = (menu, btn, start = false) => () => { if (menu.matches(':popover-open')) { const r = btn.getBoundingClientRect(); menu.style.left = `${start ? r.left : r.right - menu.offsetWidth}px`; menu.style.bottom = `${innerHeight - r.top + 6}px`; } };
@@ -306,6 +309,46 @@ export function mountAgentFront(root, transport, opts = {}) {
   const toTop = (node) => jump(feed.scrollTop + node.getBoundingClientRect().top - feed.getBoundingClientRect().top - 12);
   const startBtn = (node) => iconBtn('top', '답변 시작으로', () => toTop(node));
   // 말풍선 아래 아이콘 줄 (ChatGPT 꼴, 사용자 2026-09-27) — 복사, (사용자 턴엔) 돌아가기 = claude 의 Esc-Esc: 답변만 / 코드만 / 둘 다
+  /* 아이콘(ICONS)은 Lucide(https://lucide.dev)의 것이거나 그 꼴을 따른 것이다. 일부(plus·copy·chevron 등)는 Lucide 가 Feather 에서 가져온 것이다.
+   *
+   * ISC License
+   *
+   * Copyright (c) 2026 Lucide Icons and Contributors
+   *
+   * Permission to use, copy, modify, and/or distribute this software for any
+   * purpose with or without fee is hereby granted, provided that the above
+   * copyright notice and this permission notice appear in all copies.
+   *
+   * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+   * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+   * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+   * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+   * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+   * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+   * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+   *
+   * The MIT License (MIT) (for the icons derived from the Feather project)
+   *
+   * Copyright (c) 2013-present Cole Bemis
+   *
+   * Permission is hereby granted, free of charge, to any person obtaining a copy
+   * of this software and associated documentation files (the "Software"), to deal
+   * in the Software without restriction, including without limitation the rights
+   * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   * copies of the Software, and to permit persons to whom the Software is
+   * furnished to do so, subject to the following conditions:
+   *
+   * The above copyright notice and this permission notice shall be included in all
+   * copies or substantial portions of the Software.
+   *
+   * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+   * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+   * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+   * SOFTWARE.
+   */
   const ICONS = {
     pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
     copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>',
@@ -316,7 +359,10 @@ export function mountAgentFront(root, transport, opts = {}) {
     stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
     chevron: '<path d="M6 9l6 6 6-6"/>',
     panel: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/>',
-    shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
+    // 권한 모드 — lucide hand·shield-check·shield-alert (사용자 2026-10-24)
+    hand: '<path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>',
+    shieldCheck: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
+    shieldAlert: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="M12 8v4"/><path d="M12 16h.01"/>',
     // 상태 아이콘 — claude 상태줄의 📁🌿⌛📦·비용(작성창 아래)·💻(사이드바 위) 자리, 외곽선만 — lucide 꼴
     folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
     branch: '<line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
@@ -355,7 +401,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   const pencil = iconBtn('pencil', '이름 바꾸기', editName);
   title.addEventListener('dblclick', editName);
   nameRow.append(pencil);
-  sendBtn.append(icon('up')); addBtn.append(icon('plus')); stopBtn.append(icon('stop')); modelBtn.append(icon('chevron')); modeBtn.prepend(icon('shield')); modeBtn.append(icon('chevron')); sideBtn.append(icon('panel')); gearBtn.append(icon('gear')); jumpBtn.prepend(icon('down'));
+  sendBtn.append(icon('up')); addBtn.append(icon('plus')); stopBtn.append(icon('stop')); modelBtn.append(icon('chevron')); modeBtn.prepend(modeIco); modeBtn.append(icon('chevron')); sideBtn.append(icon('panel')); gearBtn.append(icon('gear')); jumpBtn.prepend(icon('down'));
   // 보낼 게 없거나(빈 입력·첨부 없음) 세션이 끝났으면 보내기 버튼을 비활성처럼 (사용자 2026-09-27)
   // 실행 중엔 보내기 자리에 중단 (사용자 2026-10-09) — 입력이나 첨부가 생기면 다시 보내기, 작업 중에도 보낼 수 있으므로
   const canSend = () => {
@@ -749,7 +795,7 @@ export function mountAgentFront(root, transport, opts = {}) {
         ev.summary ? h('span', { class: 'sum' }, ev.summary) : null);
     })));
     side.append(sec('session', '세션', kv([
-      ['상태', STATE_LABEL[info?.state] ?? ''], ['id', current ? h('span', { class: 'idv' }, current, iconBtn('copy', '세션 id 복사', copyOf(current))) : null],['벤더 세션', info?.vendorSessionId ?? ready?.vendorSessionId], ['권한 모드', ready?.permissionMode ?? info?.permissionMode],
+      ['상태', STATE_LABEL[info?.state] ?? ''], ['id', current ? h('span', { class: 'idv' }, current, iconBtn('copy', '세션 id 복사', copyOf(current))) : null],['벤더 세션', info?.vendorSessionId ?? ready?.vendorSessionId], ['권한 모드', modeName(ready?.permissionMode ?? info?.permissionMode)],
       ['연결', connected ? '연결됨' : '끊김'], ['raw', info?.raw ? '켬' : '끔'],
       // inspect 토글 — 켜고 끄면 벤더(claude·codex)를 같은 대화로 다시 띄운다 (idle 일 때만). 값은 session.changed 로 온다
       ...(info ? [['inspect', h('button', { class: 'ghost', title: `켜거나 끄면 ${info.vendor} 를 같은 대화로 다시 띄웁니다 (대기 중일 때만)`, disabled: info.state === 'idle' || info.state === 'starting' ? null : '',

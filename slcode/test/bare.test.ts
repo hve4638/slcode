@@ -56,6 +56,11 @@ test('동사 없는 slcode = new . — 옵션만 받는다, 위치 인자·모�
   assert.equal(pos.code, 2); assert.match(pos.stderr, /옵션만 받는다: elsewhere/);
   const unk = await run(dir, ['foo']);
   assert.equal(unk.code, 2); assert.match(unk.stderr, /unknown verb: foo/);
+  // 권한 모드는 셋만 — 메뉴에서 뺀 acceptEdits·plan 도 아무것도 열지 않고 거절 (ticket slcode-permission-modes-three)
+  for (const m of ['acceptEdits', 'plan']) {
+    const r = await run(dir, ['--mode', m]);
+    assert.equal(r.code, 2); assert.match(r.stderr, new RegExp(`unknown mode '${m}' \\(default\\|auto\\|bypassPermissions\\)`));
+  }
   await sleep(1500); // 우체국 grace
 });
 
@@ -63,13 +68,13 @@ test('superlite 안: slcode·slcode new 는 slcode.new 동사로 카드를 열�
   const dir = tmp('slcode-bare-');
   const work = tmp('slcode-work-');
   const shim = fakeShim('ok');
-  const a = await run(dir, ['--vendor', 'codex', '--title', 'T 1', '--mode', 'plan', '--model', 'gpt-x', '--raw'], { cwd: work, env: shim.env });
+  const a = await run(dir, ['--vendor', 'codex', '--title', 'T 1', '--mode', 'auto', '--model', 'gpt-x', '--raw'], { cwd: work, env: shim.env });
   assert.equal(a.code, 0, a.stderr); assert.equal(a.stdout.trim(), 's-card-1');
   assert.match(a.stderr, /warning: ignoring --raw \(opened as a card\)/);
   const b = await run(dir, ['new', work], { env: shim.env });
   assert.equal(b.code, 0); assert.equal(b.stdout.trim(), 's-card-1');
   const real = fs.realpathSync(work);
-  assert.deepEqual(shim.calls(), [`slcode.new --cwd ${real} --vendor codex --title T 1 --mode plan --model gpt-x`, `slcode.new --cwd ${work}`]);
+  assert.deepEqual(shim.calls(), [`slcode.new --cwd ${real} --vendor codex --title T 1 --mode auto --model gpt-x`, `slcode.new --cwd ${work}`]);
   assert.deepEqual(EventLog.list(corePaths(dir).sessionsDir), [], '이 프로세스는 세션을 만들지 않는다');
 });
 
@@ -103,7 +108,7 @@ test('superlite 안: resume·continue 는 slcode.resume 동사로 카드 — con
   const work = fs.realpathSync(tmp('slcode-work-'));
   stored(dir, 'old11111', work, { closedAt: 100, updatedAt: 90 }); stored(dir, 'new22222', work, { updatedAt: 200 }); // closedAt 없는 옛 세션은 updatedAt
   const shim = fakeShim('ok');
-  const r = await run(dir, ['resume', 'old11111', '--mode', 'plan'], { env: shim.env });
+  const r = await run(dir, ['resume', 'old11111', '--mode', 'auto'], { env: shim.env });
   assert.equal(r.code, 0, r.stderr); assert.equal(r.stdout.trim(), 's-card-1'); assert.match(r.stderr, /warning: ignoring --mode \(opened as a card\)/);
   assert.equal((await run(dir, ['continue'], { cwd: work, env: shim.env })).code, 0);
   assert.equal((await run(dir, ['resume'], { cwd: work, env: shim.env })).code, 0);
