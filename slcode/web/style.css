@@ -126,6 +126,29 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .jump button svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .acf .jump .n:empty { display: none; }
 
+/* 지난 요청 목록 (ticket slcode-prompt-outline) — 대화 열 왼쪽 여백. 자리·폭·높이(--h)와 감춤은 app.js outlineLayout 이 실제 여백으로 정한다 */
+.acf .main { position: relative; }
+.acf .outline { position: absolute; top: 24px; z-index: 1; display: flex; flex-direction: column; min-width: 0; font-size: 13px; }
+.acf .outline[hidden] { display: none; }
+.acf .outline button.head { display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 6px; padding: 5px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--acf-muted); font-size: 12px; }
+.acf .outline button.head:hover { background: var(--acf-soft); color: var(--acf-fg); }
+.acf .outline button.head svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform .15s; }
+.acf .outline.folded button.head svg { transform: rotate(-90deg); }
+.acf .outline.folded .list { display: none; }
+/* 목록만의 스크롤바 — 대화와 따로 굴린다 */
+.acf .outline .list { display: flex; flex-direction: column; max-height: var(--h); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--acf-line) transparent; }
+.acf .outline button.oitem { display: flex; align-items: center; gap: 6px; height: 28px; flex: none; padding: 0 10px; border: 0; border-left: 2px solid transparent; border-radius: 0 6px 6px 0; background: transparent; color: var(--acf-muted); text-align: left; font-size: 13px; min-width: 0; }
+.acf .outline button.oitem:hover { background: var(--acf-soft); color: var(--acf-fg); }
+.acf .outline button.oitem.cur { color: var(--acf-fg); font-weight: 500; border-left-color: var(--acf-accent); }
+.acf .outline .oitem .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.acf .outline .oitem .slash { font-family: var(--acf-mono); font-size: 12px; flex: none; }
+.acf .outline .oitem.files .t { font-style: italic; opacity: .8; }
+.acf .outline .oitem svg { width: 12px; height: 12px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.acf .outline .oitem.loading::after { content: "⋯"; margin-left: auto; padding-left: 6px; animation: acf-blink 1s steps(2) infinite; }
+/* 목록에서 옮겨 온 요청 — 잠깐 테두리 */
+.acf .hit { animation: acf-hit 1.2s ease-out; }
+@keyframes acf-hit { from { box-shadow: 0 0 0 2px var(--acf-accent); } to { box-shadow: 0 0 0 2px transparent; } }
+
 .acf .user { align-self: flex-end; max-width: 85%; display: flex; flex-direction: column; align-items: flex-end; }
 .acf .user .bubble { background: var(--acf-user); border-radius: 14px 14px 4px 14px; padding: 9px 14px; white-space: pre-wrap; word-break: break-word; }
 .acf .acts { display: flex; gap: 4px; align-items: center; margin: 2px 0 -8px; opacity: 0; transition: opacity .15s; font-size: 12px; }

@@ -45,6 +45,9 @@ export fn visible(events) -> LoggedEvent[] {
 export fn historyPage(events, before, limit) -> HistoryPage {
   role: 기록 페이지 — visible 의 seq before 앞에서, 끝부터 화면 항목(이어진 같은 범위의 delta 는 하나) limit 개 안의 가장 앞 자름 지점, 없으면 그 너머 첫 지점에서 자른다. 자름 지점은 열린 tool·approval·task 가 없는 turn.start (웹 pickCut 과 같다) — session.exit 에서 열린 것을 비운다(벤더가 끝나 끝 이벤트가 오지 않는다). 지점이 없으면 전부
 }
+export fn outline(events) -> OutlineItem[] {
+  role: 요청 목록 (ticket slcode-prompt-outline, 2026-10-23) — 되돌린 턴을 뺀 turn.start 마다 seq·origin·앞 300자·첨부 이름. 메일 턴은 웹이 머리표를 풀어 보낸 이·본문 첫 줄을 보이므로 자르지 않는다. 웹이 아직 받지 않은 옛 요청까지 왼쪽 목록에 처음부터 보인다
+}
 export fn summarize(events) -> HistorySummary {
   role: 기록 전체(되돌린 턴 포함)의 turn.end 사용량·비용 누계(SDK 비용은 프로세스 누계라 줄어드는 경계에서 기준선에 합친다), 훅 횟수·마지막, 마지막 session.ready — 웹이 앞 페이지를 안 받고도 합계를 그린다
 }

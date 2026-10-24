@@ -494,10 +494,10 @@ export function mountAgentFront(root, transport, opts = {}) {
       case 'turn.start': if (!turned) { turned = true; paintVendor(); } if (!replaying) busySince = e.at || Date.now(); setBusy('작업 중');
         endText(); main.acts = null; // 이 턴 마지막 응답의 아이콘 줄 — turn.end 가 inspect 버튼을 붙인다
         // main.turnEl: 이 턴의 내 요청(메시지 카드) — 그 바로 다음 항목이 '답변 시작으로' 가 가는 곳 (실행 중 줄은 늘 맨 끝으로 옮겨지므로 사이에 끼지 않는다)
-        if (ev.origin === 'mail') { main.turnEl = push(mailCard(ev.text, e.seq)); break; }
-        main.turnEl = push(h('div', { class: 'user' }, h('div', { class: 'bubble' }, ev.origin ? h('span', { class: 'origin' }, ev.origin) : null,
+        if (ev.origin === 'mail') { outlineAdd(e.seq, ev, main.turnEl = push(mailCard(ev.text, e.seq))); break; }
+        outlineAdd(e.seq, ev, main.turnEl = push(h('div', { class: 'user' }, h('div', { class: 'bubble' }, ev.origin ? h('span', { class: 'origin' }, ev.origin) : null,
           ev.attachments?.length ? h('div', { class: 'chips' }, ...ev.attachments.map((a) => { const local = sentFiles.get(a.name); return h('span', { class: 'chip' }, local ? h('img', { src: local }) : null, a.name); })) : null,
-          ev.text), rewindBtn(e.seq, ev.text)));
+          ev.text), rewindBtn(e.seq, ev.text))));
         break;
       case 'text.delta': {
         const sc = scopeOf(ev.parent);
@@ -594,6 +594,7 @@ export function mountAgentFront(root, transport, opts = {}) {
         endText();
         for (const n of [...col.children, ...(replaying ? [] : older.children)]) if (Number(n.dataset.seq) >= ev.seq) n.remove();
         if (!replaying) backlog = backlog.filter((b) => b.seq < ev.seq);
+        outlineCut(ev.seq, e.seq);
         for (const [k, sc] of subs) if (!sc.col.isConnected) subs.delete(k);
         for (const [k, t] of tasks) if (!t.card.isConnected) tasks.delete(k);
         // 답변 되돌리기는 화면에서 보이므로 안내가 없다. 파일 되돌리기만 결과를 남긴다 (사용자 2026-09-30)
@@ -831,7 +832,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   const CHUNK = 300; // ponytail: 이벤트 수로 자른다, 턴 하나가 아주 길면 그 턴은 통째로
   const PAGE = CHUNK * 2;
   let backlog = [];
-  let more = false, oldest = 0, fetching = false; // more: 서버에 앞 기록이 더 있다, oldest: 받은 것 중 가장 앞 seq
+  let more = false, oldest = 0, fetching = null; // more: 서버에 앞 기록이 더 있다, oldest: 받은 것 중 가장 앞 seq, fetching: 받는 중인 약속
   // 끝에서 CHUNK 개 안의 가장 앞 자름 지점, 없으면 그 너머의 첫 지점, 그것도 없으면 전부
   function pickCut(a) {
     let cut = 0;
@@ -901,20 +902,137 @@ export function mountAgentFront(root, transport, opts = {}) {
     renderSide(); rearm(); prefetch();
   }
   // 버퍼가 화면 두 번 분량 아래면 그 앞 페이지를 받아 둔다 — 위로 올리는 동안 기다리지 않게. 받은 뒤 표지가 보이고 있으면 rearm 이 바로 붙인다
-  async function prefetch() {
-    if (!more || fetching || backlog.length >= PAGE || !current) return;
-    fetching = true;
-    try {
-      const r = await rpc('session.history', { id: current, before: oldest, limit: PAGE });
-      more = r.more;
-      if (r.history.length) { oldest = r.history[0].seq; backlog = prepare(r.history).concat(backlog); }
-    } catch (e) { if (e.code !== 'closed') more = false; return; } // 끊김이면 재접속의 attach 가 다시 부른다. 그 밖의 실패는 다시 불러도 같으니 멈춘다
-    finally { fetching = false; }
-    rearm(); prefetch();
+  // 받는 중이면 그 약속을 돌려준다 — 요청 목록의 옛 요청 이동(loadUntil)이 기다린다
+  function prefetch() {
+    if (!more || fetching || backlog.length >= PAGE || !current) return fetching;
+    return fetching = (async () => {
+      try {
+        const r = await rpc('session.history', { id: current, before: oldest, limit: PAGE });
+        more = r.more;
+        if (r.history.length) { oldest = r.history[0].seq; backlog = prepare(r.history).concat(backlog); }
+      } catch (e) { if (e.code !== 'closed') more = false; return; } // 끊김이면 재접속의 attach 가 다시 부른다. 그 밖의 실패는 다시 불러도 같으니 멈춘다
+      finally { fetching = null; }
+      rearm(); prefetch();
+    })();
   }
   // 맨 위 표지가 보이면 앞 턴을 붙인다. 붙인 뒤에도 계속 보이면 교차 상태가 안 바뀌어 콜백이 없으므로 다시 건다
   const io = new IntersectionObserver((es) => { if (es[0].isIntersecting) requestAnimationFrame(loadOlder); }, { root: feed, rootMargin: '600px 0px 0px 0px' });
   const rearm = () => { io.unobserve(sentinel); if (backlog.length) io.observe(sentinel); };
+
+  // ---- 지난 요청 목록 (ticket slcode-prompt-outline, chatgpt.com 의 prompt navigator 참조) — 대화 열 왼쪽 여백에 사용자 요청을 줄마다 하나씩.
+  // 목록은 서버가 attach 때 기록 전체에서 준다(prompts) — 아직 받지 않은 옛 요청도 보이고, 누르면 그 자리까지 앞 기록을 이어 그린 뒤 옮긴다.
+  // 옛 core 는 prompts 가 없다 — 그린 요청만 모인다. 지금 항목 = 화면 위 35% 선을 마지막으로 지난 요청(지금 읽는 답의 질문), 바닥이면 마지막 요청
+  const outline = []; // { seq, origin, text, files, node } — seq 순
+  const outlineAt = new Map();
+  let outlineCur = -1, navTok = 0;
+  // 접기 — 처음엔 접혀 제목줄만 보인다(대화 옆이 어수선하다). 펼침은 이 화면에서만 — 저장하지 않는다 (사용자 결정)
+  const navCount = h('span', {});
+  const navHead = h('button', { class: 'head', 'aria-expanded': 'false', onclick: () => setFolded(!nav.classList.contains('folded')) }, navCount, icon('chevron'));
+  const navList = h('div', { class: 'list', role: 'list' });
+  const nav = h('nav', { class: 'outline folded', 'aria-label': '지난 요청', hidden: '' }, navHead, navList);
+  function setFolded(on) {
+    nav.classList.toggle('folded', on); navHead.setAttribute('aria-expanded', String(!on));
+    if (!on) centerCur(true);
+  }
+  center.append(nav);
+  const promptHead = (it) => {
+    if (it.origin === 'mail') { const m = mailParts(it.text)[0]; return { mail: true, text: `${m.from}: ${m.body.trim().split('\n')[0]}` }; }
+    const line = it.text.trim().split('\n').find((l) => l.trim()) ?? '';
+    if (!line && it.files.length) return { files: true, text: `첨부 ${it.files.length}개 · ${it.files[0]}` };
+    return { text: line, slash: /^\/\S+/.exec(line)?.[0] };
+  };
+  function itemEl(it, i) {
+    const p = promptHead(it);
+    const b = h('button', { class: `oitem${p.files ? ' files' : ''}`, role: 'listitem', tabindex: -1, title: it.text.trim().slice(0, 200) || it.files.join(', '), onclick: () => goPrompt(it.seq) },
+      p.mail ? icon('mail') : null,
+      p.slash ? h('span', { class: 'slash' }, p.slash) : null, h('span', { class: 't' }, p.slash ? p.text.slice(p.slash.length) : p.text));
+    b.dataset.i = i;
+    return b;
+  }
+  function outlineDraw() {
+    navCount.textContent = `기록 · ${outline.length}`;
+    navList.replaceChildren(...outline.map(itemEl));
+    outlineCur = -1; outlineLayout(); spy(true);
+  }
+  let drawQueued = false;
+  const outlineRedraw = () => { if (!drawQueued) { drawQueued = true; requestAnimationFrame(() => { drawQueued = false; outlineDraw(); }); } };
+  function outlineSeed(list) { outline.length = 0; outlineAt.clear(); for (const p of list) { const it = { ...p, node: null }; outline.push(it); outlineAt.set(p.seq, it); } outlineRedraw(); }
+  function outlineAdd(seq, ev, node) {
+    let it = outlineAt.get(seq);
+    if (!it) {
+      it = { seq, origin: ev.origin, text: ev.text, files: ev.attachments?.map((a) => a.name) ?? [], node: null };
+      outlineAt.set(seq, it);
+      let i = outline.length; while (i > 0 && outline[i - 1].seq > seq) i--;
+      outline.splice(i, 0, it); outlineRedraw();
+    }
+    it.node = node;
+  }
+  // 되돌리기 — from 부터 그 이벤트(at) 앞까지의 요청을 뺀다. 기록을 다시 그릴 땐 되돌림 뒤의 요청이 목록에 이미 있다
+  function outlineCut(from, at) {
+    const n = outline.length;
+    for (let i = n - 1; i >= 0; i--) if (outline[i].seq >= from && outline[i].seq < at) { outlineAt.delete(outline[i].seq); outline.splice(i, 1); }
+    if (outline.length !== n) outlineRedraw();
+  }
+  // 자리는 실제 왼쪽 여백으로 — 사이드바가 열리거나 카드가 좁아 여백이 232px 미만이면 감춘다(사용자 결정: 좁은 화면의 막대·헤더 버튼 안 기각). 요청이 셋 미만이어도 감춘다
+  function outlineLayout() {
+    const g = (feed.clientWidth - liveCol.offsetWidth) / 2;
+    nav.hidden = outline.length < 3 || g < 232;
+    if (nav.hidden) return;
+    const w = Math.min(280, g - 32);
+    nav.style.width = `${w}px`; nav.style.left = `${g - 24 - w}px`; nav.style.setProperty('--h', `${feed.clientHeight - 48}px`);
+  }
+  new ResizeObserver(() => outlineLayout()).observe(feed);
+  // 지금 항목이 목록 가운데 오게 — 포인터가 목록 위에 있으면 옮기지 않는다(고르려는 항목이 손 밑에서 도망가지 않게). scrollIntoView 는 카드 iframe 의 바깥까지 굴린다
+  function centerCur(force = false) {
+    const b = navList.children[outlineCur];
+    if (!b || (!force && nav.matches(':hover'))) return;
+    navList.scrollTop = b.offsetTop - (navList.clientHeight - b.offsetHeight) / 2;
+  }
+  // 이분 탐색 — 그린 요청은 목록의 끝쪽 연속 구간이다(앞 기록은 이어 붙인다)
+  function spy(force = false) {
+    let cur = outline.length - 1;
+    if (!follow) {
+      const line = feed.getBoundingClientRect().top + feed.clientHeight * 0.35;
+      let lo = outline.findIndex((it) => it.node?.isConnected), hi = outline.length - 1;
+      if (lo < 0) cur = -1;
+      else if (outline[lo].node.getBoundingClientRect().top > line) cur = lo;
+      else { while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (outline[mid].node.getBoundingClientRect().top <= line) lo = mid; else hi = mid - 1; } cur = lo; }
+    }
+    if (cur === outlineCur) return;
+    navList.children[outlineCur]?.classList.remove('cur'); navList.children[outlineCur]?.removeAttribute('aria-current'); navList.children[outlineCur]?.setAttribute('tabindex', '-1');
+    outlineCur = cur;
+    const b = navList.children[cur];
+    if (b) { b.classList.add('cur'); b.setAttribute('aria-current', 'location'); b.setAttribute('tabindex', '0'); }
+    centerCur(force);
+  }
+  let spyQueued = false;
+  feed.addEventListener('scroll', () => { if (!spyQueued) { spyQueued = true; requestAnimationFrame(() => { spyQueued = false; spy(); }); } }, { passive: true });
+  navList.addEventListener('keydown', (e) => {
+    const i = Number(e.target.dataset?.i); if (Number.isNaN(i)) return;
+    const to = { ArrowUp: i - 1, ArrowDown: i + 1, Home: 0, End: outline.length - 1 }[e.key];
+    if (e.key === 'Escape') { input.focus(); return; }
+    if (to === undefined) return;
+    e.preventDefault(); const b = navList.children[Math.max(0, Math.min(outline.length - 1, to))]; b?.focus(); b && (navList.scrollTop = b.offsetTop - (navList.clientHeight - b.offsetHeight) / 2);
+  });
+  // 그린 적 없는 요청이면 그 자리까지 앞 기록을 이어 그린다 — 구간을 띄엄띄엄 두면 위로 올리기·되돌리기·미리 받기가 끊긴 구간을 다뤄야 한다
+  async function loadUntil(it, tok) {
+    while (!it.node?.isConnected && tok === navTok) {
+      if (backlog.length) { loadOlder(); await new Promise(requestAnimationFrame); }
+      else if (more) { await prefetch(); if (!backlog.length) return; }
+      else return;
+    }
+  }
+  // 바로 옮기고 그 말풍선 테두리를 잠깐 빛낸다 — 부드러운 스크롤은 먼 요청일수록 오래 굴러 도착 자리를 놓친다
+  async function goPrompt(seq) {
+    const it = outlineAt.get(seq), tok = ++navTok;
+    if (!it) return;
+    const b = navList.children[outline.indexOf(it)];
+    if (!it.node?.isConnected) { b?.classList.add('loading'); await loadUntil(it, tok); b?.classList.remove('loading'); }
+    if (tok !== navTok || !it.node?.isConnected) return;
+    jump(feed.scrollTop + it.node.getBoundingClientRect().top - feed.getBoundingClientRect().top - 12);
+    const hit = it.node.querySelector('.bubble, .envelope') ?? it.node;
+    hit.classList.remove('hit'); void hit.offsetWidth; hit.classList.add('hit');
+  }
 
   // ---- attach · 재접속
   async function attach(id) {
@@ -927,6 +1045,7 @@ export function mountAgentFront(root, transport, opts = {}) {
       else throw e;
     }
     if (first && r.summary) { more = !!r.more; oldest = r.history[0]?.seq ?? 0; }
+    if (first && r.prompts) outlineSeed(r.prompts);
     info = r.info; setTitle(info.title); syncInspect();
     if (r.draft && !input.value) { input.value = r.draft; input.oninput(); } // 다시 로드된 화면 — 쓰던 글을 되살린다 (치던 중이면 그대로)
     replayHistory(r.history, first ? r.summary : null);

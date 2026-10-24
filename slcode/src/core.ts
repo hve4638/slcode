@@ -15,7 +15,7 @@ import { execFile } from 'node:child_process';
 import { ClaudeSession } from './session.js';
 import { CodexSession, codexRunnable } from './codex.js';
 import type { AgentSession } from './base.js';
-import { EventLog, historyPage, summarize, type SessionMeta } from './eventLog.js';
+import { EventLog, historyPage, outline, summarize, type SessionMeta } from './eventLog.js';
 import { isLoopback, reachable, sockAlive, spawnCore } from './live.js';
 import { BUILD, PKG, VERSION, replacingMark } from './client.js';
 import { corePaths, ensureDir, readOrCreateToken } from './paths.js';
@@ -265,8 +265,8 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     'session.attach': (conn, p) => {
       const s = mine(p?.id);
       conn.detach?.();
-      // limit 이면 끝 한 페이지와 합계 (ticket slcode-history-paging) — 구독과 같은 틱이라 페이지와 실시간 사이에 빠지는 이벤트가 없다
-      const page = p.limit ? { ...historyPage(s.log.all, Infinity, Number(p.limit)), summary: summarize(s.log.all) } : { history: s.since(Number(p.since ?? 0)) };
+      // limit 이면 끝 한 페이지와 합계 (ticket slcode-history-paging)·요청 목록 (ticket slcode-prompt-outline) — 구독과 같은 틱이라 페이지와 실시간 사이에 빠지는 이벤트가 없다
+      const page = p.limit ? { ...historyPage(s.log.all, Infinity, Number(p.limit)), summary: summarize(s.log.all), prompts: outline(s.log.all) } : { history: s.since(Number(p.since ?? 0)) };
       conn.detach = s.onEvent((e: LoggedEvent) => conn.send({ event: 'session.event', params: { id: sid, ...e } }));
       return { info: s.info(), ...page, pending: s.pendingApprovals() as ApprovalRequest[], draft };
     },

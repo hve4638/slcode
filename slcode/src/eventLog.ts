@@ -4,7 +4,7 @@
 // 옛 평탄 구조 sessions/<id>/ 는 migrate 가 슬러그 아래로 옮긴다 (2026-09-27 이전 세션).
 import fs from 'node:fs';
 import path from 'node:path';
-import type { HistorySummary, LoggedEvent, SessionInfo, Vendor } from './protocol.js';
+import type { HistorySummary, LoggedEvent, OutlineItem, SessionInfo, Vendor } from './protocol.js';
 import { cwdSlug, sessionDir } from './paths.js';
 
 export type SessionMeta = {
@@ -74,6 +74,12 @@ export function historyPage(events: readonly LoggedEvent[], before: number, limi
     if (n >= limit && found) { cut = found; break; } // 처음까지 limit 안에 들면 전부 — 첫 턴 앞 몇 줄만 남은 페이지를 따로 받지 않게
   }
   return { history: vis.slice(cut, end), more: cut > 0 };
+}
+
+/** 요청 목록 (ticket slcode-prompt-outline) — 되돌린 턴을 뺀 turn.start 마다. 웹이 아직 받지 않은 옛 요청도 목록에 보이게 기록 전체에서 */
+export function outline(events: readonly LoggedEvent[]): OutlineItem[] {
+  return unrewound(events).flatMap(({ seq, ev }) => ev.kind === 'turn.start'
+    ? [{ seq, origin: ev.origin, text: ev.origin === 'mail' ? ev.text : ev.text.slice(0, 300), files: ev.attachments?.map((a) => a.name) ?? [] }] : []);
 }
 
 /** 기록 전체의 합계 — 되돌린 턴도 센다. SDK 비용은 프로세스 누계라 --resume 뒤 0 부터 다시 시작한다: 줄어드는 경계에서 기준선에 합친다 (웹 tally 와 같다) */

@@ -136,6 +136,20 @@ test('historyPage·summarize: 되돌린 턴을 빼고 화면 항목(delta 묶음
   assert.equal((s.ready as any).model, 'm2', '마지막 session.ready — 되돌린 턴 안의 것이라도');
 });
 
+test('outline: 되돌린 턴을 뺀 요청마다 seq·origin·앞 300자·첨부 이름, 메일 턴은 글 전부 (ticket slcode-prompt-outline)', async () => {
+  const { outline } = await import('../src/eventLog.ts');
+  const evs: LoggedEvent[] = [];
+  const add = (ev: any) => { evs.push({ seq: evs.length + 1, at: 0, ev }); return evs.length; };
+  add({ kind: 'session.ready', model: 'm', tools: [] });
+  add({ kind: 'turn.start', text: 'a', origin: null });
+  add({ kind: 'turn.end', ok: true, error: null, interrupted: false, costUsd: null, durationMs: 1, usage: null });
+  const gone = add({ kind: 'turn.start', text: 'gone', origin: null });
+  add({ kind: 'turn.rewound', seq: gone, conversation: true, files: false, filesChanged: null });
+  const long = add({ kind: 'turn.start', text: 'x'.repeat(400), origin: null, attachments: [{ name: 'a.png', mediaType: 'image/png', size: 1 }] });
+  const mail = add({ kind: 'turn.start', text: 'm'.repeat(400), origin: 'mail' });
+  assert.deepEqual(outline(evs).map((o) => [o.seq, o.origin, o.text.length, o.files]), [[2, null, 1, []], [long, null, 300, ['a.png']], [mail, 'mail', 400, []]]);
+});
+
 test('historyPage: 끝 이벤트 없이 세션이 끝난 도구는 session.exit 뒤의 자름 지점을 막지 않는다', async () => {
   const { historyPage } = await import('../src/eventLog.ts');
   const evs: LoggedEvent[] = [];

@@ -87,6 +87,9 @@ export type Usage = { input: number; output: number; cacheRead: number; cacheWri
  *  다음 turn.end 가 이보다 작으면 벤더가 새로 떴고 합계에 이어 붙인다. ready 는 마지막 session.ready 본문 */
 export type HistorySummary = { turns: number; usage: Usage; costUsd: number | null; lastCostUsd: number | null; hooks: number; lastHook: string | null; ready: Extract<CoreEventBody, { kind: 'session.ready' }> | null };
 
+/** 요청 목록 한 줄 (ticket slcode-prompt-outline) — turn.start 의 seq·origin·앞 300자(메일 턴은 전부 — 웹이 머리표를 풀어 보낸 이·본문 첫 줄을 보인다)·첨부 이름 */
+export type OutlineItem = { seq: number; origin: string | null; text: string; files: string[] };
+
 export type ApprovalDecision = 'allow' | 'deny';
 export type ResolvedDecision = ApprovalDecision | 'cancelled';
 
@@ -185,8 +188,9 @@ export type Methods = {
   /** 이 연결에 세션의 이벤트 스트림을 켠다. since 뒤의 로그를 history 로, 대기 승인을 pending 으로 */
   /** draft 는 웹 입력창 초안 (session.setDraft 로 맡긴 것, 없으면 '') — 다시 붙은 웹이 비어 있는 입력창을 채운다 */
   /** limit 이 있으면 history 는 끝 한 페이지(되돌린 턴을 빼고 화면 항목 limit 개 안팎, 열린 도구·승인·작업이 없는 turn.start 에서 자른 것)이고 more·summary 가 붙는다 — since 는 보지 않는다.
-   *  옛 core 는 limit 을 모르고 전체를 보낸다 (summary 없음) (ticket slcode-history-paging, 2026-10-17) */
-  'session.attach': { params: { id: string; since?: number; limit?: number }; result: { info: SessionInfo; history: LoggedEvent[]; pending: ApprovalRequest[]; draft: string; more?: boolean; summary?: HistorySummary } };
+   *  옛 core 는 limit 을 모르고 전체를 보낸다 (summary 없음) (ticket slcode-history-paging, 2026-10-17).
+   *  limit 응답의 prompts 는 되돌린 턴을 뺀 기록 전체의 요청 목록 — 웹 왼쪽 목록이 아직 받지 않은 옛 요청도 보인다 (ticket slcode-prompt-outline) */
+  'session.attach': { params: { id: string; since?: number; limit?: number }; result: { info: SessionInfo; history: LoggedEvent[]; pending: ApprovalRequest[]; draft: string; more?: boolean; summary?: HistorySummary; prompts?: OutlineItem[] } };
   /** seq before 앞의 한 페이지 (attach limit 과 같은 규칙). more 는 그 앞이 더 있는가 */
   'session.history': { params: { id: string; before: number; limit: number }; result: { history: LoggedEvent[]; more: boolean } };
   'session.detach': { params: { id: string }; result: { ok: true } };
