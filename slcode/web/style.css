@@ -118,6 +118,13 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .col { max-width: 780px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
 .acf .older:not(:empty) { margin-bottom: 14px; } /* 앞 턴 붙이기 — 위치 보정은 app.js 가 직접 한다, 브라우저 scroll anchoring 과 겹치면 두 번 밀린다 */
 .acf .feed { overflow-anchor: none; }
+/* 맨 아래로 (ticket slcode-scroll-nav) — 피드 끝의 높이 0 sticky 줄이라 늘 피드 아래 가운데에 뜬다. 새 메시지가 있으면 글자·개수가 붙은 강조색 알약으로 */
+.acf .jump { position: sticky; bottom: 0; height: 0; display: flex; justify-content: center; pointer-events: none; }
+.acf .jump button { position: absolute; bottom: 10px; display: flex; align-items: center; gap: 6px; height: 34px; min-width: 34px; padding: 0 8px; border-radius: 17px; background: var(--acf-panel); color: var(--acf-fg); box-shadow: 0 2px 10px var(--acf-shadow); font-size: 13px; white-space: nowrap; opacity: 0; transition: opacity .15s; }
+.acf .jump button.on { opacity: 1; pointer-events: auto; }
+.acf .jump button.hot { padding: 0 14px 0 10px; background: var(--acf-accent); border-color: var(--acf-accent); color: var(--acf-on-accent); }
+.acf .jump button svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.acf .jump .n:empty { display: none; }
 
 .acf .user { align-self: flex-end; max-width: 85%; display: flex; flex-direction: column; align-items: flex-end; }
 .acf .user .bubble { background: var(--acf-user); border-radius: 14px 14px 4px 14px; padding: 9px 14px; white-space: pre-wrap; word-break: break-word; }

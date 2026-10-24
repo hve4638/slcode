@@ -264,16 +264,36 @@ export function mountAgentFront(root, transport, opts = {}) {
   // 따라가기 — 바닥에 있을 때만 새 항목을 따라 내려간다. 부드러운 스크롤 도중엔 위치 측정이 틀리므로(2026-09-30 실측) 값을 재지 않고 플래그를 든다:
   // 사용자가 스크롤하면 그때 바닥 여부를 재고, 보내기·바닥 도달 때 켠다
   let follow = true;
-  feed.onscroll = () => { follow = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 80; };
-  const toBottom = () => { follow = true; feed.scrollTop = feed.scrollHeight; };
+  // 맨 아래로 버튼 (ticket slcode-scroll-nav, 사용자 2026-10-23) — 따라가기가 꺼진 동안 피드 아래 가운데(작성창·승인 카드 바로 위)에 뜬다.
+  // 그 사이 실시간으로 새로 시작한 답변 말풍선(서브에이전트 안은 빼고)을 세어 '새 메시지 N' 알약으로. 알림은 이 화면 안에서만 (superlite 알림으로 보내지 않는다)
+  // 바닥으로는 즉시 간다 — 부드러운 스크롤 도중의 onscroll 이 follow 를 꺼서 버튼이 깜빡이고, 그 사이 온 항목을 따라가지 않는다
+  let unread = 0;
+  const jumpLbl = h('span', { class: 'n' });
+  const jumpBtn = h('button', { title: '맨 아래로', 'aria-label': '맨 아래로', onclick: () => toBottom() }, jumpLbl); // 화살표는 icon 정의 뒤에 붙인다
+  feed.append(h('div', { class: 'jump' }, jumpBtn));
+  const paintJump = () => { if (follow) unread = 0; jumpBtn.classList.toggle('on', !follow); jumpBtn.classList.toggle('hot', unread > 0); jumpLbl.textContent = unread ? `새 메시지 ${unread}` : ''; };
+  // 끄는 것은 위로 갈 때만 — 바닥으로 부드럽게 내려가는 도중의 위치(큰 도구 카드가 붙은 직후 등)로 끄면 버튼이 깜빡이고 그 사이 온 답변을 '새 메시지' 로 센다 (2026-10-23 실측)
+  let lastTop = 0;
+  feed.onscroll = () => {
+    if (feed.scrollHeight - feed.scrollTop - feed.clientHeight < 80) follow = true; else if (feed.scrollTop < lastTop) follow = false;
+    lastTop = feed.scrollTop; paintJump();
+  };
+  const toBottom = () => { follow = true; jump(feed.scrollHeight); paintJump(); };
   const atBottom = () => follow;
   function push(node, sc = main) { const stick = atBottom(); node.dataset.seq = curSeq; (sc.col ?? col).append(node); if (!busy.hidden && !replaying) col.append(busy); if (stick && !replaying) feed.scrollTop = feed.scrollHeight; return node; }
   function endText(sc = main) { if (sc.textEl) { sc.textEl.classList.remove('streaming'); sc.textEl.append(sc.acts = acts(iconBtn('copy', '복사', copyOf(sc.textBuf)))); } sc.textEl = null; sc.textBuf = ''; sc.thinkEl = null; sc.thinkBuf = ''; }
+  // 답변 시작으로 (ticket slcode-scroll-nav, 사용자 2026-10-24) — 턴의 마지막 말풍선 아이콘 줄(복사 옆)에만, 누르면 그 턴의 응답 첫 항목
+  // (내 요청 바로 아래 — 글·생각·도구 카드 무엇이든)이 화면 맨 위로. 턴 안에서 도구 사이로 쪼개진 마지막 말풍선의 처음이 아니다.
+  // 말풍선마다 두는 안은 프로토타입으로 비교하고 뺐다. 즉시 간다 — 부드럽게 올라가는 도중 앞 턴이 붙으면 엉뚱한 곳에 멈춘다
+  const toTop = (node) => jump(feed.scrollTop + node.getBoundingClientRect().top - feed.getBoundingClientRect().top - 12);
+  const startBtn = (node) => iconBtn('top', '답변 시작으로', () => toTop(node));
   // 말풍선 아래 아이콘 줄 (ChatGPT 꼴, 사용자 2026-09-27) — 복사, (사용자 턴엔) 돌아가기 = claude 의 Esc-Esc: 답변만 / 코드만 / 둘 다
   const ICONS = {
     pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
     copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>',
     up: '<path d="M12 19V5"/><path d="M5 12l7-7 7 7"/>',
+    down: '<path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/>',
+    top: '<path d="M5 3h14"/><path d="m18 13-6-6-6 6"/><path d="M12 7v14"/>',
     plus: '<path d="M12 5v14"/><path d="M5 12h14"/>',
     stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
     chevron: '<path d="M6 9l6 6 6-6"/>',
@@ -317,7 +337,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   const pencil = iconBtn('pencil', '이름 바꾸기', editName);
   title.addEventListener('dblclick', editName);
   nameRow.append(pencil);
-  sendBtn.append(icon('up')); addBtn.append(icon('plus')); stopBtn.append(icon('stop')); modelBtn.append(icon('chevron')); effortBtn.append(icon('chevron')); modeBtn.prepend(icon('shield')); modeBtn.append(icon('chevron')); sideBtn.append(icon('panel')); gearBtn.append(icon('gear'));
+  sendBtn.append(icon('up')); addBtn.append(icon('plus')); stopBtn.append(icon('stop')); modelBtn.append(icon('chevron')); effortBtn.append(icon('chevron')); modeBtn.prepend(icon('shield')); modeBtn.append(icon('chevron')); sideBtn.append(icon('panel')); gearBtn.append(icon('gear')); jumpBtn.prepend(icon('down'));
   // 보낼 게 없거나(빈 입력·첨부 없음) 세션이 끝났으면 보내기 버튼을 비활성처럼 (사용자 2026-09-27)
   // 실행 중엔 보내기 자리에 중단 (사용자 2026-10-09) — 입력이나 첨부가 생기면 다시 보내기, 작업 중에도 보낼 수 있으므로
   const canSend = () => {
@@ -409,15 +429,19 @@ export function mountAgentFront(root, transport, opts = {}) {
     switch (ev.kind) {
       case 'turn.start': if (!replaying) busySince = e.at || Date.now(); setBusy('작업 중');
         endText(); main.acts = null; // 이 턴 마지막 응답의 아이콘 줄 — turn.end 가 inspect 버튼을 붙인다
-        if (ev.origin === 'mail') { push(mailCard(ev.text, e.seq)); break; }
-        push(h('div', { class: 'user' }, h('div', { class: 'bubble' }, ev.origin ? h('span', { class: 'origin' }, ev.origin) : null,
+        // main.turnEl: 이 턴의 내 요청(메시지 카드) — 그 바로 다음 항목이 '답변 시작으로' 가 가는 곳 (실행 중 줄은 늘 맨 끝으로 옮겨지므로 사이에 끼지 않는다)
+        if (ev.origin === 'mail') { main.turnEl = push(mailCard(ev.text, e.seq)); break; }
+        main.turnEl = push(h('div', { class: 'user' }, h('div', { class: 'bubble' }, ev.origin ? h('span', { class: 'origin' }, ev.origin) : null,
           ev.attachments?.length ? h('div', { class: 'chips' }, ...ev.attachments.map((a) => { const local = sentFiles.get(a.name); return h('span', { class: 'chip' }, local ? h('img', { src: local }) : null, a.name); })) : null,
           ev.text), rewindBtn(e.seq, ev.text)));
         break;
       case 'text.delta': {
         const sc = scopeOf(ev.parent);
         if (!ev.parent) setBusy('작성 중');
-        if (!sc.textEl) { sc.textEl = push(h('div', { class: 'assistant streaming' }), sc); sc.textBuf = ''; }
+        if (!sc.textEl) {
+          if (live && !ev.parent && !follow) { unread++; paintJump(); }
+          sc.textEl = push(h('div', { class: 'assistant streaming' }), sc); sc.textBuf = '';
+        }
         sc.textBuf += ev.text;
         const stick = atBottom();
         sc.textEl.innerHTML = renderMarkdown(sc.textBuf, info?.cwd ?? ready?.cwd);
@@ -483,7 +507,7 @@ export function mountAgentFront(root, transport, opts = {}) {
           if (u) parts.push(`↑${fmtTok(u.input + u.cacheRead + u.cacheWrite)} ↓${fmtTok(u.output)}`);
           if (e.at) parts.push(new Date(e.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })); // 끝난 시각 — claude 의 "done 오후 9:14" 자리 (사용자 2026-10-15)
         }
-        if (main.acts) main.acts.append(inspectBtn(e.seq)); else push(h('div', { class: 'acts solo' }, inspectBtn(e.seq)));
+        if (main.acts) main.acts.append(startBtn(main.turnEl?.nextElementSibling ?? main.acts.parentNode), inspectBtn(e.seq)); else push(h('div', { class: 'acts solo' }, inspectBtn(e.seq)));
         if (parts.length) push(h('div', { class: `meta${ev.interrupted ? ' err' : ''}` }, parts.join(' · ')));
         if (!replaying) renderSide();
         break;
