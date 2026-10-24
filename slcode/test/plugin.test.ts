@@ -6,6 +6,8 @@ import assert from 'node:assert/strict';
 import * as mod from '../../main.js';
 // @ts-expect-error — 빌드 없는 JS 플러그인 (카드 화면 — 모듈 최상위는 DOM 에 닿지 않는다)
 import * as cardMod from '../../views/session.js';
+// @ts-expect-error — 빌드 없는 JS 플러그인
+import * as rendererMod from '../../renderer.js';
 
 // repo 루트에 package.json 이 없어 tsx 가 main.js 를 CJS 로 감싼다 — named export 가 default 아래로 온다
 const plugin = mod.default ?? mod;
@@ -201,7 +203,7 @@ test('slcode.new 동사: 요청자 창에 key·폴더·옵션으로 카드를 �
     const open = calls.find((c) => c.startsWith('call w$3 slcode/cards.open '))!;
     const arg = JSON.parse(open.slice('call w$3 slcode/cards.open '.length));
     assert.deepEqual(arg.spawn, { cwd: '/w s', vendor: 'codex', title: 'T' });
-    assert.equal(arg.tmux, '$3'); assert.equal(arg.title, 'T'); assert.match(arg.key, /^s/);
+    assert.equal(arg.tmux, '$3'); assert.equal(arg.title, 'T'); assert.match(arg.key, /^s/); assert.equal(arg.focus, undefined, '기본은 포커스 없음');
     exposed.host.started(arg.key, 'sess-9');
     exposed.host.started(arg.key, 'sess-other');
     assert.equal(await out, 'sess-9');
@@ -220,6 +222,7 @@ test('slcode.new 동사: 요청자 창에 key·폴더·옵션으로 카드를 �
     await new Promise((r) => setTimeout(r, 10));
     const arg3 = JSON.parse(calls.filter((c) => c.startsWith('call w$3 slcode/cards.open ')).at(-1)!.slice('call w$3 slcode/cards.open '.length));
     assert.deepEqual(arg3.spawn, { cwd: '/w', vendor: 'codex', effort: 'turbo', prompt: 'go' });
+    assert.equal(arg3.focus, undefined);
     exposed.host.started(arg3.key, 'sess-3');
     // model 의 공급자 앞머리는 벤더를 고르고 떼어 낸다 (임시) — 벤더가 어긋나면 카드를 열기 전에 거절
     void verbs['slcode.new']({ model: 'openai:gpt-5.6-sol', effort: 'minimal' }, { cwd: '/w', tmux: '$3' });
@@ -227,10 +230,40 @@ test('slcode.new 동사: 요청자 창에 key·폴더·옵션으로 카드를 �
     const arg4 = JSON.parse(calls.filter((c) => c.startsWith('call w$3 slcode/cards.open ')).at(-1)!.slice('call w$3 slcode/cards.open '.length));
     assert.deepEqual(arg4.spawn, { cwd: '/w', vendor: 'codex', model: 'gpt-5.6-sol', effort: 'minimal' });
     exposed.host.started(arg4.key, 'sess-4');
+    // --focus(사람이 친 slcode new)는 renderer 에 focus 로
+    void verbs['slcode.new']({ focus: true }, { cwd: '/w', tmux: '$3' });
+    await new Promise((r) => setTimeout(r, 10));
+    const arg5 = JSON.parse(calls.filter((c) => c.startsWith('call w$3 slcode/cards.open ')).at(-1)!.slice('call w$3 slcode/cards.open '.length));
+    assert.equal(arg5.focus, true);
+    exposed.host.started(arg5.key, 'sess-5');
     const m = calls.length;
     await assert.rejects(verbs['slcode.new']({ vendor: 'claude', model: 'openai:gpt-x' }, { cwd: '/w', tmux: '$3' }), /is a codex model but --vendor is claude/);
     assert.equal(calls.length, m);
   });
+});
+
+// ---- renderer 카드 열기 (ticket slcode-new-card-no-focus, 사용자 2026-10-25) — 요청자 deck 끝에 조용히 붙이기만 하고 포커스를 옮기는 두 번째 열기는 없다
+test('renderer cards.open: tmux 요청자면 views.open 한 번(opener·end), 포커스용 다시 열기 없음', async () => {
+  const opens: unknown[][] = [];
+  let cards: any;
+  const noop = () => {};
+  const api = {
+    main: { call: async () => [] }, notify: noop, storage: { get: async () => ({ 'sess-1': 'sOld' }) },
+    expose: (name: string, impl: unknown) => { if (name === 'cards') cards = impl; },
+    sidebar: { register: noop, setBadge: noop }, events: { on: noop }, commands: { register: noop },
+    views: { open: async (...a: unknown[]) => { opens.push(a); }, post: noop, onMessage: noop, active: () => null },
+  };
+  (rendererMod.default ?? rendererMod).activate(api);
+  await cards.open({ key: 'sNew', spawn: { cwd: '/w' }, tmux: '$3' });
+  assert.equal(opens.length, 1);
+  assert.deepEqual(opens[0][2], { as: 'card', key: 'sNew', title: 'SLCode', preserve: true, opener: '$3', end: true });
+  // 이미 있는 세션 — 같은 key 로 한 번 연다(코어가 있는 카드를 활성화한다)
+  await cards.open({ id: 'sess-1', tmux: '$3' });
+  assert.equal(opens.length, 2);
+  assert.equal((opens[1][2] as { key: string }).key, 'sOld');
+  // 사람이 친 slcode new(--focus) — superlite focus 로 연다 (요청자 터미널을 보고 있을 때만 보인다)
+  await cards.open({ key: 'sF', spawn: { cwd: '/w' }, tmux: '$3', focus: true });
+  assert.deepEqual(opens[2][2], { as: 'card', key: 'sF', title: 'SLCode', preserve: true, opener: '$3', end: true, focus: true });
 });
 
 // ---- 승인 요청은 카드 배지로만 (사용자 2026-10-24) — main 은 승인 알림을 받지도 띄우지도 않는다

@@ -29,8 +29,15 @@ async function serveOnce(dir: string, args: string[], opts: { cwd?: string; env?
   await exit;
   return { first: out.split('\n')[0], err };
 }
-/** 가짜 superlite 심 — 받은 인자를 calls 파일에 적고, mode 에 따라 성공·동사 없음·연결 불가·다른 실패 */
-function fakeShim(mode: 'ok' | 'unknown' | 'unreachable' | 'fail') {
+/** PTY 안의 호출 — 사람이 터미널에서 친 것처럼 stdin·stdout 이 TTY (util-linux script). 에이전트 표식은 지운다 (이 테스트를 에이전트가 돌려도) */
+function runTty(dir: string, args: string[], opts: { cwd?: string; env?: NodeJS.ProcessEnv } = {}): Promise<Out> {
+  const q = (a: string) => `'${a.replace(/'/g, `'\\''`)}'`;
+  const cmd = [process.execPath, '--import', TSX, CLI, ...args].map(q).join(' ');
+  const env = { ...baseEnv(dir), CLAUDECODE: undefined, CODEX_THREAD_ID: undefined, ...opts.env };
+  return new Promise((resolve) => execFile('script', ['-qec', cmd, '/dev/null'], { cwd: opts.cwd, env }, (e, stdout, stderr) => resolve({ code: (e as { code?: number } | null)?.code ?? 0, stdout, stderr })));
+}
+/** 가짜 superlite 심 — 받은 인자를 calls 파일에 적고, mode 에 따라 성공·동사 없음·연결 불가·다른 실패·--focus 를 모르는 옛 플러그인 */
+function fakeShim(mode: 'ok' | 'unknown' | 'unreachable' | 'fail' | 'nofocus') {
   const bin = tmp('slcode-shim-');
   const calls = path.join(bin, 'calls');
   const body = {
@@ -38,6 +45,7 @@ function fakeShim(mode: 'ok' | 'unknown' | 'unreachable' | 'fail') {
     unknown: 'echo "superlite: unknown verb: slcode.new — see superlite --help" >&2; exit 1',
     unreachable: 'echo "superlite: 데몬 접속 실패" >&2; exit 3',
     fail: 'echo "superlite: card failed" >&2; exit 1',
+    nofocus: 'case "$*" in *--focus*) echo "superlite: unknown option --focus" >&2; exit 2;; esac; echo s-card-1',
   }[mode];
   fs.writeFileSync(path.join(bin, 'superlite'), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${calls}'\n${body}\n`, { mode: 0o755 });
   const env = { SUPERLITE_SOCK: '/tmp/fake.sock', PATH: `${bin}:${process.env.PATH}` };
@@ -76,6 +84,23 @@ test('superlite 안: slcode·slcode new 는 slcode.new 동사로 카드를 열�
   const real = fs.realpathSync(work);
   assert.deepEqual(shim.calls(), [`slcode.new --cwd ${real} --vendor codex --title T 1 --mode auto --model gpt-x`, `slcode.new --cwd ${work}`]);
   assert.deepEqual(EventLog.list(corePaths(dir).sessionsDir), [], '이 프로세스는 세션을 만들지 않는다');
+});
+
+// 포커스 (ticket slcode-new-card-no-focus, 사용자 2026-10-25) — 사람이 친 slcode new 만 --focus. 에이전트(env 표식)·TTY 가 아닌 호출은 붙이지 않는다
+test('superlite 안: 사람이 터미널에서 친 slcode new 만 slcode.new --focus — slcode 세션·Claude Code·Codex 표식이나 TTY 가 아니면 없다', async () => {
+  const dir = tmp('slcode-bare-');
+  const work = fs.realpathSync(tmp('slcode-work-'));
+  const shim = fakeShim('ok');
+  const a = await runTty(dir, ['new', work], { env: shim.env });
+  assert.equal(a.code, 0, a.stdout); assert.match(a.stdout, /s-card-1/);
+  for (const marker of ['SLCODE_SESSION_ID', 'CLAUDECODE', 'CODEX_THREAD_ID']) assert.equal((await runTty(dir, ['new', work], { env: { ...shim.env, [marker]: 'x' } })).code, 0, marker);
+  assert.equal((await run(dir, ['new', work], { env: { ...shim.env, CLAUDECODE: undefined } })).code, 0); // TTY 아님
+  assert.deepEqual(shim.calls(), [`slcode.new --focus --cwd ${work}`, ...Array(4).fill(`slcode.new --cwd ${work}`)]);
+  // --focus 를 모르는 옛 플러그인 — 빼고 다시 열어 성공한다
+  const old = fakeShim('nofocus');
+  const b = await runTty(dir, ['new', work], { env: old.env });
+  assert.equal(b.code, 0, b.stdout); assert.match(b.stdout, /s-card-1/);
+  assert.deepEqual(old.calls(), [`slcode.new --focus --cwd ${work}`, `slcode.new --cwd ${work}`]);
 });
 
 test('superlite 안 폴백: --web·--stdio·동사 없음·연결 불가는 웹 서빙, 다른 동사 실패는 그 사유로 끝난다', async () => {

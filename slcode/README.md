@@ -19,7 +19,7 @@ slcode check | ask <to> <text> [--timeout S] | reply <메시지 id> <text>      
 pnpm test                               # 잠금·로그·세션 프로세스·교체·CLI 동사 테스트
 ```
 
-new·resume·continue 는 superlite 터미널 안이면 그 터미널의 deck 에 카드로 연다. superlite 밖이거나 `--web` 이면 그 프로세스가 세션이 되어 웹을 연다. 이미 살아 있는 세션이면 그 카드로 가거나 웹 주소를 출력한다. superlite 안에서 `--host`·`--port` 는 `--web` 과 함께 쓴다.
+new·resume·continue 는 superlite 터미널 안이면 그 터미널의 deck 끝에 카드로 연다. 새 카드로 넘어가는 것은 사람이 친 new 이고 그 터미널을 보고 있을 때뿐이다(에이전트가 친 명령·스크립트는 조용히 붙인다). superlite 밖이거나 `--web` 이면 그 프로세스가 세션이 되어 웹을 연다. 이미 살아 있는 세션이면 그 카드로 가거나 웹 주소를 출력한다. superlite 안에서 `--host`·`--port` 는 `--web` 과 함께 쓴다.
 
 `<s>`·`<to>` 는 세션 id 또는 유일한 제목이다. 세션이 되는 동사(new·resume·continue·import)를 빼면 동사는 한 번 부르고 끝난다 — 다른 에이전트·스크립트·superlite 카드가 세션을 조종하는 표면이다. 승인·질문은 `pending` 으로 요청 id 를 보고 `respond` 로 답한다. 열려 있지 않은 id 면 오류와 함께 지금 대기 중인 id 를 보여 준다 (미리 보관하지 않는다). `status`·`last`·`log` 는 꺼진 세션도 로그 파일에서 답한다.
 

@@ -298,16 +298,25 @@ function unused(keys: (keyof Flags)[], why: string) {
  *  card 서비스가 든다. 심 없음·연결 불가(exit 3)·동사 없음(플러그인 미설치·비활성·옛 플러그인)이면 돌아와 웹 서빙으로. 동사가 있는데
  *  실패하면 그 사유로 끝낸다 */
 function openCard(verb: string[], skip: (keyof Flags)[]): void {
-  const r = spawnSync('superlite', verb, { encoding: 'utf8' });
+  let r = spawnSync('superlite', verb, { encoding: 'utf8' });
+  // 옛 플러그인(0.4.0 이하)의 slcode.new 는 --focus 를 모른다 — 빼고 다시 (포커스 없이 연다)
+  if (r.status !== 0 && verb[1] === '--focus' && /unknown option --focus/.test(r.stderr)) r = spawnSync('superlite', [verb[0], ...verb.slice(2)], { encoding: 'utf8' });
   if (r.error || r.status === 3 || (r.status !== 0 && /unknown verb/.test(r.stderr))) return;
   if (r.status !== 0) { process.stderr.write(r.stderr); process.exit(1); }
   unused(skip, 'opened as a card');
   process.stdout.write(r.stdout);
   process.exit(0);
 }
-/** 새 세션 카드 — 폴더·벤더·제목·모드·모델·effort·첫 프롬프트를 slcode.new 에 넘긴다 */
+/** 사람이 이 터미널에서 친 호출인가 — 그때만 slcode.new 에 --focus 를 붙여 새 카드로 넘어간다 (ticket slcode-new-card-no-focus, 사용자 2026-10-25).
+ *  에이전트가 친 명령은 env 표식으로 거른다: slcode 세션 안(SLCODE_SESSION_ID), Claude Code(CLAUDECODE), Codex(CODEX_THREAD_ID — 0.159 실측, tty 를 켜고
+ *  치기도 해서 TTY 만으로는 못 거른다). CLAUDE_* 접두어는 사람 셸에도 있어(.bashrc) 보지 않는다. 표식을 모르는 도구·$(slcode new) 는 stdin·stdout TTY 로 거른다 */
+function byPerson(): boolean {
+  const e = process.env;
+  return !e.SLCODE_SESSION_ID && !e.CLAUDECODE && !e.CODEX_THREAD_ID && !!process.stdin.isTTY && !!process.stdout.isTTY;
+}
+/** 새 세션 카드 — 폴더·벤더·제목·모드·모델·effort·첫 프롬프트를 slcode.new 에 넘긴다. --focus 는 verb[1] 자리 (openCard 의 옛 플러그인 재시도) */
 function newCard(cwd: string): void {
-  const args = ['slcode.new', '--cwd', cwd];
+  const args = ['slcode.new', ...(byPerson() ? ['--focus'] : []), '--cwd', cwd];
   for (const k of ['vendor', 'title', 'mode', 'model', 'effort'] as const) if (flags[k] !== undefined) args.push(`--${k}`, flags[k]!);
   if (firstPrompt) args.push('--prompt', firstPrompt);
   openCard(args, ['no-web', 'raw', 'no-inspect', 'dir']);

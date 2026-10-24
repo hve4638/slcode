@@ -205,8 +205,8 @@ export function activate(api) {
     failed(key, reason) { const w = waits.get(key); if (w) { waits.delete(key); w.reject(new Error(String(reason))); } },
   });
 
-  // 셸 동사 — superlite 터미널 안의 `slcode`·`slcode new` 가 부른다 (ticket slcode-bare-new). 요청자 터미널의 deck 끝에 카드를 붙이고
-  // 그 카드로 포커스를 옮긴다. 세션 id 는 카드 화면이 서비스를 띄운 뒤 started 로 알린다 (심 stdout 한 줄)
+  // 셸 동사 — superlite 터미널 안의 `slcode`·`slcode new` 가 부른다 (ticket slcode-bare-new). 요청자 터미널의 deck 끝에 카드를 붙인다.
+  // 포커스는 --focus 일 때만 옮긴다 — 사람이 친 slcode new 가 붙인다, 다른 플러그인(orchestrate)은 기본값 (ticket slcode-new-card-no-focus). 세션 id 는 카드 화면이 서비스를 띄운 뒤 started 로 알린다 (심 stdout 한 줄)
   api.verbs.handle('slcode.new', async (a, ctx) => {
     // model 이 <공급자>:<모델> 이면 벤더를 고르고 앞머리를 뗀다 — 다른 앞머리는 이름 전체가 모델
     let { vendor, model } = a;
@@ -224,7 +224,7 @@ export function activate(api) {
     const done = new Promise((resolve, reject) => waits.set(key, { resolve, reject }));
     try {
       const w = await windowFor(ctx.tmux);
-      await w.call(CARDS, 'open', { key, spawn: { cwd: a.cwd ?? ctx.cwd, vendor, title: a.title, mode: a.mode, model, effort: a.effort, prompt: a.prompt }, title: a.title, tmux: ctx.tmux });
+      await w.call(CARDS, 'open', { key, spawn: { cwd: a.cwd ?? ctx.cwd, vendor, title: a.title, mode: a.mode, model, effort: a.effort, prompt: a.prompt }, title: a.title, tmux: ctx.tmux, ...(a.focus ? { focus: true } : {}) });
       return await done;
     } finally { waits.delete(key); }
   });

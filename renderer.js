@@ -21,14 +21,15 @@ export function activate(api) {
   const keyOf = async (id) => { const o = ((await api.storage.get('owners')) ?? {})[id]; return typeof o === 'string' ? o : o?.key ?? null; }; // 객체 꼴은 잠시 쓰던 형식
 
   /** 카드 열기 — 있는 세션이면 그 카드를 활성화, 없으면 새 카드(spawn 이면 새 세션, id 면 resume, pick 이면 꺼진 세션 고르기).
-   *  tmux(요청자 터미널)가 있으면 그 deck 끝에 붙이고 같은 key 로 한 번 더 열어 그 카드로 포커스를 옮긴다 (사용자 2026-10-07) */
-  async function open({ key, id = null, spawn, pick, title, tmux } = {}) {
+   *  tmux(요청자 터미널)가 있으면 새 카드는 그 deck 끝에 조용히 붙이고 포커스는 옮기지 않는다 (ticket slcode-new-card-no-focus, 사용자 2026-10-25 —
+   *  orchestrate 가 워커 카드를 열 때마다 보던 카드에서 포커스가 빠져서. 2026-10-07 의 "그 카드로 포커스" 를 뒤집음). focus(사람이 친 slcode new)면
+   *  superlite focus — 사용자가 그 순간 요청자 터미널을 보고 있을 때만 새 카드를 보인다 */
+  async function open({ key, id = null, spawn, pick, title, tmux, focus } = {}) {
     if (!key && id) key = await keyOf(id);
     key ??= newKey();
     const state = pick ? { key, id: null, pick } : spawn ? { key, id: null, spawn } : { key, id };
     const at = { as: 'card', key, title: title ?? (pick ? PICK_NAME : DEFAULT_NAME), preserve: true };
-    await api.views.open(VIEW, state, tmux ? { ...at, opener: tmux, end: true } : at);
-    if (tmux) await api.views.open(VIEW, undefined, at);
+    await api.views.open(VIEW, state, tmux ? { ...at, opener: tmux, end: true, ...(focus ? { focus: true } : {}) } : at);
     if (id) void api.views.post({ type: 'revive', key }); // 닫힌 세션의 카드가 남아 있다 — 활성화만 하면 "세션이 닫혔습니다" 그대로라 다시 띄운다
   }
 

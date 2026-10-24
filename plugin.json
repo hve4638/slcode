@@ -19,7 +19,8 @@
         { "name": "mode", "kind": "option", "help": "default | acceptEdits | auto | bypassPermissions" },
         { "name": "model", "kind": "option", "help": "model of the new session (default: the vendor's default); anthropic:<model> or openai:<model> also picks the vendor (claude | codex)" },
         { "name": "effort", "kind": "option", "help": "effort of the new session — claude: low | medium | high | xhigh | max (default: the vendor's default; a value the model lacks warns in the session and falls back to the default)" },
-        { "name": "prompt", "kind": "option", "help": "first prompt — starts the first turn as soon as the session is up" }
+        { "name": "prompt", "kind": "option", "help": "first prompt — starts the first turn as soon as the session is up" },
+        { "name": "focus", "kind": "flag", "help": "show the new card if you are looking at this terminal right then (default: attach it quietly; slcode new passes it when a person types it)" }
       ]
     },
     {
