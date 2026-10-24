@@ -82,9 +82,4 @@ export function activate(api) {
       void api.views.post({ type: 'close' }, a.tabId);
     },
   });
-  const runInstallCommand = (force) => host('installCommand', force).then((r) => {
-    if (typeof r === 'string') void api.notify('info', `slcode 런처를 만들었습니다: ${r}`);
-    else void api.notify('warning', `이미 slcode 가 있습니다: ~/.local/bin/slcode → ${r.conflict}`, { label: '덮어쓰기', run: () => void runInstallCommand(true) });
-  }).catch(fail);
-  api.commands.register({ id: 'installCommand', title: 'slcode: Install command', run: () => void runInstallCommand(false) });
 }

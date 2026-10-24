@@ -40,6 +40,7 @@
     ]
   },
   "binary": { "repo": "hve4638/slcode", "version": "^0.3.0" },
+  "bin": { "slcode": "bin/linux-x64/bin/slcode" },
   "services": [
     { "id": "session", "command": "slcode new --stdio --no-web", "unit": "card", "lifetime": "owned", "channel": "stdio", "web": true }
   ]

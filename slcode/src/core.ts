@@ -39,6 +39,16 @@ export function stripEnv(env: NodeJS.ProcessEnv, rules: string[] = STRIP_ENV): N
   }));
 }
 const SDK_ENV = stripEnv(process.env);
+/** 세션 안의 `slcode` 가 이 core 를 띄운 판이 되게 — 벤더 env 의 PATH 맨 앞에 설치 폴더의 bin/ (ticket slcode-session-bin-path, 사용자 2026-10-24).
+ *  플러그인은 ~/.local/bin 같은 일반 PATH 위치에 런처를 두지 않는다. 런처(bin/slcode, Windows 는 bin/slcode.cmd)가 없으면(소스 체크아웃의 dist) 그대로.
+ *  Windows env 의 PATH 이름은 Path 처럼 대소문자가 섞여 온다 — 있는 이름에 넣는다 */
+export function withBinPath(env: NodeJS.ProcessEnv, pkg: string, platform: NodeJS.Platform = process.platform): NodeJS.ProcessEnv {
+  const win = platform === 'win32';
+  const bin = path.join(pkg, 'bin');
+  if (!fs.existsSync(path.join(bin, win ? 'slcode.cmd' : 'slcode'))) return env;
+  const key = (win && Object.keys(env).find((k) => k.toUpperCase() === 'PATH')) || 'PATH';
+  return { ...env, [key]: env[key] ? `${bin}${win ? ';' : ':'}${env[key]}` : bin };
+}
 /** 소유자가 close 없이 끊긴 뒤(SIGKILL·크래시) 새 소유자를 기다리는 시간 — 카드 핸드오프·serve 재기동의 틈. 빈 값·숫자 아님은 기본값 */
 const OWNER_GRACE_MS = (Number(process.env.SLCODE_OWNER_GRACE_SECS) > 0 ? Number(process.env.SLCODE_OWNER_GRACE_SECS) : 10) * 1000;
 /** 벤더 종료를 기다리는 상한 — core 는 detached 라 superlite 의 SIGKILL(서비스 중지 3초 뒤)이 닿지 않는다. 넘으면 정리하고 끝낸다 */
@@ -98,8 +108,9 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     logFile = EventLog.create(P.sessionsDir, meta);
   }
   const cwd = logFile.meta.cwd;
-  // 벤더 자식(과 그 Bash 도구가 띄우는 명령)이 자기 세션을 알게 — 세션 안의 `slcode mail/check/ask/reply` 가 이걸 읽는다 (사용자 확정 2026-10-02)
-  const env: NodeJS.ProcessEnv = { ...SDK_ENV, SLCODE_SESSION_ID: logFile.meta.id };
+  // 벤더 자식(과 그 Bash 도구가 띄우는 명령)이 자기 세션을 알게 — 세션 안의 `slcode mail/check/ask/reply` 가 이걸 읽는다 (사용자 확정 2026-10-02).
+  // 그 `slcode` 는 이 판이다 (withBinPath)
+  const env: NodeJS.ProcessEnv = withBinPath({ ...SDK_ENV, SLCODE_SESSION_ID: logFile.meta.id }, PKG);
   // inspect (ticket slcode-inspect-proxy·slcode-inspect-default-on) — 켜져 있으면 벤더를 띄우기 전에 proxy 를 세우고 벤더 env 의 ANTHROPIC_BASE_URL 을 그리로.
   // 기록은 세션 폴더 inspect/inspect.db. proxy 를 띄운 core 는 3일마다 상태 폴더의 꺼진 세션 raw 를 정리한다 (기록이 늘어나는 것은 proxy 가 떠 있을 때뿐)
   const inspectDir = path.join(logFile.dir, 'inspect');

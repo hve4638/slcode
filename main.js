@@ -1,6 +1,6 @@
 // slcode 플러그인 main (새 방식 apiVersion 2, ticket slcode-plugin-v2) — 세션 머신의 node 에서 머신마다 한 번 돈다. 카드 하나 = slcode 세션 하나.
 //
-// 세 갈래 (사용자 확정 2026-10-21): main(이 파일) — 바이너리 받기·설치, `slcode list`·`close --force`·런처 같은 명령, 셸 동사
+// 세 갈래 (사용자 확정 2026-10-21): main(이 파일) — 바이너리 받기·설치, `slcode list`·`close --force` 같은 명령, 셸 동사
 // slcode.new·slcode.resume, 승인 알림을 창 하나에. renderer.js — 창마다: 팔레트 명령, 액티비티바 사이드바·배지, 카드 열기(이 main 이
 // 부른다). views/session.js — 카드마다: 서비스 기동·연결·배지·다시 붙기, slcode 화면 iframe 중계. views/sessions.js — 세션 목록 사이드바.
 // 카드 화면이 서비스를 띄우는 명령은 여기서 짓는다 (command) — 받은 바이너리의 경로가 이 머신의 것이라서다.
@@ -119,17 +119,16 @@ export function activate(api) {
     }
     return p;
   }
-  /** 서비스·목록·런처가 쓸 slcode — 설정 bin 이 있으면 그것(셸에 그대로), 없으면 받은 바이너리 `<플러그인 폴더>/bin/<platform>/bin/slcode`.
-   *  cmd 는 셸 명령에 넣을 꼴, path 는 따옴표 없는 경로 (설정이면 null) */
+  /** 서비스·목록이 쓸 slcode — 설정 bin 이 있으면 그것(셸에 그대로), 없으면 받은 바이너리 `<플러그인 폴더>/bin/<platform>/bin/slcode`.
+   *  cmd 는 셸 명령에 넣을 꼴 */
   async function resolveBin() {
     const over = await setting('bin', '');
-    if (over) return { cmd: over, path: null };
+    if (over) return { cmd: over };
     const plat = platformOf(await api.platform());
     await install(plat);
     const dir = await api.folder.deploy(`bin/${plat}`); // main 은 그 머신에 있어 폴더 경로 그대로다
-    if (plat === 'win-x64') { const path = `${dir}\\bin\\slcode.cmd`; return { cmd: `"${path}"`, path, plat }; }
-    const path = `${dir}/bin/slcode`;
-    return { cmd: shq(path), path, plat };
+    if (plat === 'win-x64') return { cmd: `"${dir}\\bin\\slcode.cmd"` };
+    return { cmd: shq(`${dir}/bin/slcode`) };
   }
   const dirOpt = async () => { const dir = await setting('dir', ''); return dir ? ` --dir ${shq(dir)}` : ''; };
 
@@ -167,28 +166,6 @@ export function activate(api) {
     return b.version !== d?.version || String(b.build) !== String(d?.build) ? { status: 'restart-required', version: b.version, build: b.build } : { status: 'latest' };
   }
 
-  // PATH 런처 — 명시적 명령으로만 (자동 실행 없음). Linux ~/.local/bin/slcode 심링크, Windows 는 사용자 PATH 에 기본으로 있는
-  // %LOCALAPPDATA%\Microsoft\WindowsApps 에 slcode.cmd. 런처는 지금 받은 바이너리를 가리킨다 — 새 버전을 받으면 다시 실행한다.
-  // 돌려주는 값: 만든 자리(문자열) 또는 우리 것이 아닌 slcode 가 이미 있으면 {conflict}
-  async function installCommand(force) {
-    const bin = await resolveBin();
-    if (!bin.path) throw new Error('설정 "slcode command" 를 쓰는 중이라 런처를 만들지 않습니다 (설정을 비우면 받은 바이너리로 만든다)');
-    if (bin.plat === 'win-x64') {
-      const r = await api.proc.run(`(echo @"${bin.path}" %*) > "%LOCALAPPDATA%\\Microsoft\\WindowsApps\\slcode.cmd"`);
-      if (r.code !== 0) throw new Error(r.stderr.trim() || `exit ${r.code}`);
-      return '%LOCALAPPDATA%\\Microsoft\\WindowsApps\\slcode.cmd';
-    }
-    const link = '~/.local/bin/slcode';
-    if (!force) {
-      const cur = await api.proc.run(`if [ -L ${link} ]; then readlink ${link}; elif [ -e ${link} ]; then echo '(file)'; fi`);
-      const was = cur.stdout.trim();
-      if (was && was !== bin.path) return { conflict: was };
-    }
-    const r = await api.proc.run(`mkdir -p ~/.local/bin && ln -sfn ${shq(bin.path)} ${link}`);
-    if (r.code !== 0) throw new Error(r.stderr.trim() || `exit ${r.code}`);
-    return link;
-  }
-
   // ---- 창 — 요청자 터미널을 연 창 가운데 메인 창 (tmux 가 없으면 이 머신의 메인 창). 카드 열기는 그 창의 renderer 가 한다
   async function windowFor(tmux) {
     const w = await api.window.main(tmux ? { tmux } : undefined);
@@ -211,7 +188,7 @@ export function activate(api) {
   }
 
   api.expose('host', {
-    command, list, closed, forceClose, checkUpdate, installCommand, approval,
+    command, list, closed, forceClose, checkUpdate, approval,
     started(key, id) { const w = waits.get(key); if (w) { waits.delete(key); w.resolve(id); } },
     failed(key, reason) { const w = waits.get(key); if (w) { waits.delete(key); w.reject(new Error(String(reason))); } },
   });

@@ -6,9 +6,11 @@
 // inspect (ticket slcode-inspect-codex): config/read 는 -c openai_base_url 을 sessionFlags 층, FAKE_CODEX_USER_BASE 를 user 층으로 답한다.
 // 본문이 ws 면 -c 로 받은 주소(없으면 FAKE_CODEX_USER_BASE)의 /responses 에 WebSocket 으로 response.create 둘(둘째는 previous_response_id 로 증분)을 보내고 끝난 뒤 턴을 마친다.
 // no-call 이면 API 를 부르지 않고 성공한 턴으로 마친다
+// FAKE_CODEX_ENV 면 기동 때 받은 PATH·SLCODE_SESSION_ID 를 그 파일에 JSON 으로 남긴다 (ticket slcode-session-bin-path)
 import fs from 'node:fs';
 import readline from 'node:readline';
 import WebSocket from 'ws';
+if (process.env.FAKE_CODEX_ENV) fs.writeFileSync(process.env.FAKE_CODEX_ENV, JSON.stringify({ PATH: process.env.PATH, SLCODE_SESSION_ID: process.env.SLCODE_SESSION_ID }));
 const argBase = process.argv.join(' ').match(/openai_base_url="([^"]+)"/)?.[1] ?? null;
 /** 요청 하나 — response.completed 까지 받은 이벤트의 response id */
 const call = (ws, msg) => new Promise((resolve, reject) => {
