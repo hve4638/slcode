@@ -1,6 +1,6 @@
 {
   "id": "slcode",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "apiVersion": 2,
   "main": "main.js",
   "renderer": "renderer.js",
@@ -16,7 +16,7 @@
         { "name": "cwd", "kind": "option", "value": "dir", "help": "session folder (default: this shell's cwd)" },
         { "name": "vendor", "kind": "option", "help": "claude | codex" },
         { "name": "title", "kind": "option" },
-        { "name": "mode", "kind": "option", "help": "default | acceptEdits | auto | bypassPermissions" },
+        { "name": "mode", "kind": "option", "help": "default | auto | bypassPermissions (default: auto)" },
         { "name": "model", "kind": "option", "help": "model of the new session (default: the vendor's default); anthropic:<model> or openai:<model> also picks the vendor (claude | codex)" },
         { "name": "effort", "kind": "option", "help": "effort of the new session — claude: low | medium | high | xhigh | max (default: the vendor's default; a value the model lacks warns in the session and falls back to the default)" },
         { "name": "prompt", "kind": "option", "help": "first prompt — starts the first turn as soon as the session is up" },
@@ -40,7 +40,7 @@
       { "key": "dir", "type": "string", "label": "SLCODE_DIR", "description": "비우면 slcode 기본 폴더 (~/.local/state/slcode)", "default": "" }
     ]
   },
-  "binary": { "repo": "hve4638/slcode", "version": "^0.4.0" },
+  "binary": { "repo": "hve4638/slcode", "version": "^0.4.1" },
   "bin": { "slcode": "bin/linux-x64/bin/slcode" },
   "services": [
     { "id": "session", "command": "slcode new --stdio --no-web", "unit": "card", "lifetime": "owned", "channel": "stdio", "web": true }
