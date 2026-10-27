@@ -44,6 +44,8 @@ export type SessionOptions = {
   raw?: boolean;
   /** SDK 가 부모 세션의 표식을 물려받지 않게 정리된 env (core.ts STRIP_ENV) */
   env?: NodeJS.ProcessEnv;
+  /** slcode 에이전트 플러그인 (agentPlugins.loadSessionPlugins) — 플러그인 폴더·지시문·session.json·env. 벤더를 다시 띄워도(rewind·reopen) 같은 값 */
+  agent?: { plugins: { type: 'local'; path: string }[]; append: string; settings: Record<string, unknown> | null; env: Record<string, string> };
 };
 
 export function summarize(content: unknown): string {
@@ -268,6 +270,15 @@ export class ClaudeSession extends AgentSession {
     this.running = this.run({ ...this.opts, resume: null });
   }
 
+  /** 에이전트 플러그인을 디스크에서 다시 싣는다 — SDK reloadPlugins(). 링크는 부른 쪽이 먼저 바꾼다. 지시문은 바뀌지 않는다 (시스템 프롬프트는 첫 요청 때 고정) */
+  async reloadPlugins() {
+    if (!this.q) throw new Error('vendor is not running');
+    return this.q.reloadPlugins();
+  }
+
+  /** 다시 싣기의 결과를 기록에 — core 가 링크를 바꾸고 reloadPlugins() 를 부른 뒤 */
+  emitPlugins(body: Omit<Extract<CoreEvent, { kind: 'plugins.reloaded' }>, 'kind'>) { this.emit({ kind: 'plugins.reloaded', ...body }); }
+
   async close(reason = 'closed', quiet = false) {
     if (this.ended) return;
     this.ended = true;
@@ -298,12 +309,16 @@ export class ClaudeSession extends AgentSession {
         agentProgressSummaries: true,   // task_progress 에 한 줄 진행 요약 (약 30초마다 짧은 포크, 비용은 작다)
         thinking: { type: 'adaptive', display: 'summarized' },
         // slcode 고정 지시를 기본 프롬프트 뒤에 (ticket slcode-append-system-prompt). snapshot 은 SDK 기본 — 첫 요청 때 기록하고 resume 도 그 기록이라 기존 세션엔 compact 뒤부터 (사용자 결정 2026-10-17: 새 세션부터)
-        systemPrompt: { type: 'preset', preset: 'claude_code', append: SLCODE_PROMPT },
+        // 에이전트 플러그인의 지시문은 그 뒤에 (ticket slcode-agent-plugin)
+        systemPrompt: { type: 'preset', preset: 'claude_code', append: opts.agent?.append ? `${SLCODE_PROMPT}\n\n${opts.agent.append}` : SLCODE_PROMPT },
+        // slcode 에이전트 플러그인 — 세션 폴더의 링크 경로를 <이름>@inline 으로 싣는다. 사용자 설정·설치 기록은 건드리지 않는다
+        ...(opts.agent?.plugins.length ? { plugins: opts.agent.plugins } : {}),
+        ...(opts.agent?.settings ? { settings: opts.agent.settings as any } : {}),
         // CLI 와 같은 로드 — user/project/local (스파이크 (a) 실측: 플러그인·스킬·훅·MCP 가 CLI 와 같다)
         settingSources: ['user', 'project', 'local'],
         // IS_SANDBOX=1 을 늘 얹는다 — uid 0 이면 CLI 가 이것 없이는 아래 skip 플래그나 bypass 모드만으로 첫 턴 전에 exit 1 한다 (CLI 2.1.282, 2026-10-08 실측, 값은 '1' 만).
         // root 에서도 bypass 를 쓰게 Claude Code 의 이 안전 장치를 slcode 가 끈다 (사용자 결정 2026-10-09)
-        env: { ...(opts.env ?? process.env), IS_SANDBOX: '1' },
+        env: { ...(opts.env ?? process.env), ...opts.agent?.env, IS_SANDBOX: '1' },
         ...(permissionMode ? { permissionMode: permissionMode as any } : {}),
         allowDangerouslySkipPermissions: true, // bypassPermissions 로 바꿀 수 있게 (그 자체로 우회하지 않는다 — 모드는 위 permissionMode)
         ...(this.log.meta.model ? { model: this.log.meta.model } : {}),

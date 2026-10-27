@@ -23,6 +23,7 @@ import { formatMail, newMail, parseMails, sendMail, sessionMeta } from './mail.j
 import { blockInspect, CODEX_ROUTE, codexArgs, codexUpstream, inspectBlocked, inspectEnv, keepsFirstParty, sdkVersion, startInspect, turnCalls, upstreamOf, type InspectProxy } from './inspect.js';
 import { InspectStore, maybeSweep } from './inspectDb.js';
 import { Activity } from './activity.js';
+import { currentBuilds, loadSessionPlugins, reloadSessionPlugins, unlinkSessionPlugins, type Loaded, type SessionPlugins } from './agentPlugins.js';
 import { CoreError, ERR, FILES, PERMISSION_MODES, PROTOCOL_VERSION, type ApprovalRequest, type LoggedEvent, type Mail, type MethodName, type Methods, type RequestFrame, type SessionInfo } from './protocol.js';
 
 /** 벤더 자식(claude CLI·codex)에 넘기지 않을 env — 워커 Claude 세션 안에서 띄우면 그 세션의 표식(CLAUDECODE·CLAUDE_CODE_SESSION_ID·
@@ -161,15 +162,22 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   // 첫 기동에서 못 켜면(이 SDK 에서 막힘·node:sqlite 없음) 끄고 띄운다 — 사유는 세션이 생긴 뒤 기록에 남긴다
   let firstEnv = env, firstArgs: string[] = [], inspectFailed: string | null = null;
   try { firstEnv = await vendorEnv(); firstArgs = await vendorArgs(); } catch (e) { logFile.updateMeta({ inspect: false }); inspectFailed = (e as Error).message; }
+  // 에이전트 플러그인 (ticket slcode-agent-plugin) — Claude 만. 기동 때의 설정(기본 설정 < 세션 값)으로 빌드해 세션 폴더에 링크를 건다.
+  // 싣지 못해도 세션은 뜬다 — 사유는 세션이 생긴 뒤 기록에 남긴다
+  let agent: SessionPlugins | null = null, agentFailed: string | null = null;
+  if (!codex) { try { agent = loadSessionPlugins(logFile.dir, env, logFile.meta.agentPlugins ?? {}, P.dir); } catch (e) { agentFailed = (e as Error).message; } }
+  let agentLoaded: Loaded[] = agent?.loaded ?? [];
   const session: AgentSession = codex
     ? new CodexSession({ log: logFile, env, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, args: firstArgs, onConfig: (base) => gotBase(base) })
-    : new ClaudeSession({ log: logFile, env: firstEnv, resume: logFile.meta.vendorSessionId, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw });
+    : new ClaudeSession({ log: logFile, env: firstEnv, resume: logFile.meta.vendorSessionId, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, ...(agent ? { agent } : {}) });
   const sid = session.id;
   // 활동 기록 (ticket slcode-activity-state) — 첫 프롬프트가 상태를 바꾸기 전에 구독한다
   const activity = Activity.open(logFile.dir);
   activity.agent(session.state);
   session.onEvent((e) => { if (e.ev.kind === 'session.state') activity.agent(e.ev.state); });
   if (inspectFailed) session.notice(`inspect 를 켜지 않았습니다: ${inspectFailed}`);
+  if (agentFailed) session.notice(`에이전트 플러그인을 싣지 못했습니다: ${agentFailed}`);
+  for (const n of agent?.notes ?? []) session.notice(`에이전트 플러그인을 싣지 못했습니다 — ${n}`);
   if (!opts.resume && opts.prompt?.trim()) session.send(opts.prompt);
   // codex 감시 (사용자 결정 2026-10-19) — proxy 를 세운 뒤 처음 성공한 턴까지 모델 호출(/responses)이 하나도 기록되지 않았으면 codex 가 proxy 를 거치지 않는다
   // (openai 가 아닌 model_provider·workspace routing 등). 알리고 이 세션만 끈다 — 새 세션은 막지 않는다
@@ -327,6 +335,20 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       try { return await mine(p.id).reconnectMcp(p.name); }
       catch (e) { if (e instanceof CoreError) throw e; throw new CoreError(ERR.badRequest, (e as Error).message); }
     },
+    'session.plugins': (_c, p) => {
+      mine(p?.id);
+      if (codex) return { plugins: [], added: [], pending: false };
+      const cur = currentBuilds(logFile.meta.agentPlugins ?? {}, P.dir);
+      return { plugins: agentLoaded.map((l) => ({ name: l.name, version: l.version, build: l.build, values: l.values, current: cur[l.name] ?? null })), added: Object.keys(cur).filter((n) => !agentLoaded.some((l) => l.name === n)), pending: reloadWanted };
+    },
+    'session.reloadPlugins': async (_c, p) => {
+      const s = mine(p?.id);
+      if (!(s instanceof ClaudeSession)) throw new CoreError(ERR.badRequest, 'agent plugins are loaded into Claude sessions only');
+      // 다음 턴 전에 — 턴 중이면 그 턴이 끝난 idle 에서
+      if (s.state === 'idle' || s.state === 'starting') { await reloadPlugins(); return { deferred: false }; }
+      reloadWanted = true;
+      return { deferred: true };
+    },
     'session.rewind': async (_c, p) => {
       if (typeof p?.seq !== 'number') throw new CoreError(ERR.badRequest, 'seq required');
       try { return { ok: true, filesChanged: await mine(p.id).rewind(p.seq, !!p.conversation, !!p.files) }; }
@@ -391,6 +413,24 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     },
   };
   function broadcast(event: string, params: unknown) { for (const c of conns) c.send({ event, params }); }
+
+  // ---- 에이전트 플러그인 다시 싣기 (ticket slcode-agent-plugin) — 링크를 지금 설정의 빌드로 바꾸고 SDK reloadPlugins(). 결과는 plugins.reloaded 이벤트로
+  let reloadWanted = false;
+  async function reloadPlugins() {
+    reloadWanted = false;
+    const s = session as ClaudeSession;
+    try {
+      const r = reloadSessionPlugins(logFile.dir, agentLoaded, env, logFile.meta.agentPlugins ?? {}, P.dir);
+      const sdk = await s.reloadPlugins();
+      agentLoaded = r.loaded;
+      s.emitPlugins({
+        plugins: r.loaded.map((l) => ({ name: l.name, version: l.version, build: l.build, values: l.values })), removed: r.removed, later: r.later,
+        sdk: { plugins: sdk.plugins.map((x) => ({ name: x.name, ...(x.source ? { source: x.source } : {}) })), commands: sdk.commands.map((c) => c.name), agents: sdk.agents.map((a) => a.name), mcp: sdk.mcpServers.map((m) => ({ name: m.name, status: m.status, ...(m.error ? { error: m.error } : {}) })) },
+      });
+    } catch (e) { session.notice(`에이전트 플러그인을 다시 싣지 못했습니다: ${(e as Error).message}`); }
+  }
+  if (!codex) session.onEvent((e) => { if (reloadWanted && e.ev.kind === 'session.state' && e.ev.state === 'idle') void reloadPlugins(); });
+
   async function onLine(conn: Conn, line: string) {
     let msg: RequestFrame;
     try { msg = JSON.parse(line); } catch { return; }
@@ -496,6 +536,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     uds.close();
     for (const s of socks) s.end(); // serve 의 중계·제어 연결이 닫힘을 본다
     try { fs.unlinkSync(sockPath); } catch {}
+    try { unlinkSessionPlugins(logFile.dir); } catch {} // 이 세션이 쓰던 빌드를 정리 대상으로
     resolveDone();
   })());
   closeFn = close;

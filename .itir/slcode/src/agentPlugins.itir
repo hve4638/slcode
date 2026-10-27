@@ -1,0 +1,61 @@
+import { buildId, compat, HARNESSES, MANIFEST, parseAssignment, readManifest, resolveValues, sourceFiles, sourceHash, valuesString, Harness, Manifest, Values } from './agentFormat'
+import { BUILD_FILES, ensureBuild, Report } from './agentBuild'
+import { acquireLock, releaseLock } from './lock'
+import { corePaths } from './paths'
+
+role: 에이전트 플러그인의 상태 폴더와 명령 (ticket slcode-agent-plugin, 설계 ws docs/report/slcode-agent-plugin-survey.md) — $SLCODE_DIR/agent-plugins/{installed/<이름>(원본 복사본), config.json(설치 목록·플러그인 기본 설정·하네스별 마지막 빌드 — slcode 내부 파일, 임시 파일 + rename, 쓰는 명령은 config.lock), build/<식별자>, export(slcode-agent-plugin-export 가 링크를 둔다), data(GPT 하네스·Codex 의 플러그인 데이터 — 이 ticket 은 쓰지 않는다)}. 설치는 원하는 상태를 적는 것이라 같은 원본을 몇 번 add 해도 결과가 같다 (superlite 플러그인이 데몬을 시작할 때마다 불러도 된다). 하네스 CLI 를 부르지 않는다. 설정 값은 manifest 기본값 < 플러그인 기본 설정(set) < 프로필(slcode-session-profile) < 세션(meta.agentPlugins). 세션에 싣기(Claude): 세션 폴더의 agent-plugins/<이름> 링크(Windows junction)가 그 세션이 쓰는 빌드의 플러그인 폴더를 가리키고 SDK 에는 링크 경로를 넘긴다 — 다시 싣기는 링크를 새 빌드로 바꾸고 SDK reloadPlugins() 를 부르는 것(링크를 바꾸고 reloadPlugins 하면 새 내용이 실린다, 2026-10-27 실측). 정리(gcBuilds)는 config 의 마지막 빌드·세션 링크·export/ 아래 링크가 가리키지 않고 10분 넘은 빌드를 지운다 — 막 빌드하고 링크를 걸기 전의 틈을 남긴다.
+
+export val AGENT_DIR
+export val SESSION_LINKS
+type AgentPaths
+type PluginEntry
+type AgentConfig
+type AddResult
+type PluginRow
+type Loaded
+type SessionPlugins
+type SessionValues
+type Later
+export fn agentPaths(stateDir) -> AgentPaths
+export fn readConfig(ap) -> AgentConfig {
+  role: 없거나 깨졌으면 빈 목록. plugins 의 키 순서가 설치 순서 — 지시문을 이 순서로 잇는다
+}
+export fn addPlugin(src, stateDir) -> AddResult {
+  role: manifest 를 읽고(없거나 깨지면 던진다 — 설치 거부) 내용 해시가 같고 설치본이 있으면 아무것도 하지 않는다(changed false). 아니면 sourceFiles 를 installed/<이름> 에 통째로 바꿔 넣고, 호환 등급을 매기고, 옛 판의 기본 설정 중 이 판에 맞는 값만 남겨 기본 설정으로 Claude 빌드를 만든다. export 링크 바꾸기는 slcode-agent-plugin-export 가 붙인다
+}
+export fn removePlugin(name, stateDir) {
+  role: 설치본·설정 항목을 지우고, 링크가 가리키지 않는 그 플러그인의 빌드도 바로 지운다. 없으면 removed false 로 성공. export 해제는 slcode-agent-plugin-export 가 붙인다
+}
+export fn setPlugin(name, assignments, stateDir) {
+  role: 플러그인 기본 설정에서 part 켜고 끄기·옵션 값 — 하나라도 틀리면 아무것도 바꾸지 않는다. 새 기본 설정으로 빌드한다
+}
+export fn listPlugins(stateDir) -> PluginRow[] {
+  role: 설치 순서로 — 판, 호환 등급과 하네스별 빠지는 것, part(필수·켬)·옵션 값(기본 설정 기준), 하네스별 마지막 빌드의 report.json
+}
+export fn claudeDataDir(name, env) -> Path {
+  role: Claude 의 플러그인 데이터 폴더 <CLAUDE_CONFIG_DIR 또는 ~/.claude>/plugins/data/<이름>-inline — 지시문의 ${CLAUDE_PLUGIN_DATA}. 빌드가 바꾸지 않는다(훅 명령 문자열과 Claude 가 주는 env 가 다른 폴더를 가리키게 된다)
+}
+export fn loadSessionPlugins(sessionDir, env, session, stateDir) -> SessionPlugins {
+  role: 세션을 띄울 때 — 지난 링크를 지우고, 설치한 플러그인마다 기본 설정 < 세션 값으로 빌드하고(있으면 다시 쓴다) 링크를 건다. 지시문의 ${CLAUDE_PLUGIN_ROOT} 는 링크 경로, ${CLAUDE_PLUGIN_DATA} 는 claudeDataDir 로 바꿔 설치 순서로 잇고, env 는 합치고, session.json 은 뒤의 플러그인이 이긴다. 싣지 못한 플러그인은 notes 에 사유만 — 세션은 오류 없이 뜬다
+}
+export fn reloadSessionPlugins(sessionDir, loaded, env, session, stateDir) {
+  role: 다시 싣기 — 실은 플러그인의 링크를 지금 설정의 빌드로 바꾼다, 지운 플러그인은 링크를 뗀다(removed). later 는 이 세션에 반영되지 않아 새 세션부터인 것: 지시문·env·session.json 이 기동 때와 달라진 플러그인, 세션 뒤에 설치한 플러그인(installed). loaded 의 지시문·env·session.json 은 기동 때 값으로 둔다 — 다음 비교의 기준. SDK reloadPlugins() 는 부른 쪽(core)이 한다
+}
+export fn currentBuilds(session, stateDir) {
+  role: 지금 설정으로 빌드하면 나올 식별자(빌드하지 않는다) — 세션이 실은 것과 다르면 다시 실을 것이 있다. 설치본이 깨졌으면 null
+}
+export fn unlinkSessionPlugins(sessionDir) {
+  role: 세션이 닫힐 때 링크를 떼어 그 빌드를 정리 대상으로
+}
+export fn gcBuilds(stateDir, graceMs, removed) -> String[] {
+  role: 지운 빌드 식별자. removed(방금 지운 플러그인 이름)면 그 플러그인의 빌드는 유예 없이 — 새 세션이 더는 그것을 빌드하지 않는다(세션·export 링크가 가리키면 남긴다). 남기는 것 — config 의 하네스별 마지막 빌드, 모든 세션 폴더의 링크, export/ 아래 링크가 가리키는 빌드, graceMs 안에 만들거나 다시 쓴 빌드. add·remove·set 뒤에 부른다
+}
+fn prune(v, m) -> Values {
+  role: 옛 판의 설정 중 이 판에 있는 키, 꼴이 맞는 값만 (필수 part 값은 버린다)
+}
+fn plan(ap, name, e, link, layers, env) {
+  role: 플러그인 하나의 지금 빌드와 세션에 넘길 값
+}
+fn relink(link, target) {
+  role: 옆에 만든 링크를 rename — 바꾸는 사이 링크가 없는 순간이 없다
+}

@@ -30,6 +30,8 @@ export type SessionMeta = {
   forkFrom?: string | null;
   /** inspect 모드 (session.setInspect) — Claude 벤더의 API 호출 원본을 inspect/ 에 남긴다 */
   inspect?: boolean;
+  /** 에이전트 플러그인의 세션 단위 설정 값 — 플러그인 이름별 {parts, options}. 기본 설정 위에 덮는다 (자리만, 채우는 것은 slcode-session-profile) */
+  agentPlugins?: Record<string, { parts?: Record<string, boolean>; options?: Record<string, boolean | string | number> } | undefined>;
 };
 
 /** turn.rewound 가 버린 턴(그 seq 부터)을 뺀 이벤트 — 버린 턴은 벤더 쪽에도 없으므로 대화 되돌리기의 유지 지점·다시 import 의 기준에서 뺀다 */

@@ -149,7 +149,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     modelMenu.replaceChildren(vendorSeg, h('div', { class: 'note' }, `${v} 로 바꾸는 중…`));
     // 응답 뒤 core 가 바뀐다 — 그 사이 보낸 요청은 serve 의 중계가 새 core 에 다시 보낸다. 모델 목록은 새 벤더가 뜬 뒤에 온다
     rpc('session.setVendor', { id: current, vendor: v })
-      .then(() => { loadStatus(); loadCommands(); loadMcp(); return loadModels(); })
+      .then(() => { loadStatus(); loadCommands(); loadMcp(); loadPlugins(); return loadModels(); })
       .catch((e) => { push(h('div', { class: 'meta err' }, e.message)); return loadModels(); })
       .finally(() => { switching = null; paintVendor(); });
   }
@@ -277,6 +277,17 @@ export function mountAgentFront(root, transport, opts = {}) {
   async function loadStatus() { if (!current) return; try { status = await rpc('session.status', { id: current }); } catch { status = null; } renderSide(); }
   // MCP 의 지금 상태 — session.ready 의 mcp 는 기동 때 것이라 실패 사유가 없다. failed 가 있을 때만 묻는다 (폴링 없음, ticket slcode-mcp-failed-path)
   let mcp = null, mcpBusy = null; // mcp: session.mcp·mcpReconnect 결과, 없으면 ready.mcp 를 그린다. mcpBusy: 다시 연결 중인 서버 이름
+  // 에이전트 플러그인 (ticket slcode-agent-plugin) — 실은 빌드와 지금 설정의 빌드가 다르면 다시 싣기를 켠다. attach·turn.end 때 묻는다 (폴링 없음)
+  let plugs = null, plugBusy = false; // plugs: session.plugins 결과
+  async function loadPlugins() { if (!current) return; try { plugs = await rpc('session.plugins', { id: current }); } catch { plugs = null; } renderSide(); }
+  async function reloadPlugins() {
+    if (plugBusy || !current) return;
+    plugBusy = true; renderSide();
+    try { await rpc('session.reloadPlugins', { id: current }); } // 결과는 plugins.reloaded 이벤트로, 턴 중이면 pending 으로 기다린다
+    catch (e) { push(h('div', { class: 'meta err' }, e.message)); }
+    plugBusy = false; loadPlugins();
+  }
+  const LATER = { instructions: '지시문', env: 'env', 'session.json': 'session.json', installed: '새로 설치함' };
   async function loadMcp() { if (!current || !ready?.mcp?.some((m) => m.status === 'failed')) return; try { mcp = await rpc('session.mcp', { id: current }); } catch { return; } renderSide(); }
   async function retryMcp(name) {
     if (mcpBusy) return;
@@ -562,7 +573,7 @@ export function mountAgentFront(root, transport, opts = {}) {
       case 'approval.resolved': resolveCard(ev.requestId, ev.decision); break;
       case 'turn.end': {
         endText();
-        if (live) { tally(ev); loadStatus(); } // 기록의 턴은 replayHistory 가 센다 — 열 때 턴마다 status 를 부르지 않게
+        if (live) { tally(ev); loadStatus(); loadPlugins(); } // 기록의 턴은 replayHistory 가 센다 — 열 때 턴마다 status 를 부르지 않게
         // 실패한 턴은 빨간 오류 블록 — 벤더 문구, 인증 실패면 로그인 안내 한 줄. API 를 쓰지 못한 턴(통계 0)은 통계 줄을 뺀다 (ticket slcode-auth-error-shown-as-answer)
         const failed = !ev.ok && !ev.interrupted;
         if (failed) push(h('div', { class: 'errblock' }, h('div', { class: 'msg' }, h('b', {}, '오류'), ` · ${ev.error ?? ''}`),
@@ -582,6 +593,13 @@ export function mountAgentFront(root, transport, opts = {}) {
       }
       case 'session.state': setState(ev.state); if (live) act.refresh(); break;
       case 'session.ready': ready = ev; mcp = null; renderMode(); renderSide(); if (live) loadMcp(); break;
+      case 'plugins.reloaded': {
+        endText();
+        push(h('div', { class: 'notice' }, ['에이전트 플러그인 다시 실음', ...ev.plugins.map((p) => `${p.name} ${p.version}`), ev.removed.length ? `뗌 ${ev.removed.join(', ')}` : null].filter(Boolean).join(' · ')));
+        if (ev.later.length) push(h('div', { class: 'meta' }, `새 세션부터 적용: ${ev.later.map((l) => `${l.name} ${l.what.map((w) => LATER[w] ?? w).join('·')}`).join(', ')}`));
+        if (live && ready) { ready = { ...ready, plugins: ev.sdk.plugins, slashCommands: ev.sdk.commands, agents: ev.sdk.agents, mcp: ev.sdk.mcp }; mcp = null; renderSide(); }
+        break;
+      }
       case 'session.imported': push(h('div', { class: 'notice' }, `imported from ${ev.vendor} (${ev.vendorSessionId.slice(0, 8)})`)); break; // 표지는 옮겨 온 대화 뒤에 선다 (사용자 2026-10-15: 짧게)
       case 'context.compacted': endText(); push(h('div', { class: 'notice' }, `컨텍스트 압축${ev.preTokens ? ` · ${fmtTok(ev.preTokens)}` : ''}`)); break;
       case 'hook': if (live) { hooks++; lastHook = `${ev.event} ${ev.phase}`; } break;
@@ -825,6 +843,15 @@ export function mountAgentFront(root, transport, opts = {}) {
       h('span', { class: 'nm' }, `${m.name} (${mcpBusy === m.name ? '다시 연결 중' : 'failed'})`),
       h('button', { class: 'ico', title: '다시 연결', 'aria-label': '다시 연결', disabled: mcpBusy ? '' : null, onclick: () => retryMcp(m.name) }, icon('retry')),
       m.error ? h('div', { class: 'why' }, m.error) : null);
+    // 에이전트 플러그인 — 실은 것과 지금 설정이 다르면 다시 싣기 (다음 턴 전에 적용, 지시문은 새 세션부터)
+    if (plugs && (plugs.plugins.length || plugs.added.length)) {
+      const stale = plugs.plugins.some((p) => p.current !== p.build);
+      side.append(sec('agentPlugins', '에이전트 플러그인', h('div', { class: 'plugs' },
+        kv([...plugs.plugins.map((p) => [h('span', { title: p.values }, `${p.name} ${p.version}`), p.current == null ? '지워짐' : p.current === p.build ? '최신' : '설정 바뀜']),
+          ...plugs.added.map((n) => [n, '새 세션부터'])]),
+        h('button', { disabled: !stale || plugBusy || plugs.pending ? '' : null, title: '바뀐 part·옵션을 이 세션에 다시 싣습니다. 지시문은 새 세션부터 적용됩니다', onclick: reloadPlugins },
+          plugs.pending ? '턴이 끝나면 다시 싣습니다' : plugBusy ? '다시 싣는 중…' : '다시 싣기'))));
+    }
     side.append(sec('loaded', '로드됨', ready
       ? h('div', {}, list('tools', '도구', ready.tools), list('skills', '스킬', ready.skills), list('plugins', '플러그인', ready.plugins, (p) => p.name), list('mcp', 'MCP', mcp ?? ready.mcp, mcpItem), list('slash', '슬래시 명령', ready.slashCommands), list('agents', '에이전트', ready.agents))
       : h('div', { class: 'empty' }, '첫 턴 뒤')));
@@ -1057,7 +1084,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     replayHistory(r.history, first ? r.summary : null);
     for (const p of r.pending) renderCard(p);
     setState(info.state);
-    loadModels(); loadStatus(); loadCommands(); loadMcp(); renderMode(); prefetch(); act.refresh();
+    loadModels(); loadStatus(); loadCommands(); loadMcp(); loadPlugins(); renderMode(); prefetch(); act.refresh();
     if (opts.onAttach) opts.onAttach(id, info);
   }
   transport.onEvent((m) => {

@@ -23,6 +23,7 @@ import { findVendorSession, forkClaude, vendorResumeCommand } from './vendor.js'
 import { pullHistory } from './history.js';
 import { CLAUDE_EFFORTS } from './base.js';
 import { randomUUID } from 'node:crypto';
+import { addPlugin, listPlugins, removePlugin, setPlugin } from './agentPlugins.js';
 import { FILES, PERMISSION_MODES, type ApprovalRequest, type LoggedEvent, type Methods, type SessionInfo } from './protocol.js';
 
 type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; model?: string; effort?: string; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; 'no-inspect'?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; re?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; takeover?: boolean; version?: boolean; help?: boolean };
@@ -76,6 +77,12 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
 * check                          밀린 메시지를 지금 읽는다
 * ask <to> <text> [--timeout S]  묻고 답장을 기다린다
 * reply <id> <text>              받은 메시지에 답장
+에이전트 플러그인 (Claude 세션에 싣는다. 바꾼 설정은 새 세션부터, 떠 있는 세션은 사이드바의 다시 싣기로)
+  plugin add <folder>            slcode-plugin.json 이 있는 원본 폴더를 설치한다. 같은 내용이면 아무것도 하지 않는다
+  plugin remove <name>           설치와 설정을 지운다 (없어도 성공)
+  plugin set <name> <part>=on|off <option>=<value> ...
+                                 플러그인 기본 설정을 바꾼다 (필수 part 는 끌 수 없다)
+  plugin list [--json]           설치한 플러그인, 호환 등급(full|partial)과 빠지는 것, part·옵션 값, 마지막 빌드 보고
 공통: --dir D (SLCODE_DIR 대체), --help, --version [--json] (--json 이면 {"version","build"} — build 는 dist/cli.js 의 mtime)`;
 
 function usage(msg?: string): never {
@@ -585,6 +592,29 @@ try {
       const sid = inSession(); if (!rest[1]) usage('reply <id> <text>');
       const { client } = await liveClient(sid);
       try { print(await client.request('session.reply', { id: sid, re: rest[0], text: rest.slice(1).join(' ') })); } finally { client.close(); }
+      break;
+    }
+    // ---- 에이전트 플러그인 (ticket slcode-agent-plugin)
+    case 'plugin': {
+      const [sub, ...args] = rest;
+      if (sub === 'add') { if (args.length !== 1) usage('plugin add <folder>'); print(await addPlugin(args[0], P.dir)); break; }
+      if (sub === 'remove') { if (args.length !== 1) usage('plugin remove <name>'); print(await removePlugin(args[0], P.dir)); break; }
+      if (sub === 'set') { if (args.length < 2) usage('plugin set <name> <part>=on|off <option>=<value> ...'); print(await setPlugin(args[0], args.slice(1), P.dir)); break; }
+      if (sub !== 'list') usage('plugin add|remove|set|list');
+      const rows = listPlugins(P.dir);
+      if (flags.json) { print(rows); break; }
+      if (!rows.length) { console.log('(no agent plugins)'); break; }
+      for (const r of rows) {
+        const lost = Object.entries(r.lost).filter(([, l]) => l.length);
+        const rep = r.reports.claude;
+        console.log([
+          `${r.name} ${r.version}  ${r.grade}`,
+          `  parts    ${r.parts.map((x) => `${x.name}${x.required ? '(required)' : ''} ${x.on ? 'on' : 'off'}`).join(' · ') || '-'}`,
+          ...(r.options.length ? [`  options  ${r.options.map((o) => `${o.name}=${JSON.stringify(o.value)}${o.label ? ` (${o.label})` : ''}`).join(' · ')}`] : []),
+          ...lost.map(([h, l]) => `  lost in ${h}: ${l.join('; ')}`),
+          rep ? `  claude build ${rep.build}  instructions ${rep.instructions.used.length}${[rep.overridden.length && `overridden ${rep.overridden.join('; ')}`, rep.dropped.length && `dropped ${rep.dropped.join('; ')}`, rep.lost.length && `lost ${rep.lost.join('; ')}`].filter(Boolean).map((x) => ` · ${x}`).join('')}` : '  claude build -',
+        ].join('\n'));
+      }
       break;
     }
     default: usage(`unknown verb: ${cmd}`);

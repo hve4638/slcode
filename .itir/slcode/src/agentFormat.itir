@@ -1,0 +1,46 @@
+role: 에이전트 플러그인의 원본 형식 (ticket slcode-agent-plugin, 설계 ws docs/report/slcode-agent-plugin-survey.md 커밋 12ffcf2, 사용자 결정 2026-10-26·27) — Claude 플러그인 형식을 따른다. manifest slcode-plugin.json {name, version, options {<이름>: {type boolean|string|number, default, label}}, parts {<이름>: {required, default}}, env}. part 폴더마다 skills/·hooks/hooks.json·.mcp.json·bin/·instructions/*.md(frontmatter if — boolean 옵션 이름, ! 로 부정)·raw/claude/(Claude 플러그인 폴더 형식, session.json 은 SDK settings)·raw/pi/. part 를 켜는 조건(when)은 두지 않는다 — 실행 환경 조건은 플러그인이 실행할 때 확인한다. 형식이 모르는 폴더·파일은 오류가 아니다; manifest 가 없거나 깨진 경우(이름·part 구성을 알 수 없음, part·옵션 이름이 겹침)만 던진다 — slcode plugin add 가 거부하는 유일한 경우. 파일을 쓰지 않는다. 하네스는 claude·gpt(GPT 하네스, 장기적으로 Codex 자리 — 설계 기준)·codex. BUILDER 는 빌드기 판 — 빌드 결과가 달라지는 변경이면 올린다(빌드 식별자에 들어가 옛 빌드를 다시 쓰지 않는다).
+
+export val MANIFEST
+export val BUILDER
+export val HARNESSES
+type Harness
+type OptionType
+type OptionSpec
+type PartSpec
+type Manifest
+type Values
+type Resolved
+export fn parseManifest(text) -> Manifest {
+  role: 꼴 검사 — 이름은 [A-Za-z0-9][A-Za-z0-9._-]{0,63}(.. 없음, 폴더 이름이 된다). required part 는 늘 켜짐, default 를 적지 않은 part 는 켜짐. 옵션 default 가 없으면 꼴의 0 값
+}
+export fn readManifest(dir) -> Manifest
+export fn walk(dir, rel) -> String[] {
+  role: 일반 파일의 상대 경로(/ 구분, 정렬), 링크는 따라가고 .git 은 뺀다
+}
+export fn sourceFiles(dir, m) -> String[] {
+  role: manifest 와 manifest 에 적힌 part 폴더의 파일 — 설치가 복사하고 해시하는 범위
+}
+export fn sourceHash(dir, m) -> Text {
+  role: 경로·실행 비트·내용의 sha256 — 같으면 add 가 아무것도 하지 않는다
+}
+export fn frontmatter(text) -> Frontmatter {
+  role: 머리 --- 블록의 맨 앞 칸 키와 한 줄 값(따옴표를 벗긴다), 나머지는 body
+}
+export fn partLost(dir, part) {
+  role: part 하나에서 하네스마다 빠지는 것("<part>/<경로>[: 사유]") — 호환 등급과 report.json 의 lost 가 같은 규칙을 쓴다. codex: hooks/hooks.json·raw/claude·raw/pi·Claude 전용 skill 필드(name·description·when_to_use·disable-model-invocation 밖). gpt: GPT 하네스가 받지 않는 훅 이벤트(SessionStart·UserPromptSubmit·PreToolUse·PostToolUse·Stop·PreCompact·PostCompact·SessionEnd 밖)·raw/claude·Claude 전용 skill 필드. claude: raw/pi. 문법이 깨진 hooks.json·.mcp.json(raw/claude 의 것과 session.json 은 Claude 만)은 그것을 받는 하네스 모두
+}
+export fn compat(dir, m) {
+  role: 호환 등급 — 모든 part(켜지 않은 것도)의 partLost 를 모아, 어느 하네스에도 빠지는 것이 없으면 full, 아니면 partial
+}
+export fn resolveValues(m, layers) -> Resolved {
+  role: manifest 기본값 위에 층(기본 설정 config.json < 프로필 < 세션)을 차례로 덮는다 — 뒤가 이긴다. 모르는 키·꼴이 틀린 값·필수 part 끄기는 건너뛴다(옛 판의 설정이 남아 있을 수 있다)
+}
+export fn valuesString(r) -> Text {
+  role: 정렬한 설정 문자열 part.<이름>=0|1, opt.<이름>=<JSON>
+}
+export fn buildId(values, hash, harness) -> Text {
+  role: 설정 문자열·원본 해시·하네스·BUILDER 의 sha256 앞 16자 — 빌드 폴더 이름
+}
+export fn parseAssignment(m, s) {
+  role: slcode plugin set 의 <키>=<값> — part 는 on|off(필수 part 의 off 는 오류), boolean 옵션은 true|false|on|off, number 는 유한한 수, string 은 그대로. 모르는 키는 part·옵션 목록과 함께 오류
+}
