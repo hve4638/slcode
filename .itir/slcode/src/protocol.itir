@@ -45,3 +45,6 @@ type Mail
 type InspectCall
 type InspectRecord
 type InspectUsage
+type ActivityAgentState
+type ActivityRecord
+type ActivityResult

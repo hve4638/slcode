@@ -22,6 +22,7 @@ import { corePaths, ensureDir, readOrCreateToken } from './paths.js';
 import { formatMail, newMail, parseMails, sendMail, sessionMeta } from './mail.js';
 import { blockInspect, CODEX_ROUTE, codexArgs, codexUpstream, inspectBlocked, inspectEnv, keepsFirstParty, sdkVersion, startInspect, turnCalls, upstreamOf, type InspectProxy } from './inspect.js';
 import { InspectStore, maybeSweep } from './inspectDb.js';
+import { Activity } from './activity.js';
 import { CoreError, ERR, FILES, PERMISSION_MODES, PROTOCOL_VERSION, type ApprovalRequest, type LoggedEvent, type Mail, type MethodName, type Methods, type RequestFrame, type SessionInfo } from './protocol.js';
 
 /** 벤더 자식(claude CLI·codex)에 넘기지 않을 env — 워커 Claude 세션 안에서 띄우면 그 세션의 표식(CLAUDECODE·CLAUDE_CODE_SESSION_ID·
@@ -164,6 +165,10 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     ? new CodexSession({ log: logFile, env, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, args: firstArgs, onConfig: (base) => gotBase(base) })
     : new ClaudeSession({ log: logFile, env: firstEnv, resume: logFile.meta.vendorSessionId, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw });
   const sid = session.id;
+  // 활동 기록 (ticket slcode-activity-state) — 첫 프롬프트가 상태를 바꾸기 전에 구독한다
+  const activity = Activity.open(logFile.dir);
+  activity.agent(session.state);
+  session.onEvent((e) => { if (e.ev.kind === 'session.state') activity.agent(e.ev.state); });
   if (inspectFailed) session.notice(`inspect 를 켜지 않았습니다: ${inspectFailed}`);
   if (!opts.resume && opts.prompt?.trim()) session.send(opts.prompt);
   // codex 감시 (사용자 결정 2026-10-19) — proxy 를 세운 뒤 처음 성공한 턴까지 모델 호출(/responses)이 하나도 기록되지 않았으면 codex 가 proxy 를 거치지 않는다
@@ -281,6 +286,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       if (typeof p.text !== 'string' || (!p.text.trim() && !att.length)) throw new CoreError(ERR.badRequest, 'text or attachments required');
       for (const a of att) if (typeof a?.name !== 'string' || typeof a.mediaType !== 'string' || typeof a.data !== 'string') throw new CoreError(ERR.badRequest, 'attachment {name, mediaType, data}');
       s.send(p.text, p.origin ?? null, att);
+      if (!p.origin) activity.sent(); // 메시지 턴(origin mail 등)은 사람이 보낸 것이 아니다
       return { ok: true, state: s.state };
     },
     'session.models': (_c, p) => mine(p?.id).models(),
@@ -329,7 +335,9 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     'session.approve': (_c, p) => {
       const s = mine(p?.id);
       if (p.decision !== 'allow' && p.decision !== 'deny') throw new CoreError(ERR.badRequest, 'decision allow|deny');
-      return { ok: s.approve(p.requestId, p.decision, { remember: p.remember, updatedInput: p.updatedInput, message: p.message }) };
+      const ok = s.approve(p.requestId, p.decision, { remember: p.remember, updatedInput: p.updatedInput, message: p.message });
+      if (ok) activity.answered();
+      return { ok };
     },
     'session.close': (_c, p) => { mine(p?.id); setImmediate(() => void close('closed by client')); return { ok: true }; },
     'session.rename': (_c, p) => { const s = mine(p?.id); s.log.updateMeta({ title: p.title ?? null }); broadcast('session.changed', s.info()); return { ok: true }; },
@@ -347,6 +355,8 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       return rec;
     },
     'session.setDraft': (_c, p) => { mine(p?.id); if (typeof p.text !== 'string') throw new CoreError(ERR.badRequest, 'text required'); draft = p.text; return { ok: true }; },
+    'session.signal': (_c, p) => { mine(p?.id); if (!activity.signal(p.strength, p.what)) throw new CoreError(ERR.badRequest, 'strength weak|strong and what [a-z0-9-]{1,32}'); return { ok: true }; },
+    'session.activity': (_c, p) => { mine(p?.id); return activity.result(typeof p.from === 'number' ? p.from : undefined); },
     // ---- 메시징 (ticket slcode-p2p-messaging, 2026-10-19)
     'session.deliver': (_c, p) => {
       mine(p?.id);
@@ -473,6 +483,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     closed = true;
     disarmOwnerGrace();
     log(`closing: ${reason}`);
+    activity.exited();
     // 꺼진 시각은 먼저 — 벤더 종료가 길어 SIGKILL 을 맞아도 남는다
     try { logFile.updateMeta({ closedAt: Date.now() }); } catch { /* delete 가 세션 폴더를 먼저 지웠다 */ }
     for (const [id, w] of asks) { asks.delete(id); w.reject(new CoreError('closed', `session closed: ${reason}`)); }
@@ -505,6 +516,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   async function replace(pkg: string) {
     retiring = true; closed = true;
     disarmOwnerGrace();
+    activity.handoff(); // 새 core 가 이어 적는다 — 세션 꺼짐이 아니다
     log(`replacing this core with ${pkg}`);
     // 소켓을 지우기 전에 표시부터 — 그 사이 붙으려는 쪽이 꺼진 세션으로 보지 않고 기다린다
     const mark = replacingMark(sockPath);

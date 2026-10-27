@@ -6,6 +6,7 @@
 import { renderMarkdown } from './markdown.js';
 import { DEFAULTS, applySettings, closeOnBackdrop, ctxLevel, settingsDialog } from './settings.js';
 import { inspectDialog } from './inspect.js';
+import { activityPanel } from './activity.js';
 
 const STATE_LABEL = { starting: '시작 중', idle: '대기', running: '실행 중', requires_action: '응답 필요', exited: '종료', disconnected: '연결 끊김' };
 const h = (tag, attrs = {}, ...children) => {
@@ -247,6 +248,9 @@ export function mountAgentFront(root, transport, opts = {}) {
   root.append(el);
 
   const rpc = (m, p) => transport.request(m, p);
+  // 활동 기록 (ticket slcode-activity-state) — 사이드바 칸과 모달, 이 화면의 사람 행동 신호
+  const act = activityPanel(h, rpc, { getId: () => current, root: el, feed, input });
+  el.append(act.dialog);
   let current = null, lastSeq = 0, curSeq = 0, replaying = false, info = null, ready = null, connected = false, exitNote = null;
   // 스트리밍 상태는 범위마다 — 본문(main)과 서브에이전트(부모 tool_use id)마다 따로 (2026-09-30, 작업 카드)
   let main = { col: null, textEl: null, textBuf: '', thinkEl: null, thinkBuf: '' };
@@ -576,7 +580,7 @@ export function mountAgentFront(root, transport, opts = {}) {
         if (!replaying) renderSide();
         break;
       }
-      case 'session.state': setState(ev.state); break;
+      case 'session.state': setState(ev.state); if (live) act.refresh(); break;
       case 'session.ready': ready = ev; mcp = null; renderMode(); renderSide(); if (live) loadMcp(); break;
       case 'session.imported': push(h('div', { class: 'notice' }, `imported from ${ev.vendor} (${ev.vendorSessionId.slice(0, 8)})`)); break; // 표지는 옮겨 온 대화 뒤에 선다 (사용자 2026-10-15: 짧게)
       case 'context.compacted': endText(); push(h('div', { class: 'notice' }, `컨텍스트 압축${ev.preTokens ? ` · ${fmtTok(ev.preTokens)}` : ''}`)); break;
@@ -788,6 +792,8 @@ export function mountAgentFront(root, transport, opts = {}) {
       d.addEventListener('toggle', () => { if (d.open) folded.delete(key); else folded.add(key); });
       return d;
     };
+    // 활동 기록 — 모델 줄 아래, 기본으로 펼친다 (ticket slcode-activity-state). 칸 안은 activity.js 가 따로 다시 그린다
+    side.append(sec('activity', '활동 기록', act.body, act.more));
     if (tasks.size) side.append(h('div', { class: 'tasks' }, h('h4', {}, `에이전트 ${tasks.size}`), ...[...tasks.values()].map(({ card, ev }) => {
       const u = ev.usage;
       return h('a', { onclick: () => { card.open = true; card.scrollIntoView({ block: 'center' }); } },
@@ -1051,7 +1057,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     replayHistory(r.history, first ? r.summary : null);
     for (const p of r.pending) renderCard(p);
     setState(info.state);
-    loadModels(); loadStatus(); loadCommands(); loadMcp(); renderMode(); prefetch();
+    loadModels(); loadStatus(); loadCommands(); loadMcp(); renderMode(); prefetch(); act.refresh();
     if (opts.onAttach) opts.onAttach(id, info);
   }
   transport.onEvent((m) => {

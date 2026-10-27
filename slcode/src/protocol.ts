@@ -14,6 +14,8 @@ export const PROTOCOL_VERSION = 3;
 /** 파일 위치 — $SLCODE_DIR, 없으면 ~/.local/state/slcode */
 export const FILES = {
   coreLog: 'core.log',
+  /** 활동 기록 원자료 — 세션 폴더 (activity.ts) */
+  activity: 'activity.jsonl',
   token: 'slcode.token',
   sessionsDir: 'sessions',
   sessionSock: 'sock',
@@ -89,6 +91,25 @@ export type HistorySummary = { turns: number; usage: Usage; costUsd: number | nu
 
 /** 요청 목록 한 줄 (ticket slcode-prompt-outline) — turn.start 의 seq·origin·앞 300자(메일 턴은 전부 — 웹이 머리표를 풀어 보낸 이·본문 첫 줄을 보인다)·첨부 이름 */
 export type OutlineItem = { seq: number; origin: string | null; text: string; files: string[] };
+
+/** 활동 기록 원자료 한 줄 (activity.ts, ticket slcode-activity-state) — 세션 폴더의 activity.jsonl. t 는 core 의 시계.
+ *  agent 는 session.state 를 넷으로 접은 것(starting → idle, requires_action → asking), sent·answered 는 사람이 보낸 요청·처리한 질문(점),
+ *  sig 는 화면이 보낸 신호, handoff 는 core 교체(이어진 것으로 본다) */
+export type ActivityAgentState = 'running' | 'asking' | 'idle' | 'exited';
+export type ActivityRecord =
+  | { t: number; type: 'agent'; state: ActivityAgentState }
+  | { t: number; type: 'sent' | 'answered' | 'handoff' }
+  | { t: number; type: 'sig'; strength: 'weak' | 'strong'; what: string };
+/** 활동 판정 결과 (activity.ts classify) — 에이전트 구간, 사람 구간(사용자 차례의 확인 중 active·AFK), 점, 잠깐 확인(AFK 를 끊지 않은 약한 신호).
+ *  current 는 지금 상태 — label waiting 은 응답 대기, since 는 그 상태가 시작된 시각, agentSince 는 지금 에이전트 상태의 시작. start 는 첫 기록 시각(없으면 null) */
+export type ActivityResult = {
+  start: number | null; now: number;
+  agent: { from: number; to: number; state: ActivityAgentState }[];
+  user: { from: number; to: number; label: 'active' | 'afk' }[];
+  points: { t: number; kind: 'sent' | 'answered' }[];
+  peeks: { t: number }[];
+  current: { agent: ActivityAgentState; label: 'waiting' | 'active' | 'afk'; since: number; agentSince: number } | null;
+};
 
 export type ApprovalDecision = 'allow' | 'deny';
 export type ResolvedDecision = ApprovalDecision | 'cancelled';
@@ -226,6 +247,12 @@ export type Methods = {
   /** 웹 입력창 초안을 맡긴다 — 프로세스 메모리에 하나(마지막 쓴 것), 디스크·방송 없음. 카드 iframe 이 다시 로드돼도 쓰던 글이 남게
    *  (ticket slcode-card-periodic-reload, 사용자 결정 2026-10-10) */
   'session.setDraft': { params: { id: string; text: string }; result: { ok: true } };
+  // ---- 활동 기록 (ticket slcode-activity-state, 사용자 결정 2026-10-25~27)
+  /** 화면이 사람 행동을 알린다 — weak 은 의도가 불확실한 것(키·클릭·스크롤), strong 은 분명한 것. 같은 종류가 2초 안에 몰린 것은 화면이 하나로 보낸다.
+   *  what 은 영숫자·- 32자까지 (key·click·scroll·type·esc·copy·select·button·scroll-far·scroll-start) */
+  'session.signal': { params: { id: string; strength: 'weak' | 'strong'; what: string }; result: { ok: true } };
+  /** 지금 시각의 활동 판정 — from 이 있으면 그 뒤에 걸친 구간·점만 (사이드바는 최근 1시간) */
+  'session.activity': { params: { id: string; from?: number }; result: ActivityResult };
   // ---- inspect (ticket slcode-inspect-proxy, 사용자 결정 2026-10-17) — Claude 벤더만
   /** 벤더의 API 호출 원본 기록을 켜고 끈다 — idle 일 때만, 벤더 프로세스를 같은 대화로 다시 띄운다. meta 에 남아 resume 뒤에도 유지.
    *  내부 플래그가 듣지 않는다고 기록된 SDK 버전(FILES.inspectBlocked)이면 켜기는 bad_request */
