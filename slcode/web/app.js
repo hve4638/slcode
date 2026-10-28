@@ -287,7 +287,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     catch (e) { push(h('div', { class: 'meta err' }, e.message)); }
     plugBusy = false; loadPlugins();
   }
-  const LATER = { instructions: '지시문', env: 'env', 'session.json': 'session.json', installed: '새로 설치함' };
+  const LATER = { instructions: '지시문', env: 'env', 'session.json': 'session.json', mcp: 'MCP', bin: 'bin', installed: '새로 설치함' };
   async function loadMcp() { if (!current || !ready?.mcp?.some((m) => m.status === 'failed')) return; try { mcp = await rpc('session.mcp', { id: current }); } catch { return; } renderSide(); }
   async function retryMcp(name) {
     if (mcpBusy) return;
@@ -849,7 +849,7 @@ export function mountAgentFront(root, transport, opts = {}) {
       side.append(sec('agentPlugins', '에이전트 플러그인', h('div', { class: 'plugs' },
         kv([...plugs.plugins.map((p) => [h('span', { title: p.values }, `${p.name} ${p.version}`), p.current == null ? '지워짐' : p.current === p.build ? '최신' : '설정 바뀜']),
           ...plugs.added.map((n) => [n, '새 세션부터'])]),
-        h('button', { disabled: !stale || plugBusy || plugs.pending ? '' : null, title: '바뀐 part·옵션을 이 세션에 다시 싣습니다. 지시문은 새 세션부터 적용됩니다', onclick: reloadPlugins },
+        h('button', { disabled: !stale || plugBusy || plugs.pending ? '' : null, title: ready?.vendor === 'codex' ? '바뀐 skill 을 이 세션에 다시 싣습니다. MCP·지시문·bin·env 는 새 세션부터 적용됩니다' : '바뀐 part·옵션을 이 세션에 다시 싣습니다. 지시문은 새 세션부터 적용됩니다', onclick: reloadPlugins },
           plugs.pending ? '턴이 끝나면 다시 싣습니다' : plugBusy ? '다시 싣는 중…' : '다시 싣기'))));
     }
     side.append(sec('loaded', '로드됨', ready

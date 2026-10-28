@@ -1,16 +1,16 @@
 // 가짜 codex app-server — stdio JSON 줄 프로토콜의 최소 흉내 (테스트용, API 호출 없음).
 // initialize·thread/start·thread/resume·thread/fork(새 id fork-<원본>)·thread/read(turns 는 FAKE_CODEX_TURNS 파일, 없으면 빈 배열)·model/list·turn/start·turn/interrupt·thread/compact/start 에 답하고,
 // turn/start 뒤 델타 → 명령 승인 요청 → 완료 알림을 낸다.
-// FAKE_CODEX_CALLS 면 thread/* 요청의 메서드·developerInstructions 를 그 파일에 한 줄씩 남긴다.
+// FAKE_CODEX_CALLS 면 thread/* 요청의 메서드·developerInstructions 와 skills/extraRoots/set 의 extraRoots 를 그 파일에 한 줄씩 남긴다.
 // 본문이 auth-fail 이면 인증 실패 턴을 흉내 낸다. FAKE_CODEX_IGNORE_INTERRUPT 면 turn/interrupt 에 답하지 않는다 (느린 종료 — slcode 는 2초 기다린다)
 // inspect (ticket slcode-inspect-codex): config/read 는 -c openai_base_url 을 sessionFlags 층, FAKE_CODEX_USER_BASE 를 user 층으로 답한다.
 // 본문이 ws 면 -c 로 받은 주소(없으면 FAKE_CODEX_USER_BASE)의 /responses 에 WebSocket 으로 response.create 둘(둘째는 previous_response_id 로 증분)을 보내고 끝난 뒤 턴을 마친다.
 // no-call 이면 API 를 부르지 않고 성공한 턴으로 마친다
-// FAKE_CODEX_ENV 면 기동 때 받은 PATH·SLCODE_SESSION_ID 를 그 파일에 JSON 으로 남긴다 (ticket slcode-session-bin-path)
+// FAKE_CODEX_ENV 면 기동 때 받은 PATH·SLCODE_SESSION_ID·CORE_X·인자를 그 파일에 JSON 으로 남긴다 (ticket slcode-session-bin-path, 에이전트 플러그인 env·MCP 인자는 slcode-agent-plugin-codex)
 import fs from 'node:fs';
 import readline from 'node:readline';
 import WebSocket from 'ws';
-if (process.env.FAKE_CODEX_ENV) fs.writeFileSync(process.env.FAKE_CODEX_ENV, JSON.stringify({ PATH: process.env.PATH, SLCODE_SESSION_ID: process.env.SLCODE_SESSION_ID }));
+if (process.env.FAKE_CODEX_ENV) fs.writeFileSync(process.env.FAKE_CODEX_ENV, JSON.stringify({ PATH: process.env.PATH, SLCODE_SESSION_ID: process.env.SLCODE_SESSION_ID, CORE_X: process.env.CORE_X, args: process.argv.slice(2) }));
 const argBase = process.argv.join(' ').match(/openai_base_url="([^"]+)"/)?.[1] ?? null;
 /** 요청 하나 — response.completed 까지 받은 이벤트의 response id */
 const call = (ws, msg) => new Promise((resolve, reject) => {
@@ -42,9 +42,11 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   }
   const reply = (result) => out({ jsonrpc: '2.0', id: m.id, result });
   if (process.env.FAKE_CODEX_CALLS && m.method?.startsWith('thread/')) fs.appendFileSync(process.env.FAKE_CODEX_CALLS, JSON.stringify({ method: m.method, developerInstructions: m.params?.developerInstructions ?? null }) + '\n');
+  if (process.env.FAKE_CODEX_CALLS && m.method === 'skills/extraRoots/set') fs.appendFileSync(process.env.FAKE_CODEX_CALLS, JSON.stringify({ method: m.method, extraRoots: m.params.extraRoots }) + '\n');
   switch (m.method) {
     case 'initialize': return reply({ userAgent: 'fake/0.0.1 (test)', codexHome: '/tmp', platformFamily: 'unix', platformOs: 'linux' });
     case 'initialized': return;
+    case 'skills/extraRoots/set': return reply({});
     case 'config/read': return reply({ config: {}, origins: {}, layers: [...(argBase ? [{ name: { type: 'sessionFlags' }, config: { openai_base_url: argBase } }] : []), { name: { type: 'user', file: '/tmp/config.toml' }, config: process.env.FAKE_CODEX_USER_BASE ? { openai_base_url: process.env.FAKE_CODEX_USER_BASE } : {} }] });
     case 'thread/start': case 'thread/resume': return reply({ thread: { id: m.method === 'thread/resume' ? m.params.threadId : thread.id, turns: [] }, model: m.params.model ?? 'fake-model', modelProvider: 'fake', cwd: m.params.cwd, approvalPolicy: m.params.approvalPolicy, sandbox: {}, reasoningEffort: 'medium' });
     case 'thread/fork': return reply({ thread: { id: `fork-${m.params.threadId}`, turns: [] }, model: m.params.model ?? 'fake-model', modelProvider: 'fake', cwd: m.params.cwd, approvalPolicy: m.params.approvalPolicy, sandbox: {}, reasoningEffort: 'medium' });

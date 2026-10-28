@@ -5,7 +5,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import readline from 'node:readline';
 import { randomUUID } from 'node:crypto';
-import type { ApprovalDecision, ApprovalRequest, Attachment, LimitWindow, McpStatus, TaskEvent } from './protocol.js';
+import type { ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, LimitWindow, McpStatus, TaskEvent } from './protocol.js';
 import { AgentSession, effortMisfit, type ApproveOpts, type Command, type ContextUsage, type Limits, type ModelsResult } from './base.js';
 import type { EventLog } from './eventLog.js';
 import { SLCODE_PROMPT } from './prompt.js';
@@ -21,6 +21,10 @@ export type CodexOptions = {
   args?: string[];
   /** initialize 뒤 thread 를 열기 전에 한 번 — 사용자가 정한 openai_base_url (args 로 덮기 전 값, 없으면 null). 못 읽어도 null 로 부른다 */
   onConfig?: (openaiBaseUrl: string | null) => void;
+  /** slcode 에이전트 플러그인의 skill 폴더들 — thread 를 열기 전에 skills/extraRoots/set (ticket slcode-agent-plugin-codex) */
+  skillRoots?: string[];
+  /** 에이전트 플러그인의 지시문 — 새 thread 의 developerInstructions 에서 SLCODE_PROMPT 뒤에 */
+  instructions?: string;
 };
 
 /** Codex 는 비용을 주지 않는다 — 공식 가격표(USD / 1M 토큰: 입력·캐시 입력·출력, developers.openai.com 2026-10-09)로 추정한다.
@@ -206,6 +210,12 @@ export class CodexSession extends AgentSession {
         try { base = userBaseUrl((await this.request('config/read', { includeLayers: true, cwd: this.cwd }))?.layers); } catch {}
         this.opts.onConfig(base);
       }
+      // 에이전트 플러그인 skill — 프로세스에 걸리는 값이라 다시 띄우면(reopen) 다시 건다. 못 걸어도 세션은 뜬다
+      if (this.opts.skillRoots?.length) {
+        try { await this.request('skills/extraRoots/set', { extraRoots: this.opts.skillRoots }); }
+        catch (e) { this.notice(`에이전트 플러그인 skill 을 싣지 못했습니다: ${(e as Error).message}`); }
+      }
+      const developerInstructions = [SLCODE_PROMPT, this.opts.instructions?.trim()].filter(Boolean).join('\n\n');
       const pol = policyOf(this.mode);
       const base = { cwd: this.cwd, approvalPolicy: pol.approvalPolicy, approvalsReviewer: pol.approvalsReviewer, sandbox: sandboxModeOf(this.mode), ...(this.model ? { model: this.model } : {}) };
       let r: any = null;
@@ -215,9 +225,10 @@ export class CodexSession extends AgentSession {
         catch (e) { if (!/not found|no rollout/i.test((e as Error).message)) throw e; this.emit({ kind: 'error', message: `codex thread ${this.threadId} not found — starting a new thread` }); }
       }
       // slcode import --fork — 원본은 두고 갈라 낸 새 thread 로 (원본이 없으면 새 thread 로 대체하지 않고 실패)
-      // slcode 고정 지시는 새 thread 에만 — developer 메시지로 덧붙는다, 기본 프롬프트(baseInstructions)는 그대로 (ticket slcode-append-system-prompt, 사용자 결정 2026-10-17: 새 세션부터)
-      if (!r && this.log.meta.forkFrom) r = await this.request('thread/fork', { threadId: this.log.meta.forkFrom, ...base, developerInstructions: SLCODE_PROMPT, excludeTurns: true });
-      r ??= await this.request('thread/start', { ...base, developerInstructions: SLCODE_PROMPT });
+      // slcode 고정 지시는 새 thread 에만 — developer 메시지로 덧붙는다, 기본 프롬프트(baseInstructions)는 그대로 (ticket slcode-append-system-prompt, 사용자 결정 2026-10-17: 새 세션부터).
+      // 에이전트 플러그인의 지시문은 그 뒤에 (ticket slcode-agent-plugin-codex)
+      if (!r && this.log.meta.forkFrom) r = await this.request('thread/fork', { threadId: this.log.meta.forkFrom, ...base, developerInstructions, excludeTurns: true });
+      r ??= await this.request('thread/start', { ...base, developerInstructions });
       this.threadId = r.thread.id;
       this.log.updateMeta({ vendorSessionId: r.thread.id });
       this.model ??= r.model ?? null;
@@ -460,6 +471,16 @@ export class CodexSession extends AgentSession {
   async mcp(): Promise<McpStatus[]> { return []; }
   async reconnectMcp(): Promise<McpStatus[]> { throw new Error('mcp reconnect is not supported for codex sessions'); }
   async rewind(): Promise<string[] | null> { throw new Error('rewind is not supported for codex sessions'); }
+
+  /** 에이전트 플러그인 skill 다시 싣기 — extra root 를 바꾸면 Codex 가 다음 턴에 바뀐 skill 목록을 developer 메시지로 덧붙인다 (2026-10-28 요청 본문 실측).
+   *  빈 목록이면 플러그인 skill 을 뗀다 */
+  async setSkillRoots(roots: string[]) {
+    await this.ready;
+    this.opts = { ...this.opts, skillRoots: roots };
+    await this.request('skills/extraRoots/set', { extraRoots: roots });
+  }
+  /** 다시 싣기의 결과를 기록에 — core 가 링크를 바꾸고 setSkillRoots 를 부른 뒤 */
+  emitPlugins(body: Omit<Extract<CoreEvent, { kind: 'plugins.reloaded' }>, 'kind'>) { this.emit({ kind: 'plugins.reloaded', ...body }); }
 
   /** 기동 전에 온 턴 수 — core 가 inspect 를 바꾸며 다시 띄우기 전에 본다 */
   get queued(): number { return this.queue.length; }

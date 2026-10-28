@@ -78,7 +78,7 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
 * check                          밀린 메시지를 지금 읽는다
 * ask <to> <text> [--timeout S]  묻고 답장을 기다린다
 * reply <id> <text>              받은 메시지에 답장
-에이전트 플러그인 (Claude 세션에 싣는다. 바꾼 설정은 새 세션부터, 떠 있는 세션은 사이드바의 다시 싣기로)
+에이전트 플러그인 (Claude·Codex 세션에 싣는다. 바꾼 설정은 새 세션부터, 떠 있는 세션은 사이드바의 다시 싣기로 — Codex 는 skill 만)
   plugin add <folder>            slcode-plugin.json 이 있는 원본 폴더를 설치한다. 같은 내용이면 아무것도 하지 않는다
   plugin remove <name>           설치와 설정을 지운다 (없어도 성공)
   plugin set <name> <part>=on|off <option>=<value> ...
@@ -609,13 +609,17 @@ try {
       if (!rows.length) { console.log('(no agent plugins)'); break; }
       for (const r of rows) {
         const lost = Object.entries(r.lost).filter(([, l]) => l.length);
-        const rep = r.reports.claude;
+        const build = (h: 'claude' | 'codex') => {
+          const rep = r.reports[h];
+          return rep ? `  ${h} build ${rep.build}  instructions ${rep.instructions.used.length}${[rep.overridden.length && `overridden ${rep.overridden.join('; ')}`, rep.dropped.length && `dropped ${rep.dropped.join('; ')}`, rep.lost.length && `lost ${rep.lost.join('; ')}`].filter(Boolean).map((x) => ` · ${x}`).join('')}` : `  ${h} build -`;
+        };
         console.log([
           `${r.name} ${r.version}  ${r.grade}`,
           `  parts    ${r.parts.map((x) => `${x.name}${x.required ? '(required)' : ''} ${x.on ? 'on' : 'off'}`).join(' · ') || '-'}`,
           ...(r.options.length ? [`  options  ${r.options.map((o) => `${o.name}=${JSON.stringify(o.value)}${o.label ? ` (${o.label})` : ''}`).join(' · ')}`] : []),
           ...lost.map(([h, l]) => `  lost in ${h}: ${l.join('; ')}`),
-          rep ? `  claude build ${rep.build}  instructions ${rep.instructions.used.length}${[rep.overridden.length && `overridden ${rep.overridden.join('; ')}`, rep.dropped.length && `dropped ${rep.dropped.join('; ')}`, rep.lost.length && `lost ${rep.lost.join('; ')}`].filter(Boolean).map((x) => ` · ${x}`).join('')}` : '  claude build -',
+          build('claude'),
+          build('codex'),
         ].join('\n'));
       }
       break;

@@ -88,14 +88,20 @@ export function sourceHash(dir: string, m: Manifest): string {
   return h.digest('hex');
 }
 
-/** markdown 머리의 --- 블록에서 맨 앞 칸의 키와 한 줄 값만 (중첩은 키만) */
+/** markdown 머리의 --- 블록에서 맨 앞 칸의 키와 값 — 블록 스칼라(| >)와 들여 쓴 이어지는 줄은 값에 잇는다(| 는 줄바꿈, 그 밖은 공백). 중첩 맵은 키만 쓴다 */
 export function frontmatter(text: string): { fields: Record<string, string>; body: string } {
   const m = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text);
   if (!m) return { fields: {}, body: text };
   const fields: Record<string, string> = {};
-  for (const line of m[1].split(/\r?\n/)) {
-    const kv = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line);
-    if (kv) fields[kv[1]] = kv[2].trim().replace(/^(['"])(.*)\1$/, '$2');
+  const lines = m[1].split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const kv = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(lines[i]);
+    if (!kv) continue;
+    const more: string[] = [];
+    while (i + 1 < lines.length && (/^\s/.test(lines[i + 1]) || !lines[i + 1].trim())) more.push(lines[++i].trim());
+    while (more.length && !more[more.length - 1]) more.pop();
+    const v = kv[2].trim();
+    fields[kv[1]] = /^[|>][+-]?$/.test(v) ? more.join(v[0] === '|' ? '\n' : ' ') : more.length ? [v, ...more].join(' ').trim() : v.replace(/^(['"])(.*)\1$/, '$2');
   }
   return { fields, body: text.slice(m[0].length) };
 }
@@ -106,6 +112,15 @@ const SKILL_COMMON = new Set(['name', 'description', 'when_to_use', 'disable-mod
 const GPT_EVENTS = new Set(['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop', 'PreCompact', 'PostCompact', 'SessionEnd']);
 const exists = (p: string) => fs.existsSync(p);
 const parseJson = (f: string): unknown => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return undefined; } };
+
+/** .mcp.json 서버 하나의 연결 방식 — Claude 는 type 이 없으면 stdio. Codex 는 stdio·http 만 받는다 */
+export function mcpTransport(def: unknown): string {
+  if (!isObj(def)) return 'not an object';
+  const t = typeof def.type === 'string' ? def.type : 'stdio';
+  if (t === 'stdio') return typeof def.command === 'string' ? t : 'stdio without command';
+  if (t === 'http') return typeof def.url === 'string' ? t : 'http without url';
+  return `type ${t}`;
+}
 
 /** part 하나에서 하네스마다 빠지는 것 — 호환 등급과 report.json 이 같은 규칙을 쓴다. 항목은 "<part>/<경로>[: 사유]" */
 export function partLost(dir: string, part: string): Record<Harness, string[]> {
@@ -126,6 +141,8 @@ export function partLost(dir: string, part: string): Record<Harness, string[]> {
     }
     for (const f of ['.mcp.json', ...(base ? ['session.json'] : [])]) if (exists(path.join(p, base, f)) && !isObj(parseJson(path.join(p, base, f)))) add(users, `${base}${f}: broken JSON`);
   }
+  const mcp = parseJson(path.join(p, '.mcp.json'));
+  if (isObj(mcp)) for (const [name, def] of Object.entries(isObj(mcp.mcpServers) ? mcp.mcpServers : mcp)) { const t = mcpTransport(def); if (t !== 'stdio' && t !== 'http') add(['codex'], `.mcp.json ${name}: ${t}`); }
   if (exists(path.join(p, 'raw/claude'))) add(['gpt', 'codex'], 'raw/claude');
   if (exists(path.join(p, 'raw/pi'))) add(['claude', 'codex'], 'raw/pi');
   for (const r of walk(p, 'skills')) {

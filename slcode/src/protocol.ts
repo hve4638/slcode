@@ -162,10 +162,10 @@ export type CoreEventBody =
    *  vendorSessionId 는 읽어 온 세션(처음 import 면 원본이고 fork true), uuid 는 그때 벤더 쪽 마지막 지점(Claude 메시지 uuid, Codex turn id).
    *  옛 import(2026-10-15 이전)는 seq 1 의 이것 하나뿐이고 앞 대화는 벤더 기록에만 있다 */
   | { kind: 'session.imported'; vendor: Vendor; vendorSessionId: string; uuid: string | null; fork?: boolean }
-  /** 에이전트 플러그인 다시 싣기 (ticket slcode-agent-plugin) — Claude SDK reloadPlugins() 가 다음 턴부터 쓴다. plugins 는 다시 실은 slcode 플러그인,
-   *  removed 는 그사이 지워 뗀 것, later 는 이 세션에 반영되지 않아 새 세션부터인 것(플러그인마다 instructions·env·session.json·installed — installed 는 세션이 뜬 뒤 설치한 플러그인). sdk 는 SDK 가 답한 지금 목록 —
-   *  화면의 '로드됨' 을 갱신한다 */
-  | { kind: 'plugins.reloaded'; plugins: AgentPluginState[]; removed: string[]; later: { name: string; what: ('instructions' | 'env' | 'session.json' | 'installed')[] }[]; sdk: { plugins: { name: string; source?: string }[]; commands: string[]; agents: string[]; mcp: McpStatus[] } }
+  /** 에이전트 플러그인 다시 싣기 (ticket slcode-agent-plugin) — Claude SDK reloadPlugins() 가 다음 턴부터 쓴다. Codex 는 skill 만 skills/extraRoots/set 으로 (slcode-agent-plugin-codex).
+   *  plugins 는 다시 실은 slcode 플러그인, removed 는 그사이 지워 뗀 것, later 는 이 세션에 반영되지 않아 새 세션부터인 것(플러그인마다 instructions·env·session.json·mcp·bin·installed —
+   *  mcp·bin 은 Codex, installed 는 세션이 뜬 뒤 설치한 플러그인). sdk 는 SDK 가 답한 지금 목록 — 화면의 '로드됨' 을 갱신한다. Codex 는 빈 목록 */
+  | { kind: 'plugins.reloaded'; plugins: AgentPluginState[]; removed: string[]; later: { name: string; what: ('instructions' | 'env' | 'session.json' | 'mcp' | 'bin' | 'installed')[] }[]; sdk: { plugins: { name: string; source?: string }[]; commands: string[]; agents: string[]; mcp: McpStatus[] } }
   | { kind: 'session.exit'; reason: string };
 
 /** 세션에 실은 에이전트 플러그인 하나 — build 는 실은 빌드, current 는 지금 설정으로 빌드하면 나올 식별자(같으면 다시 실을 것이 없다, 지웠으면 null) */
@@ -245,9 +245,9 @@ export type Methods = {
   /** MCP 서버 하나를 다시 연결한 뒤의 상태 목록 — 다시 실패해도 오류가 아니라 목록의 error 로 온다 */
   'session.mcpReconnect': { params: { id: string; name: string }; result: McpStatus[] };
   /** 이 세션에 실은 slcode 에이전트 플러그인 (ticket slcode-agent-plugin) — added 는 세션이 뜬 뒤 설치해 새 세션부터 실리는 것, pending 은 다시 싣기가
-   *  지금 턴이 끝나기를 기다리는 중. Codex 세션은 빈 목록 */
+   *  지금 턴이 끝나기를 기다리는 중. Claude·Codex 세션 */
   'session.plugins': { params: { id: string }; result: { plugins: AgentPluginState[]; added: string[]; pending: boolean } };
-  /** 에이전트 플러그인 다시 싣기 — idle 이면 바로, 턴 중이면 그 턴이 끝난 뒤 (deferred). 결과는 plugins.reloaded 이벤트로. Claude 세션만 */
+  /** 에이전트 플러그인 다시 싣기 — idle 이면 바로, 턴 중이면 그 턴이 끝난 뒤 (deferred). 결과는 plugins.reloaded 이벤트로. Codex 는 skill 만 */
   'session.reloadPlugins': { params: { id: string }; result: { deferred: boolean } };
   /** 턴 되돌리기 (claude 의 Esc-Esc). seq 는 버릴 첫 턴의 turn.start seq. conversation 은 벤더 세션을 그 앞 지점에서 다시 열고, files 는 벤더 체크포인트로 파일을 되돌린다. idle 일 때만 */
   'session.rewind': { params: { id: string; seq: number; conversation: boolean; files: boolean }; result: { ok: true; filesChanged: string[] | null } };

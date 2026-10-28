@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseManifest, resolveValues, valuesString, type Manifest } from '../src/agentFormat.ts';
+import { frontmatter, parseManifest, resolveValues, valuesString, type Manifest } from '../src/agentFormat.ts';
 import { addPlugin, agentPaths, currentBuilds, gcBuilds, listPlugins, loadSessionPlugins, readConfig, reloadSessionPlugins, removePlugin, setPlugin } from '../src/agentPlugins.ts';
 
 const tmp = (p: string) => fs.mkdtempSync(path.join(os.tmpdir(), `slcode-ap-${p}-`));
@@ -179,15 +179,92 @@ test('remove 는 흔적 없이(그 플러그인의 빌드는 유예 없이 지�
   const ap = agentPaths(dir);
   await addPlugin(source(), dir);
   const s = loadSessionPlugins(sdir, {}, {}, dir);
-  const first = s.loaded[0].build;
+  const first = s.loaded[0].build, firstCodex = readConfig(ap).plugins.core.builds.codex;
   const set = await setPlugin('core', ['ponytail=on'], dir);
-  assert.deepEqual(gcBuilds(dir, 0), [], '세션이 쓰는 빌드와 마지막 빌드는 남는다');
+  assert.deepEqual(gcBuilds(dir, 0), [firstCodex], '세션이 쓰는 빌드와 하네스별 마지막 빌드는 남는다');
   fs.rmSync(path.join(sdir, 'agent-plugins'), { recursive: true });
-  assert.deepEqual(gcBuilds(dir, 0), [first]);
-  assert.deepEqual(fs.readdirSync(ap.build), [set.build]);
+  const last = readConfig(ap).plugins.core.builds;
+  assert.ok(gcBuilds(dir, 0).includes(first));
+  assert.deepEqual(fs.readdirSync(ap.build).sort(), [last.claude, last.codex].sort(), '하네스마다 마지막 빌드만 남는다');
+  assert.equal(last.claude, set.build);
   assert.deepEqual(await removePlugin('core', dir), { name: 'core', removed: true }); // 지운 플러그인의 빌드는 유예 없이
   assert.deepEqual(readConfig(ap).plugins, {});
   assert.deepEqual(fs.readdirSync(ap.installed), []);
   assert.deepEqual(fs.readdirSync(ap.build), []);
   assert.deepEqual(await removePlugin('core', dir), { name: 'core', removed: false });
+});
+
+test('frontmatter: 블록 스칼라(| >)와 들여 쓴 이어지는 줄을 값에 잇는다', () => {
+  const { fields, body } = frontmatter('---\nname: x\ndescription: >\n  first\n  second\n\nwhen_to_use: |\n  a\n  b\nplain: one\n  two\nmeta:\n  k: v\n---\nbody');
+  assert.deepEqual(fields, { name: 'x', description: 'first second', when_to_use: 'a\nb', plain: 'one two', meta: 'k: v' });
+  assert.equal(body, 'body');
+});
+
+test('Codex 빌드: skill 은 name·description 만의 frontmatter 로(없으면 폴더 이름·본문 첫 줄, when_to_use 는 뒤에, 자동 호출 금지는 openai.yaml), 경로 변수는 빌드 폴더·데이터 폴더로, MCP 는 -c 인자, 훅·raw 는 빼고 report 에', async () => {
+  const dir = tmp('state');
+  const src = source(MANIFEST, {
+    'base/skills/plain/SKILL.md': '# Plain first line\nmore',
+    'base/skills/manual/SKILL.md': '---\ndescription: >\n  long\n  text\nwhen_to_use: when asked\ndisable-model-invocation: true\nallowed-tools: Bash\n---\nUse ${CLAUDE_PLUGIN_DATA}/x',
+    'base/.mcp.json': JSON.stringify({ mcpServers: { echo: { command: '${CLAUDE_PLUGIN_ROOT}/bin/core-hi', args: ['a "q"'], env: { K: 'v' } }, web: { type: 'http', url: 'https://x/mcp', headers: { A: 'b' } }, old: { type: 'sse', url: 'https://x/sse' }, shared: { command: 'base' } } }),
+    'base/raw/claude/agents/a.md': 'agent',
+    'base/blob.bin': '\0${CLAUDE_PLUGIN_ROOT}',
+  });
+  await addPlugin(src, dir);
+  const ap = agentPaths(dir);
+  const id = readConfig(ap).plugins.core.builds.codex!;
+  const out = path.join(ap.build, id), root = path.join(out, 'codex'), data = path.join(ap.data, 'core');
+  const rd = (f: string) => fs.readFileSync(path.join(root, f), 'utf8');
+  assert.equal(rd('skills/hello/SKILL.md'), `---\nname: "hello"\ndescription: "say hello"\n---\nHello from ${root}`);
+  assert.equal(rd('skills/plain/SKILL.md'), '---\nname: "plain"\ndescription: "Plain first line"\n---\n# Plain first line\nmore');
+  assert.equal(rd('skills/manual/SKILL.md'), `---\nname: "manual"\ndescription: "long text when asked"\n---\nUse ${data}/x`);
+  assert.equal(rd('skills/manual/agents/openai.yaml'), 'policy:\n  allow_implicit_invocation: false\n');
+  assert.ok(fs.statSync(path.join(root, 'bin/core-hi')).mode & 0o100, 'bin 의 실행 비트');
+  assert.equal(rd('blob.bin'), '\0${CLAUDE_PLUGIN_ROOT}', 'NUL 이 있으면 바꾸지 않는다');
+  for (const f of ['hooks', 'raw', 'agents', 'instructions', '.mcp.json']) assert.ok(!fs.existsSync(path.join(root, f)), f);
+  assert.equal(fs.readFileSync(path.join(out, 'instructions.md'), 'utf8'), `Base rule. root=${root}\n\nHint only.`);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(out, 'codex-args.json'), 'utf8')), [
+    '-c', `mcp_servers.plugin_core_echo={"command" = ${JSON.stringify(`${root}/bin/core-hi`)}, "args" = ["a \\"q\\""], "env" = {"K" = "v"}}`,
+    '-c', 'mcp_servers.plugin_core_web={"url" = "https://x/mcp", "http_headers" = {"A" = "b"}}',
+    '-c', 'mcp_servers.plugin_core_shared={"command" = "useterminal"}',
+  ]);
+  const report = JSON.parse(fs.readFileSync(path.join(out, 'report.json'), 'utf8'));
+  assert.equal(report.harness, 'codex');
+  for (const l of ['base/hooks/hooks.json', 'base/raw/claude', 'base/.mcp.json old: type sse', 'base/skills/manual: allowed-tools', 'useterminal/hooks/hooks.json']) assert.ok(report.lost.some((x: string) => x.startsWith(l)), l);
+  assert.ok(report.overridden.includes('.mcp.json shared (base → useterminal)'));
+  assert.equal(listPlugins(dir)[0].reports.codex?.build, id, 'plugin list 에 Codex 빌드 보고');
+});
+
+test('Codex 세션에 싣기·다시 싣기: skill extra root·bin·MCP 인자·지시문·env 를 내고, 다시 싣기는 새 빌드의 skill 만 — 기동 때 빌드는 남기고, MCP·bin·지시문 변경은 새 세션부터', async () => {
+  const dir = tmp('state'), sdir = path.join(dir, 'sessions', '-x', 'abcd1234');
+  await addPlugin(source(), dir);
+  const s = loadSessionPlugins(sdir, {}, {}, dir, 'codex');
+  const link = path.join(sdir, 'agent-plugins/core');
+  const root = fs.realpathSync(link);
+  assert.deepEqual(s.plugins, [], 'Claude 플러그인 목록은 비어 있다');
+  assert.deepEqual(s.codex, { roots: [path.join(root, 'skills')], bin: [path.join(root, 'bin')], args: s.loaded[0].codex!.args });
+  assert.equal(s.codex.args.length, 4, 'echo·shared');
+  assert.equal(s.append, `Base rule. root=${root}\n\nHint only.`);
+  assert.deepEqual(s.env, { CORE_X: '1' });
+  assert.ok(fs.existsSync(path.join(agentPaths(dir).data, 'core')), '데이터 폴더');
+  assert.deepEqual(currentBuilds({}, dir, 'codex'), { core: s.loaded[0].build });
+  // part 만 바꾸면 skill 만 바뀐다 — 지시문은 경로가 달라도 같은 내용이면 later 가 아니다
+  await setPlugin('core', ['ponytail=on'], dir);
+  let r = reloadSessionPlugins(sdir, s.loaded, {}, {}, dir, 'codex');
+  const next = fs.realpathSync(`${link}@skills`);
+  assert.notEqual(next, root);
+  assert.equal(fs.realpathSync(link), root, '기동 때 빌드는 그대로 (MCP·bin 이 쓴다)');
+  assert.deepEqual(r.roots, [path.join(next, 'skills')]);
+  assert.ok(fs.existsSync(path.join(next, 'skills/ponytail/SKILL.md')));
+  assert.deepEqual(r.later, []);
+  assert.deepEqual(gcBuilds(dir, 0).filter((x) => x === s.loaded[0].build || next.endsWith(x)), [], '두 빌드 모두 남는다');
+  // MCP·bin·지시문이 바뀌면 later
+  await setPlugin('core', ['useterminal=off', 'proactive=true'], dir);
+  r = reloadSessionPlugins(sdir, r.loaded, {}, {}, dir, 'codex');
+  assert.deepEqual(r.later, [{ name: 'core', what: ['instructions', 'mcp'] }]);
+  assert.equal(r.loaded[0].codex!.root, root, '실은 값은 기동 때 것을 기억한다');
+  // 기동 때 설정으로 돌아오면 @skills 링크를 뗀다
+  await setPlugin('core', ['ponytail=off', 'useterminal=on', 'proactive=false'], dir);
+  r = reloadSessionPlugins(sdir, r.loaded, {}, {}, dir, 'codex');
+  assert.ok(!fs.existsSync(`${link}@skills`));
+  assert.deepEqual(r.roots, [path.join(root, 'skills')]);
 });

@@ -24,10 +24,13 @@ export fn sourceHash(dir, m) -> Text {
   role: 경로·실행 비트·내용의 sha256 — 같으면 add 가 아무것도 하지 않는다
 }
 export fn frontmatter(text) -> Frontmatter {
-  role: 머리 --- 블록의 맨 앞 칸 키와 한 줄 값(따옴표를 벗긴다), 나머지는 body
+  role: 머리 --- 블록의 맨 앞 칸 키와 값, 나머지는 body. 한 줄 값은 따옴표를 벗긴다. 블록 스칼라(| >, 끝맺음 표시 포함)와 들여 쓰거나 빈 이어지는 줄은 값에 잇는다 — | 는 줄바꿈, 그 밖은 공백(실제 skill 의 description 이 여러 줄이다, slcode-agent-plugin-codex). 중첩 맵은 키만 쓴다
+}
+export fn mcpTransport(def) -> Text {
+  role: .mcp.json 서버 하나의 연결 방식 — type 이 없으면 stdio(Claude 와 같다). stdio 는 command, http 는 url 이 있어야 그 이름, 아니면 사유. Codex 는 stdio·http 만 받는다
 }
 export fn partLost(dir, part) {
-  role: part 하나에서 하네스마다 빠지는 것("<part>/<경로>[: 사유]") — 호환 등급과 report.json 의 lost 가 같은 규칙을 쓴다. codex: hooks/hooks.json·raw/claude·raw/pi·Claude 전용 skill 필드(name·description·when_to_use·disable-model-invocation 밖). gpt: GPT 하네스가 받지 않는 훅 이벤트(SessionStart·UserPromptSubmit·PreToolUse·PostToolUse·Stop·PreCompact·PostCompact·SessionEnd 밖)·raw/claude·Claude 전용 skill 필드. claude: raw/pi. 문법이 깨진 hooks.json·.mcp.json(raw/claude 의 것과 session.json 은 Claude 만)은 그것을 받는 하네스 모두
+  role: part 하나에서 하네스마다 빠지는 것("<part>/<경로>[: 사유]") — 호환 등급과 report.json 의 lost 가 같은 규칙을 쓴다. codex: hooks/hooks.json·raw/claude·raw/pi·Claude 전용 skill 필드(name·description·when_to_use·disable-model-invocation 밖)·.mcp.json 의 stdio·http 가 아닌 서버(mcpTransport). gpt: GPT 하네스가 받지 않는 훅 이벤트(SessionStart·UserPromptSubmit·PreToolUse·PostToolUse·Stop·PreCompact·PostCompact·SessionEnd 밖)·raw/claude·Claude 전용 skill 필드. claude: raw/pi. 문법이 깨진 hooks.json·.mcp.json(raw/claude 의 것과 session.json 은 Claude 만)은 그것을 받는 하네스 모두
 }
 export fn compat(dir, m) {
   role: 호환 등급 — 모든 part(켜지 않은 것도)의 partLost 를 모아, 어느 하네스에도 빠지는 것이 없으면 full, 아니면 partial

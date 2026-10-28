@@ -11,6 +11,7 @@ import { EventLog } from '../src/eventLog.ts';
 import { corePaths } from '../src/paths.ts';
 import { estimateCostUsd } from '../src/codex.ts';
 import { SLCODE_PROMPT } from '../src/prompt.ts';
+import { addPlugin, setPlugin } from '../src/agentPlugins.ts';
 
 const FAKE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-codex.mjs');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -144,6 +145,52 @@ test('codex: slcode 고정 지시는 thread/start·thread/fork 의 developerInst
   const got = fs.readFileSync(calls, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.deepEqual(got.map((c) => [c.method, c.developerInstructions === SLCODE_PROMPT ? 'prompt' : c.developerInstructions]),
     [['thread/start', 'prompt'], ['thread/resume', null], ['thread/fork', 'prompt']]);
+});
+
+test('codex: 에이전트 플러그인 — thread 전에 skills/extraRoots/set, 지시문은 developerInstructions 의 SLCODE_PROMPT 뒤, MCP 는 -c 인자, bin 은 PATH 앞, env 는 프로세스에. 다시 싣기는 skill 만 (ticket slcode-agent-plugin-codex)', async () => {
+  process.env.SLCODE_GRACE_SECS = '1';
+  process.env.SLCODE_CODEX_BIN = `${process.execPath} ${FAKE}`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-codex-'));
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
+  const src = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-src-'));
+  const put = (rel: string, body: string) => { fs.mkdirSync(path.dirname(path.join(src, rel)), { recursive: true }); fs.writeFileSync(path.join(src, rel), body); };
+  put('slcode-plugin.json', JSON.stringify({ name: 'core', parts: { base: {}, extra: { default: false } }, env: { CORE_X: '1' } }));
+  put('base/skills/hello/SKILL.md', '---\ndescription: hi\n---\nbody');
+  put('base/instructions/a.md', 'Plugin rule.');
+  put('base/.mcp.json', JSON.stringify({ echo: { command: 'echo' } }));
+  put('base/bin/tool', '#!/bin/sh\n');
+  put('extra/skills/more/SKILL.md', '---\ndescription: more\n---\nbody');
+  await addPlugin(src, dir);
+  const calls = path.join(dir, 'calls.jsonl'), envFile = path.join(dir, 'env.json');
+  process.env.FAKE_CODEX_CALLS = calls; process.env.FAKE_CODEX_ENV = envFile;
+  const h = await serveSession({ dir, cwd: work, vendor: 'codex', web: false });
+  try {
+    await untilReady(dir, h.session.id, 1);
+    const root = fs.realpathSync(path.join(corePaths(dir).sessionsDir, fs.readdirSync(corePaths(dir).sessionsDir)[0], h.session.id, 'agent-plugins/core'));
+    let got = fs.readFileSync(calls, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    assert.deepEqual(got.map((c) => c.method), ['skills/extraRoots/set', 'thread/start']);
+    assert.deepEqual(got[0].extraRoots, [path.join(root, 'skills')]);
+    assert.equal(got[1].developerInstructions, `${SLCODE_PROMPT}\n\nPlugin rule.`);
+    const env = JSON.parse(fs.readFileSync(envFile, 'utf8'));
+    assert.equal(env.CORE_X, '1');
+    assert.ok(env.PATH.startsWith(`${path.join(root, 'bin')}${path.delimiter}`), env.PATH);
+    assert.deepEqual(env.args.slice(-2), ['-c', 'mcp_servers.plugin_core_echo={"command" = "echo"}']);
+    // 다시 싣기 — part 를 켜면 새 빌드의 skill 폴더로 extraRoots 를 다시 부른다
+    const c = await connectSession(h.sock);
+    const reloaded = new Promise<any>((r) => c.onEvent((m) => { const ev = (m.params as any)?.ev; if (m.event === 'session.event' && ev?.kind === 'plugins.reloaded') r(ev); }));
+    await c.request('session.attach', { id: h.session.id });
+    await setPlugin('core', ['extra=on'], dir);
+    const st = await c.request('session.plugins', { id: h.session.id });
+    assert.notEqual(st.plugins[0].current, st.plugins[0].build, '다시 실을 것이 있다');
+    assert.deepEqual(await c.request('session.reloadPlugins', { id: h.session.id }), { deferred: false });
+    const ev = await Promise.race([reloaded, sleep(5000).then(() => { throw new Error('no plugins.reloaded'); })]);
+    assert.deepEqual(ev.later, []);
+    got = fs.readFileSync(calls, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const roots = got.at(-1).extraRoots;
+    assert.equal(got.at(-1).method, 'skills/extraRoots/set');
+    assert.ok(fs.existsSync(path.join(roots[0], 'more/SKILL.md')), roots[0]);
+    c.close();
+  } finally { delete process.env.FAKE_CODEX_CALLS; delete process.env.FAKE_CODEX_ENV; await h.close('test'); }
 });
 
 test('codex: auto 모드 = on-request + workspaceWrite + approvalsReviewer auto_review, 다른 모드로 돌리면 reviewer 는 user (사용자 2026-10-09)', async () => {
