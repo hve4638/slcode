@@ -77,6 +77,21 @@ export function platformOf({ os, arch } = {}) {
   throw new Error(`지원하지 않는 플랫폼입니다: ${os ?? '?'}/${arch ?? '?'} (linux-x64·win-x64 만)`);
 }
 
+/** 사이드바 둘째 줄·묶음 머리용 git 정보 (ticket slcode-sidebar-orca) — gitScript 출력 → cwd → {branch, repo, worktree}. git 이 아닌 폴더는 빠진다.
+ *  branch 는 브랜치 이름(HEAD 가 떨어져 있으면 짧은 커밋), repo 는 본 저장소 폴더 이름, worktree 는 본 저장소가 아닌 연결된 워크트리인가 */
+export function parseGit(stdout) {
+  const out = {};
+  for (const block of String(stdout).split('\n@@').map((b, i) => (i ? b : b.replace(/^@@/, '')))) {
+    const [dir, common, top, branch] = block.split('\n');
+    if (!dir || !common || !top || !branch) continue;
+    const main = common.endsWith('/.git') ? common.slice(0, -5) : common;
+    out[dir] = { branch, repo: main.split('/').pop().replace(/\.git$/, ''), worktree: top !== main };
+  }
+  return out;
+}
+/** cwd 마다 git 에 한 번씩 묻는 셸 스크립트 — 출력은 `@@<cwd>` 줄 뒤 common dir·toplevel·브랜치 (git 이 아니면 줄 없음) */
+export const gitScript = (dirs, shq) => dirs.map((d) => `printf '@@%s\\n' ${shq(d)}; git -C ${shq(d)} rev-parse --path-format=absolute --git-common-dir --show-toplevel 2>/dev/null && { git -C ${shq(d)} symbolic-ref --short -q HEAD || git -C ${shq(d)} rev-parse --short HEAD; } 2>/dev/null`).join('; ');
+
 /** @param {import('@superlite/plugin').MainApi} api */
 export function activate(api) {
   const setting = async (k, d) => { const v = await api.settings.get(k); return v === undefined || v === '' ? d : String(v); };
@@ -145,6 +160,22 @@ export function activate(api) {
     if (r.code !== 0) throw new Error(r.stderr.trim() || `exit ${r.code}`);
     return JSON.parse(r.stdout || '[]');
   }
+  /** 사이드바 목록 (ticket slcode-sidebar-orca) — 살아 있는 세션(상태 포함)에 cwd 의 git 정보를 붙이고, 이 머신의 지금 시각(now — 화면이 상태
+   *  시각을 잴 때 시계 차이를 지운다)을 함께. git 정보는 cwd 마다 30초 캐시 — 사이드바가 열려 있는 동안 몇 초마다 부른다. Windows 는 git 정보 없이 */
+  const gitCache = new Map();
+  async function sidebar() {
+    const rows = await list(false), now = Date.now();
+    const stale = [...new Set(rows.map((r) => r.cwd))].filter((d) => !(now - (gitCache.get(d)?.at ?? 0) < 30e3));
+    if (stale.length && (await api.platform()).os !== 'windows') {
+      const r = await api.proc.run(gitScript(stale, shq));
+      const got = parseGit(r.stdout);
+      for (const d of stale) gitCache.set(d, { at: now, info: got[d] ?? null });
+    }
+    return { now, rows: rows.map((r) => ({ ...r, git: gitCache.get(r.cwd)?.info ?? null })) };
+  }
+  /** 이 머신의 slcode 카드 서비스 전부 — owner(카드 id)와 root(그 카드를 띄운 superlite 세션의 워크스페이스 폴더). 창 쪽 services.list 는
+   *  활성 세션의 것만 주므로, 다른 superlite 세션 탭의 카드를 알려면 여기서 (ticket slcode-sidebar-orca, 사용자 2026-10-28) */
+  const cards = async () => (await api.services.list()).filter((s) => s.service === 'session' && s.owner).map((s) => ({ owner: s.owner, root: s.root }));
   /** id 없는 resume 카드의 목록 — 그 폴더의 꺼진 세션을 꺼진 순서(최근 먼저)로, 꺼진 시각은 closedTime 에 */
   const closed = async (cwd) => closedRows(await list(true), cwd).map((s) => ({ ...s, closedTime: closedTime(s) }));
   /** 사이드바 강제 종료 (사용자 2026-10-11) — `slcode close --force`: 정상 종료, 3초 안에 안 닫히면 kill */
@@ -200,7 +231,7 @@ export function activate(api) {
   const waits = new Map();
 
   api.expose('host', {
-    command, list, closed, forceClose, checkUpdate,
+    command, list, sidebar, cards, closed, forceClose, checkUpdate,
     started(key, id) { const w = waits.get(key); if (w) { waits.delete(key); w.resolve(id); } },
     failed(key, reason) { const w = waits.get(key); if (w) { waits.delete(key); w.reject(new Error(String(reason))); } },
   });

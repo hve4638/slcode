@@ -24,6 +24,7 @@ import { pullHistory } from './history.js';
 import { CLAUDE_EFFORTS } from './base.js';
 import { randomUUID } from 'node:crypto';
 import { addPlugin, listPlugins, removePlugin, setPlugin } from './agentPlugins.js';
+import { summarize } from './activity.js';
 import { FILES, PERMISSION_MODES, type ApprovalRequest, type LoggedEvent, type Methods, type SessionInfo } from './protocol.js';
 
 type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; model?: string; effort?: string; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; 'no-inspect'?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; re?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; takeover?: boolean; version?: boolean; help?: boolean };
@@ -462,7 +463,9 @@ try {
       const alive = await Promise.all(stored.map((m) => sockAlive(new EventLog(P.sessionsDir, m).sockPath)));
       const live = new Map(stored.flatMap((m, i) => (alive[i] ? [[m.id, m.pid ?? null] as const] : [])));
       const me = process.env.SLCODE_SESSION_ID ?? null;
-      const rows = stored.map((m) => ({ id: m.id, vendor: m.vendor, cwd: m.cwd, title: m.title, createdAt: m.createdAt, updatedAt: m.updatedAt ?? m.createdAt, closedAt: m.closedAt ?? null, live: live.has(m.id), pid: live.get(m.id) ?? null, ...(m.id === me ? { me: true } : {}) }))
+      // 살아 있는 세션은 활동 기록의 지금 상태(state·stateSince·seen)도 — superlite 사이드바의 상태 점 (ticket slcode-sidebar-orca). 기록이 없으면 null
+      const now = (m: (typeof stored)[number]) => { const a = summarize(new EventLog(P.sessionsDir, m).dir); return { state: a?.state ?? null, stateSince: a?.stateSince ?? null, seen: a?.seen ?? true }; };
+      const rows = stored.map((m) => ({ id: m.id, vendor: m.vendor, cwd: m.cwd, title: m.title, createdAt: m.createdAt, updatedAt: m.updatedAt ?? m.createdAt, closedAt: m.closedAt ?? null, live: live.has(m.id), pid: live.get(m.id) ?? null, ...(live.has(m.id) ? now(m) : {}), ...(m.id === me ? { me: true } : {}) }))
         .sort((a, b) => a.updatedAt - b.updatedAt);
       print(flags.all ? rows : rows.filter((r) => r.live));
       break;

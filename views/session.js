@@ -39,6 +39,7 @@ export function mount(el, ctx) {
     spawn: !st.id && st.spawn ? st.spawn : null, // slcode.new 의 새 세션 — 세션 id 를 알면 main 에 알리고 state 에서 지운다
     takeover: !!st.takeover, from: st.from ?? null, // 핸드오프의 새 카드 — 소유권을 가져오고, 붙으면 옛 카드(from)를 옮긴다
     moved: !!st.moved, // 핸드오프로 옮겨진 카드 — 다시 붙지 않는다
+    seen: !!st.seen, // 사이드바가 눌러 연 새 카드 — 붙으면 "봤다" 신호를 한 번 (ticket slcode-sidebar-orca)
     title: null, state: null, conn: null, unsub: null, attached: false, hello: false, lost: false, closing: false,
     web: null, url: null, frame: null, shown: null, port: null, fwd: new Map(), portSeq: 0,
     nextId: 1, pending: new Map(), waits: new Map(), starting: null, note: null, error: null,
@@ -49,10 +50,15 @@ export function mount(el, ctx) {
   const countLive = () => void ctx.post({ type: 'count' });
 
   // ---- 세션 id → 카드 key (storage 'owners') — 같은 세션을 다시 열 때 다른 브라우저가 연 그 카드를 renderer 가 활성화한다
+  // 세션 id → 서비스 owner(카드 id, storage 'cards') — 사이드바 "이 세션" 이 지금 superlite 세션의 서비스 목록(owner)에서 세션을 고른다 (ticket slcode-sidebar-orca)
   const remember = async () => {
     const m = (await ctx.storage.get('owners')) ?? {};
     if (m[c.id] !== c.key) { m[c.id] = c.key; await ctx.storage.set('owners', m); }
+    const o = (await ctx.storage.get('cards')) ?? {};
+    if (o[c.id] !== owner) { o[c.id] = owner; await ctx.storage.set('cards', o); }
   };
+  /** 사이드바에서 눌러 이 카드가 실제로 앞에 보였다 — 활동 기록에 강한 신호를 남겨 "봤다"로 (ticket slcode-sidebar-orca, 사용자 2026-10-28) */
+  const seenNow = () => { if (c.id) void request('session.signal', { id: c.id, strength: 'strong', what: 'sidebar-open' }).then(countLive, () => {}); };
   /** 세션 id 를 알았다 — card state {key, id}(새로고침 복원, 보존 card 라 모든 브라우저가 같이 본다), slcode.new 면 main 에 */
   function known() {
     if (!c.id) return;
@@ -223,6 +229,7 @@ export function mount(el, ctx) {
       c.state = r.info.state; c.title = r.info.title;
       c.waits = new Map(r.pending.map((p) => [p.requestId, p]));
       applyTitle(); badge();
+      if (c.seen) { c.seen = false; seenNow(); void ctx.setState({ key: c.key, id: c.id }); }
     } catch { /* 닫히는 중 — onClose 가 처리 */ }
   }
   function detach() {
@@ -315,6 +322,7 @@ export function mount(el, ctx) {
       case 'closing': if (m.id === c.id) c.closing = !!m.on; return;
       case 'closed': if (m.id === c.id) { c.state = 'exited'; c.url = null; c.web = null; c.waits.clear(); badge(); render(); } return;
       case 'moveOut': if (m.key === c.key) void moveOut(); return;
+      case 'seen': if (m.key === c.key) { if (c.attached) seenNow(); else c.seen = true; } return; // 아직 붙기 전(숨긴 deck 을 다시 연 카드)이면 붙은 뒤에
     }
   });
 

@@ -15,6 +15,16 @@ const { stamp } = cardMod.default ?? cardMod;
 
 const { satisfies, pickRelease, installState, platformOf, assetName, closedRows } = plugin;
 
+test('parseGit: cwd 마다 브랜치·본 저장소·연결된 워크트리, git 아닌 폴더는 빠진다 (ticket slcode-sidebar-orca)', () => {
+  const out = '@@/w/app.worktrees/feat-x\n/w/app/.git\n/w/app.worktrees/feat-x\nfeat/x\n@@/tmp\n@@/w/app\n/w/app/.git\n/w/app\nmain\n@@/srv/bare-wt\n/srv/repo.git\n/srv/bare-wt\na1b2c3d\n';
+  assert.deepEqual(plugin.parseGit(out), {
+    '/w/app.worktrees/feat-x': { branch: 'feat/x', repo: 'app', worktree: true },
+    '/w/app': { branch: 'main', repo: 'app', worktree: false },
+    '/srv/bare-wt': { branch: 'a1b2c3d', repo: 'repo', worktree: true },
+  });
+  assert.deepEqual(plugin.parseGit(''), {});
+});
+
 test('satisfies: 고정·^·~ 조건', () => {
   assert.equal(satisfies('0.1.0', '0.1.0'), true);
   assert.equal(satisfies('0.1.1', '0.1.0'), false);

@@ -100,6 +100,34 @@ export function clip(r: ActivityResult, from: number): ActivityResult {
   return { ...r, agent: seg(r.agent), user: seg(r.user), points: pt(r.points), peeks: pt(r.peeks) };
 }
 
+/** 지금 상태 요약 (ticket slcode-sidebar-orca, `slcode list` 의 state·stateSince·seen) — 마지막 에이전트 상태와 그 시각, 그리고 "봤는가".
+ *  seen 이 false 인 것은 턴이 끝나(running·asking → idle) 쉬는 중인데 그 뒤 사람 기록(신호·보냄·답변)이 없을 때뿐이다 — 새로 띄운 세션의 idle 은 본 것.
+ *  기록이 없으면 null. 목록이 자주 부르므로 파일 끝 64KB 만 읽고, 거기에 에이전트 상태가 두 번 안 나오면 전체를 읽는다 */
+export function summarize(dir: string): { state: ActivityAgentState; stateSince: number; seen: boolean } | null {
+  const file = path.join(dir, FILES.activity);
+  const parse = (text: string) => text.split('\n').flatMap((l) => { try { const r = JSON.parse(l); return typeof r?.t === 'number' ? [r as ActivityRecord] : []; } catch { return []; } });
+  let recs: ActivityRecord[];
+  try {
+    const size = fs.statSync(file).size, TAIL = 64 * 1024;
+    if (size <= TAIL) recs = parse(fs.readFileSync(file, 'utf8'));
+    else {
+      const fd = fs.openSync(file, 'r'), buf = Buffer.alloc(TAIL);
+      try { fs.readSync(fd, buf, 0, TAIL, size - TAIL); } finally { fs.closeSync(fd); }
+      recs = parse(buf.toString('utf8')); // 첫 줄은 잘렸을 수 있다 — parse 가 버린다
+      if (recs.filter((r) => r.type === 'agent').length < 2) recs = parse(fs.readFileSync(file, 'utf8'));
+    }
+  } catch { return null; }
+  let i = recs.length - 1;
+  while (i >= 0 && recs[i].type !== 'agent') i--;
+  if (i < 0) return null;
+  const last = recs[i] as Extract<ActivityRecord, { type: 'agent' }>;
+  let prev: ActivityAgentState | null = null;
+  for (let j = i - 1; j >= 0 && !prev; j--) { const r = recs[j]; if (r.type === 'agent') prev = r.state; }
+  const ended = last.state === 'idle' && (prev === 'running' || prev === 'asking');
+  const touched = recs.slice(i + 1).some((r) => r.type === 'sig' || r.type === 'sent' || r.type === 'answered');
+  return { state: last.state, stateSince: last.t, seen: !ended || touched };
+}
+
 const WHAT = /^[a-z0-9-]{1,32}$/;
 const AGENT: Record<string, ActivityAgentState> = { starting: 'idle', idle: 'idle', running: 'running', requires_action: 'asking', exited: 'exited' };
 

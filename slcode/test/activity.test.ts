@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Activity, classify, THRESHOLDS } from '../src/activity.ts';
+import { Activity, classify, summarize, THRESHOLDS } from '../src/activity.ts';
 import type { ActivityRecord } from '../src/protocol.ts';
 
 const M = 60e3;
@@ -76,6 +76,21 @@ test('Activity: 같은 상태는 한 번만, 신호 형식 검사, 크래시 꼬
   assert.equal(c.records.at(-1)?.type, 'handoff', '교체 뒤에는 꺼짐을 적지 않는다');
   fs.appendFileSync(c.file, 'not json\n');
   assert.equal(Activity.open(dir, () => now).records.filter((r) => r.type === 'handoff').length, 1, '깨진 줄은 건너뛴다');
+});
+
+test('summarize: 지금 상태와 그 시각, 턴이 끝난 뒤 사람 기록이 없을 때만 안 봄 — 긴 파일은 끝만 읽는다 (ticket slcode-sidebar-orca)', () => {
+  const at = (recs: ActivityRecord[]) => { const d = tmp(); fs.writeFileSync(path.join(d, 'activity.jsonl'), recs.map((r) => JSON.stringify(r)).join('\n') + '\n'); return summarize(d); };
+  assert.equal(summarize(tmp()), null); // 기록 없음
+  assert.deepEqual(at([agent(0, 'idle')]), { state: 'idle', stateSince: 0, seen: true }); // 막 띄운 세션은 본 것
+  assert.deepEqual(at([agent(0, 'idle'), agent(1, 'running')]), { state: 'running', stateSince: 1, seen: true });
+  assert.deepEqual(at([agent(0, 'idle'), agent(1, 'running'), agent(5, 'idle')]), { state: 'idle', stateSince: 5, seen: false }); // 턴이 끝났다
+  assert.deepEqual(at([agent(0, 'running'), weak(2), agent(5, 'idle')]), { state: 'idle', stateSince: 5, seen: false }); // 턴 중 신호는 세지 않는다
+  assert.deepEqual(at([agent(0, 'running'), agent(5, 'idle'), { t: 6, type: 'handoff' }]), { state: 'idle', stateSince: 5, seen: false }); // 교체는 사람이 아니다
+  assert.deepEqual(at([agent(0, 'running'), agent(5, 'idle'), strong(7, 'sidebar-open')]), { state: 'idle', stateSince: 5, seen: true });
+  assert.deepEqual(at([agent(0, 'asking'), agent(3, 'idle'), { t: 4, type: 'sent' }]), { state: 'idle', stateSince: 3, seen: true });
+  const many = Array.from({ length: 3000 }, (_, i) => weak(10 + i)); // 64KB 를 넘는다 — 상태 변화는 맨 앞에만
+  assert.deepEqual(at([agent(0, 'running'), agent(5, 'idle'), ...many]), { state: 'idle', stateSince: 5, seen: true });
+  assert.deepEqual(at([...many, agent(9000, 'running'), agent(9001, 'idle')]), { state: 'idle', stateSince: 9001, seen: false });
 });
 
 test('Activity.result: from 뒤에 걸친 것만', () => {
