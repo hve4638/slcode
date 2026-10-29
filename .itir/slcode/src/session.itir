@@ -1,4 +1,4 @@
-import { ApprovalRequest, Attachment, CoreEvent } from './protocol'
+import { AgentHookEvent, ApprovalRequest, Attachment, CoreEvent } from './protocol'
 import { EventLog, unrewound } from './eventLog'
 import { AgentSession, CLAUDE_EFFORTS } from './base'
 import { SLCODE_PROMPT } from './prompt'
@@ -54,6 +54,9 @@ export class ClaudeSession {
   }
   export fn emitPlugins(body) {
     role: plugins.reloaded 이벤트를 기록에 — core 가 다시 실은 뒤
+  }
+  export fn emitHook(ev) {
+    role: js/ts 훅의 agent.hook 기록 (hookRunner, ticket slcode-agent-plugin-hooks) — 세션이 끝난 뒤에는 남기지 않는다. 디스패처는 SessionOptions.hooks 로 SDK options.hooks 에
   }
   export fn interrupt() {
     role: 진행 턴 중단 — 그 턴의 승인 대기는 cancelled

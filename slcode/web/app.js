@@ -318,6 +318,46 @@ export function mountAgentFront(root, transport, opts = {}) {
   const atBottom = () => follow;
   function push(node, sc = main) { const stick = atBottom(); node.dataset.seq = curSeq; (sc.col ?? col).append(node); if (!busy.hidden && !replaying) col.append(busy); if (stick && !replaying) feed.scrollTop = feed.scrollHeight; return node; }
   function endText(sc = main) { if (sc.textEl) { sc.textEl.classList.remove('streaming'); sc.textEl.append(sc.acts = acts(iconBtn('copy', '복사', copyOf(sc.textBuf)))); } sc.textEl = null; sc.textBuf = ''; sc.thinkEl = null; sc.thinkBuf = ''; }
+  // 훅 실행 하나 — 아무 일도 안 했으면 흔적 없음. 알림(message)은 대상 아래 제 줄(응답처럼), 추가 컨텍스트는 대상 아래 '겹 +N'(누르면 펼침),
+  // 도구 훅의 block·ask·allow·updateInput 은 카드 표시 + 카드 안 사유, 실패·경고는 빨간 줄. 플러그인·이벤트·파일·시간은 title(호버)로만.
+  // 대상: 도구 이벤트는 그 도구 카드, UserPromptSubmit·SessionStart 는 이 턴의 내 요청, 나머지는 피드 끝 (Claude TUI 의 '⎿ … says:' 자리)
+  function hookRun(ev) {
+    const who = `${ev.plugin} · ${ev.event} · ${ev.src.split('/').pop()} · ${ev.ms}ms`;
+    if (ev.outcome !== 'ok') push(h('div', { class: 'meta err', title: who }, `${ev.plugin} 훅 실패: ${ev.outcome === 'timeout' ? '시간 초과' : (ev.error ?? '').split('\n')[0]}`));
+    for (const w of ev.warnings) push(h('div', { class: 'meta err', title: who }, `${ev.plugin} 훅: ${w}`));
+    const fx = ev.effects;
+    const card = ev.toolUseId ? tools.get(ev.toolUseId) : null;
+    const anchor = card ?? (/^(UserPromptSubmit|SessionStart)$/.test(ev.event) && main.turnEl?.isConnected ? main.turnEl : null);
+    if (fx?.context.length) hookContext(anchor, fx.context, ev.event, who);
+    if (card && fx) {
+      const marks = [...new Set([...fx.block.map(() => 'block'), ...fx.ask.map(() => 'ask'), ...fx.allow.map(() => 'allow'), ...(fx.updateInput ? ['updateInput'] : []), ...fx.stop.map(() => 'stop')])];
+      const why = [...fx.ask, ...fx.allow, ...fx.stop].filter(Boolean); // block 사유는 도구 결과(오류)에 이미 나온다
+      if (marks.length) card.querySelector('summary').append(h('span', { class: `hk-mark${fx.block.length ? ' block' : ''}`, title: who }, marks.join(', ')));
+      if (why.length) card._detail.append(h('div', { class: 'hk-why', title: who }, why.join('\n')));
+    } else if (fx && (fx.block.length || fx.stop.length)) push(h('div', { class: 'meta', title: who }, [...fx.block, ...fx.stop].filter(Boolean).join(' · ') || (fx.block.length ? 'block' : 'stop')));
+    if (ev.message) hookAfter(anchor, h('div', { class: 'hk-note', title: who }, h('span', { class: 'ic' }, icon('bell')), h('span', { class: 't' }, ev.message)));
+  }
+  /** 대상(과 그 뒤에 이미 붙은 훅 줄들) 바로 뒤에 둔다 — 대상이 없으면 피드 끝 */
+  function hookAfter(anchor, node) {
+    if (!anchor) return push(node);
+    let at = anchor; while (at.nextElementSibling?.matches('.hk-note, .hk-ctx')) at = at.nextElementSibling;
+    node.dataset.seq = curSeq; at.after(node); return node;
+  }
+  /** 추가 컨텍스트 — 대상 아래 '겹 +N' 한 줄, 같은 대상이면 개수만 는다. 펼치면 '추가 컨텍스트' 제목 + 글 + from <이벤트> */
+  function hookContext(anchor, texts, event, who) {
+    const inUser = anchor?.matches('.user');
+    let box = inUser ? anchor.querySelector(':scope > .hk-ctx') : anchor?.nextElementSibling?.matches('.hk-ctx') ? anchor.nextElementSibling : null;
+    if (!box) {
+      const n = h('span', { class: 'n' }), body = h('div', { class: 'body', hidden: '' }, h('div', { class: 'hd' }, '추가 컨텍스트'));
+      const btn = h('button', { class: 'tg', type: 'button' }, h('span', { class: 'ic' }, icon('layers')), n);
+      btn.onclick = () => { body.hidden = !body.hidden; btn.classList.toggle('on', !body.hidden); };
+      box = h('div', { class: `hk-ctx${inUser ? '' : ' left'}` }, btn, body); box._n = n; box._body = body; box._count = 0;
+      if (inUser) anchor.append(box); else hookAfter(anchor, box);
+    }
+    for (const t of texts) box._body.append(h('div', { class: 'it' }, h('div', { class: 'tx' }, t), h('div', { class: 'from', title: who }, `from ${event}`)));
+    box._count += texts.length; box._n.textContent = `+${box._count}`;
+    box.querySelector('.tg').title = `추가 컨텍스트 ${box._count}개`;
+  }
   // 답변 시작으로 (ticket slcode-scroll-nav, 사용자 2026-10-24) — 턴의 마지막 말풍선 아이콘 줄(복사 옆)에만, 누르면 그 턴의 응답 첫 항목
   // (내 요청 바로 아래 — 글·생각·도구 카드 무엇이든)이 화면 맨 위로. 턴 안에서 도구 사이로 쪼개진 마지막 말풍선의 처음이 아니다.
   // 말풍선마다 두는 안은 프로토타입으로 비교하고 뺐다. 즉시 간다 — 부드럽게 올라가는 도중 앞 턴이 붙으면 엉뚱한 곳에 멈춘다
@@ -392,6 +432,9 @@ export function mountAgentFront(root, transport, opts = {}) {
     inspect: '<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/><path d="m16 16-1.9-1.9"/>',
     rewind: '<path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
     retry: '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>',
+    // 훅 — 알림(bell)·추가 컨텍스트(layers: 대화에 쌓인 한 겹), lucide (ticket slcode-agent-plugin-hooks, 사용자 2026-10-30)
+    bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+    layers: '<path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>',
     gear: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
   };
   const icon = (name) => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.innerHTML = ICONS[name]; return s; };
@@ -603,6 +646,13 @@ export function mountAgentFront(root, transport, opts = {}) {
       case 'session.imported': push(h('div', { class: 'notice' }, `imported from ${ev.vendor} (${ev.vendorSessionId.slice(0, 8)})`)); break; // 표지는 옮겨 온 대화 뒤에 선다 (사용자 2026-10-15: 짧게)
       case 'context.compacted': endText(); push(h('div', { class: 'notice' }, `컨텍스트 압축${ev.preTokens ? ` · ${fmtTok(ev.preTokens)}` : ''}`)); break;
       case 'hook': if (live) { hooks++; lastHook = `${ev.event} ${ev.phase}`; } break;
+      case 'agent.hook': { // 에이전트 플러그인 js/ts 훅 (ticket slcode-agent-plugin-hooks) — 한 일이 있을 때만 그린다 (사용자 2026-10-30, 프로토타입 D)
+        const who = (x) => `${ev.plugin} · ${x}`;
+        if (ev.phase === 'ready') { for (const x of ev.errors) push(h('div', { class: 'meta err', title: who('스크립트') }, `${ev.plugin} 훅: ${x}`)); break; }
+        if (ev.phase === 'warn') { push(h('div', { class: 'meta err' }, `${ev.plugin} 훅: ${ev.text}`)); break; }
+        hookRun(ev);
+        break;
+      }
       case 'error': endText(); push(h('div', { class: 'meta err' }, ev.message)); break;
       case 'review': {
         endText();

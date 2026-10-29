@@ -1,0 +1,11 @@
+role: 에이전트 플러그인 part 의 hooks/hooks.json(slcode 형식) 빌드 (ticket slcode-agent-plugin-hooks, 착수 결정 TICKET.md 2026-10-29) — Claude 형식을 따르지 않는다(사용자 결정: 빌드가 바꿔 주고, Claude 형식 그대로는 raw/claude/hooks/hooks.json). { "hooks": [ 항목… ] } 목록, 줄 하나가 항목 하나 — 목록이 아니면(Claude 형식 객체 포함) 파일째 깨진 것. script 항목 { type: "script", file: <part 기준 경로> } 은 이벤트를 적지 않는다(스크립트가 on() 으로 등록한다). command 항목 { type: "command", event, matcher?, command, compat: "claude", …Claude command 칸 } 은 Claude 형식으로 바꿔 Claude 가 실행한다(입출력·종료 코드가 Claude command 훅과 같다 — 이번엔 compat claude 만, 상태를 받는 compat 은 후속). 잘못된 항목은 그 항목만 report.dropped.
+
+export fn buildPartHooks(pdir, part, j, out, scripts) {
+  role: script 는 out/scripts/<번호>.mjs 로 묶어 scripts 에 더하고, command 는 이벤트별 Claude 항목으로 돌려준다. part 밖 경로·같은 스크립트 두 번(콜백이 두 번 등록된다)은 뺀다
+}
+fn bundle(pdir, entry, outfile) -> Text? {
+  role: esbuild buildSync — 전체 TS 문법·타입 검사 없음·source map inline·esm·node22. packages external 로 묶고 metafile 의 외부 import 가 node 내장이 아니면 실패(import 는 node 내장·상대 경로만, npm 은 후속). 실패면 그 스크립트만 빼고 사유(report.scripts.failed) — 빌드 에러로 플러그인을 막지 않는다
+}
+export fn readScripts(file) -> ScriptEntry[]
+type ScriptEntry
+type PartHooks

@@ -132,7 +132,7 @@ export type TaskEvent = {
   usage: { tokens: number; toolUses: number; durationMs: number } | null;
 };
 
-/** 이벤트 18종 — 벤더 중립. Codex 어댑터도 같은 kind 를 낸다. parent 는 서브에이전트 안에서 난 이벤트의 부모 tool_use id (없으면 본문) */
+/** 이벤트 20종 — 벤더 중립. Codex 어댑터도 같은 kind 를 낸다. parent 는 서브에이전트 안에서 난 이벤트의 부모 tool_use id (없으면 본문) */
 export type CoreEventBody =
   | { kind: 'session.ready'; vendor: Vendor; model: string; cwd: string; vendorSessionId: string; permissionMode: string;
       tools: string[]; skills: string[]; plugins: { name: string; path: string }[]; mcp: { name: string; status: string }[];
@@ -155,6 +155,9 @@ export type CoreEventBody =
   | { kind: 'turn.rewound'; seq: number; conversation: boolean; files: boolean; filesChanged: string[] | null }
   | { kind: 'context.compacted'; trigger: string; preTokens: number | null }
   | { kind: 'hook'; event: string; phase: 'started' | 'response'; ok: boolean | null }
+  /** 에이전트 플러그인 js/ts 훅 (ticket slcode-agent-plugin-hooks) — ready 는 worker 가 스크립트를 싣고 등록한 콜백(errors 는 싣지 못한 스크립트·잘못된 on()),
+   *  run 은 콜백 한 번(result 는 부른 메서드 요약, outcome 이 error·timeout 이면 error 에 사유, message 는 hook.message() 문구), warn 은 그 밖의 경고 */
+  | AgentHookEvent
   | { kind: 'error'; message: string }
   /** auto 모드에서 승인 요청을 사람 대신 모델이 판단한 결과 (지금은 Codex auto_review). action 은 대상의 사람이 읽는 한 줄, risk 는 low|medium|high|critical */
   | { kind: 'review'; toolUseId: string | null; decision: 'approved' | 'denied' | 'timedOut' | 'aborted'; risk: string | null; action: string; rationale: string | null }
@@ -167,6 +170,13 @@ export type CoreEventBody =
    *  mcp·bin 은 Codex, installed 는 세션이 뜬 뒤 설치한 플러그인). sdk 는 SDK 가 답한 지금 목록 — 화면의 '로드됨' 을 갱신한다. Codex 는 빈 목록 */
   | { kind: 'plugins.reloaded'; plugins: AgentPluginState[]; removed: string[]; later: { name: string; what: ('instructions' | 'env' | 'session.json' | 'mcp' | 'bin' | 'installed')[] }[]; sdk: { plugins: { name: string; source?: string }[]; commands: string[]; agents: string[]; mcp: McpStatus[] } }
   | { kind: 'session.exit'; reason: string };
+
+export type AgentHookEvent =
+  | { kind: 'agent.hook'; phase: 'ready'; plugin: string; callbacks: { event: string; matcher: string | null; src: string }[]; errors: string[] }
+  /** effects 는 콜백이 낸 결과 원문(잘리지 않음) — 화면은 한 일이 있을 때만 그린다. toolUseId 는 도구 이벤트(PreToolUse·PostToolUse)의 대상 도구 */
+  | { kind: 'agent.hook'; phase: 'run'; plugin: string; src: string; event: string; ms: number; outcome: 'ok' | 'error' | 'timeout'; effects: AgentHookEffects | null; toolUseId: string | null; error: string | null; message: string | null; warnings: string[] }
+  | { kind: 'agent.hook'; phase: 'warn'; plugin: string; text: string };
+export type AgentHookEffects = { block: string[]; ask: string[]; allow: string[]; stop: string[]; context: string[]; updateInput: boolean };
 
 /** 세션에 실은 에이전트 플러그인 하나 — build 는 실은 빌드, current 는 지금 설정으로 빌드하면 나올 식별자(같으면 다시 실을 것이 없다, 지웠으면 null) */
 export type AgentPluginState = { name: string; version: string; build: string; values: string; current?: string | null };

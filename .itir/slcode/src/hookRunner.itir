@@ -1,0 +1,40 @@
+import { HOOK_EVENTS, METHODS, HookEvent } from './hookApi'
+import { killGroup, Info, Reg, Result, ToCore, ToWorker, WorkerInit } from './hookWorker'
+import { BUILD_FILES } from './agentBuild'
+import { readScripts, ScriptEntry } from './agentHooks'
+import { AgentHookEvent } from './protocol'
+
+role: js/ts 훅의 core 쪽 (ticket slcode-agent-plugin-hooks) — SDK options.hooks 에 받는 이벤트마다 디스패처 하나를 늘 건다(다시 싣기로 훅이 생겨도 받게 — 걸 이벤트는 query() 때 고정된다). 실은 플러그인 중 스크립트가 있는 것마다 worker 하나 — worker 는 세션마다(core 가 세션 프로세스다), 다시 싣기로 빌드가 바뀐 플러그인만 다시 띄우고, timeout·오류로 내려가면 다음 호출 때 띄운다(사용자 결정 2026-10-29). 디스패처: matcher 판정은 core 가(Claude 규칙), 맞는 콜백을 모든 worker 에 동시에 보내고 설치 순서·등록 순서로 합친다 — 거부 > 확인 > 허용, context·message 는 잇고, updateInput 은 나중 것이 이긴다(버린 것은 경고 — part 경로·MCP 이름·session.json 과 같은 규칙, 사용자 결정). 실패·timeout 은 결과 없이 통과, failClosed 면 막는다(block 이 있는 이벤트만). 콜백마다 agent.hook run 기록을 낸다 — effects 는 결과 원문(잘리지 않음), toolUseId 는 도구 이벤트의 대상 도구. 화면은 한 일이 있을 때만 그린다(사용자 결정 2026-10-30: 알림은 대상 아래 제 줄, 추가 컨텍스트는 겹 아이콘 +N, 도구 훅은 카드 표시). SessionStart 대신 부르기: SDK(0.3.282~0.3.312 실측)는 새 세션·resume 때 SessionStart 콜백을 부르지 않는다(/clear 때만) — core 가 세션을 띄울 때 armSessionStart(startup|resume) 를 걸면 첫 UserPromptSubmit 앞에서 SessionStart 를 대신 돌리고 그 context·message 를 그 프롬프트의 결과에 합친다; SDK 가 먼저 SessionStart 를 부르면 건 것을 지워 두 번 돌지 않는다(사용자 결정 2026-10-30, 테스트가 지킨다). 상태: 주 에이전트의 것은 세션 폴더 agent-state/<플러그인>.json(resume·/clear 뒤에도 남는다 — 비우는 것은 훅이 source==='clear' 로), 서브에이전트의 것은 메모리에만 두고 SubagentStop 뒤 버린다. 상수 — READY_MS: worker 가 스크립트를 싣고 등록을 마칠 때까지 10초 — 넘으면 그 플러그인의 훅을 끈다(다음 호출 때 다시 띄운다); SDK_TIMEOUT: SDK 에 거는 디스패처 timeout 3600초 — 콜백마다의 timeout 은 디스패처가 지킨다.
+
+export val STATE_DIR
+val READY_MS
+val SDK_TIMEOUT
+export fn matches(matcher, value) -> Bool {
+  role: Claude 의 matcher 규칙 — 비거나 * 면 모두, 영문·숫자·_·| 만이면 | 로 나눈 이름과 정확히 같을 때, 그 밖은 정규식(깨진 정규식은 맞지 않음)
+}
+fn matchValue(event, input) {
+  role: 도구 이벤트는 tool_name, SessionStart 는 source, PreCompact 는 trigger, SessionEnd 는 reason, Subagent* 는 agent_type. 그 밖은 matcher 를 보지 않는다(null)
+}
+fn infoOf(event, input, sessionId) -> Info
+export class HookRunner {
+  role: 세션 하나의 js/ts 훅 — 플러그인별 worker·등록·상태를 쥔다
+  export fn load(loaded) {
+    role: 실은 플러그인 목록(설치 순서)으로 맞춘다 — 빠진 것은 내리고, 빌드가 바뀐 것은 다시 띄우고(메모리의 상태는 넘긴다), 같은 것은 둔다
+  }
+  export fn sdkHooks() {
+    role: SDK options.hooks
+  }
+  export fn close() {
+    role: 모든 worker 와 그 worker 가 띄운 hook.exec 프로세스 그룹을 내린다 — core 가 세션을 닫거나 교체할 때
+  }
+  fn terminate(p, w, why) {
+    role: worker 를 내리고 pgid 로 알린 그룹을 종료하고 기다리던 콜백을 실패로 푼다. 종료한 그룹의 직속 자식은 그 worker 가 거두지 못해 core 가 끝날 때까지 zombie 로 남는다(2026-10-29 실측)
+  }
+  fn dispatch(event, input) {
+    role: 설치 순서로 결과를 모은다. SubagentStop 뒤 그 서브에이전트의 상태를 버린다
+  }
+  fn merge(event, outs) {
+    role: PreToolUse 는 hookSpecificOutput(permissionDecision deny|ask|allow·updatedInput·additionalContext), 그 밖은 decision block·reason 과 SessionStart·UserPromptSubmit·PostToolUse·SubagentStart 의 additionalContext. message → systemMessage, stop → continue false·stopReason
+  }
+}
+type RunnerOpts

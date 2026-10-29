@@ -1,11 +1,12 @@
 // 에이전트 플러그인의 하네스별 빌드 (ticket slcode-agent-plugin, Codex 는 slcode-agent-plugin-codex) — Claude·Codex. 원본에서 단방향으로 만들고, 폴더 이름은 빌드 식별자다.
-// 켠 part 를 parts 순서로 합친다: part 마다 바깥 항목을 먼저 놓고 raw/claude/ 를 겹친다. hooks.json 은 이벤트별로 잇고, .mcp.json 은 서버 이름별로
+// 켠 part 를 parts 순서로 합친다: part 마다 바깥 항목을 먼저 놓고 raw/claude/ 를 겹친다. hooks.json 은 이벤트별로 잇고(바깥 것은 slcode 형식 — agentHooks.ts), .mcp.json 은 서버 이름별로
 // 합치고(뒤의 것이 이긴다), 그 밖의 겹친 경로는 뒤의 것을 쓴다. 문법이 깨진 hooks.json·.mcp.json·session.json 은 그 파일만 뺀다. 빌드 에러는 없다.
 // 형식이 따로 다루지 않는 part 파일(훅·MCP 가 부르는 스크립트 등)은 그대로 플러그인 폴더에 들어간다 — Claude 가 모르는 것은 Claude 가 무시한다.
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { buildId, frontmatter, mcpTransport, partLost, valuesString, walk, type Harness, type Manifest, type Resolved } from './agentFormat.js';
+import { buildPartHooks, type ScriptEntry } from './agentHooks.js';
 
 export type Report = {
   harness: Harness; name: string; version: string; build: string; values: string;
@@ -19,10 +20,12 @@ export type Report = {
   dropped: string[];
   /** 이 하네스가 받지 못해 뺀 것 (agentFormat.partLost 와 같은 규칙) */
   lost: string[];
+  /** js/ts 훅 (Claude, ticket slcode-agent-plugin-hooks) — built 는 묶은 스크립트("<part>/<file>"), failed 는 묶지 못해 뺀 것과 사유 */
+  scripts?: { built: string[]; failed: string[] };
 };
 
 /** 빌드 폴더 안의 이름들 — build/<식별자>/ 아래. codexArgs 는 Codex 빌드의 app-server 인자(-c mcp_servers…) */
-export const BUILD_FILES = { report: 'report.json', instructions: 'instructions.md', settings: 'session.json', codexArgs: 'codex-args.json' } as const;
+export const BUILD_FILES = { report: 'report.json', instructions: 'instructions.md', settings: 'session.json', codexArgs: 'codex-args.json', scripts: 'scripts.json' } as const;
 
 const isObj = (v: unknown): v is Record<string, any> => !!v && typeof v === 'object' && !Array.isArray(v);
 const readJson = (f: string): unknown => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return undefined; } };
@@ -30,7 +33,8 @@ const RAW = 'raw/claude/';
 
 /** src(설치한 원본)의 켠 part 를 out 에 Claude 빌드로 쓴다 — out/claude/<이름>/ (플러그인 폴더), instructions.md, session.json(있으면), report.json */
 export function buildClaude(src: string, m: Manifest, r: Resolved, id: string, out: string): Report {
-  const report: Report = { harness: 'claude', name: m.name, version: m.version, build: id, values: valuesString(r), parts: [], instructions: { used: [], skipped: [] }, overridden: [], dropped: [], lost: [] };
+  const report: Report = { harness: 'claude', name: m.name, version: m.version, build: id, values: valuesString(r), parts: [], instructions: { used: [], skipped: [] }, overridden: [], dropped: [], lost: [], scripts: { built: [], failed: [] } };
+  const scripts: ScriptEntry[] = [];
   const files = new Map<string, { abs: string; part: string }>();
   const hooks: Record<string, unknown[]> = {};
   const mcp: Record<string, { def: unknown; part: string }> = {};
@@ -59,8 +63,16 @@ export function buildClaude(src: string, m: Manifest, r: Resolved, id: string, o
       }
       if (rel === 'hooks/hooks.json') {
         const j = readJson(abs);
-        if (!isObj(j) || !isObj(j.hooks)) { report.dropped.push(where); continue; }
-        for (const [ev, list] of Object.entries(j.hooks)) if (Array.isArray(list)) (hooks[ev] ??= []).push(...list);
+        if (raw) { // raw/claude 는 Claude 형식 그대로
+          if (!isObj(j) || !isObj(j.hooks)) { report.dropped.push(where); continue; }
+          for (const [ev, list] of Object.entries(j.hooks)) if (Array.isArray(list)) (hooks[ev] ??= []).push(...list);
+          continue;
+        }
+        const h = buildPartHooks(pdir, part, j, out, scripts); // slcode 형식 — script 는 묶고 command 는 Claude 형식으로
+        if (!h) { report.dropped.push(where); continue; }
+        for (const [ev, list] of Object.entries(h.claude)) (hooks[ev] ??= []).push(...list);
+        report.dropped.push(...h.dropped);
+        report.scripts!.failed.push(...h.failed);
         continue;
       }
       if (rel === '.mcp.json') {
@@ -103,6 +115,8 @@ export function buildClaude(src: string, m: Manifest, r: Resolved, id: string, o
   fs.writeFileSync(path.join(plugin, '.claude-plugin/plugin.json'), JSON.stringify({ ...manifestJson, name: m.name, version: m.version }, null, 2));
   fs.writeFileSync(path.join(out, BUILD_FILES.instructions), instr.join('\n\n'));
   if (settings) fs.writeFileSync(path.join(out, BUILD_FILES.settings), JSON.stringify((settings as { j: unknown }).j, null, 2));
+  report.scripts!.built = scripts.map((x) => x.src);
+  if (scripts.length) fs.writeFileSync(path.join(out, BUILD_FILES.scripts), JSON.stringify(scripts, null, 2));
   fs.writeFileSync(path.join(out, BUILD_FILES.report), JSON.stringify(report, null, 2));
   return report;
 }

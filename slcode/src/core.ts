@@ -23,8 +23,9 @@ import { formatMail, newMail, parseMails, sendMail, sessionMeta } from './mail.j
 import { blockInspect, CODEX_ROUTE, codexArgs, codexUpstream, inspectBlocked, inspectEnv, keepsFirstParty, sdkVersion, startInspect, turnCalls, upstreamOf, type InspectProxy } from './inspect.js';
 import { InspectStore, maybeSweep } from './inspectDb.js';
 import { Activity } from './activity.js';
-import { currentBuilds, loadSessionPlugins, reloadSessionPlugins, unlinkSessionPlugins, type Loaded, type SessionPlugins } from './agentPlugins.js';
-import { CoreError, ERR, FILES, PERMISSION_MODES, PROTOCOL_VERSION, type ApprovalRequest, type LoggedEvent, type Mail, type MethodName, type Methods, type RequestFrame, type SessionInfo } from './protocol.js';
+import { agentPaths, currentBuilds, loadSessionPlugins, reloadSessionPlugins, unlinkSessionPlugins, type Loaded, type SessionPlugins } from './agentPlugins.js';
+import { HookRunner } from './hookRunner.js';
+import { CoreError, ERR, FILES, PERMISSION_MODES, PROTOCOL_VERSION, type AgentHookEvent, type ApprovalRequest, type LoggedEvent, type Mail, type MethodName, type Methods, type RequestFrame, type SessionInfo } from './protocol.js';
 
 /** 벤더 자식(claude CLI·codex)에 넘기지 않을 env — 워커 Claude 세션 안에서 띄우면 그 세션의 표식(CLAUDECODE·CLAUDE_CODE_SESSION_ID·
  *  CLAUDE_CODE_CHILD_SESSION·CLAUDE_CODE_ENTRYPOINT·CLAUDE_CODE_MESSAGING_* 등, claude 2.1.282·2.1.300 실측)이 딸려 가 자식이 남의 세션 안이라 여긴다.
@@ -166,6 +167,13 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   let agent: SessionPlugins | null = null, agentFailed: string | null = null;
   try { agent = loadSessionPlugins(logFile.dir, env, logFile.meta.agentPlugins ?? {}, P.dir, harness); } catch (e) { agentFailed = (e as Error).message; }
   let agentLoaded: Loaded[] = agent?.loaded ?? [];
+  // js/ts 훅 (ticket slcode-agent-plugin-hooks) — Claude 만. 플러그인을 하나라도 실었으면 디스패처를 건다(다시 싣기로 훅이 생겨도 받게). 세션이 생기기 전의 기록은 모았다가 낸다
+  let hookQueue: AgentHookEvent[] | null = [];
+  const hooks = !codex && agentLoaded.length
+    ? new HookRunner({ sessionDir: logFile.dir, buildDir: agentPaths(P.dir).build, sessionId: logFile.meta.id, emit: (ev) => { if (hookQueue) hookQueue.push(ev); else (session as ClaudeSession).emitHook(ev); } })
+    : null;
+  hooks?.load(agentLoaded);
+  hooks?.armSessionStart(logFile.meta.vendorSessionId ? 'resume' : 'startup');
   // 첫 기동에서 못 켜면(이 SDK 에서 막힘·node:sqlite 없음) 끄고 띄운다 — 사유는 세션이 생긴 뒤 기록에 남긴다
   let firstEnv = env, firstArgs: string[] = [], inspectFailed: string | null = null;
   try { firstEnv = await vendorEnv(); firstArgs = await vendorArgs(); } catch (e) { logFile.updateMeta({ inspect: false }); inspectFailed = (e as Error).message; }
@@ -178,7 +186,9 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   };
   const session: AgentSession = codex
     ? new CodexSession({ log: logFile, env: codexEnv(), permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, args: firstArgs, onConfig: (base) => gotBase(base), skillRoots: agent?.codex.roots ?? [], instructions: agent?.append ?? '' })
-    : new ClaudeSession({ log: logFile, env: firstEnv, resume: logFile.meta.vendorSessionId, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, ...(agent ? { agent } : {}) });
+    : new ClaudeSession({ log: logFile, env: firstEnv, resume: logFile.meta.vendorSessionId, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, ...(agent ? { agent } : {}), ...(hooks ? { hooks: hooks.sdkHooks() } : {}) });
+  for (const ev of hookQueue ?? []) (session as ClaudeSession).emitHook(ev);
+  hookQueue = null;
   const sid = session.id;
   // 활동 기록 (ticket slcode-activity-state) — 첫 프롬프트가 상태를 바꾸기 전에 구독한다
   const activity = Activity.open(logFile.dir);
@@ -437,6 +447,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       const s = session as ClaudeSession;
       const sdk = await s.reloadPlugins();
       agentLoaded = r.loaded;
+      hooks?.load(r.loaded); // 빌드가 바뀐 플러그인의 worker 만 다시 띄운다
       s.emitPlugins({
         plugins: r.loaded.map((l) => ({ name: l.name, version: l.version, build: l.build, values: l.values })), removed: r.removed, later: r.later,
         sdk: { plugins: sdk.plugins.map((x) => ({ name: x.name, ...(x.source ? { source: x.source } : {}) })), commands: sdk.commands.map((c) => c.name), agents: sdk.agents.map((a) => a.name), mcp: sdk.mcpServers.map((m) => ({ name: m.name, status: m.status, ...(m.error ? { error: m.error } : {}) })) },
@@ -544,6 +555,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     let deadline: NodeJS.Timeout | undefined;
     await Promise.race([session.close(reason), new Promise<void>((r) => { deadline = setTimeout(() => { log(`vendor did not close in ${CLOSE_DEADLINE_MS / 1000}s — leaving it`); r(); }, CLOSE_DEADLINE_MS); })]);
     clearTimeout(deadline);
+    await hooks?.close(); // worker 와 hook.exec 가 띄운 프로세스 그룹도
     await inspect?.close();
     if (sweeper) clearInterval(sweeper);
     store?.close();
@@ -582,6 +594,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     let deadline: NodeJS.Timeout | undefined;
     await Promise.race([session.close('replaced', true), new Promise<void>((r) => { deadline = setTimeout(() => { log(`vendor did not close in ${CLOSE_DEADLINE_MS / 1000}s — leaving it`); r(); }, CLOSE_DEADLINE_MS); })]);
     clearTimeout(deadline);
+    await hooks?.close(); // 상태는 파일에 있다 — 새 core 가 이어 쓴다
     await inspect?.close();
     if (sweeper) clearInterval(sweeper);
     store?.close();

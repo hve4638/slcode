@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 
 export const MANIFEST = 'slcode-plugin.json';
 /** 빌드기 판 — 빌드 결과가 달라지는 변경이면 올린다. 빌드 식별자에 들어가 옛 빌드를 다시 쓰지 않게 한다 */
-export const BUILDER = 1;
+export const BUILDER = 2; // 2: slcode 형식 hooks.json·js/ts 훅 묶기 (slcode-agent-plugin-hooks)
 /** 호환 등급을 매기는 하네스 — gpt 는 GPT 하네스(장기적으로 Codex 자리, 아직 slcode 가 띄우지 않는다) */
 export const HARNESSES = ['claude', 'gpt', 'codex'] as const;
 export type Harness = (typeof HARNESSES)[number];
@@ -132,11 +132,12 @@ export function partLost(dir: string, part: string): Record<Harness, string[]> {
     const hooks = path.join(p, base, 'hooks/hooks.json');
     if (exists(hooks)) {
       const j = parseJson(hooks);
-      if (!isObj(j) || !isObj(j.hooks)) add(users, `${base}hooks/hooks.json: broken JSON`);
-      else {
-        if (!base) add(['codex'], 'hooks/hooks.json');
-        const other = Object.keys(j.hooks).filter((e) => !GPT_EVENTS.has(e));
-        if (!base && other.length) add(['gpt'], `hooks/hooks.json: ${other.join(', ')}`);
+      // 바깥 것은 slcode 형식(항목 목록, agentHooks.ts), raw/claude 는 Claude 형식(이벤트별 객체) — 형식이 맞지 않으면 깨진 파일
+      if (!isObj(j) || !(base ? isObj(j.hooks) : Array.isArray(j.hooks))) add(users, `${base}hooks/hooks.json: broken JSON`);
+      else if (!base) {
+        add(['codex'], 'hooks/hooks.json');
+        const other = [...new Set((j.hooks as unknown[]).filter((e) => isObj(e) && e.type === 'command').map((e) => (e as { event: unknown }).event).filter((e) => typeof e === 'string' && !GPT_EVENTS.has(e)))];
+        if (other.length) add(['gpt'], `hooks/hooks.json: ${other.join(', ')}`);
       }
     }
     for (const f of ['.mcp.json', ...(base ? ['session.json'] : [])]) if (exists(path.join(p, base, f)) && !isObj(parseJson(path.join(p, base, f)))) add(users, `${base}${f}: broken JSON`);

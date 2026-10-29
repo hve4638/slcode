@@ -1,9 +1,9 @@
 // Claude 어댑터 — 세션 하나 = SDK query() 하나 (streaming input, 상시 프로세스, t3code ClaudeAdapter 와 같은 꼴).
 // SDK 메시지를 protocol.ts 의 벤더 중립 이벤트로 정규화해 EventLog 에 남기고 구독자에게 낸다.
 // 승인(canUseTool)은 Deferred 로 무기한 기다린다 — interrupt·close·프로세스 종료만 cancelled 로 푼다 (사용자 결정 2026-09-26).
-import { query, type Query, type SDKMessage, type SDKUserMessage, type PermissionResult, type PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
+import { query, type Options, type Query, type SDKMessage, type SDKUserMessage, type PermissionResult, type PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
 import { randomUUID } from 'node:crypto';
-import type { ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, Usage, LimitWindow, McpStatus } from './protocol.js';
+import type { AgentHookEvent, ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, Usage, LimitWindow, McpStatus } from './protocol.js';
 import { EventLog, unrewound } from './eventLog.js';
 import { AgentSession, CLAUDE_EFFORTS, effortMisfit } from './base.js';
 import { SLCODE_PROMPT } from './prompt.js';
@@ -46,6 +46,8 @@ export type SessionOptions = {
   env?: NodeJS.ProcessEnv;
   /** slcode 에이전트 플러그인 (agentPlugins.loadSessionPlugins) — 플러그인 폴더·지시문·session.json·env. 벤더를 다시 띄워도(rewind·reopen) 같은 값 */
   agent?: { plugins: { type: 'local'; path: string }[]; append: string; settings: Record<string, unknown> | null; env: Record<string, string> };
+  /** 에이전트 플러그인 js/ts 훅의 디스패처 (hookRunner.sdkHooks, ticket slcode-agent-plugin-hooks) — SDK options.hooks */
+  hooks?: Options['hooks'];
 };
 
 export function summarize(content: unknown): string {
@@ -279,6 +281,9 @@ export class ClaudeSession extends AgentSession {
   /** 다시 싣기의 결과를 기록에 — core 가 링크를 바꾸고 reloadPlugins() 를 부른 뒤 */
   emitPlugins(body: Omit<Extract<CoreEvent, { kind: 'plugins.reloaded' }>, 'kind'>) { this.emit({ kind: 'plugins.reloaded', ...body }); }
 
+  /** js/ts 훅의 기록 (hookRunner) */
+  emitHook(ev: AgentHookEvent) { if (!this.ended) this.emit(ev); }
+
   async close(reason = 'closed', quiet = false) {
     if (this.ended) return;
     this.ended = true;
@@ -314,6 +319,7 @@ export class ClaudeSession extends AgentSession {
         // slcode 에이전트 플러그인 — 세션 폴더의 링크 경로를 <이름>@inline 으로 싣는다. 사용자 설정·설치 기록은 건드리지 않는다
         ...(opts.agent?.plugins.length ? { plugins: opts.agent.plugins } : {}),
         ...(opts.agent?.settings ? { settings: opts.agent.settings as any } : {}),
+        ...(opts.hooks ? { hooks: opts.hooks } : {}),
         // CLI 와 같은 로드 — user/project/local (스파이크 (a) 실측: 플러그인·스킬·훅·MCP 가 CLI 와 같다)
         settingSources: ['user', 'project', 'local'],
         // IS_SANDBOX=1 을 늘 얹는다 — uid 0 이면 CLI 가 이것 없이는 아래 skip 플래그나 bypass 모드만으로 첫 턴 전에 exit 1 한다 (CLI 2.1.282, 2026-10-08 실측, 값은 '1' 만).

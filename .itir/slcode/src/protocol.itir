@@ -17,6 +17,8 @@ type LoggedEvent
 type LimitWindow
 type McpStatus
 type AgentPluginState
+type AgentHookEvent
+type AgentHookEffects
 type Methods
 type ServeMethods
 type UpdateCheck
