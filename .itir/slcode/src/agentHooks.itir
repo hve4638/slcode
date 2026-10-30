@@ -1,6 +1,14 @@
-role: 에이전트 플러그인 part 의 hooks/hooks.json(slcode 형식) 빌드 (ticket slcode-agent-plugin-hooks, 착수 결정 TICKET.md 2026-10-29) — Claude 형식을 따르지 않는다(사용자 결정: 빌드가 바꿔 주고, Claude 형식 그대로는 raw/claude/hooks/hooks.json). { "hooks": [ 항목… ] } 목록, 줄 하나가 항목 하나 — 목록이 아니면(Claude 형식 객체 포함) 파일째 깨진 것. script 항목 { type: "script", file: <part 기준 경로> } 은 이벤트를 적지 않는다(스크립트가 on() 으로 등록한다). command 항목 { type: "command", event, matcher?, command, compat: "claude", …Claude command 칸 } 은 Claude 형식으로 바꿔 Claude 가 실행한다(입출력·종료 코드가 Claude command 훅과 같다 — 이번엔 compat claude 만, 상태를 받는 compat 은 후속). 잘못된 항목은 그 항목만 report.dropped.
+role: 에이전트 플러그인 part 의 hooks/hooks.json(slcode 형식) 빌드 (ticket slcode-agent-plugin-hooks, 착수 결정 TICKET.md 2026-10-29) — Claude 형식을 따르지 않는다(사용자 결정: 빌드가 바꿔 주고, Claude 형식 그대로는 raw/claude/hooks/hooks.json). { "hooks": [ 항목… ] } 목록, 줄 하나가 항목 하나 — 목록이 아니면(Claude 형식 객체 포함) 파일째 깨진 것. script 항목 { type: "script", file: <part 기준 경로> } 은 이벤트를 적지 않는다(스크립트가 on() 으로 등록한다). command 항목 { type: "command", event, matcher?, command, compat: "claude", …Claude command 칸 } 은 Claude 형식으로 바꿔 Claude 가 실행한다(입출력·종료 코드가 Claude command 훅과 같다 — 이번엔 compat claude 만, 상태를 받는 compat 은 후속). 잘못된 항목은 그 항목만 report.dropped. command 항목의 문자열 칸에 쓴 ${slcode.vars.harness} 는 빌드하는 하네스 이름(claude|codex)으로 바꾼다. CODEX_EVENTS 는 Codex 0.165 가 받는 훅 이벤트(Codex 문서 hooks.md) — Codex export 는 그 밖의 command 항목을 뺀다(ticket slcode-agent-plugin-export, 사용자 결정 2026-10-31 — 항목마다 하네스 표시를 두지 않고 훅이 이 상수로 가린다. 이름 공간 slcode.vars 는 나중에 개발자 정의 상수·빌드 때 지정하는 값도 받는다, 지금은 harness 하나).
 
-export fn buildPartHooks(pdir, part, j, out, scripts) {
+type HookHarness
+export val CODEX_EVENTS
+export fn commandGroup(e, harness) {
+  role: command 항목 하나 → { event, Claude 형식 묶음 } 또는 틀린 사유. compat 은 claude 만
+}
+export fn partCommandHooks(j, part, harness, events) {
+  role: part 하나의 command 항목만 그 하네스용 Claude 형식으로(Codex export) — events 에 없는 이벤트·script 항목·틀린 항목은 excluded. 목록이 아니면 null
+}
+export fn buildPartHooks(pdir, part, j, out, scripts, harness) {
   role: script 는 out/scripts/<번호>.mjs 로 묶어 scripts 에 더하고, command 는 이벤트별 Claude 항목으로 돌려준다. part 밖 경로·같은 스크립트 두 번(콜백이 두 번 등록된다)은 뺀다
 }
 fn bundle(pdir, entry, outfile) -> Text? {

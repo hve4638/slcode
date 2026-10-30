@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { buildId, frontmatter, mcpTransport, partLost, valuesString, walk, type Harness, type Manifest, type Resolved } from './agentFormat.js';
-import { buildPartHooks, type ScriptEntry } from './agentHooks.js';
+import { buildPartHooks, CODEX_EVENTS, partCommandHooks, type ScriptEntry } from './agentHooks.js';
 
 export type Report = {
   harness: Harness; name: string; version: string; build: string; values: string;
@@ -24,12 +24,15 @@ export type Report = {
   scripts?: { built: string[]; failed: string[] };
 };
 
-/** 빌드 폴더 안의 이름들 — build/<식별자>/ 아래. codexArgs 는 Codex 빌드의 app-server 인자(-c mcp_servers…) */
-export const BUILD_FILES = { report: 'report.json', instructions: 'instructions.md', settings: 'session.json', codexArgs: 'codex-args.json', scripts: 'scripts.json' } as const;
+/** 빌드 폴더 안의 이름들 — build/<식별자>/ 아래. codexArgs 는 Codex 빌드의 app-server 인자(-c mcp_servers…).
+ *  codexMcp·codexHooks 는 Codex export 가 플러그인의 .mcp.json·hooks/hooks.json 으로 쓴다 — slcode 의 Codex 세션은 쓰지 않는다 */
+export const BUILD_FILES = { report: 'report.json', instructions: 'instructions.md', settings: 'session.json', codexArgs: 'codex-args.json', codexMcp: 'codex-mcp.json', codexHooks: 'codex-hooks.json', scripts: 'scripts.json' } as const;
 
 const isObj = (v: unknown): v is Record<string, any> => !!v && typeof v === 'object' && !Array.isArray(v);
 const readJson = (f: string): unknown => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return undefined; } };
 const RAW = 'raw/claude/';
+/** Codex 가 timeout 을 3초로 줄이는(그때마다 경고를 내는) 이벤트 — Codex 빌드가 미리 3초로 맞춘다 (Codex 문서 hooks.md, 0.165 실측) */
+const CODEX_SHORT = new Set(['SessionEnd', 'Interrupt']);
 
 /** src(설치한 원본)의 켠 part 를 out 에 Claude 빌드로 쓴다 — out/claude/<이름>/ (플러그인 폴더), instructions.md, session.json(있으면), report.json */
 export function buildClaude(src: string, m: Manifest, r: Resolved, id: string, out: string): Report {
@@ -122,11 +125,11 @@ export function buildClaude(src: string, m: Manifest, r: Resolved, id: string, o
 }
 
 /** src 의 켠 part 를 out 에 Codex 빌드로 쓴다 — out/codex/(플러그인 폴더: skills/·bin/·그 밖의 part 파일), instructions.md, codex-args.json, report.json.
- *  훅·raw/ 는 싣지 않는다(report.lost). Codex 는 경로 변수를 모르므로 모든 텍스트 파일·지시문·MCP 정의에서 ${CLAUDE_PLUGIN_ROOT} 는 final/codex,
- *  ${CLAUDE_PLUGIN_DATA} 는 data 로 바꾼다 — final 은 rename 뒤의 빌드 폴더다 */
-export function buildCodex(src: string, m: Manifest, r: Resolved, id: string, out: string, final: string, data: string): Report {
+ *  훅·raw/ 는 slcode 의 Codex 세션에 싣지 않는다(report.lost). Codex 는 경로 변수를 모르므로 모든 텍스트 파일·지시문·MCP 정의에서 ${CLAUDE_PLUGIN_ROOT} 는 root,
+ *  ${CLAUDE_PLUGIN_DATA} 는 data 로 바꾼다 — root 는 그 플러그인 폴더가 놓일 경로다(세션 빌드는 rename 뒤의 빌드 폴더/codex, export 는 export 링크).
+ *  Codex export 용으로 codex-mcp.json(이름을 바꾼 서버)과 codex-hooks.json(command 훅 중 Codex 가 받는 이벤트, ${slcode.vars.harness} 는 codex)도 쓴다 */
+export function buildCodex(src: string, m: Manifest, r: Resolved, id: string, out: string, root: string, data: string): Report {
   const report: Report = { harness: 'codex', name: m.name, version: m.version, build: id, values: valuesString(r), parts: [], instructions: { used: [], skipped: [] }, overridden: [], dropped: [], lost: [] };
-  const root = path.join(final, 'codex');
   const sub = (t: string) => t.replaceAll('${CLAUDE_PLUGIN_ROOT}', root).replaceAll('${CLAUDE_PLUGIN_DATA}', data);
   const deep = (v: unknown): unknown => typeof v === 'string' ? sub(v) : Array.isArray(v) ? v.map(deep) : isObj(v) ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, deep(x)])) : v;
   const files = new Map<string, { part: string; body: Buffer; mode: number }>();
@@ -136,6 +139,7 @@ export function buildCodex(src: string, m: Manifest, r: Resolved, id: string, ou
     files.set(rel, { part, body, mode });
   };
   const mcp: Record<string, { def: unknown; part: string }> = {};
+  const hooks: Record<string, unknown[]> = {}, hooksExcluded: string[] = [];
   const instr: string[] = [];
   for (const part of Object.keys(m.parts)) {
     if (!r.parts[part]) continue;
@@ -143,7 +147,14 @@ export function buildCodex(src: string, m: Manifest, r: Resolved, id: string, ou
     report.lost.push(...partLost(src, part).codex);
     const pdir = path.join(src, part);
     for (const rel of walk(pdir)) {
-      if (rel.startsWith('raw/') || rel === 'hooks/hooks.json') continue; // Codex 에는 싣지 않는다 — partLost 가 적었다
+      if (rel === 'hooks/hooks.json') { // slcode 의 Codex 세션은 싣지 않는다(partLost 가 적었다) — export 만 쓴다
+        const h = partCommandHooks(readJson(path.join(pdir, rel)), part, 'codex', CODEX_EVENTS);
+        if (!h) { hooksExcluded.push(`${part}/${rel}: broken`); continue; }
+        for (const [ev, list] of Object.entries(h.hooks)) (hooks[ev] ??= []).push(...(deep(list) as Record<string, any>[]).map((g) => CODEX_SHORT.has(ev) ? { ...g, hooks: g.hooks.map((x: Record<string, any>) => (typeof x.timeout === 'number' && x.timeout > 3 ? { ...x, timeout: 3 } : x)) } : g));
+        hooksExcluded.push(...h.excluded);
+        continue;
+      }
+      if (rel.startsWith('raw/')) continue; // Codex 에는 싣지 않는다 — partLost 가 적었다
       const abs = path.join(pdir, rel);
       const where = `${part}/${rel}`;
       if (rel.startsWith('instructions/')) {
@@ -183,15 +194,19 @@ export function buildCodex(src: string, m: Manifest, r: Resolved, id: string, ou
   }
   // MCP 는 app-server 인자로 — 서버 이름은 Claude 도구 이름과 같은 plugin_<플러그인>_<서버>. 못 받는 연결 방식은 partLost 가 적었다
   const args: string[] = [];
+  const servers: Record<string, unknown> = {};
   for (const [name, { def }] of Object.entries(mcp)) {
     const d = deep(def) as Record<string, any>;
     const t = mcpTransport(d);
     const conf = t === 'stdio' ? { command: d.command, ...(Array.isArray(d.args) ? { args: d.args } : {}), ...(isObj(d.env) ? { env: d.env } : {}), ...(typeof d.cwd === 'string' ? { cwd: d.cwd } : {}) }
       : t === 'http' ? { url: d.url, ...(isObj(d.headers) ? { http_headers: d.headers } : {}) } : null;
-    if (conf) args.push('-c', `mcp_servers.${`plugin_${m.name}_${name}`.replace(/[^A-Za-z0-9_-]/g, '_')}=${toml(conf)}`);
+    const key = `plugin_${m.name}_${name}`.replace(/[^A-Za-z0-9_-]/g, '_');
+    if (conf) { args.push('-c', `mcp_servers.${key}=${toml(conf)}`); servers[key] = conf; }
   }
   fs.mkdirSync(path.join(out, 'codex'), { recursive: true });
   fs.writeFileSync(path.join(out, BUILD_FILES.codexArgs), JSON.stringify(args, null, 2));
+  fs.writeFileSync(path.join(out, BUILD_FILES.codexMcp), JSON.stringify({ mcpServers: servers }, null, 2));
+  fs.writeFileSync(path.join(out, BUILD_FILES.codexHooks), JSON.stringify({ hooks, excluded: hooksExcluded }, null, 2));
   fs.writeFileSync(path.join(out, BUILD_FILES.instructions), instr.join('\n\n'));
   fs.writeFileSync(path.join(out, BUILD_FILES.report), JSON.stringify(report, null, 2));
   return report;
@@ -232,7 +247,7 @@ export function ensureBuild(buildDir: string, src: string, m: Manifest, r: Resol
   fs.mkdirSync(buildDir, { recursive: true });
   const tmp = path.join(buildDir, `.tmp-${randomUUID().slice(0, 8)}`);
   // Codex 빌드의 데이터 폴더는 build/ 옆 data/<이름> (agentPaths)
-  const report = harness === 'codex' ? buildCodex(src, m, r, id, tmp, dir, path.join(path.dirname(buildDir), 'data', m.name)) : buildClaude(src, m, r, id, tmp);
+  const report = harness === 'codex' ? buildCodex(src, m, r, id, tmp, path.join(dir, 'codex'), path.join(path.dirname(buildDir), 'data', m.name)) : buildClaude(src, m, r, id, tmp);
   try { fs.renameSync(tmp, dir); }
   catch { fs.rmSync(tmp, { recursive: true, force: true }); if (!fs.existsSync(path.join(dir, BUILD_FILES.report))) throw new Error(`could not place build ${id}`); }
   return { id, dir, report };

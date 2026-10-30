@@ -24,12 +24,12 @@ import { findVendorSession, forkClaude, vendorResumeCommand } from './vendor.js'
 import { pullHistory } from './history.js';
 import { CLAUDE_EFFORTS } from './base.js';
 import { randomUUID } from 'node:crypto';
-import { addPlugin, listPlugins, removePlugin, setPlugin } from './agentPlugins.js';
+import { addPlugin, exportPlugin, listPlugins, removePlugin, setPlugin } from './agentPlugins.js';
 import { addProfile, getProfile, listProfiles, removeProfile, setProfile, type Profile } from './profiles.js';
 import { summarize } from './activity.js';
 import { FILES, PERMISSION_MODES, type ApprovalRequest, type LoggedEvent, type Methods, type SessionInfo } from './protocol.js';
 
-type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; model?: string; effort?: string; profile?: string; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; 'no-inspect'?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; re?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; takeover?: boolean; version?: boolean; help?: boolean; 'from-start'?: boolean };
+type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; model?: string; effort?: string; profile?: string; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; 'no-inspect'?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; re?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; takeover?: boolean; version?: boolean; help?: boolean; 'from-start'?: boolean; to?: string[]; remove?: boolean };
 
 const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세션 id 또는 유일한 제목. * 는 세션 안(SLCODE_SESSION_ID)에서만)
 
@@ -84,10 +84,14 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
 * reply <id> <text>              받은 메시지에 답장
 에이전트 플러그인 (Claude·Codex 세션에 싣는다. 바꾼 설정은 새 세션부터, 떠 있는 세션은 사이드바의 다시 싣기로 — Codex 는 skill 만)
   plugin add <folder>            slcode-plugin.json 이 있는 원본 폴더를 설치한다. 같은 내용이면 아무것도 하지 않는다
-  plugin remove <name>           설치와 설정을 지운다 (없어도 성공)
+  plugin remove <name>           설치와 설정, export 를 지운다 (없어도 성공)
   plugin set <name> <part>=on|off <option>=<value> ...
                                  플러그인 기본 설정을 바꾼다 (필수 part 는 끌 수 없다)
-  plugin list [--json]           설치한 플러그인, 호환 등급(full|partial)과 빠지는 것, part·옵션 값, 마지막 빌드 보고
+  plugin list [--json]           설치한 플러그인, 호환 등급(full|partial)과 빠지는 것, part·옵션 값, 마지막 빌드 보고, export
+  plugin export <name> --to claude|codex ... [--remove] [--json]
+                                 터미널에서 직접 띄우는 claude·codex 에 플러그인 기본 설정의 빌드를 등록한다(마켓플레이스 slcode).
+                                 바꾼 설정·새 판은 다시 export 하지 않아도 반영된다 — 열린 claude 는 /reload-plugins, codex 는 새 세션부터.
+                                 codex 는 restricted: js/ts 훅·bin/ PATH·env·raw/ 가 빠지고, 지시문·훅은 codex 의 훅 검토(Trust all)를 거쳐야 돈다 — 리빌드할 때마다
 세션 시작 프로필 (new --profile 로 고른다. 바꾼 프로필은 그 프로필로 띄우는 다음 기동부터. Codex 세션은 따르지 않는다)
   기본 제공: default (설치한 플러그인·사용자·프로젝트 설정 전부), bare (플러그인·사용자·프로젝트 설정·Claude 내장 skill 없음). 고칠 수 없다
   profile add <name> [--from P] [<key>=<value> ...]
@@ -115,7 +119,7 @@ try {
       port: { type: 'string' }, host: { type: 'string' }, stdio: { type: 'boolean' }, vendor: { type: 'string' }, mode: { type: 'string' }, title: { type: 'string' }, model: { type: 'string' }, effort: { type: 'string' }, profile: { type: 'string' },
       since: { type: 'string' }, tail: { type: 'string' }, turn: { type: 'string' }, raw: { type: 'boolean' }, 'no-inspect': { type: 'boolean' }, all: { type: 'boolean' }, force: { type: 'boolean' }, json: { type: 'boolean' },
       remember: { type: 'boolean' }, from: { type: 'string' }, re: { type: 'string' }, timeout: { type: 'string' }, answer: { type: 'string' },
-      'no-web': { type: 'boolean' }, web: { type: 'boolean' }, takeover: { type: 'boolean' }, 'from-start': { type: 'boolean' }, version: { type: 'boolean' }, dir: { type: 'string' }, help: { type: 'boolean', short: 'h' },
+      'no-web': { type: 'boolean' }, web: { type: 'boolean' }, takeover: { type: 'boolean' }, 'from-start': { type: 'boolean' }, version: { type: 'boolean' }, dir: { type: 'string' }, help: { type: 'boolean', short: 'h' }, to: { type: 'string', multiple: true }, remove: { type: 'boolean' },
     },
   });
 } catch (e) { usage((e as Error).message); }
@@ -684,7 +688,22 @@ try {
       if (sub === 'add') { if (args.length !== 1) usage('plugin add <folder>'); print(await addPlugin(args[0], P.dir)); break; }
       if (sub === 'remove') { if (args.length !== 1) usage('plugin remove <name>'); print(await removePlugin(args[0], P.dir)); break; }
       if (sub === 'set') { if (args.length < 2) usage('plugin set <name> <part>=on|off <option>=<value> ...'); print(await setPlugin(args[0], args.slice(1), P.dir)); break; }
-      if (sub !== 'list') usage('plugin add|remove|set|list');
+      if (sub === 'export') {
+        if (args.length !== 1 || !flags.to?.length) usage('plugin export <name> --to claude|codex ... [--remove]');
+        const rs = await exportPlugin(args[0], flags.to, !!flags.remove, P.dir);
+        if (flags.json) { print(rs); break; }
+        for (const r of rs) {
+          const lines = r.removed ? [`${r.harness}: ${r.name}@slcode export 를 해제했습니다`]
+            : r.build ? [`${r.harness}${r.harness === 'codex' ? ' (restricted)' : ''}: ${r.name}@slcode 로 export 했습니다 (빌드 ${r.build})`] : [`${r.harness}: ${r.name} 는 export 되어 있지 않습니다`];
+          if (r.build && r.harness === 'codex') lines.push('  일부 기능만 지원하며 의도대로 동작하지 않을 수 있습니다.', '  codex 를 띄울 때 나오는 훅 검토 화면에서 Trust all and continue 를 고르면 지시문과 훅이 돕니다. 플러그인을 리빌드한 뒤에도 한 번 더 묻습니다.');
+          if (r.build && r.harness === 'claude') lines.push('  열린 claude 세션은 /reload-plugins 로 싣습니다. 지시문은 새 세션부터 적용됩니다.');
+          if (r.excluded.length) lines.push(`  빠지거나 다르게 도는 것:`, ...r.excluded.map((x) => `    - ${x}`));
+          lines.push(...r.notes.filter((n) => n !== 'not exported').map((n) => `  참고: ${n}`));
+          console.log(lines.join('\n'));
+        }
+        break;
+      }
+      if (sub !== 'list') usage('plugin add|remove|set|list|export');
       const rows = listPlugins(P.dir);
       if (flags.json) { print(rows); break; }
       if (!rows.length) { console.log('(no agent plugins)'); break; }
@@ -701,6 +720,7 @@ try {
           ...lost.map(([h, l]) => `  lost in ${h}: ${l.join('; ')}`),
           build('claude'),
           build('codex'),
+          `  export   ${r.exports.join(' · ') || '-'}`,
         ].join('\n'));
       }
       break;

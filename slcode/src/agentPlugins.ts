@@ -11,6 +11,7 @@ import { buildId, compat, HARNESSES, MANIFEST, parseAssignment, readManifest, re
 import { BUILD_FILES, ensureBuild, type Report } from './agentBuild.js';
 import { acquireLock, releaseLock } from './lock.js';
 import { corePaths } from './paths.js';
+import { exportTo, refreshExport, unexport, EXPORT_HARNESSES, type ExportHarness, type ExportResult } from './agentExport.js';
 import { loadsPlugin, profileValues, type Profile } from './profiles.js';
 
 export const AGENT_DIR = 'agent-plugins';
@@ -40,6 +41,8 @@ export type PluginEntry = {
   values: Values;
   /** 하네스별 마지막 빌드 — 기본 설정으로 만든 것 */
   builds: Partial<Record<Harness, string>>;
+  /** export 한 하네스 (slcode plugin export) — 리빌드 때 다시 쓰고, remove 때 해제한다 */
+  exports?: ExportHarness[];
 };
 /** plugins 의 키 순서가 설치 순서 — 지시문을 이 순서로 잇는다. profiles 는 사용자 프로필 (profiles.ts) */
 export type AgentConfig = { plugins: Record<string, PluginEntry>; profiles?: Record<string, Profile> };
@@ -94,11 +97,18 @@ function defaultBuild(ap: AgentPaths, name: string, e: PluginEntry) {
   return ensureBuild(ap.build, inst, m, r, e.hash, 'claude');
 }
 
-export type AddResult = { name: string; version: string; changed: boolean; grade: 'full' | 'partial'; lost: Record<Harness, string[]>; build: string | null };
+export type AddResult = { name: string; version: string; changed: boolean; grade: 'full' | 'partial'; lost: Record<Harness, string[]>; build: string | null; exports?: ExportResult[] };
+
+/** 리빌드 뒤 export 를 새 빌드로 — 실패는 결과의 notes 로 (리빌드를 막지 않는다) */
+function refreshExports(ap: AgentPaths, name: string, e: PluginEntry, env: NodeJS.ProcessEnv): ExportResult[] | undefined {
+  if (!e.exports?.length) return undefined;
+  return e.exports.map((h) => refreshExport(ap, name, e, h, env));
+}
+const exportedNames = (c: AgentConfig, h: ExportHarness) => Object.entries(c.plugins).filter(([, e]) => e.exports?.includes(h)).map(([n]) => n);
 
 /** 원본을 installed/<이름>/ 에 복사한다. 내용 해시가 같으면 아무것도 하지 않는다. 새 판이면 기본 설정(맞는 값만 남긴다)으로 다시 빌드한다.
  *  manifest 가 없거나 깨졌으면 던진다 — 설치를 거부하는 유일한 경우 */
-export async function addPlugin(src: string, stateDir?: string): Promise<AddResult> {
+export async function addPlugin(src: string, stateDir?: string, env: NodeJS.ProcessEnv = process.env): Promise<AddResult> {
   const abs = path.resolve(src);
   const m = readManifest(abs);
   const hash = sourceHash(abs, m);
@@ -118,33 +128,65 @@ export async function addPlugin(src: string, stateDir?: string): Promise<AddResu
       }
     });
     const { grade, lost } = compat(inst, m);
-    const e: PluginEntry = { version: m.version, hash, source: abs, installedAt: Date.now(), grade, lost, values: prune(prev?.values, m), builds: {} };
+    const e: PluginEntry = { version: m.version, hash, source: abs, installedAt: Date.now(), grade, lost, values: prune(prev?.values, m), builds: {}, ...(prev?.exports?.length ? { exports: prev.exports } : {}) };
     defaultBuild(ap, m.name, e);
     c.plugins[m.name] = e;
     writeConfig(ap, c);
-    return { name: m.name, version: m.version, changed: true, grade, lost, build: e.builds.claude ?? null };
+    const exports = refreshExports(ap, m.name, e, env);
+    return { name: m.name, version: m.version, changed: true, grade, lost, build: e.builds.claude ?? null, ...(exports ? { exports } : {}) };
   });
   gcBuilds(stateDir);
   return r;
 }
 
-/** 원본·설정 항목을 지운다. 없으면 성공 (removed false). export 해제는 slcode-agent-plugin-export 가 여기에 붙인다 */
-export async function removePlugin(name: string, stateDir?: string): Promise<{ name: string; removed: boolean }> {
+/** 원본·설정 항목·export 를 지운다. 없으면 성공 (removed false). export 를 먼저 해제한다 — 링크가 사라진 빌드를 가리키면 하네스가 오류를 낸다 */
+export async function removePlugin(name: string, stateDir?: string, env: NodeJS.ProcessEnv = process.env): Promise<{ name: string; removed: boolean; exports?: ExportResult[] }> {
   const ap = agentPaths(stateDir);
-  const removed = await locked(ap, () => {
+  const r = await locked(ap, () => {
     const c = readConfig(ap);
     const inst = path.join(ap.installed, name);
     const had = !!c.plugins[name] || fs.existsSync(inst);
+    const hs = c.plugins[name]?.exports ?? [];
     if (c.plugins[name]) { delete c.plugins[name]; writeConfig(ap, c); }
+    const exports = hs.map((h) => unexport(ap, name, h, exportedNames(c, h), env));
     fs.rmSync(inst, { recursive: true, force: true });
-    return had;
+    return { name, removed: had, ...(exports.length ? { exports } : {}) };
   });
   gcBuilds(stateDir, GC_GRACE_MS, name); // 지운 플러그인의 빌드는 유예 없이 — 새 세션이 더는 그것을 빌드하지 않는다
-  return { name, removed };
+  return r;
+}
+
+/** export 하거나(--to) 해제한다(--remove). 설정 값은 플러그인 기본 설정 — 프로필 고르기는 미정. 하네스 CLI(claude·codex)를 env 의 PATH 에서 부른다 */
+export async function exportPlugin(name: string, harnesses: string[], remove: boolean, stateDir?: string, env: NodeJS.ProcessEnv = process.env): Promise<ExportResult[]> {
+  for (const h of harnesses) if (!(EXPORT_HARNESSES as readonly string[]).includes(h)) throw new Error(`export target must be ${EXPORT_HARNESSES.join(' or ')}: ${h}`);
+  const hs = [...new Set(harnesses)] as ExportHarness[];
+  const ap = agentPaths(stateDir);
+  const r = await locked(ap, () => {
+    const c = readConfig(ap);
+    const e = c.plugins[name];
+    if (!e) throw new Error(`no agent plugin ${name} (slcode plugin list)`);
+    const out: ExportResult[] = [];
+    const save = (list: ExportHarness[]) => { if (list.length) e.exports = list; else delete e.exports; writeConfig(ap, c); };
+    for (const h of hs) {
+      const had = e.exports?.includes(h) ?? false;
+      const others = (e.exports ?? []).filter((x) => x !== h);
+      if (remove) {
+        if (!had) { out.push({ name, harness: h, removed: false, build: null, link: null, excluded: [], notes: ['not exported'] }); continue; }
+        save(others);
+        out.push(unexport(ap, name, h, exportedNames(c, h), env));
+        continue;
+      }
+      e.exports = [...others, h];
+      out.push(exportTo(ap, name, e, h, exportedNames(c, h), env)); // 실패면 던진다 — 이 하네스는 config 에 적지 않는다
+      save(e.exports);
+    }
+    return out;
+  });
+  return r;
 }
 
 /** 플러그인 기본 설정에서 part 를 켜고 끄거나 옵션 값을 바꾼다 — `<part>=on|off`, `<옵션>=<값>` 여럿. 하나라도 틀리면 아무것도 바꾸지 않는다 */
-export async function setPlugin(name: string, assignments: string[], stateDir?: string): Promise<{ name: string; values: string; build: string }> {
+export async function setPlugin(name: string, assignments: string[], stateDir?: string, env: NodeJS.ProcessEnv = process.env): Promise<{ name: string; values: string; build: string; exports?: ExportResult[] }> {
   const ap = agentPaths(stateDir);
   const r = await locked(ap, () => {
     const c = readConfig(ap);
@@ -156,7 +198,8 @@ export async function setPlugin(name: string, assignments: string[], stateDir?: 
     e.values = prune(values, m);
     const b = defaultBuild(ap, name, e);
     writeConfig(ap, c);
-    return { name, values: b.report.values, build: b.id };
+    const exports = refreshExports(ap, name, e, env);
+    return { name, values: b.report.values, build: b.id, ...(exports ? { exports } : {}) };
   });
   gcBuilds(stateDir);
   return r;
@@ -168,6 +211,8 @@ export type PluginRow = {
   options: { name: string; type: string; value: unknown; default: unknown; label: string | null }[];
   /** 하네스별 마지막 빌드의 report.json — 빌드가 없으면 null */
   reports: Partial<Record<Harness, Report | null>>;
+  /** export 한 하네스 */
+  exports: ExportHarness[];
 };
 
 /** 설치 목록 — 기본 설정 기준의 part·옵션 값과 마지막 빌드 보고 */
@@ -183,7 +228,7 @@ export function listPlugins(stateDir?: string): PluginRow[] {
       name, version: e.version, grade: e.grade, lost: e.lost, source: e.source, installedAt: e.installedAt,
       parts: m ? Object.entries(m.parts).map(([k, p]) => ({ name: k, on: r.parts[k], required: p.required, default: p.default })) : [],
       options: m ? Object.entries(m.options).map(([k, o]) => ({ name: k, type: o.type, value: r.options[k], default: o.default, label: o.label ?? null })) : [],
-      reports,
+      reports, exports: e.exports ?? [],
     };
   });
 }
