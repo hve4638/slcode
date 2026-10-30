@@ -27,7 +27,7 @@ function source(): string {
       { type: 'command', event: 'SessionEnd', command: 'echo bye', compat: 'claude', timeout: 5 },
       { type: 'script', file: 'hooks/guard.ts' },
     ] }),
-    'base/hooks/guard.ts': 'export default function () {}\n',
+    'base/hooks/guard.ts': "import { slcode } from 'slcode/api'; slcode.on('PreToolUse', { matcher: 'Read|Bash' }, (h) => h.block('no')); slcode.run();\n",
     'extra/instructions/extra.md': '---\nif: proactive\n---\nBe proactive.',
   });
   fs.chmodSync(path.join(src, 'base/bin/core-hi'), 0o755);
@@ -47,7 +47,7 @@ function fakeEnv() {
   return { env, calls, clear };
 }
 
-test('Claude export: 디렉터리 마켓플레이스 slcode 에 링크로 등록 — 지시문은 SessionStart 훅의 additionalContext(맨 앞), ${slcode.vars.harness} 는 claude, 옮길 수 없는 것은 excluded', async () => {
+test('Claude export: 디렉터리 마켓플레이스 slcode 에 링크로 등록 — 지시문은 SessionStart 훅의 additionalContext(맨 앞), ${slcode.vars.harness} 는 claude, js/ts 훅은 slcode-hooks/ 와 command 로, 옮길 수 없는 것은 excluded', async () => {
   const dir = tmp('state'), f = fakeEnv();
   await addPlugin(source(), dir, f.env);
   const [r] = await exportPlugin('core', ['claude'], false, dir, f.env);
@@ -66,14 +66,21 @@ test('Claude export: 디렉터리 마켓플레이스 slcode 에 링크로 등록
   const ctx = read(path.join(link, 'hooks/slcode-instructions.json')).hookSpecificOutput;
   assert.equal(ctx.hookEventName, 'SessionStart');
   assert.equal(ctx.additionalContext, `Base rule. root=${link} data=${path.join(f.env.CLAUDE_CONFIG_DIR!, 'plugins/data/core-slcode')}`);
-  assert.ok(r.excluded.includes('base/hooks/guard.ts: js/ts hooks run only in slcode sessions'), r.excluded.join('\n'));
+  // js/ts 훅 (slcode-agent-plugin-script-portable) — 묶은 스크립트를 slcode-hooks/ 에, 그것을 돌리는 command 를 이벤트 끝에(SessionEnd 는 늘)
+  assert.deepEqual(read(path.join(link, 'slcode-hooks/scripts.json')).map((s: any) => s.src), ['base/hooks/guard.ts']);
+  assert.ok(fs.existsSync(path.join(link, 'slcode-hooks/scripts/0.mjs')));
+  const pre = hooks.PreToolUse.at(-1);
+  assert.equal(pre.matcher, 'Read|Bash');
+  assert.match(pre.hooks[0].command, / claude "\$\{CLAUDE_PLUGIN_ROOT\}" PreToolUse$/);
+  assert.match(hooks.SessionEnd.at(-1).hooks[0].command, / claude "\$\{CLAUDE_PLUGIN_ROOT\}" SessionEnd$/);
+  assert.ok(!r.excluded.some((x) => /js\/ts/.test(x)), r.excluded.join('\n'));
   assert.ok(r.excluded.some((x) => x.startsWith('env: CORE_X')));
   // 세션 빌드는 지시문 훅이 없다 — 세션은 systemPrompt 로 넘긴다
   assert.equal(read(path.join(ap.build, r.build!, 'claude/core/hooks/hooks.json')).hooks.SessionStart.length, 1);
   assert.deepEqual(listPlugins(dir)[0].exports, ['claude']);
 });
 
-test('Codex export (restricted): 경로 변수는 export 링크·data 로, MCP 는 plugin_<p>_<s>, 훅은 Codex 가 받는 이벤트의 command 만(harness=codex), 지시문 훅은 한도 없이 — bin·env·js/ts·없는 이벤트는 excluded', async () => {
+test('Codex export (restricted): 경로 변수는 export 링크·data 로, MCP 는 plugin_<p>_<s>, 훅은 Codex 가 받는 이벤트의 command 와 js/ts(harness=codex), 지시문 훅은 한도 없이 — bin·env·없는 이벤트·Codex 차이는 excluded', async () => {
   const dir = tmp('state'), f = fakeEnv();
   await addPlugin(source(), dir, f.env);
   const [r] = await exportPlugin('core', ['codex'], false, dir, f.env);
@@ -91,7 +98,12 @@ test('Codex export (restricted): 경로 변수는 export 링크·data 로, MCP �
   assert.equal(hooks.Notification, undefined);
   assert.equal(hooks.SessionEnd[0].hooks[0].timeout, 3, 'Codex 는 SessionEnd timeout 을 3초로 줄이며 경고한다');
   assert.match(read(path.join(link, 'hooks/slcode-instructions.json')).hookSpecificOutput.additionalContext, new RegExp(`root=${link} data=${path.join(ap.data, 'core')}`));
-  for (const want of [/Notification/, /js\/ts hook hooks\/guard\.ts/, /^bin\//, /^env: CORE_X/]) assert.ok(r.excluded.some((x) => want.test(x)), `${want}\n${r.excluded.join('\n')}`);
+  // js/ts 훅 — Claude 빌드의 묶은 스크립트, 명령의 플러그인 폴더는 export 링크, SessionEnd 는 3초, Codex 차이는 excluded 에
+  assert.deepEqual(read(path.join(link, 'slcode-hooks/scripts.json')).map((s: any) => s.src), ['base/hooks/guard.ts']);
+  assert.ok(hooks.PreToolUse.at(-1).hooks[0].command.endsWith(` codex "${link}" PreToolUse`), hooks.PreToolUse.at(-1).hooks[0].command);
+  assert.deepEqual(hooks.SessionEnd.at(-1).hooks[0].timeout, 3);
+  assert.ok(!r.excluded.some((x) => /: js\/ts hook /.test(x)), 'js/ts 훅은 싣는다');
+  for (const want of [/Notification/, /guard\.ts: PreToolUse Read\|Bash — Codex 에는 Read 도구가 없습니다/, /^bin\//, /^env: CORE_X/]) assert.ok(r.excluded.some((x) => want.test(x)), `${want}\n${r.excluded.join('\n')}`);
   assert.ok(!r.excluded.some((x) => x.endsWith('/hooks/hooks.json')), 'command 훅은 싣는다');
 });
 

@@ -24,7 +24,9 @@ import { findVendorSession, forkClaude, vendorResumeCommand } from './vendor.js'
 import { pullHistory } from './history.js';
 import { CLAUDE_EFFORTS } from './base.js';
 import { randomUUID } from 'node:crypto';
-import { addPlugin, exportPlugin, listPlugins, removePlugin, setPlugin } from './agentPlugins.js';
+import { addPlugin, agentPaths, exportPlugin, listPlugins, removePlugin, setPlugin } from './agentPlugins.js';
+import { BUILD_FILES, type Report } from './agentBuild.js';
+import { checkScripts } from './scriptCheck.js';
 import { addProfile, getProfile, listProfiles, removeProfile, setProfile, type Profile } from './profiles.js';
 import { summarize } from './activity.js';
 import { FILES, PERMISSION_MODES, type ApprovalRequest, type LoggedEvent, type Methods, type SessionInfo } from './protocol.js';
@@ -91,7 +93,9 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
   plugin export <name> --to claude|codex ... [--remove] [--json]
                                  터미널에서 직접 띄우는 claude·codex 에 플러그인 기본 설정의 빌드를 등록한다(마켓플레이스 slcode).
                                  바꾼 설정·새 판은 다시 export 하지 않아도 반영된다 — 열린 claude 는 /reload-plugins, codex 는 새 세션부터.
-                                 codex 는 restricted: js/ts 훅·bin/ PATH·env·raw/ 가 빠지고, 지시문·훅은 codex 의 훅 검토(Trust all)를 거쳐야 돈다 — 리빌드할 때마다
+                                 codex 는 restricted: bin/ PATH·env·raw/ 가 빠지고, 지시문·훅은 codex 의 훅 검토(Trust all)를 거쳐야 돈다 — 리빌드할 때마다
+  hook <claude|codex> <plugin folder> <event>
+                                 export 한 플러그인의 js/ts 훅을 한 번 돌린다 (훅 입력 JSON 은 stdin, 출력은 하네스 훅 JSON) — hooks.json 이 부르는 것
 세션 시작 프로필 (new --profile 로 고른다. 바꾼 프로필은 그 프로필로 띄우는 다음 기동부터. Codex 세션은 따르지 않는다)
   기본 제공: default (설치한 플러그인·사용자·프로젝트 설정 전부), bare (플러그인·사용자·프로젝트 설정·Claude 내장 skill 없음). 고칠 수 없다
   profile add <name> [--from P] [<key>=<value> ...]
@@ -154,6 +158,21 @@ if (bare && positionals.length) usage(`동사 없는 slcode 는 옵션만 받는
 const [cmd, ...rest] = bare ? ['start'] : positionals;
 if (!cmd || flags.help) { console.log(HELP); process.exit(0); }
 const print = (o: unknown) => console.log(JSON.stringify(o, null, 2));
+
+/** 빌드한 js/ts 훅의 보고 — 빼거나 고칠 것과 하네스별 tsc 검사 경고를 stderr 에 (ticket slcode-agent-plugin-script-portable). 경고일 뿐 빌드는 그대로 */
+async function scriptReport(name: string, build: string) {
+  const ap = agentPaths(P.dir);
+  let rep: Report;
+  try { rep = JSON.parse(fs.readFileSync(path.join(ap.build, build, BUILD_FILES.report), 'utf8')); } catch { return; }
+  const sc = rep.scripts;
+  if (!sc || !(sc.built.length + sc.failed.length)) return;
+  const lines = [...sc.failed.map((x) => `  failed: ${x}`), ...sc.warnings.map((x) => `  warning: ${x}`)];
+  const inst = path.join(ap.installed, name);
+  const c = await checkScripts(sc.built.map((s) => path.join(inst, s)), ['claude', 'codex'], P.dir, inst);
+  if (c.skipped) lines.push(`  type check skipped: ${c.skipped}`);
+  for (const [h, ws] of Object.entries(c.warnings)) lines.push(...ws.map((w) => `  ${h === 'codex' ? 'codex export' : h}: ${w}`));
+  if (lines.length) err(`${name}: js/ts hooks\n${lines.join('\n')}`);
+}
 const err = (msg: string) => console.error(`[slcode] ${msg}`);
 const P = corePaths(flags.dir);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -685,9 +704,9 @@ try {
     // ---- 에이전트 플러그인 (ticket slcode-agent-plugin)
     case 'plugin': {
       const [sub, ...args] = rest;
-      if (sub === 'add') { if (args.length !== 1) usage('plugin add <folder>'); print(await addPlugin(args[0], P.dir)); break; }
+      if (sub === 'add') { if (args.length !== 1) usage('plugin add <folder>'); const r = await addPlugin(args[0], P.dir); print(r); if (r.build) await scriptReport(r.name, r.build); break; }
       if (sub === 'remove') { if (args.length !== 1) usage('plugin remove <name>'); print(await removePlugin(args[0], P.dir)); break; }
-      if (sub === 'set') { if (args.length < 2) usage('plugin set <name> <part>=on|off <option>=<value> ...'); print(await setPlugin(args[0], args.slice(1), P.dir)); break; }
+      if (sub === 'set') { if (args.length < 2) usage('plugin set <name> <part>=on|off <option>=<value> ...'); const r = await setPlugin(args[0], args.slice(1), P.dir); print(r); await scriptReport(r.name, r.build); break; }
       if (sub === 'export') {
         if (args.length !== 1 || !flags.to?.length) usage('plugin export <name> --to claude|codex ... [--remove]');
         const rs = await exportPlugin(args[0], flags.to, !!flags.remove, P.dir);
@@ -725,6 +744,7 @@ try {
       }
       break;
     }
+    case 'hook': { process.exitCode = await (await import('./hookMain.js')).main(rest); break; } // export 한 hooks.json 은 hookMain.js 를 바로 부른다 (빨리 뜨게)
     // ---- 세션 시작 프로필 (ticket slcode-session-profile)
     case 'profile': {
       const [sub, ...args] = rest;

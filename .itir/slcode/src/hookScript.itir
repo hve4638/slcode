@@ -1,0 +1,6 @@
+role: `slcode/api` 의 구현 (ticket slcode-agent-plugin-script-portable, 사용자 결정 2026-10-30) — 훅 스크립트가 `import { slcode } from 'slcode/api'` 로 쓰는 모듈. 빌드(agentHooks.bundle)가 esbuild alias 로 스크립트마다 이 파일을 함께 묶는다. 등록만 받는다: slcode.on() 은 스크립트를 싣는 쪽(hookWorker.loadScript)이 globalThis 에 둔 수집기에 넣고 slcode.run() 은 등록이 끝났다는 신호 — 콜백은 언제나 그 worker 가 부르고 하네스별 입출력 변환은 hookBroker 가 한다(그래서 하네스별 구현이 없다). 묶인 사본마다 따로 평가되므로 slcode 의 다른 모듈을 import 하지 않는다. 수집기는 이 모듈이 평가될 때 한 번 잡는다 — 수집기가 없으면(slcode 밖에서 실행) on() 이 던진다. 상수 — COLLECT: 수집기 자리 Symbol.for('slcode.hooks.collect') — hookWorker 가 같은 이름을 쓴다(worker 는 로컬 모듈을 런타임에 싣지 않는다).
+
+export val COLLECT
+val collect
+export val slcode
+type Collect

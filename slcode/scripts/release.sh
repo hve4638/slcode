@@ -75,6 +75,8 @@ EOF
 #!/bin/sh
 # slcode 런처 — 동봉 node 로 dist/cli.js 를 띄운다. 심링크로 불려도 실제 위치를 따른다
 d=$(dirname "$(readlink -f "$0")")
+# export 한 플러그인의 훅 명령(slcode hook …)은 도구 호출마다 뜬다 — cli.js 를 거치지 않는 가벼운 진입점으로
+if [ "$1" = hook ]; then shift; exec "$d/../runtime/node" "$d/../dist/hookMain.js" "$@"; fi
 exec "$d/../runtime/node" "$d/../dist/cli.js" "$@"
 EOF
   chmod +x "$st/bin/slcode"

@@ -1,5 +1,6 @@
 // 에이전트 플러그인 js/ts 훅 (agentHooks·hookWorker·hookRunner, ticket slcode-agent-plugin-hooks) — slcode 형식 hooks.json 빌드, on() 등록, 결과 합치기,
 // 세션×플러그인 상태(파일·공유·JSON·서브에이전트), timeout·failClosed, hook.exec 의 그룹 정리. SDK 는 띄우지 않고 디스패처를 직접 부른다.
+// 계약은 slcode/api 의 slcode.on()·slcode.run() (ticket slcode-agent-plugin-script-portable).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -16,30 +17,30 @@ function write(root: string, files: Record<string, string>) {
 }
 
 const GUARD = `
+import { slcode } from 'slcode/api';
 import { label } from './lib';
-export default (slcode: any) => {
-  slcode.on('PreToolUse', { matcher: 'Bash' }, (hook: any) => {
-    hook.state.n = (hook.state.n ?? 0) + 1;
-    if (hook.tool.input.command.includes('rm -rf')) return hook.block(label('danger'));
-    hook.context(\`n=\${hook.state.n}\`);
-  });
-  slcode.on('PreToolUse', { matcher: 'Write|Edit' }, (hook: any) => { hook.updateInput({ file: 'a' }); });
-  slcode.on('Stop', (hook: any) => { hook.context('ignored'); hook.block('keep going'); });
-  slcode.on('UserPromptSubmit', { timeout: 1, failClosed: true }, async (hook: any) => {
-    if (hook.prompt === 'slow') await new Promise((r) => setTimeout(r, 5000));
-    if (hook.prompt === 'map') hook.state.m = new Map([[1, 2]]);
-    if (hook.prompt === 'late') setTimeout(() => hook.message('late'), 10);
-    if (hook.prompt === 'throw') throw new Error('boom');
-    if (hook.prompt.startsWith('hang:')) await hook.exec('sh', ['-c', \`echo $$ > \${hook.prompt.slice(5)}; exec sleep 30\`]);
-    if (hook.prompt === 'exec') {
-      const r = await hook.exec('sh', ['-c', 'sleep 30 & echo $!']);
-      hook.state.bg = Number(r.stdout.trim());
-      hook.message(\`code \${r.code}\`);
-    }
-  });
-  slcode.on('SubagentStart', (hook: any) => { hook.context(\`sub n=\${hook.state.n ?? 'none'}\`); hook.state.sub = true; });
-  setTimeout(() => slcode.on('SessionEnd', () => {}), 0);
-};
+slcode.on('PreToolUse', { matcher: 'Bash' }, (hook: any) => {
+  hook.state.n = (hook.state.n ?? 0) + 1;
+  if (hook.tool.input.command.includes('rm -rf')) return hook.block(label('danger'));
+  hook.context(\`n=\${hook.state.n}\`);
+});
+slcode.on('PreToolUse', { matcher: 'Write|Edit' }, (hook: any) => { hook.updateInput({ file: 'a' }); });
+slcode.on('Stop', (hook: any) => { hook.context('ignored'); hook.block('keep going'); });
+slcode.on('UserPromptSubmit', { timeout: 1, failClosed: true }, async (hook: any) => {
+  if (hook.prompt === 'slow') await new Promise((r) => setTimeout(r, 5000));
+  if (hook.prompt === 'map') hook.state.m = new Map([[1, 2]]);
+  if (hook.prompt === 'late') setTimeout(() => hook.message('late'), 10);
+  if (hook.prompt === 'throw') throw new Error('boom');
+  if (hook.prompt.startsWith('hang:')) await hook.exec('sh', ['-c', \`echo $$ > \${hook.prompt.slice(5)}; exec sleep 30\`]);
+  if (hook.prompt === 'exec') {
+    const r = await hook.exec('sh', ['-c', 'sleep 30 & echo $!']);
+    hook.state.bg = Number(r.stdout.trim());
+    hook.message(\`code \${r.code}\`);
+  }
+});
+slcode.on('SubagentStart', (hook: any) => { hook.context(\`sub n=\${hook.state.n ?? 'none'}\`); hook.state.sub = true; });
+setTimeout(() => slcode.on('SessionEnd', () => {}), 0);
+slcode.run();
 `;
 
 async function install(dir: string, name: string, files: Record<string, string>) {
@@ -72,7 +73,7 @@ test('빌드: slcode 형식 hooks.json — script 는 묶고(상대 import 포�
     ] }),
     'main/hooks/guard.ts': GUARD,
     'main/hooks/lib.ts': 'export const label = (s: string): string => `[guard] ${s}`;',
-    'main/hooks/npm.ts': "import _ from 'lodash'; export default () => _;",
+    'main/hooks/npm.ts': "import _ from 'lodash'; import { slcode } from 'slcode/api'; slcode.on('Stop', () => _); slcode.run();",
   });
   const out = path.join(agentPaths(dir).build, id);
   const report = JSON.parse(fs.readFileSync(path.join(out, 'report.json'), 'utf8'));
@@ -80,7 +81,9 @@ test('빌드: slcode 형식 hooks.json — script 는 묶고(상대 import 포�
   assert.match(report.scripts.failed[0], /^main\/hooks\/npm\.ts: only node built-ins and relative imports: lodash/);
   assert.equal(report.dropped.length, 3, report.dropped.join('\n'));
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(out, 'claude/guard/hooks/hooks.json'), 'utf8')), { hooks: { Stop: [{ hooks: [{ type: 'command', command: 'notify-send done', timeout: 3 }] }] } });
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(out, 'scripts.json'), 'utf8')), [{ src: 'main/hooks/guard.ts', js: 'scripts/0.mjs' }]);
+  const listed = JSON.parse(fs.readFileSync(path.join(out, 'scripts.json'), 'utf8'));
+  assert.deepEqual(listed.map((s: any) => [s.src, s.js]), [['main/hooks/guard.ts', 'scripts/0.mjs']]);
+  assert.deepEqual(listed[0].regs.claude.map((r: any) => `${r.event} ${r.matcher} ${r.timeout} ${r.failClosed}`), ['PreToolUse Bash 10 false', 'PreToolUse Write|Edit 10 false', 'Stop null 10 false', 'UserPromptSubmit null 1 true', 'SubagentStart null 10 false'], '목록 모드 — 늦은 on() 은 없다');
   assert.match(fs.readFileSync(path.join(out, 'scripts/0.mjs'), 'utf8'), /sourceMappingURL=data:/);
 
   const id2 = await install(dir, 'old', { 'main/hooks/hooks.json': JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'x' }] }] } }) });
@@ -101,7 +104,7 @@ test('실행: on() 등록·결과 합치기·상태 파일·나중이 이기는 
   const dir = tmp('state'), sdir = tmp('session');
   const files = { 'main/hooks/hooks.json': JSON.stringify({ hooks: [{ type: 'script', file: 'hooks/guard.ts' }] }), 'main/hooks/guard.ts': GUARD, 'main/hooks/lib.ts': 'export const label = (s: string) => `[guard] ${s}`;' };
   const a = await install(dir, 'guard', files);
-  const b = await install(dir, 'second', { 'main/hooks/hooks.json': JSON.stringify({ hooks: [{ type: 'script', file: 'h.ts' }] }), 'main/h.ts': "export default (s: any) => s.on('PreToolUse', { matcher: 'Write' }, (h: any) => h.updateInput({ file: 'b' }));" });
+  const b = await install(dir, 'second', { 'main/hooks/hooks.json': JSON.stringify({ hooks: [{ type: 'script', file: 'h.ts' }] }), 'main/h.ts': "import { slcode } from 'slcode/api'; slcode.on('PreToolUse', { matcher: 'Write' }, (h: any) => h.updateInput({ file: 'b' })); slcode.run();" });
   const { r, events, fire } = runner(dir, sdir, [{ name: 'guard', build: a }, { name: 'second', build: b }]);
   try {
     let o = await fire('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: 't1' });
@@ -132,7 +135,7 @@ test('실행: on() 등록·결과 합치기·상태 파일·나중이 이기는 
     await fire('UserPromptSubmit', { prompt: 'late' });
     await new Promise((res) => setTimeout(res, 100));
     assert.ok(events.some((e) => e.phase === 'warn' && /끝난 뒤 hook\.message\(\)/.test(e.text)));
-    assert.ok(events.some((e) => e.phase === 'warn' && /끝난 뒤의 slcode\.on\(SessionEnd\)/.test(e.text)));
+    assert.ok(events.some((e) => e.phase === 'warn' && /slcode\.run\(\) 뒤\)의 slcode\.on\(SessionEnd\)/.test(e.text)));
     const ready = events.find((e) => e.phase === 'ready' && e.plugin === 'guard') as Extract<AgentHookEvent, { phase: 'ready' }>;
     assert.deepEqual(ready.callbacks.map((c) => `${c.event} ${c.matcher}`), ['PreToolUse Bash', 'PreToolUse Write|Edit', 'Stop null', 'UserPromptSubmit null', 'SubagentStart null']);
   } finally { await r.close(); }
@@ -183,10 +186,10 @@ test('SessionStart: SDK 가 부르지 않으면 첫 프롬프트 앞에서 대�
   const dir = tmp('state'), sdir = tmp('session');
   const id = await install(dir, 'start', {
     'main/hooks/hooks.json': JSON.stringify({ hooks: [{ type: 'script', file: 'hooks/start.ts' }] }),
-    'main/hooks/start.ts': `export default (slcode: any) => {
-      slcode.on('SessionStart', (hook: any) => { hook.state.starts = [...(hook.state.starts ?? []), hook.source]; hook.context(\`start \${hook.source}\`); hook.message('hello'); });
+    'main/hooks/start.ts': `import { slcode } from 'slcode/api';
+      slcode.on('SessionStart', (hook: any) => { hook.state.starts = [...(hook.state.starts ?? []), hook.source]; hook.context(\`start \${hook.source}\`); hook.state.harness = slcode.vars.harness; hook.message('hello'); });
       slcode.on('UserPromptSubmit', (hook: any) => { hook.context(\`prompt \${hook.prompt}\`); });
-    };`,
+      slcode.run();`,
   });
   const starts = (events: AgentHookEvent[]) => events.filter((e) => e.phase === 'run' && e.event === 'SessionStart').length;
 
@@ -203,6 +206,7 @@ test('SessionStart: SDK 가 부르지 않으면 첫 프롬프트 앞에서 대�
     assert.equal(starts(a.events), 2);
   } finally { await a.r.close(); }
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(sdir, STATE_DIR, 'start.json'), 'utf8')).starts, ['startup', 'clear']);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(sdir, STATE_DIR, 'start.json'), 'utf8')).harness, 'claude', 'slcode 세션의 slcode.vars.harness');
 
   // SDK 가 고쳐져 resume 때 SessionStart 를 먼저 부르는 경우 — slcode 는 다시 부르지 않는다
   const b = runner(dir, sdir, [{ name: 'start', build: id }]);

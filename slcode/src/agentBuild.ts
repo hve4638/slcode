@@ -20,8 +20,8 @@ export type Report = {
   dropped: string[];
   /** 이 하네스가 받지 못해 뺀 것 (agentFormat.partLost 와 같은 규칙) */
   lost: string[];
-  /** js/ts 훅 (Claude, ticket slcode-agent-plugin-hooks) — built 는 묶은 스크립트("<part>/<file>"), failed 는 묶지 못해 뺀 것과 사유 */
-  scripts?: { built: string[]; failed: string[] };
+  /** js/ts 훅 (Claude, ticket slcode-agent-plugin-hooks) — built 는 묶은 스크립트("<part>/<file>"), failed 는 묶지 못해 뺀 것과 사유, warnings 는 넣었지만 고칠 것(잘못된 등록 등) */
+  scripts?: { built: string[]; failed: string[]; warnings: string[] };
 };
 
 /** 빌드 폴더 안의 이름들 — build/<식별자>/ 아래. codexArgs 는 Codex 빌드의 app-server 인자(-c mcp_servers…).
@@ -36,7 +36,7 @@ const CODEX_SHORT = new Set(['SessionEnd', 'Interrupt']);
 
 /** src(설치한 원본)의 켠 part 를 out 에 Claude 빌드로 쓴다 — out/claude/<이름>/ (플러그인 폴더), instructions.md, session.json(있으면), report.json */
 export function buildClaude(src: string, m: Manifest, r: Resolved, id: string, out: string): Report {
-  const report: Report = { harness: 'claude', name: m.name, version: m.version, build: id, values: valuesString(r), parts: [], instructions: { used: [], skipped: [] }, overridden: [], dropped: [], lost: [], scripts: { built: [], failed: [] } };
+  const report: Report = { harness: 'claude', name: m.name, version: m.version, build: id, values: valuesString(r), parts: [], instructions: { used: [], skipped: [] }, overridden: [], dropped: [], lost: [], scripts: { built: [], failed: [], warnings: [] } };
   const scripts: ScriptEntry[] = [];
   const files = new Map<string, { abs: string; part: string }>();
   const hooks: Record<string, unknown[]> = {};
@@ -76,6 +76,7 @@ export function buildClaude(src: string, m: Manifest, r: Resolved, id: string, o
         for (const [ev, list] of Object.entries(h.claude)) (hooks[ev] ??= []).push(...list);
         report.dropped.push(...h.dropped);
         report.scripts!.failed.push(...h.failed);
+        report.scripts!.warnings.push(...h.warnings);
         continue;
       }
       if (rel === '.mcp.json') {

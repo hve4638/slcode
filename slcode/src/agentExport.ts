@@ -12,7 +12,8 @@ import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readManifest, resolveValues } from './agentFormat.js';
 import { BUILD_FILES, buildCodex, type Report } from './agentBuild.js';
-import { readScripts } from './agentHooks.js';
+import { codexGaps, exportHookEntries, hookLaunch, readScripts, type ScriptEntry } from './agentHooks.js';
+import { EXPORT_SCRIPTS_DIR } from './hookBroker.js';
 import type { AgentPaths, PluginEntry } from './agentPlugins.js';
 
 export const EXPORT_HARNESSES = ['claude', 'codex'] as const;
@@ -29,6 +30,19 @@ export type ExportResult = { name: string; harness: ExportHarness; removed: bool
 
 export const exportLink = (ap: AgentPaths, h: ExportHarness, name: string) => path.join(ap.export, h, name);
 const readJson = (f: string): any => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return undefined; } };
+
+/** js/ts 훅 (ticket slcode-agent-plugin-script-portable) — Claude 빌드의 묶은 스크립트를 export 판의 slcode-hooks/ 에 두고, 그것을 돌리는 command 항목(플러그인·이벤트마다 하나)을 hooks 에 더한다.
+ *  묶은 파일은 하네스들이 같이 쓴다(Codex 판도 Claude 빌드의 것). root 가 있으면 명령의 플러그인 폴더 자리를 그 경로로 — Codex 판은 다른 경로 변수처럼 export 링크로 */
+function addScriptHooks(cbuild: string, plugin: string, h: ExportHarness, hooks: Record<string, unknown[]>, root?: string): ScriptEntry[] {
+  const scripts = readScripts(path.join(cbuild, BUILD_FILES.scripts));
+  if (!scripts.length) return scripts;
+  fs.cpSync(path.join(cbuild, 'scripts'), path.join(plugin, EXPORT_SCRIPTS_DIR, 'scripts'), { recursive: true });
+  fs.copyFileSync(path.join(cbuild, BUILD_FILES.scripts), path.join(plugin, EXPORT_SCRIPTS_DIR, 'scripts.json'));
+  const mine = exportHookEntries(scripts, h, hookLaunch()) as Record<string, { hooks: { command: string }[] }[]>;
+  if (root) for (const g of Object.values(mine).flat()) for (const c of g.hooks) c.command = c.command.replaceAll('${CLAUDE_PLUGIN_ROOT}', root.replace(/["\\$`]/g, '\\$&')); // 명령 안에서 "…" 로 감싼 자리
+  for (const [ev, groups] of Object.entries(mine)) hooks[ev] = [...(hooks[ev] ?? []), ...groups];
+  return scripts;
+}
 
 /** Claude 가 export 한 플러그인에 주는 데이터 폴더 — <설정 폴더>/plugins/data/<이름>-slcode (agentPlugins.claudeDataDir 의 출처만 slcode) */
 function claudeExportData(name: string, env: NodeJS.ProcessEnv) {
@@ -61,7 +75,7 @@ export function exportBuild(ap: AgentPaths, name: string, e: PluginEntry, h: Exp
         .replaceAll('${CLAUDE_PLUGIN_ROOT}', exportLink(ap, h, name)).replaceAll('${CLAUDE_PLUGIN_DATA}', claudeExportData(name, env));
       hooks = readJson(path.join(plugin, 'hooks/hooks.json'))?.hooks ?? {};
       if (fs.existsSync(path.join(bdir, BUILD_FILES.settings))) excluded.push('raw/claude/session.json: Claude settings cannot travel with a plugin');
-      for (const s of readScripts(path.join(bdir, BUILD_FILES.scripts))) excluded.push(`${s.src}: js/ts hooks run only in slcode sessions`);
+      addScriptHooks(bdir, plugin, h, hooks);
     } else {
       // 경로 변수를 export 링크·data/<이름> 으로 바꿔 다시 빌드한다 — 세션 빌드의 것은 빌드 폴더를 가리킨다
       buildCodex(inst, m, resolveValues(m, [e.values]), id, tmp, exportLink(ap, h, name), path.join(ap.data, name));
@@ -71,7 +85,10 @@ export function exportBuild(ap: AgentPaths, name: string, e: PluginEntry, h: Exp
       const ch = readJson(path.join(tmp, BUILD_FILES.codexHooks)) ?? { hooks: {}, excluded: [] };
       hooks = ch.hooks;
       // slcode 의 Codex 세션이 빼는 hooks.json 통째 대신, export 는 command 훅을 싣고 못 싣는 항목만 적는다
-      excluded.splice(0, excluded.length, ...excluded.filter((x) => !x.endsWith('/hooks/hooks.json')), ...ch.excluded);
+      excluded.splice(0, excluded.length, ...excluded.filter((x) => !x.endsWith('/hooks/hooks.json')), ...ch.excluded.filter((x: string) => !/: js\/ts hook /.test(x)));
+      const cbuild = e.builds.claude ? path.join(ap.build, e.builds.claude) : null; // 묶은 스크립트는 Claude 빌드에만 있다
+      const scripts = cbuild ? addScriptHooks(cbuild, plugin, h, hooks, exportLink(ap, h, name)) : [];
+      if (scripts.length) excluded.push(...codexGaps(scripts));
       if (fs.existsSync(path.join(plugin, 'bin'))) excluded.push('bin/: Codex does not put plugin bin/ on PATH');
       const servers = readJson(path.join(tmp, BUILD_FILES.codexMcp))?.mcpServers ?? {};
       if (Object.keys(servers).length) fs.writeFileSync(path.join(plugin, '.mcp.json'), JSON.stringify({ mcpServers: servers }, null, 2));
