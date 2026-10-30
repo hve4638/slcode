@@ -6,17 +6,22 @@
 // serve 자식이 교체 중이 아닐 때 죽으면 한 번 다시 띄운다. 다시 띄운 것도 1분 안에 죽으면 세션을 닫는다 (사용자 2026-10-19).
 // 이 프로세스는 교체되지 않는다 — serve 자식과의 IPC(serveMain.ts 머리말)는 늘리기만 한다.
 // core 교체(3단계)는 새 코드의 serve 자식이 청한다. 이 프로세스는 core.replaced 를 받으면 새 core 에 다시 붙어 소유권을 다시 잡는다.
+import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
 import { fork, type ChildProcess } from 'node:child_process';
 import { connectSession, PKG, type RpcClient } from './client.js';
-import { spawnCore } from './live.js';
+import { spawnCore, undiscardable } from './live.js';
+import { EventLog } from './eventLog.js';
+import { startServer } from './startPage.js';
 import { corePaths } from './paths.js';
 import type { CoreOptions } from './core.js';
 import type { SessionInfo } from './protocol.js';
 
-export type EntryOptions = Omit<CoreOptions, 'log'> & { host?: string; port?: number; log?: (msg: string) => void };
-export type EntryHandle = { url: string | null; sock: string; session: SessionInfo; close: (reason?: string) => Promise<void>; done: Promise<void> };
+/** choose 가 있으면 세션을 띄우기 전에 그 포트에서 시작 화면을 서빙하고(startPage.ts), 주소를 choose 로 알린다. 고른 프로필로 새 세션을, 또는 고른 세션을 이어서 띄운다 */
+export type EntryOptions = Omit<CoreOptions, 'log'> & { host?: string; port?: number; log?: (msg: string) => void; choose?: (url: string) => void };
+/** back — 화면이 시작 화면으로 돌아가기를 골라 세션을 닫고 지웠다 (done 뒤에 본다). 부른 쪽이 같은 포트에 시작 화면을 다시 연다 */
+export type EntryHandle = { url: string | null; sock: string; session: SessionInfo; close: (reason?: string) => Promise<void>; done: Promise<void>; readonly back: boolean };
 
 /** serve 자식이 준비를 알리기까지의 상한 */
 const READY_MS = 15000;
@@ -29,18 +34,36 @@ export async function runEntry(opts: EntryOptions): Promise<EntryHandle> {
   const log = opts.log ?? (() => {});
   const dir = corePaths(opts.dir).dir;
   const host = opts.host ?? '127.0.0.1';
-  const { id, sock, session } = await spawnCore({ dir, cwd: opts.cwd, resume: opts.resume, title: opts.title, raw: opts.raw, inspect: opts.inspect, permissionMode: opts.permissionMode, model: opts.model, effort: opts.effort, prompt: opts.prompt, vendor: opts.vendor });
+
+  // ---- 포트 — 연결은 읽지 않고(pauseOnConnect) 지금의 serve 에 넘긴다. serve 가 없는 틈(다시 띄우는 중)의 연결은 끊는다 — 화면이 다시 붙는다.
+  // 프로필을 고르는 동안(picking)은 고르기 서버가 받고, 고른 뒤 첫 serve 가 뜰 때까지의 연결은 쥐고 있다가(held) 넘긴다 — 새로 고친 화면이 대화 화면이 된다
+  let cur: Serve | null = null;
+  let picking: http.Server | null = null;
+  let held: net.Socket[] | null = opts.choose ? [] : null;
+  const tcp = net.createServer({ pauseOnConnect: true }, (s) => {
+    if (picking) { picking.emit('connection', s); s.resume(); }
+    else if (cur?.child.connected) cur.child.send('conn', s);
+    else if (held) held.push(s);
+    else s.destroy();
+  });
+  const port = await new Promise<number>((resolve, reject) => { tcp.once('error', reject); tcp.listen(opts.port ?? 0, host, () => resolve((tcp.address() as net.AddressInfo).port)); });
+  let core = opts;
+  if (opts.choose) {
+    const pick = startServer(dir, opts.cwd);
+    picking = pick.server;
+    opts.choose(`http://${host.includes(':') ? `[${host}]` : host}:${port}/`);
+    const got = await pick.chosen;
+    picking = null;
+    pick.server.close();
+    // 이어서 하는 세션은 자기 meta 를 따른다 — 새 세션용 값(inspect 등)은 넘기지 않는다
+    core = 'resume' in got ? { dir: opts.dir, cwd: opts.cwd, resume: got.resume, raw: opts.raw } : { ...opts, fromStart: true };
+  }
+  let id: string, sock: string, session: SessionInfo;
+  try { ({ id, sock, session } = await spawnCore({ dir, cwd: core.cwd, resume: core.resume, title: core.title, raw: core.raw, inspect: core.inspect, permissionMode: core.permissionMode, model: core.model, effort: core.effort, prompt: core.prompt, vendor: core.vendor, profile: core.profile, fromStart: core.fromStart })); }
+  catch (e) { tcp.close(); for (const s of held ?? []) s.destroy(); throw e; }
   let control = await connectSession(sock);
   const closeSession = async () => { await control.request('session.close', { id }).catch(() => {}); control.close(); };
-  try { await control.request('core.own', { pid: process.pid, follows: true }); } catch (e) { control.close(); throw e; }
-
-  // ---- 포트 — 연결은 읽지 않고(pauseOnConnect) 지금의 serve 에 넘긴다. serve 가 없는 틈(다시 띄우는 중)의 연결은 끊는다 — 화면이 다시 붙는다
-  let cur: Serve | null = null;
-  const tcp = net.createServer({ pauseOnConnect: true }, (s) => { if (cur?.child.connected) cur.child.send('conn', s); else s.destroy(); });
-  let port: number;
-  try {
-    port = await new Promise<number>((resolve, reject) => { tcp.once('error', reject); tcp.listen(opts.port ?? 0, host, () => resolve((tcp.address() as net.AddressInfo).port)); });
-  } catch (e) { await closeSession(); throw e; }
+  try { await control.request('core.own', { pid: process.pid, follows: true }); } catch (e) { control.close(); tcp.close(); throw e; }
 
   function startServe(): Promise<Serve> {
     const child = fork(path.join(PKG, 'dist', 'serveMain.js'), [JSON.stringify({ dir, id, sock, host, port })], { stdio: ['ignore', 'inherit', 'inherit', 'ipc'], execArgv: [] });
@@ -58,7 +81,7 @@ export async function runEntry(opts: EntryOptions): Promise<EntryHandle> {
   }
   let swapping = false, stopping = false, crashedAt = 0;
   function wire(child: ChildProcess) {
-    child.on('message', (m: { type?: string }) => { if (m?.type === 'restart') void swap(child); });
+    child.on('message', (m: { type?: string }) => { if (m?.type === 'restart') void swap(child); else if (m?.type === 'back') back(child); });
     child.once('exit', (code, sig) => { if (cur?.child === child && !stopping) void crashed(code ?? sig); });
   }
   async function swap(from: ChildProcess) {
@@ -75,6 +98,15 @@ export async function runEntry(opts: EntryOptions): Promise<EntryHandle> {
     } catch (e) { log(`serve restart failed: ${(e as Error).message}`); reply(false, (e as Error).message); }
     finally { swapping = false; }
   }
+  // 시작 화면으로 돌아가기 (start.back) — 시작 화면에서 연 새 세션이 첫 메시지 전이면 세션을 닫고(close 가 core 가 끝난 뒤 지운다) 끝난다
+  let backed = false;
+  function back(from: ChildProcess) {
+    const why = undiscardable(corePaths(dir).sessionsDir, id);
+    if (from.connected) from.send({ type: 'back-result', ok: !why, reason: why ?? undefined });
+    if (why) return;
+    backed = true;
+    void close('back to the start screen');
+  }
   async function crashed(why: unknown) {
     cur = null;
     if (Date.now() - crashedAt < CRASH_WINDOW_MS) { log(`serve died again (${why}) — closing the session`); void close('serve crashed'); return; }
@@ -84,7 +116,9 @@ export async function runEntry(opts: EntryOptions): Promise<EntryHandle> {
   }
 
   try { cur = await startServe(); }
-  catch (e) { tcp.close(); await closeSession(); throw e; }
+  catch (e) { tcp.close(); for (const s of held ?? []) s.destroy(); await closeSession(); throw e; }
+  for (const s of held ?? []) if (cur.child.connected) cur.child.send('conn', s); else s.destroy();
+  held = null;
 
   // ---- 수명 — core 가 끝나면(세션 닫힘·벤더 종료·크래시) 포트를 닫는다. serve 자식은 core 연결이 끊겨 스스로 끝난다
   let resolveDone!: () => void;
@@ -115,7 +149,8 @@ export async function runEntry(opts: EntryOptions): Promise<EntryHandle> {
       await Promise.race([control.done, new Promise((r) => (t = setTimeout(r, 15000)))]);
       clearTimeout(t);
     }
+    if (backed) EventLog.remove(corePaths(dir).sessionsDir, id);
     shutdown();
   })());
-  return { url: cur.url, sock, session, close, done };
+  return { url: cur.url, sock, session, close, done, get back() { return backed; } };
 }

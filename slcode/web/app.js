@@ -67,11 +67,11 @@ export function mountAgentFront(root, transport, opts = {}) {
   let hostSeq = 0;
   const hostWait = new Map();
   window.addEventListener('message', (e) => { const w = e.source === window.parent && hostWait.get(e.data?.re); if (w) { hostWait.delete(e.data.re); w(e.data); } });
-  const askHost = (type, ms) => new Promise((resolve, reject) => {
+  const askHost = (type, ms, extra = {}) => new Promise((resolve, reject) => {
     const id = ++hostSeq;
     const t = setTimeout(() => { hostWait.delete(id); reject(new Error('플러그인이 답하지 않습니다')); }, ms);
     hostWait.set(id, (d) => { clearTimeout(t); d.error ? reject(new Error(d.error)) : resolve(d.result); });
-    window.parent.postMessage({ type, id, version: page.version, build: page.build }, '*');
+    window.parent.postMessage({ ...extra, type, id, version: page.version, build: page.build }, '*');
   });
   let update = null; // 찾은 새 버전 — 있으면 버튼이 restart required
   const updBtn = h('button', { class: 'upd', onclick: () => void (update ? restart() : checkUpdate()) }, '업데이트');
@@ -101,7 +101,8 @@ export function mountAgentFront(root, transport, opts = {}) {
   const liveCol = h('div', { class: 'col' });
   let col = liveCol; // 옛 턴을 그릴 땐 임시 div 로 바꿨다가 앞에 붙인다
   const older = h('div', { class: 'col older' }), sentinel = h('div');
-  feed.append(sentinel, older, liveCol);
+  const hero = h('div', { class: 'hero', hidden: '' }); // 첫 메시지 전 시작 프로필 고르기 (paintHero)
+  feed.append(sentinel, older, hero, liveCol);
   const input = h('textarea', { rows: 1 });
   const sendBtn = h('button', { class: 'send primary', title: '전송', disabled: '', onclick: () => send() });
   const stopBtn = h('button', { class: 'stop primary', title: '중단', onclick: () => current && rpc('session.interrupt', { id: current }) });
@@ -152,6 +153,49 @@ export function mountAgentFront(root, transport, opts = {}) {
       .then(() => { loadStatus(); loadCommands(); loadMcp(); loadPlugins(); return loadModels(); })
       .catch((e) => { push(h('div', { class: 'meta err' }, e.message)); return loadModels(); })
       .finally(() => { switching = null; paintVendor(); });
+  }
+  // 시작 프로필 — 첫 메시지 전에 채팅창 가운데에서 고른다 (ticket slcode-session-profile, 사용자 2026-10-30). session.setProfile 은 setVendor 처럼 같은 세션 id 로
+  // core 를 그 프로필로 다시 띄운다. 첫 메시지 뒤엔 감춘다 — 지금 프로필은 사이드바 "에이전트 플러그인" 칸에 남는다. 옛 core(session.profiles 없음)면 보이지 않는다
+  let profiles = null, profSwitching = null, backing = false;
+  async function loadProfiles() {
+    if (!current || turned) { paintHero(); return; }
+    try { profiles = await rpc('session.profiles', { id: current }); } catch { profiles = null; }
+    paintHero();
+  }
+  function paintHero() {
+    const back = !!info?.fromStart; // 시작 화면(동사 없는 slcode)에서 연 새 세션 — 첫 메시지 전엔 돌아갈 수 있다
+    hero.hidden = turned || (!profiles && !back);
+    if (hero.hidden) return;
+    const cur = profSwitching ?? profiles?.current;
+    hero.replaceChildren(
+      back ? h('button', { class: 'ghost hero-back', disabled: backing || profSwitching ? '' : null, onclick: () => void backToStart() }, backing ? '시작 화면으로 돌아가는 중…' : '← 시작 화면') : null,
+      ...(profiles ? [h('div', { class: 'hero-h' }, '프로필'),
+      h('div', { class: 'hero-seg' }, ...profiles.profiles.map((p) => h('button', { class: 'seg', 'aria-pressed': String(p.name === cur), disabled: profSwitching ? '' : null, title: p.summary, onclick: () => switchProfile(p.name) }, p.name))),
+      h('div', { class: 'hero-sum' }, profSwitching ? `${profSwitching} 로 바꾸는 중…` : profiles.profiles.find((p) => p.name === cur)?.summary ?? ''),
+      h('div', { class: 'hero-note' }, '첫 메시지를 보내기 전에만 바꿀 수 있습니다')] : []));
+  }
+  // 시작 화면으로 — 이 빈 세션은 닫고 지운다. 카드는 플러그인이 같은 카드에 시작 화면을 다시 그리고, 웹은 진입 프로세스가 같은 주소에 시작 화면을 다시 연다
+  async function backToStart() {
+    if (backing || turned || !current) return;
+    backing = true; paintHero();
+    try {
+      if (viaHost) { await askHost('slcode.back', 30000, { session: current, cwd: info?.cwd }); return; }
+      await rpc('start.back');
+      for (let t = Date.now(); Date.now() - t < 30000; await new Promise((r) => setTimeout(r, 300))) {
+        const page = await fetch('./', { cache: 'no-store' }).then((r) => r.text(), () => '');
+        if (page.includes('data-start=')) { location.reload(); return; }
+      }
+      throw new Error('시작 화면이 열리지 않았습니다');
+    } catch (e) { backing = false; paintHero(); push(h('div', { class: 'meta err' }, e.message)); }
+  }
+  function switchProfile(name) {
+    if (turned || profSwitching || backing || !current || !profiles || name === profiles.current) return;
+    profSwitching = name; paintHero();
+    // 응답 뒤 core 가 바뀐다 — 그 사이 보낸 요청은 serve 의 중계가 새 core 에 다시 보낸다
+    rpc('session.setProfile', { id: current, profile: name })
+      .then(() => { loadStatus(); loadCommands(); loadMcp(); loadPlugins(); return loadModels(); })
+      .catch((e) => { push(h('div', { class: 'meta err' }, e.message)); })
+      .finally(() => { profSwitching = null; void loadProfiles(); });
   }
   // 권한 모드 — effort 옆 알약 + 메뉴 (session.setMode, 즉시). 현재 값은 info.permissionMode (session.changed 로 갱신)
   const REVIEW = { approved: '허용', denied: '거부', timedOut: '시간 초과', aborted: '중단' };
@@ -549,7 +593,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     curSeq = e.seq;
     const ev = e.ev;
     switch (ev.kind) {
-      case 'turn.start': if (!turned) { turned = true; paintVendor(); } if (!replaying) busySince = e.at || Date.now(); setBusy('작업 중');
+      case 'turn.start': if (!turned) { turned = true; paintVendor(); paintHero(); } if (!replaying) busySince = e.at || Date.now(); setBusy('작업 중');
         endText(); main.acts = null; // 이 턴 마지막 응답의 아이콘 줄 — turn.end 가 inspect 버튼을 붙인다
         // main.turnEl: 이 턴의 내 요청(메시지 카드) — 그 바로 다음 항목이 '답변 시작으로' 가 가는 곳 (실행 중 줄은 늘 맨 끝으로 옮겨지므로 사이에 끼지 않는다)
         if (ev.origin === 'mail') { outlineAdd(e.seq, ev, main.turnEl = push(mailCard(ev.text, e.seq))); break; }
@@ -894,13 +938,15 @@ export function mountAgentFront(root, transport, opts = {}) {
       h('button', { class: 'ico', title: '다시 연결', 'aria-label': '다시 연결', disabled: mcpBusy ? '' : null, onclick: () => retryMcp(m.name) }, icon('retry')),
       m.error ? h('div', { class: 'why' }, m.error) : null);
     // 에이전트 플러그인 — 실은 것과 지금 설정이 다르면 다시 싣기 (다음 턴 전에 적용, 지시문은 새 세션부터)
-    if (plugs && (plugs.plugins.length || plugs.added.length)) {
+    // 시작 프로필(ticket slcode-session-profile)은 default 가 아닐 때만 맨 위 줄로 — 실은 플러그인이 없어도(bare) 칸을 보인다. 옛 core 는 profile 이 없다
+    const profile = plugs?.profile && plugs.profile !== 'default' ? plugs.profile : null;
+    if (plugs && (plugs.plugins.length || plugs.added.length || profile)) {
       const stale = plugs.plugins.some((p) => p.current !== p.build);
       side.append(sec('agentPlugins', '에이전트 플러그인', h('div', { class: 'plugs' },
-        kv([...plugs.plugins.map((p) => [h('span', { title: p.values }, `${p.name} ${p.version}`), p.current == null ? '지워짐' : p.current === p.build ? '최신' : '설정 바뀜']),
+        kv([...(profile ? [['프로필', profile]] : []), ...plugs.plugins.map((p) => [h('span', { title: p.values }, `${p.name} ${p.version}`), p.current == null ? '지워짐' : p.current === p.build ? '최신' : '설정 바뀜']),
           ...plugs.added.map((n) => [n, '새 세션부터'])]),
-        h('button', { disabled: !stale || plugBusy || plugs.pending ? '' : null, title: ready?.vendor === 'codex' ? '바뀐 skill 을 이 세션에 다시 싣습니다. MCP·지시문·bin·env 는 새 세션부터 적용됩니다' : '바뀐 part·옵션을 이 세션에 다시 싣습니다. 지시문은 새 세션부터 적용됩니다', onclick: reloadPlugins },
-          plugs.pending ? '턴이 끝나면 다시 싣습니다' : plugBusy ? '다시 싣는 중…' : '다시 싣기'))));
+        plugs.plugins.length || plugs.added.length ? h('button', { disabled: !stale || plugBusy || plugs.pending ? '' : null, title: ready?.vendor === 'codex' ? '바뀐 skill 을 이 세션에 다시 싣습니다. MCP·지시문·bin·env 는 새 세션부터 적용됩니다' : '바뀐 part·옵션을 이 세션에 다시 싣습니다. 지시문은 새 세션부터 적용됩니다', onclick: reloadPlugins },
+          plugs.pending ? '턴이 끝나면 다시 싣습니다' : plugBusy ? '다시 싣는 중…' : '다시 싣기') : null)));
     }
     side.append(sec('loaded', '로드됨', ready
       ? h('div', {}, list('tools', '도구', ready.tools), list('skills', '스킬', ready.skills), list('plugins', '플러그인', ready.plugins, (p) => p.name), list('mcp', 'MCP', mcp ?? ready.mcp, mcpItem), list('slash', '슬래시 명령', ready.slashCommands), list('agents', '에이전트', ready.agents))
@@ -958,7 +1004,7 @@ export function mountAgentFront(root, transport, opts = {}) {
       else if (e.ev.kind === 'session.ready') { ready = e.ev; }
     }
     for (const e of evs.slice(cut)) render(e);
-    if (summary?.turns || history.some((e) => e.ev.kind === 'turn.start')) { turned = true; paintVendor(); } // 되돌린 턴·그리지 않은 앞 페이지도 첫 메시지다
+    if (summary?.turns || history.some((e) => e.ev.kind === 'turn.start')) { turned = true; paintVendor(); paintHero(); } // 되돌린 턴·그리지 않은 앞 페이지도 첫 메시지다
     if (summary) { // 서버가 센 기록 전체 — 그린 페이지의 session.ready 보다 뒤의 것(되돌린 턴 안)일 수 있어 그린 뒤에
       const u = summary.usage;
       Object.assign(usage, { turns: summary.turns, input: u.input, output: u.output, cacheRead: u.cacheRead, cacheWrite: u.cacheWrite, cost: summary.costUsd ?? 0 });
@@ -1134,7 +1180,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     replayHistory(r.history, first ? r.summary : null);
     for (const p of r.pending) renderCard(p);
     setState(info.state);
-    loadModels(); loadStatus(); loadCommands(); loadMcp(); loadPlugins(); renderMode(); prefetch(); act.refresh();
+    loadModels(); loadStatus(); loadCommands(); loadMcp(); loadPlugins(); loadProfiles(); renderMode(); prefetch(); act.refresh();
     if (opts.onAttach) opts.onAttach(id, info);
   }
   transport.onEvent((m) => {

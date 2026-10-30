@@ -30,8 +30,12 @@ export type SessionMeta = {
   forkFrom?: string | null;
   /** inspect 모드 (session.setInspect) — Claude 벤더의 API 호출 원본을 inspect/ 에 남긴다 */
   inspect?: boolean;
-  /** 에이전트 플러그인의 세션 단위 설정 값 — 플러그인 이름별 {parts, options}. 기본 설정 위에 덮는다 (자리만, 채우는 것은 slcode-session-profile) */
+  /** 에이전트 플러그인의 세션 단위 설정 값 — 플러그인 이름별 {parts, options}. 기본 설정·프로필 위에 덮는다 (자리만 — 채우는 명령·화면은 아직 없다) */
   agentPlugins?: Record<string, { parts?: Record<string, boolean>; options?: Record<string, boolean | string | number> } | undefined>;
+  /** 세션 시작 프로필 이름 (ticket slcode-session-profile) — 없으면 default. 띄울 때마다(resume 포함) 그 프로필의 지금 값을 읽는다 */
+  profile?: string;
+  /** 시작 화면에서 연 새 세션 — 첫 메시지 전엔 시작 화면으로 돌아갈 수 있다 (protocol SessionInfo.fromStart) */
+  fromStart?: boolean;
 };
 
 /** turn.rewound 가 버린 턴(그 seq 부터)을 뺀 이벤트 — 버린 턴은 벤더 쪽에도 없으므로 대화 되돌리기의 유지 지점·다시 import 의 기준에서 뺀다 */

@@ -150,7 +150,7 @@ export function activate(api) {
   async function command({ id = null, spawn = null, takeover = false } = {}) {
     const [bin, dir] = await Promise.all([resolveBin(), dirOpt()]);
     const sp = spawn ?? {};
-    const verb = id ? `resume ${shq(id)}` : `new${sp.cwd ? ` ${shq(sp.cwd)}` : ''}${['vendor', 'title', 'mode', 'model', 'effort'].map((k) => (sp[k] ? ` --${k} ${shq(sp[k])}` : '')).join('')}`;
+    const verb = id ? `resume ${shq(id)}` : `new${sp.cwd ? ` ${shq(sp.cwd)}` : ''}${['vendor', 'title', 'mode', 'model', 'effort', 'profile'].map((k) => (sp[k] ? ` --${k} ${shq(sp[k])}` : '')).join('')}${sp.fromStart ? ' --from-start' : ''}`;
     return `${bin.cmd} ${verb} --stdio --no-web${takeover && id ? ' --takeover' : ''}${dir}${!id && sp.prompt ? ` -- ${shq(sp.prompt)}` : ''}`;
   }
   /** `slcode list` 행 — all 이면 꺼진 세션까지 */
@@ -178,6 +178,20 @@ export function activate(api) {
   const cards = async () => (await api.services.list()).filter((s) => s.service === 'session' && s.owner).map((s) => ({ owner: s.owner, root: s.root }));
   /** id 없는 resume 카드의 목록 — 그 폴더의 꺼진 세션을 꺼진 순서(최근 먼저)로, 꺼진 시각은 closedTime 에 */
   const closed = async (cwd) => closedRows(await list(true), cwd).map((s) => ({ ...s, closedTime: closedTime(s) }));
+  // ---- 시작 화면 (ticket slcode-session-profile, 사용자 2026-10-30) — 동사 없는 `slcode`(slcode.start 동사)의 카드가 slcode 의 start-page html 을 iframe 에
+  // 넣고, 목록은 여기서 CLI 로. 새 세션·이어서 하기는 카드가 그 자리에서 띄우고, 첫 메시지 전에 돌아가면 그 빈 세션을 discard 로 지운다
+  const cli = async (args) => {
+    const [bin, dir] = await Promise.all([resolveBin(), dirOpt()]);
+    const r = await api.proc.run(`${bin.cmd} ${args}${dir}`);
+    if (r.code !== 0) throw new Error(r.stderr.trim().replace(/^\[slcode\] /, '').split('\n')[0] || `exit ${r.code}`);
+    return r.stdout;
+  };
+  /** 시작 화면 html — 옛 slcode(start-page 없음)면 throw, 카드가 사유를 보인다 */
+  const startPage = (cwd) => cli(`start-page ${shq(cwd)}`);
+  /** 화면의 list — 그 폴더의 세션과 모든 세션, 마지막 활동 순 (startPage.ts StartList) */
+  const startList = async (cwd) => JSON.parse(await cli(`start-page ${shq(cwd)} --json`));
+  /** 시작 화면으로 — 시작 화면에서 연 빈 세션(첫 메시지 전)을 닫고 지운다. 아니면 slcode 가 거절한다 */
+  const discard = async (id) => { await cli(`discard ${shq(String(id))}`); return {}; };
   /** 사이드바 강제 종료 (사용자 2026-10-11) — `slcode close --force`: 정상 종료, 3초 안에 안 닫히면 kill */
   async function forceClose(id) {
     const [bin, dir] = await Promise.all([resolveBin(), dirOpt()]);
@@ -231,7 +245,7 @@ export function activate(api) {
   const waits = new Map();
 
   api.expose('host', {
-    command, list, sidebar, cards, closed, forceClose, checkUpdate,
+    command, list, sidebar, cards, closed, forceClose, checkUpdate, startPage, startList, discard,
     started(key, id) { const w = waits.get(key); if (w) { waits.delete(key); w.resolve(id); } },
     failed(key, reason) { const w = waits.get(key); if (w) { waits.delete(key); w.reject(new Error(String(reason))); } },
   });
@@ -255,9 +269,14 @@ export function activate(api) {
     const done = new Promise((resolve, reject) => waits.set(key, { resolve, reject }));
     try {
       const w = await windowFor(ctx.tmux);
-      await w.call(CARDS, 'open', { key, spawn: { cwd: a.cwd ?? ctx.cwd, vendor, title: a.title, mode: a.mode, model, effort: a.effort, prompt: a.prompt }, title: a.title, tmux: ctx.tmux, ...(a.focus ? { focus: true } : {}) });
+      await w.call(CARDS, 'open', { key, spawn: { cwd: a.cwd ?? ctx.cwd, vendor, title: a.title, mode: a.mode, model, effort: a.effort, profile: a.profile, prompt: a.prompt }, title: a.title, tmux: ctx.tmux, ...(a.focus ? { focus: true } : {}) });
       return await done;
     } finally { waits.delete(key); }
+  });
+  // 셸 동사 — 동사 없는 `slcode` (ticket slcode-session-profile, 사용자 2026-10-30). 요청자 deck 에 그 폴더의 시작 화면 카드를. 기동을 기다리지 않는다
+  api.verbs.handle('slcode.start', async (a, ctx) => {
+    const w = await windowFor(ctx.tmux);
+    await w.call(CARDS, 'open', { start: a.cwd ?? ctx.cwd, tmux: ctx.tmux, focus: true });
   });
   // 셸 동사 — `slcode resume`·`continue` (ticket slcode-resume-like-new). --id 면 그 세션의 카드를 활성화하고 없으면 요청자 deck 에
   // resume 카드로. --id 가 없으면 그 폴더의 꺼진 세션을 고르는 카드. 기동을 기다리지 않는다

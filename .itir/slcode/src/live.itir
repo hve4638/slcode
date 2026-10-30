@@ -1,5 +1,5 @@
 import { EventLog } from './eventLog'
-import { PKG } from './client'
+import { connectSession, PKG } from './client'
 import { corePaths, ensureDir } from './paths'
 import { CoreError } from './protocol'
 
@@ -17,6 +17,12 @@ export fn closedTime(meta) -> Int {
 }
 export fn closedSessions(sessionsDir, cwd) -> SessionMeta[] {
   role: 그 cwd 슬러그 폴더의 저장 세션 중 meta.cwd 가 그 cwd 와 같고(슬러그가 같은 다른 폴더 제외) 소켓이 살아 있지 않은 것을 closedTime 내림차순으로 — continue 대상과 id 없는 resume 목록
+}
+export fn undiscardable(sessionsDir, id) -> String {
+  role: 시작 화면으로 돌아가며 버릴 수 있는 세션인가 (ticket slcode-session-profile, 사용자 2026-10-30) — meta.fromStart(시작 화면에서 연 새 세션)이고 turn.start 가 없으면 null, 아니면 사유
+}
+export fn discardSession(sessionsDir, id) {
+  role: undiscardable 이면 던지고, 떠 있으면 session.close 후 core 가 끝나기를(최대 15초) 기다린 뒤 EventLog.remove — CLI discard(카드의 '시작 화면으로')가 쓴다. 웹 입구는 진입 프로세스가 자기 소유 core 로 같은 일을 한다
 }
 export fn spawnCore(opts, pkg) {
   role: <pkg>/dist/coreMain.js(기본 이 설치 PKG)를 detached 로 띄우고 stderr 는 $SLCODE_DIR/core.log 에 잇는다. stdout 첫 줄(준비 {id, sock, session} 또는 {error, code})을 기다린 뒤 파이프를 놓고 unref — core 가 띄운 쪽과 따로 산다. 첫 줄 없이 끝나면(close — stdout 을 다 읽은 뒤) core.log 를 가리키는 오류. serve 가 세션을 열 때, 내리는 core 가 새 core 를 띄울 때(pkg 는 core.retire 를 보낸 serve 의 설치 폴더) 같이 쓴다 — 이 모듈이 SDK 를 싣지 않아 core 도 serve 도 부를 수 있다

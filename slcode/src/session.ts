@@ -7,6 +7,7 @@ import type { AgentHookEvent, ApprovalDecision, ApprovalRequest, Attachment, Cor
 import { EventLog, unrewound } from './eventLog.js';
 import { AgentSession, CLAUDE_EFFORTS, effortMisfit } from './base.js';
 import { SLCODE_PROMPT } from './prompt.js';
+import type { ClaudeLoad } from './profiles.js';
 
 /** push 와 비동기 순회를 잇는 무한 큐 — streaming input 의 프롬프트 공급원 */
 class AsyncQueue<T> implements AsyncIterable<T> {
@@ -46,6 +47,8 @@ export type SessionOptions = {
   env?: NodeJS.ProcessEnv;
   /** slcode 에이전트 플러그인 (agentPlugins.loadSessionPlugins) — 플러그인 폴더·지시문·session.json·env. 벤더를 다시 띄워도(rewind·reopen) 같은 값 */
   agent?: { plugins: { type: 'local'; path: string }[]; append: string; settings: Record<string, unknown> | null; env: Record<string, string> };
+  /** 세션 시작 프로필의 Claude 쪽 (profiles.claudeLoad) — 없으면 CLI 와 같은 로드 */
+  load?: ClaudeLoad;
   /** 에이전트 플러그인 js/ts 훅의 디스패처 (hookRunner.sdkHooks, ticket slcode-agent-plugin-hooks) — SDK options.hooks */
   hooks?: Options['hooks'];
 };
@@ -280,6 +283,11 @@ export class ClaudeSession extends AgentSession {
 
   /** 다시 싣기의 결과를 기록에 — core 가 링크를 바꾸고 reloadPlugins() 를 부른 뒤 */
   emitPlugins(body: Omit<Extract<CoreEvent, { kind: 'plugins.reloaded' }>, 'kind'>) { this.emit({ kind: 'plugins.reloaded', ...body }); }
+  /** init 의 skill 목록에서 프로필이 숨긴 것을 뺀다 — SDK 는 허용 목록 밖의 skill 도 init 에 그대로 보고한다 (0.3.282 실측) */
+  private shownSkills(skills: string[]): string[] {
+    const allow = this.opts.load?.skills;
+    return allow ? skills.filter((s) => allow.includes(s)) : skills;
+  }
 
   /** js/ts 훅의 기록 (hookRunner) */
   emitHook(ev: AgentHookEvent) { if (!this.ended) this.emit(ev); }
@@ -303,6 +311,10 @@ export class ClaudeSession extends AgentSession {
   private async run(opts: SessionOptions) {
     const resume = opts.resume ?? this.log.meta.vendorSessionId ?? undefined;
     const permissionMode = opts.permissionMode ?? this.log.meta.permissionMode ?? undefined;
+    // 플러그인 session.json 위에 프로필의 CLAUDE.md 빼기 — 플러그인이 정한 것과 합친다
+    const excludes = [...((opts.agent?.settings?.claudeMdExcludes as string[] | undefined) ?? []), ...(opts.load?.claudeMdExcludes ?? [])];
+    // Remote Control 은 늘 자동으로 켜지 않는다 — 사용자 설정을 끈 프로필이면 ~/.claude 의 false 가 안 실려 계정 기본값으로 켜질 수 있다 (사용자 결정 2026-10-30)
+    const settings = { ...opts.agent?.settings, ...(excludes.length ? { claudeMdExcludes: excludes } : {}), remoteControlAtStartup: false };
     const q = query({
       prompt: this.input,
       options: {
@@ -318,13 +330,15 @@ export class ClaudeSession extends AgentSession {
         systemPrompt: { type: 'preset', preset: 'claude_code', append: opts.agent?.append ? `${SLCODE_PROMPT}\n\n${opts.agent.append}` : SLCODE_PROMPT },
         // slcode 에이전트 플러그인 — 세션 폴더의 링크 경로를 <이름>@inline 으로 싣는다. 사용자 설정·설치 기록은 건드리지 않는다
         ...(opts.agent?.plugins.length ? { plugins: opts.agent.plugins } : {}),
-        ...(opts.agent?.settings ? { settings: opts.agent.settings as any } : {}),
+        settings: settings as any,
         ...(opts.hooks ? { hooks: opts.hooks } : {}),
-        // CLI 와 같은 로드 — user/project/local (스파이크 (a) 실측: 플러그인·스킬·훅·MCP 가 CLI 와 같다)
-        settingSources: ['user', 'project', 'local'],
+        // 기본은 CLI 와 같은 로드 — user/project/local (스파이크 (a) 실측: 플러그인·스킬·훅·MCP 가 CLI 와 같다). 프로필이 줄이고 skill 을 거른다 (ticket slcode-session-profile)
+        settingSources: opts.load?.settingSources ?? ['user', 'project', 'local'],
+        ...(opts.load?.skills ? { skills: opts.load.skills } : {}),
         // IS_SANDBOX=1 을 늘 얹는다 — uid 0 이면 CLI 가 이것 없이는 아래 skip 플래그나 bypass 모드만으로 첫 턴 전에 exit 1 한다 (CLI 2.1.282, 2026-10-08 실측, 값은 '1' 만).
-        // root 에서도 bypass 를 쓰게 Claude Code 의 이 안전 장치를 slcode 가 끈다 (사용자 결정 2026-10-09)
-        env: { ...(opts.env ?? process.env), ...opts.agent?.env, IS_SANDBOX: '1' },
+        // root 에서도 bypass 를 쓰게 Claude Code 의 이 안전 장치를 slcode 가 끈다 (사용자 결정 2026-10-09).
+        // CLAUDE_CODE_DISABLE_ARTIFACT=1 도 늘 — 셸의 같은 값은 STRIP_ENV(CLAUDE_*)가 지우므로 여기서 다시 넣는다 (사용자 결정 2026-10-30)
+        env: { ...(opts.env ?? process.env), ...opts.agent?.env, ...opts.load?.env, IS_SANDBOX: '1', CLAUDE_CODE_DISABLE_ARTIFACT: '1' },
         ...(permissionMode ? { permissionMode: permissionMode as any } : {}),
         allowDangerouslySkipPermissions: true, // bypassPermissions 로 바꿀 수 있게 (그 자체로 우회하지 않는다 — 모드는 위 permissionMode)
         ...(this.log.meta.model ? { model: this.log.meta.model } : {}),
@@ -376,7 +390,7 @@ export class ClaudeSession extends AgentSession {
           this.effort = this.log.meta.effort ?? s.effort ?? null;
           this.emit({
             kind: 'session.ready', vendor: 'claude', model: s.model, cwd: s.cwd, vendorSessionId: s.session_id, permissionMode: s.permissionMode,
-            tools: s.tools ?? [], skills: s.skills ?? [], plugins: s.plugins ?? [], mcp: s.mcp_servers ?? [],
+            tools: s.tools ?? [], skills: this.shownSkills(s.skills ?? []), plugins: s.plugins ?? [], mcp: s.mcp_servers ?? [],
             slashCommands: s.slash_commands ?? [], agents: s.agents ?? [], version: s.claude_code_version ?? null,
           }, raw);
         } else if (s.subtype === 'session_state_changed') this.emit({ kind: 'session.state', state: s.state }, raw);

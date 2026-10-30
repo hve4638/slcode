@@ -57,6 +57,8 @@ export type SessionInfo = {
   raw: boolean;
   /** Claude 벤더의 API 호출 원본 기록 (session.setInspect) — 한 번도 켠 적 없으면 없다. 새 세션은 입구 설정의 inspect 를 따른다 */
   inspect?: boolean;
+  /** 시작 화면(동사 없는 slcode)에서 연 새 세션 — 첫 메시지 전엔 대화 화면에서 시작 화면으로 돌아갈 수 있다(그 빈 세션은 지운다, ticket slcode-session-profile) */
+  fromStart?: boolean;
 };
 
 /** inspect 기록의 호출 하나 요약 (inspect/inspect.db 의 calls 한 행). at 은 요청이 들어온 시각, ms 는 응답이 끝날 때까지 */
@@ -180,6 +182,8 @@ export type AgentHookEffects = { block: string[]; ask: string[]; allow: string[]
 
 /** 세션에 실은 에이전트 플러그인 하나 — build 는 실은 빌드, current 는 지금 설정으로 빌드하면 나올 식별자(같으면 다시 실을 것이 없다, 지웠으면 null) */
 export type AgentPluginState = { name: string; version: string; build: string; values: string; current?: string | null };
+/** 고를 수 있는 시작 프로필 — summary 는 화면에 그대로 보이는 한 줄 (profiles.profileSummary) */
+export type ProfileChoice = { name: string; builtin: boolean; summary: string };
 
 export type CoreEventKind = CoreEventBody['kind'];
 
@@ -255,8 +259,12 @@ export type Methods = {
   /** MCP 서버 하나를 다시 연결한 뒤의 상태 목록 — 다시 실패해도 오류가 아니라 목록의 error 로 온다 */
   'session.mcpReconnect': { params: { id: string; name: string }; result: McpStatus[] };
   /** 이 세션에 실은 slcode 에이전트 플러그인 (ticket slcode-agent-plugin) — added 는 세션이 뜬 뒤 설치해 새 세션부터 실리는 것, pending 은 다시 싣기가
-   *  지금 턴이 끝나기를 기다리는 중. Claude·Codex 세션 */
-  'session.plugins': { params: { id: string }; result: { plugins: AgentPluginState[]; added: string[]; pending: boolean } };
+   *  지금 턴이 끝나기를 기다리는 중, profile 은 시작 프로필 이름(ticket slcode-session-profile). Claude·Codex 세션 */
+  'session.plugins': { params: { id: string }; result: { profile: string; plugins: AgentPluginState[]; added: string[]; pending: boolean } };
+  /** 시작 프로필 — 고를 수 있는 것과 지금 것 (ticket slcode-session-profile). 첫 메시지 전에만 바꾼다 */
+  'session.profiles': { params: { id: string }; result: { current: string; profiles: ProfileChoice[] } };
+  /** 첫 메시지 전에 시작 프로필을 바꾼다 — session.setVendor 처럼 같은 세션 id 로 core 를 다시 띄운다 */
+  'session.setProfile': { params: { id: string; profile: string }; result: { ok: true } };
   /** 에이전트 플러그인 다시 싣기 — idle 이면 바로, 턴 중이면 그 턴이 끝난 뒤 (deferred). 결과는 plugins.reloaded 이벤트로. Codex 는 skill 만 */
   'session.reloadPlugins': { params: { id: string }; result: { deferred: boolean } };
   /** 턴 되돌리기 (claude 의 Esc-Esc). seq 는 버릴 첫 턴의 turn.start seq. conversation 은 벤더 세션을 그 앞 지점에서 다시 열고, files 는 벤더 체크포인트로 파일을 되돌린다. idle 일 때만 */
@@ -311,6 +319,8 @@ export type ServeMethods = {
   'update.run': { params: Record<string, never>; result: UpdateCheck };
   /** [restart required] — 웹 모드 진입 프로세스가 같은 포트로 새 serve 를 띄우고 이 serve 를 내린다. 새 serve 가 준비된 뒤 답한다(못 뜨면 그 사유로 오류) */
   'serve.restart': { params: Record<string, never>; result: { ok: true } };
+  /** 시작 화면으로 돌아가기 (웹 입구, ticket slcode-session-profile) — 시작 화면에서 연 새 세션이 첫 메시지 전이면 진입 프로세스가 그 세션을 닫고 지운 뒤 같은 포트에 시작 화면을 다시 연다 */
+  'start.back': { params: Record<string, never>; result: { ok: true } };
   /** inspect 캐시 정리 미리보기 — 설정 창을 열 때 */
   'inspect.usage': { params: Record<string, never>; result: InspectUsage };
   /** inspect 캐시 정리 — old: 오래된 캐시 제거, compact: 압축(하루 지난 raw), all: 모든 캐시 제거. 떠 있는 세션은 뺀다. 결과는 정리 뒤의 미리보기 */

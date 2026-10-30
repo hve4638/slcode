@@ -6,9 +6,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { EventLog, type SessionMeta } from './eventLog.js';
-import { PKG } from './client.js';
+import { connectSession, PKG } from './client.js';
 import { corePaths, ensureDir } from './paths.js';
-import { CoreError, type SessionInfo } from './protocol.js';
+import { CoreError, ERR, type SessionInfo } from './protocol.js';
 import type { CoreOptions } from './core.js';
 
 export const isLoopback = (host: string) => ['127.0.0.1', 'localhost', '::1'].includes(host);
@@ -36,6 +36,29 @@ export async function closedSessions(sessionsDir: string, cwd: string): Promise<
   const out: SessionMeta[] = [];
   for (const m of EventLog.list(sessionsDir, cwd)) if (m.cwd === cwd && !(await sockAlive(new EventLog(sessionsDir, m).sockPath))) out.push(m);
   return out.sort((a, b) => closedTime(b) - closedTime(a));
+}
+
+/** 시작 화면으로 돌아가며 버릴 수 있는 세션인가 — 시작 화면에서 연 새 세션이고 첫 메시지 전. 아니면 사유 (ticket slcode-session-profile) */
+export function undiscardable(sessionsDir: string, id: string): string | null {
+  const log = EventLog.open(sessionsDir, id);
+  if (!log) return `no session ${id}`;
+  if (!log.meta.fromStart) return 'only a session opened from the start screen can go back to it';
+  if (log.all.some((e) => e.ev.kind === 'turn.start')) return 'the session has a message — it is kept';
+  return null;
+}
+/** 시작 화면으로 돌아가며 그 빈 세션을 닫고 지운다 — 떠 있으면 닫고 core 가 끝나기를(최대 15초) 기다린 뒤. 버릴 수 없으면 던진다 */
+export async function discardSession(sessionsDir: string, id: string): Promise<void> {
+  const why = undiscardable(sessionsDir, id);
+  if (why) throw new CoreError(ERR.badRequest, why);
+  const log = EventLog.open(sessionsDir, id)!;
+  try {
+    const c = await connectSession(log.sockPath);
+    c.request('session.close', { id }).catch(() => {});
+    let t: NodeJS.Timeout | undefined;
+    await Promise.race([c.done, new Promise((r) => (t = setTimeout(r, 15000)))]);
+    clearTimeout(t); c.close();
+  } catch {} // 이미 꺼졌다
+  EventLog.remove(sessionsDir, id);
 }
 
 /** core 의 준비 줄 — pid·version 은 3단계부터 (옛 core 엔 없다) */

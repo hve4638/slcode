@@ -9,6 +9,7 @@ const VIEW = 'session';
 const SIDEBAR = 'sessions';
 const DEFAULT_NAME = 'SLCode'; // 이름 없는 세션의 카드 제목 (slcode 웹의 기본 이름과 같다)
 const PICK_NAME = 'Resume'; // 고르기 전 resume 카드의 제목 — deck 에서 이름 없는 세션 카드와 갈리게
+const START_NAME = 'Start'; // 시작 화면 카드의 제목 (views/session.js 와 같다)
 
 /** @param {import('@superlite/plugin').RendererApi} api */
 export function activate(api) {
@@ -20,15 +21,15 @@ export function activate(api) {
   /** 세션 id → 그 세션을 띄운 카드의 key (카드 화면이 storage 'owners' 에 남긴다) — 같은 세션을 다시 열면 그 카드를 활성화 */
   const keyOf = async (id) => { const o = ((await api.storage.get('owners')) ?? {})[id]; return typeof o === 'string' ? o : o?.key ?? null; }; // 객체 꼴은 잠시 쓰던 형식
 
-  /** 카드 열기 — 있는 세션이면 그 카드를 활성화, 없으면 새 카드(spawn 이면 새 세션, id 면 resume, pick 이면 꺼진 세션 고르기).
+  /** 카드 열기 — 있는 세션이면 그 카드를 활성화, 없으면 새 카드(spawn 이면 새 세션, id 면 resume, pick 이면 꺼진 세션 고르기, start 면 그 폴더의 시작 화면).
    *  tmux(요청자 터미널)가 있으면 새 카드는 그 deck 끝에 조용히 붙이고 포커스는 옮기지 않는다 (ticket slcode-new-card-no-focus, 사용자 2026-10-25 —
    *  orchestrate 가 워커 카드를 열 때마다 보던 카드에서 포커스가 빠져서. 2026-10-07 의 "그 카드로 포커스" 를 뒤집음). focus(사람이 친 slcode new)면
    *  superlite focus — 사용자가 그 순간 요청자 터미널을 보고 있을 때만 새 카드를 보인다 */
-  async function open({ key, id = null, spawn, pick, title, tmux, focus, seen } = {}) {
+  async function open({ key, id = null, spawn, pick, start, title, tmux, focus, seen } = {}) {
     if (!key && id) key = await keyOf(id);
     key ??= newKey();
-    const state = pick ? { key, id: null, pick } : spawn ? { key, id: null, spawn } : { key, id, ...(seen ? { seen: true } : {}) };
-    const at = { as: 'card', key, title: title ?? (pick ? PICK_NAME : DEFAULT_NAME), preserve: true };
+    const state = pick ? { key, id: null, pick } : start ? { key, id: null, start } : spawn ? { key, id: null, spawn } : { key, id, ...(seen ? { seen: true } : {}) };
+    const at = { as: 'card', key, title: title ?? (pick ? PICK_NAME : start ? START_NAME : DEFAULT_NAME), preserve: true };
     await api.views.open(VIEW, state, tmux ? { ...at, opener: tmux, end: true, ...(focus ? { focus: true } : {}) } : at);
     if (id) void api.views.post({ type: 'revive', key }); // 닫힌 세션의 카드가 남아 있다 — 활성화만 하면 "세션이 닫혔습니다" 그대로라 다시 띄운다
   }

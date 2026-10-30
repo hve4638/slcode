@@ -23,6 +23,7 @@ import { formatMail, newMail, parseMails, sendMail, sessionMeta } from './mail.j
 import { blockInspect, CODEX_ROUTE, codexArgs, codexUpstream, inspectBlocked, inspectEnv, keepsFirstParty, sdkVersion, startInspect, turnCalls, upstreamOf, type InspectProxy } from './inspect.js';
 import { InspectStore, maybeSweep } from './inspectDb.js';
 import { Activity } from './activity.js';
+import { claudeLoad, DEFAULT_PROFILE, getProfile, listProfiles, profileSummary, sessionProfile } from './profiles.js';
 import { agentPaths, currentBuilds, loadSessionPlugins, reloadSessionPlugins, unlinkSessionPlugins, type Loaded, type SessionPlugins } from './agentPlugins.js';
 import { HookRunner } from './hookRunner.js';
 import { CoreError, ERR, FILES, PERMISSION_MODES, PROTOCOL_VERSION, type AgentHookEvent, type ApprovalRequest, type LoggedEvent, type Mail, type MethodName, type Methods, type RequestFrame, type SessionInfo } from './protocol.js';
@@ -78,6 +79,10 @@ export type CoreOptions = {
   prompt?: string;
   /** 새 세션의 벤더 — 기본 claude. 이어받는 세션은 meta.vendor 를 따른다 */
   vendor?: 'claude' | 'codex';
+  /** 새 세션의 시작 프로필 이름 (ticket slcode-session-profile) — meta.profile 로 남긴다. 없으면 default. 이어받는 세션은 meta 를 따른다 */
+  profile?: string;
+  /** 시작 화면에서 연 새 세션 — meta.fromStart 로 남긴다 */
+  fromStart?: boolean;
   /** 새 세션을 inspect 로 — 입구 설정(Settings.inspect)을 CLI 가 읽어 넘긴다. 이어받는 세션은 meta.inspect 를 따르고, false 면 끈다 (--no-inspect) */
   inspect?: boolean;
   log?: (msg: string) => void;
@@ -107,10 +112,12 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     if (found.meta.permissionMode && !isMode(found.meta.permissionMode)) found.updateMeta({ permissionMode: 'auto' });
     logFile = found;
   } else {
+    if (opts.profile !== undefined && !getProfile(opts.profile, P.dir)) throw new CoreError(ERR.badRequest, `no profile ${opts.profile} (slcode profile list)`);
     const meta: SessionMeta = {
       id: randomUUID().slice(0, 8), vendor: opts.vendor ?? 'claude', cwd: opts.cwd, title: opts.title ?? null,
       vendorSessionId: null, createdAt: Date.now(), permissionMode: opts.permissionMode ?? 'auto', raw: opts.raw ?? false,
       ...(opts.model ? { model: opts.model } : {}), ...(opts.effort ? { effort: opts.effort } : {}), ...(opts.inspect ? { inspect: true } : {}),
+      ...(opts.profile && opts.profile !== DEFAULT_PROFILE ? { profile: opts.profile } : {}), ...(opts.fromStart ? { fromStart: true } : {}),
     };
     // 새 세션의 권한 모드는 생략하면 auto (사용자 2026-10-24) — 이미 있는 세션의 null(벤더 기본 = 승인 요청)은 건드리지 않는다
     logFile = EventLog.create(P.sessionsDir, meta);
@@ -164,8 +171,14 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   // 에이전트 플러그인 (ticket slcode-agent-plugin, Codex 는 slcode-agent-plugin-codex) — 기동 때의 설정(기본 설정 < 세션 값)으로 그 하네스의 빌드를 만들어 세션 폴더에 링크를 건다.
   // 싣지 못해도 세션은 뜬다 — 사유는 세션이 생긴 뒤 기록에 남긴다
   const harness = codex ? 'codex' : 'claude';
+  // 시작 프로필 (ticket slcode-session-profile) — meta 의 이름으로 띄울 때마다 지금 값을 읽는다. 지운 프로필이면 default.
+  // 실을 플러그인과 그 값(기본 설정 < 프로필 < 세션)은 두 하네스 모두, Claude 쪽 로드 설정(사용자·프로젝트 설정·CLAUDE.md·내장 skill)은 Claude 만
+  const prof = sessionProfile(logFile.meta.profile, P.dir);
+  /** 다시 싣기 때의 프로필 — 그사이 고쳤으면 고친 값, 지웠으면 기동 때 값 */
+  const profileNow = () => getProfile(prof.name, P.dir) ?? prof.profile;
   let agent: SessionPlugins | null = null, agentFailed: string | null = null;
-  try { agent = loadSessionPlugins(logFile.dir, env, logFile.meta.agentPlugins ?? {}, P.dir, harness); } catch (e) { agentFailed = (e as Error).message; }
+  try { agent = loadSessionPlugins(logFile.dir, env, logFile.meta.agentPlugins ?? {}, P.dir, harness, prof.profile); } catch (e) { agentFailed = (e as Error).message; }
+  const load = codex ? undefined : claudeLoad(prof.profile.claude, cwd, env, (agent?.loaded ?? []).map((l, i) => ({ name: l.name, path: agent!.plugins[i].path })));
   let agentLoaded: Loaded[] = agent?.loaded ?? [];
   // js/ts 훅 (ticket slcode-agent-plugin-hooks) — Claude 만. 플러그인을 하나라도 실었으면 디스패처를 건다(다시 싣기로 훅이 생겨도 받게). 세션이 생기기 전의 기록은 모았다가 낸다
   let hookQueue: AgentHookEvent[] | null = [];
@@ -186,7 +199,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   };
   const session: AgentSession = codex
     ? new CodexSession({ log: logFile, env: codexEnv(), permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, args: firstArgs, onConfig: (base) => gotBase(base), skillRoots: agent?.codex.roots ?? [], instructions: agent?.append ?? '' })
-    : new ClaudeSession({ log: logFile, env: firstEnv, resume: logFile.meta.vendorSessionId, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, ...(agent ? { agent } : {}), ...(hooks ? { hooks: hooks.sdkHooks() } : {}) });
+    : new ClaudeSession({ log: logFile, env: firstEnv, resume: logFile.meta.vendorSessionId, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, ...(agent ? { agent } : {}), ...(load ? { load } : {}), ...(hooks ? { hooks: hooks.sdkHooks() } : {}) });
   for (const ev of hookQueue ?? []) (session as ClaudeSession).emitHook(ev);
   hookQueue = null;
   const sid = session.id;
@@ -195,6 +208,8 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   activity.agent(session.state);
   session.onEvent((e) => { if (e.ev.kind === 'session.state') activity.agent(e.ev.state); });
   if (inspectFailed) session.notice(`inspect 를 켜지 않았습니다: ${inspectFailed}`);
+  if (prof.missing) session.notice(`프로필 ${prof.missing} 이 없어 default 로 띄웠습니다`);
+  if (codex && prof.name !== DEFAULT_PROFILE) session.notice(`Codex 세션은 프로필(${prof.name})의 플러그인 선택만 따릅니다 — 사용자 설정·AGENTS.md·skill 은 그대로 실립니다`);
   if (agentFailed) session.notice(`에이전트 플러그인을 싣지 못했습니다: ${agentFailed}`);
   for (const n of agent?.notes ?? []) session.notice(`에이전트 플러그인을 싣지 못했습니다 — ${n}`);
   if (!opts.resume && opts.prompt?.trim()) session.send(opts.prompt);
@@ -256,6 +271,12 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   const mine = (id: unknown) => { if (id !== sid) throw new CoreError(ERR.badRequest, `this process serves session ${sid} only`); return session; };
   const webs = () => [...conns].flatMap((c) => (c.web ? [c.web] : []));
   type Handler<K extends MethodName> = (conn: Conn, params: Methods[K]['params']) => Promise<Methods[K]['result']> | Methods[K]['result'];
+  /** 첫 메시지 전·쉬는 중에만 바꾸는 것(벤더·시작 프로필) — 바꾸면 core 를 다시 띄우므로 그 교체를 따라올 소유자여야 한다 */
+  function beforeFirst(s: AgentSession, what: string) {
+    if (s.log.all.some((e) => e.ev.kind === 'turn.start')) throw new CoreError(ERR.badRequest, `the ${what} is fixed after the first message`);
+    if (closed || retire || switching || (s.state !== 'idle' && s.state !== 'starting') || s.pendingApprovals().length || pending.length || asks.size) throw new CoreError(ERR.badRequest, `the ${what} can be switched only while the session is idle`);
+    if (owner && !owner.follows) throw new CoreError(ERR.badRequest, 'the session owner cannot follow a core replacement (an older slcode started it)');
+  }
   const handlers: { [K in MethodName]: Handler<K> } = {
     'core.auth': (_c, p) => {
       // 루프백 밖 웹 — serve 가 remote 를 붙여 넘긴다. 토큰 파일은 core 가 든다
@@ -323,11 +344,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       const s = mine(p?.id);
       if (p.vendor !== 'claude' && p.vendor !== 'codex') throw new CoreError(ERR.badRequest, 'vendor claude|codex');
       if (p.vendor === logFile.meta.vendor) return { ok: true };
-      const check = () => {
-        if (s.log.all.some((e) => e.ev.kind === 'turn.start')) throw new CoreError(ERR.badRequest, 'the vendor is fixed after the first message');
-        if (closed || retire || switching || (s.state !== 'idle' && s.state !== 'starting') || s.pendingApprovals().length || pending.length || asks.size) throw new CoreError(ERR.badRequest, 'the vendor can be switched only while the session is idle');
-        if (owner && !owner.follows) throw new CoreError(ERR.badRequest, 'the session owner cannot follow a core replacement (an older slcode started it)');
-      };
+      const check = () => beforeFirst(s, 'vendor');
       check();
       // 설치돼 있지 않은 codex 로 바꾸면 새 core 의 벤더 기동이 실패해 세션이 닫힌다 — 띄워 보고 못 뜨면 그대로 둔다
       if (p.vendor === 'codex') { const why = await codexRunnable(env); if (why) throw new CoreError(ERR.badRequest, `codex is not available: ${why}`); }
@@ -336,6 +353,23 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       logFile.updateMeta({ vendor: p.vendor, vendorSessionId: null, model: undefined, effort: undefined });
       log(`vendor switched to ${p.vendor} — replacing this core`);
       void replace(PKG); // retiring 을 바로 세운다. 이 응답은 연결이 끝나기 전에 나간다
+      return { ok: true };
+    },
+    // 시작 프로필 (ticket slcode-session-profile, 사용자 2026-10-30) — 새 세션의 채팅창 가운데에서 첫 메시지 전에 고른다. 바꾸면 meta.profile 을 고치고
+    // setVendor 처럼 core 를 다시 띄운다 — 새 core 가 그 프로필로 플러그인·Claude 로드 설정을 다시 짠다. 그 전에 default 로 뜬 것(MCP·SessionStart 훅)은 한 번 돈 뒤다
+    'session.profiles': (_c, p) => {
+      mine(p?.id);
+      return { current: prof.name, profiles: listProfiles(P.dir).map((r) => ({ name: r.name, builtin: r.builtin, summary: profileSummary(r.profile) })) };
+    },
+    'session.setProfile': async (_c, p) => {
+      const s = mine(p?.id);
+      if (typeof p.profile !== 'string' || !getProfile(p.profile, P.dir)) throw new CoreError(ERR.badRequest, `no profile ${p?.profile}`);
+      if (p.profile === prof.name && !prof.missing) return { ok: true };
+      beforeFirst(s, 'profile');
+      // 벤더 세션은 옛 프로필의 로드 설정으로 열린 것이다 — 첫 메시지 전이라 버려도 잃는 것이 없다
+      logFile.updateMeta({ profile: p.profile === DEFAULT_PROFILE ? undefined : p.profile, vendorSessionId: null });
+      log(`profile switched to ${p.profile} — replacing this core`);
+      void replace(PKG);
       return { ok: true };
     },
     'session.interrupt': async (_c, p) => { await mine(p?.id).interrupt(); return { ok: true }; },
@@ -356,8 +390,8 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     },
     'session.plugins': (_c, p) => {
       mine(p?.id);
-      const cur = currentBuilds(logFile.meta.agentPlugins ?? {}, P.dir, harness);
-      return { plugins: agentLoaded.map((l) => ({ name: l.name, version: l.version, build: l.build, values: l.values, current: cur[l.name] ?? null })), added: Object.keys(cur).filter((n) => !agentLoaded.some((l) => l.name === n)), pending: reloadWanted };
+      const cur = currentBuilds(logFile.meta.agentPlugins ?? {}, P.dir, harness, profileNow());
+      return { profile: prof.name, plugins: agentLoaded.map((l) => ({ name: l.name, version: l.version, build: l.build, values: l.values, current: cur[l.name] ?? null })), added: Object.keys(cur).filter((n) => !agentLoaded.some((l) => l.name === n)), pending: reloadWanted };
     },
     'session.reloadPlugins': async (_c, p) => {
       const s = mine(p?.id);
@@ -437,7 +471,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   async function reloadPlugins() {
     reloadWanted = false;
     try {
-      const r = reloadSessionPlugins(logFile.dir, agentLoaded, env, logFile.meta.agentPlugins ?? {}, P.dir, harness);
+      const r = reloadSessionPlugins(logFile.dir, agentLoaded, env, logFile.meta.agentPlugins ?? {}, P.dir, harness, profileNow());
       if (session instanceof CodexSession) {
         await session.setSkillRoots(r.roots);
         agentLoaded = r.loaded;

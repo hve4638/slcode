@@ -62,7 +62,7 @@ test('카드 경로: --effort·-- 뒤 첫 프롬프트를 slcode.new 에 넘긴�
   const dir = tmp('slcode-newopt-');
   const work = fs.realpathSync(tmp('slcode-work-'));
   const shim = fakeShim();
-  const a = await run(dir, ['--effort', 'high', '--model', 'opus', '--', 'fix', 'the', 'login bug'], { cwd: work, env: shim.env });
+  const a = await run(dir, ['new', '.', '--effort', 'high', '--model', 'opus', '--', 'fix', 'the', 'login bug'], { cwd: work, env: shim.env });
   assert.equal(a.code, 0, a.stderr); assert.equal(a.stdout.trim(), 's-card-1');
   const b = await run(dir, ['new', work, '--vendor', 'codex', '--effort', 'turbo', '--', '-x', '--title', 'y'], { env: shim.env });
   assert.equal(b.code, 0, b.stderr);

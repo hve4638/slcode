@@ -292,6 +292,33 @@ test('벤더 전환: 첫 메시지 전 claude → codex 는 같은 세션 id 로
   assert.equal(await e.exit, 0);
 });
 
+test('시작 프로필 전환: 첫 메시지 전엔 대화 화면에서 바꾼다 — 같은 세션 id 로 core 를 바꾸고 meta.profile 을 남기며, 첫 메시지 뒤엔 거절 (ticket slcode-session-profile)', async (t) => {
+  const dir = tmp('slcode-profile-');
+  const e = cli(dir, ['new', tmp('slcode-work-'), '--vendor', 'codex']);
+  t.after(() => { if (alive(e.child)) e.child.kill('SIGKILL'); });
+  const a = await screen(await e.first);
+  const id = (await a.call('server.info')).result.session;
+  await a.call('session.attach', { id, since: 0 });
+  const before = (await a.call('session.profiles', { id })).result;
+  assert.equal(before.current, 'default');
+  assert.deepEqual(before.profiles.map((p: any) => [p.name, p.builtin]), [['default', true], ['bare', true]]);
+  assert.match(before.profiles[1].summary, /플러그인 없음 · Claude 설정 끔 · 내장 skill 숨김/);
+  const oldCore = await corePid(a);
+  assert.deepEqual((await a.call('session.setProfile', { id, profile: 'default' })).result, { ok: true }, '같은 프로필은 아무것도 하지 않는다');
+  assert.match((await a.call('session.setProfile', { id, profile: 'nope' })).error.message, /no profile nope/);
+  assert.equal(await corePid(a), oldCore);
+  assert.deepEqual((await a.call('session.setProfile', { id, profile: 'bare' })).result, { ok: true });
+  assert.equal((await a.call('session.profiles', { id })).result.current, 'bare', '새 core 는 그 프로필로 떴다');
+  assert.notEqual(await corePid(a), oldCore);
+  assert.equal(EventLog.open(corePaths(dir).sessionsDir, id)!.meta.profile, 'bare');
+  await waitFor(async () => (await a.call('server.info')).result.owner === e.child.pid, 5000);
+  await a.call('session.send', { id, text: 'hello' });
+  assert.match((await a.call('session.setProfile', { id, profile: 'default' })).error?.message ?? '', /profile is fixed after the first message/);
+  a.close();
+  e.child.kill('SIGINT');
+  assert.equal(await e.exit, 0);
+});
+
 test('벤더 전환: codex 실행 파일이 뜨지 않으면 바꾸지 않고 거절한다', async (t) => {
   const dir = tmp('slcode-vendor-');
   const e = cli(dir, ['new', tmp('slcode-work-')], 'ignore', undefined, { SLCODE_CODEX_BIN: path.join(dir, 'no-such-codex') });
@@ -337,6 +364,7 @@ test('웹(진입 프로세스가 넘긴 연결): 다른 출처 페이지의 WS·
   assert.equal(await upgrade({ origin: `http://127.0.0.1:${port + 1}` }), 403);
   assert.equal(await upgrade({ host: `evil.example:${port}` }), 403);
   assert.equal(await upgrade({ origin: `http://localhost:${port}`, host: `localhost:${port}` }), 101);
+  assert.equal(await upgrade({ origin: `http://127.0.0.1:${port + 1}`, host: `127.0.0.1:${port + 1}` }), 101, 'superlite 포트 포워드로 연 화면');
   const http = await import('node:http');
   const file = (headers: Record<string, string>) => new Promise<number>((resolve, reject) => {
     http.get({ host: '127.0.0.1', port, path: `/file?path=${encodeURIComponent(secret)}`, headers }, (r) => { r.resume(); resolve(r.statusCode!); }).on('error', reject);

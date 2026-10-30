@@ -34,7 +34,7 @@ const TYPES: Record<string, string> = {
 /** 화면 연결(웹·stdio)에서는 부를 수 없는 제어 메서드 — 소유권·웹 주소 등록(토큰이 붙은 url 을 돌려준다)·core 교체는 serve 의 제어 연결만 */
 const CONTROL_ONLY = new Set(['core.own', 'serve.register', 'core.retire']);
 /** serve 가 답하는 메서드 (ServeMethods) — core 로 넘기지 않는다 */
-const SERVE_METHODS = new Set(['settings.get', 'settings.set', 'serve.info', 'update.run', 'serve.restart', 'inspect.usage', 'inspect.clean', 'web.files', 'file.get']);
+const SERVE_METHODS = new Set(['settings.get', 'settings.set', 'serve.info', 'update.run', 'serve.restart', 'start.back', 'inspect.usage', 'inspect.clean', 'web.files', 'file.get']);
 /** 프레임의 요청·응답 id — 앞머리만 본다 (첨부가 실린 큰 프레임을 해석하지 않게). 화면·core 는 id 를 맨 앞에 쓴다 ({id, method, params}·{id, result}). 아니면 null */
 const idOf = (line: string): string | null => /^\{"id":(-?\d+|"(?:[^"\\]|\\.)*")[,}]/.exec(line)?.[1] ?? null;
 /** 인증 전 줄 세워 둘 수 있는 요청 수 — 인증 안 된 원격 클라이언트가 serve 메모리를 키우지 못하게 */
@@ -58,6 +58,10 @@ export type ServeOptions = {
   prompt?: string;
   /** 새 세션의 벤더 — 기본 claude. 이어받는 세션은 meta.vendor 를 따른다 */
   vendor?: 'claude' | 'codex';
+  /** 새 세션의 시작 프로필 — core 로 넘긴다 (CoreOptions) */
+  profile?: string;
+  /** 시작 화면에서 연 새 세션 (CoreOptions.fromStart — 카드가 new --from-start 로) */
+  fromStart?: boolean;
   /** 웹 서버 — 기본 켬. false 면 웹 없이 (superlite 카드 서비스) */
   web?: boolean;
   host?: string;
@@ -75,6 +79,8 @@ export type ServeOptions = {
   feed?: { host: string; port: number; onConn: (cb: (sock: net.Socket) => void) => void };
   /** serve.restart — 진입 프로세스에 교체를 맡긴다. 새 serve 가 준비되면 풀리고, 못 뜨면 사유로 거절된다. 없으면(카드·--no-web) 이 serve 는 스스로 바뀌지 못한다 */
   onRestart?: () => Promise<void>;
+  /** start.back — 진입 프로세스에 시작 화면으로 돌아가기를 맡긴다 (ticket slcode-session-profile). 받아들이면 풀리고 세션이 닫힌다. 없으면(카드·--no-web) 이 serve 는 돌아가지 못한다 */
+  onBack?: () => Promise<void>;
   log?: (msg: string) => void;
 };
 
@@ -108,7 +114,7 @@ export function staticHandler(req: http.IncomingMessage, res: http.ServerRespons
 }
 
 /** 화면 html 의 <html> 에 테마·serve 버전·빌드·입구를 넣는다 (staticHandler 의 index.html, 카드 모드 web.files 의 card.html) */
-function withPageAttrs(html: string, dir: string, kind: SettingsKind): string {
+export function withPageAttrs(html: string, dir: string, kind: SettingsKind): string {
   const { theme } = readSettings(dir, kind);
   const attr = (/^[\w-]+$/.test(theme) ? ` data-theme="${theme}"` : '') + ` data-version="${VERSION}" data-build="${BUILD}" data-kind="${kind}"`;
   return html.replace('<html lang="ko">', `<html lang="ko"${attr}>`);
@@ -167,14 +173,16 @@ export function fileHandler(req: http.IncomingMessage, res: http.ServerResponse,
 }
 
 /** 루프백 TCP 웹의 요청이 자기 화면에서 왔는가 (ticket slcode-loopback-origin-check, 사용자 결정 2026-10-21) — 토큰이 없는 루프백 웹에 같은 PC 브라우저의 다른 사이트가 닿지 못하게.
- *  Host 는 루프백 이름 + 이 포트만 (DNS rebinding 은 Origin 도 공격 도메인이라 Host 로만 막힌다). Origin 은 없거나(브라우저 밖 클라이언트, 링크·이미지로 연 /file) 같은 규칙의 http 출처만 */
+ *  Host 는 루프백 이름만 (DNS rebinding 은 Origin 도 공격 도메인이라 Host 로만 막힌다). Origin 은 없거나(브라우저 밖 클라이언트, 링크·이미지로 연 /file) Host 와 같은 http 출처만.
+ *  포트는 서버 포트와 대지 않는다 — superlite 포트 포워드(ssh -L 127.0.0.1:N:…)로 열면 Host·Origin 이 127.0.0.1:N 이다. 다른 포트의 페이지는 Origin 이 Host 와 달라 막힌다 */
 const LOOPBACK_NAMES = ['127.0.0.1', 'localhost', '[::1]'];
-export function loopbackAllowed(req: http.IncomingMessage, port: number): boolean {
-  const ours = (origin: string) => {
-    try { const u = new URL(origin); return u.protocol === 'http:' && !u.username && !u.password && u.pathname === '/' && !u.search && LOOPBACK_NAMES.includes(u.hostname) && Number(u.port || 80) === port; } catch { return false; }
+export function loopbackAllowed(req: http.IncomingMessage): boolean {
+  const site = (origin: string) => {
+    try { const u = new URL(origin); return u.protocol === 'http:' && !u.username && !u.password && u.pathname === '/' && !u.search && LOOPBACK_NAMES.includes(u.hostname) ? u.host : null; } catch { return null; }
   };
   const { host, origin } = req.headers;
-  return !!host && ours(`http://${host}`) && (origin === undefined || ours(origin));
+  const own = host ? site(`http://${host}`) : null;
+  return own !== null && (origin === undefined || site(origin) === own);
 }
 
 /** 서비스 웹 소켓 주소에 listen — `/` 로 시작하면 uds(0600), 아니면 host:port */
@@ -204,7 +212,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
       resume = (await closedSessions(P.sessionsDir, opts.cwd))[0]?.id;
       if (!resume) log(`no closed session in ${opts.cwd} — starting a new one`);
     }
-    ({ id: sid, sock, session } = await spawnCore({ dir: P.dir, cwd: opts.cwd, resume, title: opts.title, raw: opts.raw, inspect: opts.inspect, permissionMode: opts.permissionMode, model: opts.model, effort: opts.effort, prompt: opts.prompt, vendor: opts.vendor }));
+    ({ id: sid, sock, session } = await spawnCore({ dir: P.dir, cwd: opts.cwd, resume, title: opts.title, raw: opts.raw, inspect: opts.inspect, permissionMode: opts.permissionMode, model: opts.model, effort: opts.effort, prompt: opts.prompt, vendor: opts.vendor, profile: opts.profile, fromStart: opts.fromStart }));
   }
   let control = await connectSession(sock);
   // 소유권을 빼앗기면(core.owner — 카드 핸드오프) 이 serve 가 닫혀도 세션을 닫지 않는다
@@ -267,6 +275,10 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
         case 'serve.restart':
           if (!opts.onRestart) throw new CoreError(ERR.badRequest, 'this serve cannot restart itself');
           await opts.onRestart();
+          return { ok: true };
+        case 'start.back':
+          if (!opts.onBack) throw new CoreError(ERR.badRequest, 'this screen cannot go back to the start screen — a card asks the plugin');
+          await opts.onBack();
           return { ok: true };
         // inspect 캐시 정리 (ticket slcode-inspect-storage, 사용자 확정 2026-10-20) — 상태 폴더의 꺼진 세션 inspect/ 만. 입구와 상관없다
         case 'inspect.usage': return inspectUsage(P.sessionsDir);
@@ -425,7 +437,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
   let url: string | null = opts.attach?.url ?? null;
   const host = opts.host ?? '127.0.0.1';
   if (opts.web !== false && !opts.attach) {
-    const allow = isLoopback(host) ? (q: http.IncomingMessage) => loopbackAllowed(q, (srv.address() as net.AddressInfo).port) : undefined;
+    const allow = isLoopback(host) ? loopbackAllowed : undefined;
     const srv = http.createServer((q, r) => { if (!fileHandler(q, r, allow ? null : readOrCreateToken(P), allow)) staticHandler(q, r, web, P.dir, 'web'); });
     const wss = wsOn(srv, !allow, 'web', allow);
     stopAll.push(() => { for (const c of wss.clients) c.close(); wss.close(); srv.close(); });
@@ -435,8 +447,8 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
   }
   if (opts.feed) {
     // 진입 프로세스가 넘긴 연결 — listen 은 진입 프로세스가 한다. 이 serve 가 끝나면 받은 연결을 모두 끊어 화면이 다음 serve 로 다시 붙게 한다
-    const fh = opts.feed.host, fp = opts.feed.port;
-    const allow = isLoopback(fh) ? (q: http.IncomingMessage) => loopbackAllowed(q, fp) : undefined;
+    const fh = opts.feed.host;
+    const allow = isLoopback(fh) ? loopbackAllowed : undefined;
     const srv = http.createServer((q, r) => { if (!fileHandler(q, r, allow ? null : readOrCreateToken(P), allow)) staticHandler(q, r, web, P.dir, 'web'); });
     const wss = wsOn(srv, !allow, 'web', allow);
     const socks = new Set<net.Socket>();

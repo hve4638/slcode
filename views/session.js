@@ -15,6 +15,7 @@ const VIEW = 'session';
 const SVC = 'session';
 const DEFAULT_NAME = 'SLCode'; // 이름 없는 세션의 카드 제목 (slcode 웹의 기본 이름과 같다)
 const PICK_NAME = 'Resume'; // 고르기 전 resume 카드의 제목
+const START_NAME = 'Start'; // 시작 화면 카드의 제목
 const FAR = Number.MAX_SAFE_INTEGER; // attach since — 이력은 안쪽 화면이 그린다, 여기선 pending 만
 // 이 화면의 표 — 카드 서비스의 stdio 는 같은 폴더를 연 모든 superlite 창에 방송된다. 요청 id 앞에 붙여 다른 창의 응답을 가려낸다
 const WIN = Math.random().toString(36).slice(2, 8);
@@ -37,6 +38,8 @@ export function mount(el, ctx) {
     key: st.key, id: st.id ?? null, savedId: st.id ?? null,
     pick: !st.id && typeof st.pick === 'string' ? st.pick : null, // 고르기 전 resume 카드 — 서비스를 띄우지 않는다
     spawn: !st.id && st.spawn ? st.spawn : null, // slcode.new 의 새 세션 — 세션 id 를 알면 main 에 알리고 state 에서 지운다
+    // 동사 없는 `slcode` 의 시작 화면 카드 — 그 폴더 (ticket slcode-session-profile, 사용자 2026-10-30). 고르면 이 카드가 새 세션(spawn)이나 이어서 할 세션(id)이 된다
+    start: !st.id && typeof st.start === 'string' ? st.start : null,
     takeover: !!st.takeover, from: st.from ?? null, // 핸드오프의 새 카드 — 소유권을 가져오고, 붙으면 옛 카드(from)를 옮긴다
     moved: !!st.moved, // 핸드오프로 옮겨진 카드 — 다시 붙지 않는다
     seen: !!st.seen, // 사이드바가 눌러 연 새 카드 — 붙으면 "봤다" 신호를 한 번 (ticket slcode-sidebar-orca)
@@ -106,7 +109,7 @@ export function mount(el, ctx) {
     const n = c.waits.size;
     void ctx.setBadge(c.moved ? null : n ? (n > 1 ? `!${n}` : '!') : c.state === 'running' ? '…' : c.state === 'exited' ? 'off' : null);
   }
-  function applyTitle() { void ctx.setTitle(c.title || (c.pick && !c.id ? PICK_NAME : DEFAULT_NAME)); } // 카드 제목 = 세션 이름, 없으면 SLCode
+  function applyTitle() { void ctx.setTitle(c.title || (c.pick && !c.id ? PICK_NAME : c.start ? START_NAME : DEFAULT_NAME)); } // 카드 제목 = 세션 이름, 없으면 SLCode
   /** 안쪽 iframe 이 무엇을 띄우는가 — 카드 모드 화면(web.files, 주소 없음)이면 'port', 아니면 /svc 주소 */
   const shownKey = () => (c.web ? 'port' : c.url);
   function render() {
@@ -116,6 +119,7 @@ export function mount(el, ctx) {
     const wrap = document.createElement('div');
     wrap.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;background:var(--vscode-editor-background,#1e1e1e);color:var(--vscode-foreground,#ccc)';
     if (c.pick && !c.id) renderPicker(wrap);
+    else if (c.start) renderStart(wrap);
     else if (c.web || c.url) {
       const f = document.createElement('iframe');
       f.title = 'slcode';
@@ -173,9 +177,51 @@ export function mount(el, ctx) {
     }, (e) => { list.textContent = `Failed to list sessions: ${e?.message ?? e}`; });
   }
 
+  /** 시작 화면 — slcode 의 start-page html(web/start.js, 웹과 같은 화면)을 주소 없는 iframe 에. 화면의 list·add 는 HOST 가 main 에 넘기고,
+   *  go 면 이 카드가 그 자리에서 새 세션(그 폴더·프로필)이나 꺼진 세션을 띄운다. 옛 slcode(start-page 없음)면 사유를 보인다 */
+  function renderStart(wrap) {
+    const f = document.createElement('iframe');
+    f.title = 'slcode';
+    f.sandbox = 'allow-scripts';
+    f.style.cssText = 'flex:1;border:0;width:100%;height:100%;color-scheme:light dark;background:light-dark(#f7f7f8,#18181b)';
+    c.frame = f;
+    wrap.appendChild(f);
+    host('startPage', c.start).then((html) => { if (c.frame === f) f.srcdoc = html; }, (e) => {
+      if (c.frame !== f) return;
+      f.remove(); c.frame = null;
+      const p = document.createElement('div');
+      p.style.cssText = 'margin:auto;font:13px system-ui;opacity:.8;max-width:80%;text-align:center;white-space:pre-wrap';
+      p.textContent = `시작 화면을 열지 못했습니다: ${e?.message ?? e}`;
+      wrap.appendChild(p);
+    });
+  }
+  /** 시작 화면에서 골랐다 — {new} 면 그 폴더의 새 세션(시작 화면에서 연 표시 — 첫 메시지 전엔 돌아갈 수 있다), {resume} 이면 그 세션 */
+  function begin(what) {
+    if (!c.start) return;
+    const cwd = c.start;
+    c.start = null;
+    if (typeof what.resume === 'string') { c.id = what.resume; known(); }
+    else { c.spawn = { cwd, fromStart: true }; void ctx.setState({ key: c.key, id: null, spawn: c.spawn }); } // 다시 로드되어도 시작 화면으로 돌아가지 않게
+    applyTitle(); render(); void ensure();
+  }
+  /** 대화 화면의 '시작 화면으로' — 이 빈 세션을 지우고(slcode 가 시작 화면에서 연 첫 메시지 전 세션만 받아들인다) 이 카드에 그 폴더의 시작 화면을 다시 그린다.
+   *  세션이 닫히며 끊긴 연결이 다시 붙지 않게 start 를 먼저 세운다 */
+  async function backToStart(d) {
+    if (!c.id || d.session !== c.id || typeof d.cwd !== 'string') throw new Error('이 카드의 세션이 아닙니다');
+    const id = c.id;
+    c.start = d.cwd;
+    try { await host('discard', id); }
+    catch (e) { c.start = null; throw e; }
+    c.id = null; c.savedId = null; c.spawn = null; c.web = null; c.url = null; c.title = null; c.state = null; c.waits.clear();
+    detach();
+    void ctx.setState({ key: c.key, id: null, start: c.start });
+    applyTitle(); render(); badge();
+    return {};
+  }
+
   // ---- 기동·연결 (attach-or-start). 선구독 → open(start+connect) → 이미 돌고 있었으면 hello 가 없으니 server.info 로 id
   async function ensure() {
-    if (c.moved) return;
+    if (c.moved || c.start) return;
     if (c.conn || c.starting) return c.starting;
     c.starting = (async () => {
       let dropped = false; // 이 시도에서 연 연결이 끊겼다
@@ -329,7 +375,13 @@ export function mount(el, ctx) {
   // 안쪽 화면이 보낸 것 — 포트 청하기·다시 그리기·serve 교체·링크 열기. 링크(slcode.open)는 superlite 의 open 동사(웹 주소는 URL 탭, 파일은 에디터),
   // slcode.download 는 download 동사(로컬 파일을 Download 뷰 대기열에 — 사용자가 확인하면 이 PC 로) (ticket slcode-append-system-prompt)
   const VERB = { 'slcode.open': 'open', 'slcode.download': 'download' };
-  const HOST = { 'slcode.update': (d) => host('checkUpdate', { version: d.version, build: d.build }), 'slcode.restart': handoff };
+  const HOST = {
+    'slcode.update': (d) => host('checkUpdate', { version: d.version, build: d.build }), 'slcode.restart': handoff,
+    // 시작 화면 (renderStart)
+    'slcode.start.list': () => host('startList', c.start),
+    'slcode.start.go': (d) => { begin(typeof d.resume === 'string' ? { resume: d.resume } : { new: true }); return {}; },
+    'slcode.back': backToStart,
+  };
   const onFrame = (e) => {
     if (!c.frame || e.source !== c.frame.contentWindow) return;
     const d = e.data;
@@ -349,7 +401,7 @@ export function mount(el, ctx) {
   cleanup = () => { window.removeEventListener('message', onFrame); unshared?.(); c.io?.disconnect(); detach(); };
 
   render(); applyTitle(); badge();
-  if (!c.pick && !c.moved) void ensure();
+  if (!c.pick && !c.moved && !c.start) void ensure();
 }
 
 /** 화면이 다시 로드되기 전 — 연결은 창이 닫지만 구독·관찰자도 거둔다 */

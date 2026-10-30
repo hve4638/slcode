@@ -243,7 +243,7 @@ async function wsTry(url: string, headers: { origin?: string; host?: string }, c
   });
 }
 
-test('루프백 웹은 자기 출처만: 다른 출처 페이지의 WS(setMode·send)·Host 를 바꾼 /file 은 거절, 같은 출처·Origin 없는 클라이언트는 그대로; 루프백 밖(토큰)은 출처를 보지 않는다 (ticket slcode-loopback-origin-check)', async (t) => {
+test('루프백 웹은 자기 출처만: 다른 출처 페이지의 WS(setMode·send)·Host 를 바꾼 /file 은 거절, 같은 출처(포트 포워드로 바뀐 포트 포함)·Origin 없는 클라이언트는 그대로; 루프백 밖(토큰)은 출처를 보지 않는다 (ticket slcode-loopback-origin-check)', async (t) => {
   const dir = isolated();
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
   // 공격이 통과하면 턴이 돈다 — 가짜 codex 로 (API 호출 없음)
@@ -262,8 +262,9 @@ test('루프백 웹은 자기 출처만: 다른 출처 페이지의 WS(setMode·
   const c = await connectSession(h.sock);
   assert.notEqual((await c.request('session.attach', { id: h.session.id })).info.permissionMode, 'bypassPermissions', '권한 모드는 그대로');
   c.close();
-  // 자기 화면 (127.0.0.1·localhost 둘 다), Origin 없는 브라우저 밖 클라이언트
-  for (const hd of [{ origin: `http://127.0.0.1:${port}` }, { origin: `http://localhost:${port}`, host: `localhost:${port}` }, { origin: `http://LOCALHOST:${port}`, host: `LocalHost:${port}` }, {}]) {
+  // 자기 화면 (127.0.0.1·localhost 둘 다), superlite 포트 포워드로 다른 포트에서 연 화면, Origin 없는 브라우저 밖 클라이언트
+  for (const hd of [{ origin: `http://127.0.0.1:${port}` }, { origin: `http://localhost:${port}`, host: `localhost:${port}` }, { origin: `http://LOCALHOST:${port}`, host: `LocalHost:${port}` },
+    { origin: `http://127.0.0.1:${port + 1}`, host: `127.0.0.1:${port + 1}` }, {}]) {
     const r = await wsTry(h.url!, hd, [{ method: 'core.auth', params: { token: null } }, { method: 'server.info' }]) as { out?: any[] };
     assert.equal(r.out?.[1]?.result?.session, h.session.id, JSON.stringify(hd));
   }
@@ -275,7 +276,8 @@ test('루프백 웹은 자기 출처만: 다른 출처 페이지의 WS(setMode·
   const fileGet = (headers: Record<string, string>) => get(`/file?path=${encodeURIComponent(secret)}`, headers);
   assert.deepEqual(await fileGet({}), { status: 200, body: 'TOP-SECRET' });
   assert.equal((await fileGet({ host: `localhost:${port}`, origin: `http://localhost:${port}` })).status, 200);
-  for (const hd of [{ host: `evil.example:${port}` }, { origin: `http://127.0.0.1:${port + 1}` }, { origin: 'null' }, { host: `127.0.0.1:${port + 1}` }]) {
+  assert.equal((await fileGet({ host: `127.0.0.1:${port + 1}`, origin: `http://127.0.0.1:${port + 1}` })).status, 200, '포트 포워드로 연 화면');
+  for (const hd of [{ host: `evil.example:${port}` }, { origin: `http://127.0.0.1:${port + 1}` }, { origin: 'null' }, { host: `127.0.0.1:${port + 1}`, origin: `http://127.0.0.1:${port}` }]) {
     const r = await fileGet(hd);
     assert.equal(r.status, 403, JSON.stringify(hd)); assert.ok(!r.body.includes('TOP-SECRET'));
   }

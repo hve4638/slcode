@@ -1,4 +1,4 @@
-// 동사 없는 slcode = new . 와 superlite 안 카드 경로 (ticket slcode-bare-new·slcode-resume-like-new) — 카드 경로는 PATH 앞의 가짜 `superlite` 심으로 본다
+// 동사 없는 slcode = 시작 화면(ticket slcode-session-profile, 사용자 2026-10-30 — 그 전엔 new .)과 superlite 안 카드 경로 (ticket slcode-bare-new·slcode-resume-like-new) — 카드 경로는 PATH 앞의 가짜 `superlite` 심으로 본다
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -53,13 +53,20 @@ function fakeShim(mode: 'ok' | 'unknown' | 'unreachable' | 'fail' | 'nofocus') {
   return { env, calls: () => (fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').trim().split('\n').filter((l) => l.startsWith('slcode.')) : []) };
 }
 
-test('동사 없는 slcode = new . — 옵션만 받는다, 위치 인자·모르는 동사는 거부', async () => {
+test('동사 없는 slcode = 시작 화면 — 세션은 고르기 전엔 없고, 세션 옵션·위치 인자·모르는 동사는 거부; new 는 폴더를 꼭 받는다', async () => {
   const dir = tmp('slcode-bare-');
   const work = tmp('slcode-work-');
-  const a = await serveOnce(dir, ['--no-web', '--title', 'bare1'], { cwd: work });
-  assert.ok(a.first.endsWith('/sock'), a.first + a.err);
+  const a = await serveOnce(dir, ['--port', '0'], { cwd: work });
+  assert.match(a.first, /^http:\/\/127\.0\.0\.1:\d+\/$/, a.first + a.err); assert.match(a.err, /start screen/);
+  assert.deepEqual(EventLog.list(corePaths(dir).sessionsDir), [], '고르기 전엔 세션이 없다');
+  const opt = await run(dir, ['--no-web', '--title', 'bare1'], { cwd: work });
+  assert.equal(opt.code, 2); assert.match(opt.stderr, /takes no session options \(--title, --no-web\) — for a new session: slcode new <folder>/);
+  const nf = await run(dir, ['new'], { cwd: work });
+  assert.equal(nf.code, 2); assert.match(nf.stderr, /new needs a folder/);
+  const b = await serveOnce(dir, ['new', '.', '--no-web', '--title', 'new1'], { cwd: work });
+  assert.ok(b.first.endsWith('/sock'), b.first + b.err);
   const [meta] = EventLog.list(corePaths(dir).sessionsDir);
-  assert.equal(meta.cwd, fs.realpathSync(work)); assert.equal(meta.title, 'bare1');
+  assert.equal(meta.cwd, fs.realpathSync(work)); assert.equal(meta.title, 'new1');
   const pos = await run(dir, ['--title', 'x', 'elsewhere']);
   assert.equal(pos.code, 2); assert.match(pos.stderr, /옵션만 받는다: elsewhere/);
   const unk = await run(dir, ['foo']);
@@ -72,17 +79,19 @@ test('동사 없는 slcode = new . — 옵션만 받는다, 위치 인자·모�
   await sleep(1500); // 우체국 grace
 });
 
-test('superlite 안: slcode·slcode new 는 slcode.new 동사로 카드를 열고 끝난다 — 옵션 전달, 카드가 쓰지 않는 옵션은 경고', async () => {
+test('superlite 안: slcode 는 slcode.start 로 시작 화면 카드, slcode new 는 slcode.new 동사로 카드를 열고 끝난다 — 옵션 전달, 카드가 쓰지 않는 옵션은 경고', async () => {
   const dir = tmp('slcode-bare-');
   const work = tmp('slcode-work-');
   const shim = fakeShim('ok');
-  const a = await run(dir, ['--vendor', 'codex', '--title', 'T 1', '--mode', 'auto', '--model', 'gpt-x', '--raw'], { cwd: work, env: shim.env });
+  const s = await run(dir, [], { cwd: work, env: shim.env });
+  assert.equal(s.code, 0, s.stderr); assert.equal(s.stdout.trim(), 's-card-1');
+  const a = await run(dir, ['new', work, '--vendor', 'codex', '--title', 'T 1', '--mode', 'auto', '--model', 'gpt-x', '--raw'], { env: shim.env });
   assert.equal(a.code, 0, a.stderr); assert.equal(a.stdout.trim(), 's-card-1');
   assert.match(a.stderr, /warning: ignoring --raw \(opened as a card\)/);
   const b = await run(dir, ['new', work], { env: shim.env });
   assert.equal(b.code, 0); assert.equal(b.stdout.trim(), 's-card-1');
   const real = fs.realpathSync(work);
-  assert.deepEqual(shim.calls(), [`slcode.new --cwd ${real} --vendor codex --title T 1 --mode auto --model gpt-x`, `slcode.new --cwd ${work}`]);
+  assert.deepEqual(shim.calls(), [`slcode.start --cwd ${real}`, `slcode.new --cwd ${work} --vendor codex --title T 1 --mode auto --model gpt-x`, `slcode.new --cwd ${work}`]);
   assert.deepEqual(EventLog.list(corePaths(dir).sessionsDir), [], '이 프로세스는 세션을 만들지 않는다');
 });
 
@@ -114,11 +123,15 @@ test('superlite 안 폴백: --web·--stdio·동사 없음·연결 불가는 웹 
   assert.ok(JSON.parse(st.first).id, st.first + st.err); assert.deepEqual(ok.calls(), [], '--stdio 는 심을 부르지 않는다');
   for (const mode of ['unknown', 'unreachable'] as const) {
     const s = fakeShim(mode);
-    const r = await serveOnce(dir, ['--no-web'], { cwd: work, env: s.env });
+    const r = await serveOnce(dir, ['new', '.', '--no-web'], { cwd: work, env: s.env });
     assert.ok(r.first.endsWith('/sock'), `${mode}: ${r.first} ${r.err}`); assert.equal(s.calls().length, 1);
   }
+  // slcode.start 를 모르는 옛 플러그인 — 시작 화면은 웹으로
+  const old = fakeShim('unknown');
+  const sw = await serveOnce(dir, [], { cwd: work, env: old.env });
+  assert.match(sw.first, /^http:\/\/127\.0\.0\.1:\d+\/$/, sw.first + sw.err); assert.deepEqual(old.calls(), [`slcode.start --cwd ${fs.realpathSync(work)}`]);
   const f = fakeShim('fail');
-  const r = await run(dir, ['--no-web'], { cwd: work, env: f.env });
+  const r = await run(dir, ['new', '.', '--no-web'], { cwd: work, env: f.env });
   assert.equal(r.code, 1); assert.match(r.stderr, /card failed/);
   await sleep(1500);
 });
@@ -158,7 +171,7 @@ test('--host·--port: superlite 안에서 --web 없이 주면 아무것도 열�
   const work = fs.realpathSync(tmp('slcode-work-'));
   stored(dir, 'old11111', work, { closedAt: 100 });
   const shim = fakeShim('ok');
-  for (const args of [['--host', '0.0.0.0'], ['new', '--port', '9'], ['resume', 'old11111', '--port', '9'], ['continue', '--host', '0.0.0.0'], ['resume', '--port', '9']]) {
+  for (const args of [['--host', '0.0.0.0'], ['new', '.', '--port', '9'], ['resume', 'old11111', '--port', '9'], ['continue', '--host', '0.0.0.0'], ['resume', '--port', '9']]) {
     const r = await run(dir, args, { cwd: work, env: shim.env });
     assert.equal(r.code, 2, args.join(' ')); assert.match(r.stderr, new RegExp(`warning: ${args.find((a) => a === '--host' || a === '--port')} is ambiguous inside superlite; add --web to serve over the web, or drop it to open a card`), args.join(' '));
   }

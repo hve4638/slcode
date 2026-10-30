@@ -11,6 +11,7 @@ import { buildId, compat, HARNESSES, MANIFEST, parseAssignment, readManifest, re
 import { BUILD_FILES, ensureBuild, type Report } from './agentBuild.js';
 import { acquireLock, releaseLock } from './lock.js';
 import { corePaths } from './paths.js';
+import { loadsPlugin, profileValues, type Profile } from './profiles.js';
 
 export const AGENT_DIR = 'agent-plugins';
 /** 세션 폴더 안의 링크 폴더 — agent-plugins/<이름> → build/<식별자>/claude/<이름> (Codex 는 build/<식별자>/codex, 다시 실은 skill 의 빌드는 <이름>@skills) */
@@ -40,8 +41,8 @@ export type PluginEntry = {
   /** 하네스별 마지막 빌드 — 기본 설정으로 만든 것 */
   builds: Partial<Record<Harness, string>>;
 };
-/** plugins 의 키 순서가 설치 순서 — 지시문을 이 순서로 잇는다 */
-export type AgentConfig = { plugins: Record<string, PluginEntry> };
+/** plugins 의 키 순서가 설치 순서 — 지시문을 이 순서로 잇는다. profiles 는 사용자 프로필 (profiles.ts) */
+export type AgentConfig = { plugins: Record<string, PluginEntry>; profiles?: Record<string, Profile> };
 
 export function readConfig(ap: AgentPaths): AgentConfig {
   try {
@@ -50,13 +51,13 @@ export function readConfig(ap: AgentPaths): AgentConfig {
   } catch {}
   return { plugins: {} };
 }
-function writeConfig(ap: AgentPaths, c: AgentConfig) {
+export function writeConfig(ap: AgentPaths, c: AgentConfig) {
   fs.mkdirSync(ap.dir, { recursive: true, mode: 0o700 });
   const tmp = `${ap.config}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(c, null, 2));
   fs.renameSync(tmp, ap.config);
 }
-async function locked<T>(ap: AgentPaths, fn: () => T): Promise<T> {
+export async function locked<T>(ap: AgentPaths, fn: () => T): Promise<T> {
   fs.mkdirSync(ap.dir, { recursive: true, mode: 0o700 });
   const l = await acquireLock(ap.lock, process.pid, 10_000);
   if (!l.ok) throw new Error(`agent plugin config is locked by pid ${l.holder}`);
@@ -218,7 +219,7 @@ export function claudeDataDir(name: string, env: NodeJS.ProcessEnv): string {
 }
 
 type Plan = Loaded & { target: string };
-/** 플러그인 하나의 지금 빌드 — 기본 설정 < 세션 값. Claude 는 지시문의 경로 변수를 세션 링크 경로로 바꾼다 (Claude 는 지시문을 치환하지 않는다).
+/** 플러그인 하나의 지금 빌드 — 기본 설정 < 프로필 < 세션 값. Claude 는 지시문의 경로 변수를 세션 링크 경로로 바꾼다 (Claude 는 지시문을 치환하지 않는다).
  *  Codex 빌드는 이미 바꿨다 — 데이터 폴더만 만든다 */
 function plan(ap: AgentPaths, name: string, e: PluginEntry, link: string, layers: (Values | undefined)[], env: NodeJS.ProcessEnv, harness: SessionHarness = 'claude'): Plan {
   const inst = path.join(ap.installed, name);
@@ -248,20 +249,21 @@ function relink(link: string, target: string) {
 }
 
 /** 세션을 띄울 때 — 설치한 플러그인마다 그 하네스의 빌드를 만들고(있으면 다시 쓰고) 세션 폴더에 링크를 건다. 싣지 못한 것은 notes 에.
- *  Codex 는 링크로 빌드를 정리에서 지킬 뿐, 넘기는 경로는 빌드 폴더 그대로다 (빌드 안의 경로 변수를 이미 그 경로로 바꿨다) */
-export function loadSessionPlugins(sessionDir: string, env: NodeJS.ProcessEnv, session: SessionValues = {}, stateDir?: string, harness: SessionHarness = 'claude'): SessionPlugins {
+ *  Codex 는 링크로 빌드를 정리에서 지킬 뿐, 넘기는 경로는 빌드 폴더 그대로다 (빌드 안의 경로 변수를 이미 그 경로로 바꿨다).
+ *  프로필이 있으면 그 프로필이 싣는 플러그인만, 설정 값은 기본 설정 < 프로필 < 세션 (ticket slcode-session-profile) */
+export function loadSessionPlugins(sessionDir: string, env: NodeJS.ProcessEnv, session: SessionValues = {}, stateDir?: string, harness: SessionHarness = 'claude', profile?: Profile): SessionPlugins {
   const ap = agentPaths(stateDir);
   const links = path.join(sessionDir, SESSION_LINKS);
   fs.rmSync(links, { recursive: true, force: true }); // 지난 기동의 링크 — 지운 플러그인이 남지 않게
   const out: SessionPlugins = { plugins: [], append: '', settings: null, env: {}, loaded: [], notes: [], codex: { roots: [], bin: [], args: [] } };
-  const entries = Object.entries(readConfig(ap).plugins);
+  const entries = Object.entries(readConfig(ap).plugins).filter(([name]) => !profile || loadsPlugin(profile, name));
   if (!entries.length) return out;
   fs.mkdirSync(links, { recursive: true, mode: 0o700 });
   const texts: string[] = [];
   for (const [name, e] of entries) {
     const link = path.join(links, name);
     try {
-      const { target, ...p } = plan(ap, name, e, link, [session[name]], env, harness);
+      const { target, ...p } = plan(ap, name, e, link, [profile && profileValues(profile, name), session[name]], env, harness);
       relink(link, target);
       if (p.codex) {
         if (p.codex.skills) out.codex.roots.push(p.codex.skills);
@@ -282,7 +284,7 @@ export function loadSessionPlugins(sessionDir: string, env: NodeJS.ProcessEnv, s
  *  later 는 이 세션에 반영되지 않아 새 세션부터인 것 (지시문·env·session.json·Codex 의 MCP·bin 이 바뀐 플러그인, 세션 뒤에 설치한 플러그인).
  *  Codex 는 skill 만 다시 싣는다 — 기동 때의 빌드는 <이름> 링크로 남기고(MCP·bin 이 아직 그것을 쓴다) 새 빌드는 <이름>@skills 링크로 지킨다. roots 는 새 extra root 들 */
 export type Later = { name: string; what: ('instructions' | 'env' | 'session.json' | 'mcp' | 'bin' | 'installed')[] };
-export function reloadSessionPlugins(sessionDir: string, loaded: Loaded[], env: NodeJS.ProcessEnv, session: SessionValues = {}, stateDir?: string, harness: SessionHarness = 'claude'): { loaded: Loaded[]; later: Later[]; removed: string[]; roots: string[] } {
+export function reloadSessionPlugins(sessionDir: string, loaded: Loaded[], env: NodeJS.ProcessEnv, session: SessionValues = {}, stateDir?: string, harness: SessionHarness = 'claude', profile?: Profile): { loaded: Loaded[]; later: Later[]; removed: string[]; roots: string[] } {
   const ap = agentPaths(stateDir);
   const plugins = readConfig(ap).plugins;
   const links = path.join(sessionDir, SESSION_LINKS);
@@ -292,8 +294,8 @@ export function reloadSessionPlugins(sessionDir: string, loaded: Loaded[], env: 
   for (const old of loaded) {
     const link = path.join(links, old.name);
     const e = plugins[old.name];
-    if (!e) { fs.rmSync(link, { force: true }); fs.rmSync(`${link}@skills`, { force: true }); removed.push(old.name); continue; }
-    const { target, ...p } = plan(ap, old.name, e, link, [session[old.name]], env, harness);
+    if (!e || (profile && !loadsPlugin(profile, old.name))) { fs.rmSync(link, { force: true }); fs.rmSync(`${link}@skills`, { force: true }); removed.push(old.name); continue; }
+    const { target, ...p } = plan(ap, old.name, e, link, [profile && profileValues(profile, old.name), session[old.name]], env, harness);
     if (p.codex) {
       let start = '';
       try { start = fs.readlinkSync(link); } catch {}
@@ -312,18 +314,19 @@ export function reloadSessionPlugins(sessionDir: string, loaded: Loaded[], env: 
     if (what.length) later.push({ name: old.name, what });
     next.push({ ...p, instructions: old.instructions, env: old.env, settings: old.settings, ...(old.codex ? { codex: { ...old.codex, skills: p.codex?.skills ?? null } } : {}) });
   }
-  for (const name of Object.keys(plugins)) if (!loaded.some((l) => l.name === name)) later.push({ name, what: ['installed'] });
+  for (const name of Object.keys(plugins)) if (!loaded.some((l) => l.name === name) && (!profile || loadsPlugin(profile, name))) later.push({ name, what: ['installed'] });
   return { loaded: next, later, removed, roots };
 }
 
 /** 지금 설정으로 빌드하면 나올 식별자 — 세션이 실은 것과 다르면 다시 실을 것이 있다. 빌드하지 않는다 */
-export function currentBuilds(session: SessionValues = {}, stateDir?: string, harness: SessionHarness = 'claude'): Record<string, string | null> {
+export function currentBuilds(session: SessionValues = {}, stateDir?: string, harness: SessionHarness = 'claude', profile?: Profile): Record<string, string | null> {
   const ap = agentPaths(stateDir);
   const out: Record<string, string | null> = {};
   for (const [name, e] of Object.entries(readConfig(ap).plugins)) {
+    if (profile && !loadsPlugin(profile, name)) continue;
     try {
       const m = readManifest(path.join(ap.installed, name));
-      out[name] = buildId(valuesString(resolveValues(m, [e.values, session[name]])), e.hash, harness);
+      out[name] = buildId(valuesString(resolveValues(m, [e.values, profile && profileValues(profile, name), session[name]])), e.hash, harness);
     } catch { out[name] = null; }
   }
   return out;

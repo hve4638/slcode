@@ -367,6 +367,17 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf button.pill-btn { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 3px 8px 3px 10px; border-radius: 8px; background: var(--acf-soft); color: var(--acf-fg); }
 .acf button.pill-btn svg { width: 14px; height: 14px; fill: none; stroke: var(--acf-muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .acf #acf-models { min-width: 260px; }
+/* 첫 메시지 전 시작 프로필 고르기 — 빈 채팅창 가운데 (ticket slcode-session-profile) */
+.acf .hero { max-width: 560px; margin: 18vh auto 0; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.acf .hero[hidden] { display: none; }
+.acf .hero-h { font-size: 13px; color: var(--acf-muted); }
+.acf .hero-seg { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px; padding: 2px; border-radius: 10px; background: var(--acf-soft); }
+.acf .hero-seg .seg { border: 0; padding: 6px 14px; border-radius: 8px; background: transparent; color: var(--acf-muted); font-size: 13px; cursor: pointer; }
+.acf .hero-seg .seg[aria-pressed=true] { background: var(--acf-panel); color: var(--acf-fg); box-shadow: 0 1px 2px var(--acf-shadow); }
+.acf .hero-seg .seg[disabled] { cursor: default; }
+.acf .hero-sum { font-size: 12px; color: var(--acf-fg); min-height: 1.4em; }
+.acf .hero-note { font-size: 11px; color: var(--acf-muted); }
+.acf .hero-back { font-size: 12px; margin-bottom: 10px; }
 /* 모델 메뉴 맨 위 벤더 토글 — 첫 메시지 뒤엔 지금 벤더만 칠한 채 흐리게 (ticket slcode-vendor-model-picker) */
 .acf #acf-models .vendor { display: flex; gap: 2px; padding: 2px; margin-bottom: 6px; border-radius: 8px; background: var(--acf-soft); }
 .acf #acf-models .vendor .seg { flex: 1; border: 0; padding: 5px 0; border-radius: 6px; background: transparent; color: var(--acf-muted); font-size: 13px; }
