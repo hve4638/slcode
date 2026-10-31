@@ -43,7 +43,7 @@ function ago(t) {
 const base = (p) => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
 
 const RECENT = 6; // 목록마다 처음에 이만큼 — 나머지는 '모두 보기'
-const state = { list: null, open: { here: false, all: false }, error: null, busy: null };
+const state = { list: null, open: { here: false, all: false }, error: null, busy: null, plugins: null };
 
 async function load() {
   try { state.list = await call('list'); state.error = null; }
@@ -97,6 +97,13 @@ html:not([data-theme*="-"]) .st .go:hover{filter:none;border-color:light-dark(#0
 .st .more:hover{background:var(--acf-soft);color:var(--acf-fg)}
 .st .none{padding:6px 10px;color:var(--acf-muted);font-size:12px}
 .st .err{color:var(--acf-err);white-space:pre-wrap;margin-top:16px;text-align:center}
+.st .more.plug{display:block;margin:40px auto 0}
+.st.pl{max-width:1040px;padding-top:16px}
+.st.pl .phead{display:flex;align-items:center;gap:6px;padding-bottom:10px;border-bottom:1px solid var(--acf-line)}
+.st.pl .phead .more{margin:0;padding:0 8px;font-size:18px;line-height:28px}
+.st.pl .pdetail{overflow:visible}
+.st.pl .apply{background:var(--acf-bg)}
+.st.pl h1{margin:0;font-size:15px;font-weight:600;text-align:left;letter-spacing:0}
 @container (max-width:640px){
   .st{padding:32px 16px 24px}
   .st h1{font-size:22px}
@@ -131,14 +138,29 @@ function column(key, head, full, rows, pick, where) {
     rows.length > shown.length ? el('button', { class: 'more', on: { click: () => { state.open[key] = true; draw(); } } }, `모두 보기 (${rows.length})`) : null);
 }
 
+/** 에이전트 플러그인 관리 (ticket slcode-agent-plugin-ui) — 웹 입구만. 모듈은 누를 때 읽는다: 카드(srcdoc)에는 이 파일만 들어 있어 import 가 닿지 않는다 */
+async function openPlugins() {
+  const { pluginsPanel } = await import('./plugins.js');
+  state.plugins = pluginsPanel(call);
+  draw();
+  state.plugins.load();
+}
+
 function draw() {
   const l = state.list;
+  if (state.plugins) {
+    root.replaceChildren(el('style', {}, STYLE), el('div', { class: 'st pl' },
+      el('div', { class: 'phead' }, el('button', { class: 'more', title: '시작 화면', on: { click: () => { state.plugins = null; draw(); } } }, '‹'), el('h1', {}, '에이전트 플러그인')),
+      state.plugins.el));
+    return;
+  }
   root.replaceChildren(el('style', {}, STYLE), el('div', { class: 'st' },
     el('h1', {}, 'slcode'),
     el('button', { class: 'go', disabled: !!state.busy, on: { click: () => void go({ new: true }, 'new session') } }, 'new session'),
     state.busy ? el('div', { class: 'busy' }, `${state.busy} — 여는 중…`) : null,
     l ? el('div', { class: 'cols' }, column('here', pathHead(l.cwd), l.cwd, l.here, true, false), column('all', 'all sessions', null, l.all, false, true)) : null,
-    state.error ? el('div', { class: 'err' }, state.error) : null));
+    state.error ? el('div', { class: 'err' }, state.error) : null,
+    mode === 'web' ? el('button', { class: 'more plug', on: { click: () => void openPlugins() } }, '에이전트 플러그인') : null));
 }
 
 draw();

@@ -10,7 +10,7 @@ import { summarize } from './activity.js';
 import { EventLog } from './eventLog.js';
 import { closedTime, sockAlive } from './live.js';
 import { corePaths } from './paths.js';
-import { loopbackAllowed, WEB_DIR, withPageAttrs } from './serve.js';
+import { loopbackAllowed, pluginMethod, PLUGIN_METHODS, WEB_DIR, withPageAttrs } from './serve.js';
 import type { SettingsKind } from './protocol.js';
 
 /** at 은 마지막 활동 — 꺼진 세션은 꺼진 시각, 떠 있는 세션은 활동 기록의 마지막 상태 변화(없으면 마지막 턴) */
@@ -59,7 +59,7 @@ export function startServer(dir: string, cwd: string): { server: http.Server; ch
     if (req.method === 'GET') {
       if (url === '/' || url === '/index.html') { send(200, 'text/html; charset=utf-8', startPageHtml(dir, 'web', cwd, false)); return; }
       const f = url.slice(1);
-      if (f === 'style.css' || f === 'start.js') { send(200, f.endsWith('.css') ? 'text/css' : 'text/javascript', fs.readFileSync(path.join(WEB_DIR, f), 'utf8')); return; }
+      if (f === 'style.css' || f === 'start.js' || f === 'plugins.js') { send(200, f.endsWith('.css') ? 'text/css' : 'text/javascript', fs.readFileSync(path.join(WEB_DIR, f), 'utf8')); return; }
       send(404, 'text/plain', 'not found'); return;
     }
     if (req.method !== 'POST' || !url.startsWith('/api/')) { send(404, 'text/plain', 'not found'); return; }
@@ -68,7 +68,9 @@ export function startServer(dir: string, cwd: string): { server: http.Server; ch
     req.on('end', async () => {
       try {
         const a = body ? JSON.parse(body) : {};
-        switch (url.slice(5)) {
+        const action = url.slice(5);
+        if ((PLUGIN_METHODS as readonly string[]).includes(action)) { json(200, await pluginMethod(dir, action as (typeof PLUGIN_METHODS)[number], a)); return; } // 에이전트 플러그인 관리 (ticket slcode-agent-plugin-ui)
+        switch (action) {
           case 'list': json(200, await startList(dir, cwd)); return;
           case 'go': {
             if (picked) { json(200, {}); return; } // 두 번 눌러도 한 세션

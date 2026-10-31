@@ -11,7 +11,8 @@ import { buildId, compat, HARNESSES, MANIFEST, parseAssignment, readManifest, re
 import { BUILD_FILES, ensureBuild, type Report } from './agentBuild.js';
 import { acquireLock, releaseLock } from './lock.js';
 import { corePaths } from './paths.js';
-import { exportTo, refreshExport, unexport, EXPORT_HARNESSES, type ExportHarness, type ExportResult } from './agentExport.js';
+import { exportTo, refreshExport, unexport, EXPORT_HARNESSES, type ExportHarness, type ExportReport, type ExportResult } from './agentExport.js';
+import { checkScripts } from './scriptCheck.js';
 import { loadsPlugin, profileValues, type Profile } from './profiles.js';
 
 export const AGENT_DIR = 'agent-plugins';
@@ -213,6 +214,8 @@ export type PluginRow = {
   reports: Partial<Record<Harness, Report | null>>;
   /** export 한 하네스 */
   exports: ExportHarness[];
+  /** export 한 하네스별 export 판의 report.json — 아직 만들지 않았거나 읽지 못하면 null */
+  exported: Partial<Record<ExportHarness, ExportReport | null>>;
 };
 
 /** 설치 목록 — 기본 설정 기준의 part·옵션 값과 마지막 빌드 보고 */
@@ -224,13 +227,31 @@ export function listPlugins(stateDir?: string): PluginRow[] {
     const r = m ? resolveValues(m, [e.values]) : { parts: {}, options: {} };
     const reports: PluginRow['reports'] = {};
     for (const h of HARNESSES) if (e.builds[h]) { try { reports[h] = JSON.parse(fs.readFileSync(path.join(ap.build, e.builds[h]!, BUILD_FILES.report), 'utf8')); } catch { reports[h] = null; } }
+    const exported: PluginRow['exported'] = {};
+    for (const h of e.exports ?? []) { try { exported[h] = JSON.parse(fs.readFileSync(path.join(ap.build, e.builds[h]!, 'export', h, BUILD_FILES.report), 'utf8')); } catch { exported[h] = null; } }
     return {
       name, version: e.version, grade: e.grade, lost: e.lost, source: e.source, installedAt: e.installedAt,
       parts: m ? Object.entries(m.parts).map(([k, p]) => ({ name: k, on: r.parts[k], required: p.required, default: p.default })) : [],
       options: m ? Object.entries(m.options).map(([k, o]) => ({ name: k, type: o.type, value: r.options[k], default: o.default, label: o.label ?? null })) : [],
-      reports, exports: e.exports ?? [],
+      reports, exports: e.exports ?? [], exported,
     };
   });
+}
+
+/** 빌드한 js/ts 훅의 보고 줄 — 빼거나 고칠 것과 하네스별 tsc 검사 경고 (ticket slcode-agent-plugin-script-portable). build 는 Claude 빌드(스크립트는 거기서 묶는다).
+ *  CLI 의 add·set 이 stderr 에, 웹 관리 화면이 플러그인 칸에 보인다. 경고일 뿐 빌드는 그대로 */
+export async function scriptWarnings(name: string, build: string, stateDir?: string): Promise<string[]> {
+  const ap = agentPaths(stateDir);
+  let rep: Report;
+  try { rep = JSON.parse(fs.readFileSync(path.join(ap.build, build, BUILD_FILES.report), 'utf8')); } catch { return []; }
+  const sc = rep.scripts;
+  if (!sc || !(sc.built.length + sc.failed.length)) return [];
+  const lines = [...sc.failed.map((x) => `  failed: ${x}`), ...sc.warnings.map((x) => `  warning: ${x}`)];
+  const inst = path.join(ap.installed, name);
+  const c = await checkScripts(sc.built.map((s) => path.join(inst, s)), ['claude', 'codex'], corePaths(stateDir).dir, inst);
+  if (c.skipped) lines.push(`  type check skipped: ${c.skipped}`);
+  for (const [h, ws] of Object.entries(c.warnings)) lines.push(...ws.map((w) => `  ${h === 'codex' ? 'codex export' : h}: ${w}`));
+  return lines;
 }
 
 // ---- 세션에 싣기 (Claude·Codex)

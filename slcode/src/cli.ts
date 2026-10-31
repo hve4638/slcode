@@ -24,9 +24,7 @@ import { findVendorSession, forkClaude, vendorResumeCommand } from './vendor.js'
 import { pullHistory } from './history.js';
 import { CLAUDE_EFFORTS } from './base.js';
 import { randomUUID } from 'node:crypto';
-import { addPlugin, agentPaths, exportPlugin, listPlugins, removePlugin, setPlugin } from './agentPlugins.js';
-import { BUILD_FILES, type Report } from './agentBuild.js';
-import { checkScripts } from './scriptCheck.js';
+import { addPlugin, exportPlugin, listPlugins, removePlugin, scriptWarnings, setPlugin } from './agentPlugins.js';
 import { addProfile, getProfile, listProfiles, removeProfile, setProfile, type Profile } from './profiles.js';
 import { summarize } from './activity.js';
 import { FILES, PERMISSION_MODES, type ApprovalRequest, type LoggedEvent, type Methods, type SessionInfo } from './protocol.js';
@@ -161,16 +159,7 @@ const print = (o: unknown) => console.log(JSON.stringify(o, null, 2));
 
 /** 빌드한 js/ts 훅의 보고 — 빼거나 고칠 것과 하네스별 tsc 검사 경고를 stderr 에 (ticket slcode-agent-plugin-script-portable). 경고일 뿐 빌드는 그대로 */
 async function scriptReport(name: string, build: string) {
-  const ap = agentPaths(P.dir);
-  let rep: Report;
-  try { rep = JSON.parse(fs.readFileSync(path.join(ap.build, build, BUILD_FILES.report), 'utf8')); } catch { return; }
-  const sc = rep.scripts;
-  if (!sc || !(sc.built.length + sc.failed.length)) return;
-  const lines = [...sc.failed.map((x) => `  failed: ${x}`), ...sc.warnings.map((x) => `  warning: ${x}`)];
-  const inst = path.join(ap.installed, name);
-  const c = await checkScripts(sc.built.map((s) => path.join(inst, s)), ['claude', 'codex'], P.dir, inst);
-  if (c.skipped) lines.push(`  type check skipped: ${c.skipped}`);
-  for (const [h, ws] of Object.entries(c.warnings)) lines.push(...ws.map((w) => `  ${h === 'codex' ? 'codex export' : h}: ${w}`));
+  const lines = await scriptWarnings(name, build, P.dir);
   if (lines.length) err(`${name}: js/ts hooks\n${lines.join('\n')}`);
 }
 const err = (msg: string) => console.error(`[slcode] ${msg}`);

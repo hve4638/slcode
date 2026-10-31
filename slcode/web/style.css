@@ -793,3 +793,64 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .act-dlg .d-tl .hov-wrap { position: absolute; left: 80px; right: 0; top: 0; bottom: 22px; pointer-events: none; }
 .acf .act-dlg .d-tl .hov { position: absolute; top: -4px; bottom: -4px; width: 1px; background: var(--acf-fg); }
 .acf .act-dlg .d-tl .hov[hidden] { display: none; }
+
+/* 에이전트 플러그인 관리 (web/plugins.js, ticket slcode-agent-plugin-ui) — 설정 창·시작 화면이 같이 쓴다 */
+.ppanel { container-type: inline-size; display: grid; grid-template-columns: 200px minmax(0, 1fr); min-height: 100%; font: 14px/1.45 var(--acf-sans); color: var(--acf-fg); }
+.ppanel .plist { display: flex; flex-direction: column; gap: 2px; padding: 12px 8px; border-right: 1px solid var(--acf-line); overflow-y: auto; }
+.ppanel .pitem { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 6px; align-items: baseline; padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.ppanel .pitem:hover { background: var(--acf-soft); }
+.ppanel .pitem[aria-current=true] { background: var(--acf-soft); }
+.ppanel .pitem .nm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ppanel .pitem .sub { grid-column: 1 / -1; font-size: 11px; color: var(--acf-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ppanel .pdetail { min-width: 0; padding: 4px 18px 16px; overflow-y: auto; }
+@container (max-width: 560px) {
+  .ppanel { grid-template-columns: minmax(0, 1fr); }
+  .ppanel .plist { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--acf-line); padding: 8px 0; }
+  .ppanel .pdetail { padding: 4px 0 16px; }
+  .ppanel .apply { margin: 8px 0 -16px; padding: 10px 0; }
+}
+.ppanel p { margin: 6px 0 0; }
+.ppanel .note { font-size: 12px; color: var(--acf-muted); }
+.ppanel .warn { font-size: 12px; color: var(--acf-warn); }
+.ppanel .err { font-size: 12px; color: var(--acf-err); white-space: pre-wrap; }
+.ppanel .none { font-size: 12px; color: var(--acf-muted); padding: 2px 0; }
+.ppanel section.plug { padding: 12px 0 8px; }
+.ppanel section.plug > header { display: flex; align-items: baseline; gap: 8px; }
+.ppanel section.plug h3 { margin: 0; font-size: 15px; font-weight: 600; color: var(--acf-fg); }
+.ppanel .ver { font-size: 12px; color: var(--acf-muted); font-variant-numeric: tabular-nums; }
+.ppanel .grade { padding: 0 6px; border-radius: 4px; font-size: 11px; line-height: 18px; border: 1px solid currentColor; }
+.ppanel .grade.full { color: var(--acf-ok); }
+.ppanel .grade.partial { color: var(--acf-warn); }
+.ppanel .busy { margin-left: auto; font-size: 12px; color: var(--acf-muted); }
+.ppanel .grp { margin-top: 12px; }
+.ppanel h4 { margin: 0 0 4px; font-size: 12px; font-weight: 600; color: var(--acf-muted); }
+.ppanel .ln { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 30px; }
+.ppanel .ln .nm { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.ppanel .ln .sub { font-size: 12px; color: var(--acf-muted); }
+.ppanel .ln.changed .nm::after { content: "•"; color: var(--acf-accent); }
+.ppanel .apply { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin: 8px -18px -16px; padding: 10px 18px; border-top: 1px solid var(--acf-line); background: var(--acf-panel); }
+.ppanel .apply[hidden] { display: none; }
+.ppanel .apply .sub { margin-right: auto; font-size: 12px; color: var(--acf-muted); }
+.ppanel .apply button { height: 28px; padding: 0 12px; border: 1px solid var(--acf-line); border-radius: 6px; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
+.ppanel .apply button.solid { border-color: var(--acf-accent); background: var(--acf-accent); color: var(--acf-on-accent); }
+.ppanel .apply button:disabled { opacity: .5; cursor: default; }
+.ppanel .restricted { font-size: 11px; color: var(--acf-warn); }
+.ppanel .ln input:not([role=switch]) { width: 180px; padding: 3px 6px; border: 1px solid var(--acf-line); border-radius: 6px; background: var(--acf-bg); color: inherit; font: inherit; font-size: 13px; }
+.ppanel input[role=switch] { -webkit-appearance: none; appearance: none; position: relative; flex: none; width: 34px; height: 20px; margin: 0; border-radius: 10px; background: var(--acf-line); cursor: pointer; transition: background .15s; }
+.ppanel input[role=switch]::before { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: transform .15s; }
+.ppanel input[role=switch]:checked { background: var(--acf-accent); }
+.ppanel input[role=switch]:checked::before { transform: translateX(14px); }
+.ppanel input[role=switch]:disabled { opacity: .5; cursor: default; }
+.ppanel input[role=switch]:focus-visible { outline: 2px solid var(--acf-accent); outline-offset: 2px; }
+.ppanel details { margin: 2px 0; font-size: 13px; }
+.ppanel details > summary { cursor: pointer; color: var(--acf-muted); }
+.ppanel details > summary:hover { color: var(--acf-fg); }
+.ppanel .lost details > summary { color: var(--acf-warn); }
+.ppanel ul { margin: 4px 0 4px; padding-left: 18px; font-size: 12px; }
+.ppanel ul.warns { color: var(--acf-warn); }
+.ppanel li { overflow-wrap: anywhere; }
+.ppanel pre { margin: 4px 0 6px; padding: 8px; max-height: 320px; overflow: auto; border-radius: 6px; background: var(--acf-soft); font: 12px/1.4 var(--acf-mono, ui-monospace, monospace); }
+.ppanel code { font: 12px var(--acf-mono, ui-monospace, monospace); }
+.acf dialog.settings.wide { width: min(920px, calc(100vw - 24px)); height: min(680px, calc(100dvh - 48px)); }
+.acf dialog.settings .body.plugs-body { flex: 1; padding: 0; overflow: hidden; }
+.acf dialog.settings .body.plugs-body .ppanel { height: 100%; }

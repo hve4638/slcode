@@ -12,6 +12,7 @@
 // 웹 모드(터미널의 slcode new)에서는 진입 프로세스(entry.ts)가 포트를 쥐고 들어온 연결을 넘긴다(feed) — 이 serve 는 그 자식이고 소유자가 아니다.
 // serve 가 답하는 것: settings.get·set(화면 설정), serve.info·update.run·serve.restart(serve 교체, 2단계), inspect.usage·clean(inspect 캐시 정리) — 그 밖은 core 로 그대로 넘긴다.
 import http from 'node:http';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -24,6 +25,7 @@ import { readSettings, watchSettings, writeSettings } from './settings.js';
 import { CoreError, ERR, FILES, type SessionInfo, type SettingsKind, type SettingsPatch, type UpdateCheck } from './protocol.js';
 import { inspectBlocked } from './inspect.js';
 import { cleanInspect, inspectUsage } from './inspectDb.js';
+import { listPlugins, scriptWarnings } from './agentPlugins.js';
 
 export const WEB_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'web');
 const TYPES: Record<string, string> = {
@@ -34,7 +36,7 @@ const TYPES: Record<string, string> = {
 /** 화면 연결(웹·stdio)에서는 부를 수 없는 제어 메서드 — 소유권·웹 주소 등록(토큰이 붙은 url 을 돌려준다)·core 교체는 serve 의 제어 연결만 */
 const CONTROL_ONLY = new Set(['core.own', 'serve.register', 'core.retire']);
 /** serve 가 답하는 메서드 (ServeMethods) — core 로 넘기지 않는다 */
-const SERVE_METHODS = new Set(['settings.get', 'settings.set', 'serve.info', 'update.run', 'serve.restart', 'start.back', 'inspect.usage', 'inspect.clean', 'web.files', 'file.get']);
+const SERVE_METHODS = new Set(['settings.get', 'settings.set', 'serve.info', 'update.run', 'serve.restart', 'start.back', 'inspect.usage', 'inspect.clean', 'web.files', 'file.get', 'plugins.list', 'plugins.check', 'plugins.set', 'plugins.export']);
 /** 프레임의 요청·응답 id — 앞머리만 본다 (첨부가 실린 큰 프레임을 해석하지 않게). 화면·core 는 id 를 맨 앞에 쓴다 ({id, method, params}·{id, result}). 아니면 null */
 const idOf = (line: string): string | null => /^\{"id":(-?\d+|"(?:[^"\\]|\\.)*")[,}]/.exec(line)?.[1] ?? null;
 /** 인증 전 줄 세워 둘 수 있는 요청 수 — 인증 안 된 원격 클라이언트가 serve 메모리를 키우지 못하게 */
@@ -172,6 +174,45 @@ export function fileHandler(req: http.IncomingMessage, res: http.ServerResponse,
   return true;
 }
 
+export const PLUGIN_METHODS = ['plugins.list', 'plugins.check', 'plugins.set', 'plugins.export'] as const;
+/** 에이전트 플러그인 관리 화면의 요청 (ticket slcode-agent-plugin-ui) — 대화 화면(serve)과 웹 시작 화면(startPage)이 같이 쓴다. 바꾸는 것은 `slcode plugin set·export` 를 자식으로 돌린다:
+ *  같은 경로이고, 빌드·하네스 CLI(claude·codex)가 serve 의 중계를 멈추지 않게 */
+export async function pluginMethod(dir: string, method: (typeof PLUGIN_METHODS)[number], params: unknown): Promise<unknown> {
+  const p = (params ?? {}) as { name?: unknown; set?: unknown; to?: unknown; remove?: unknown };
+  switch (method) {
+    case 'plugins.list': return { plugins: listPlugins(dir) };
+    case 'plugins.check': {
+      const row = listPlugins(dir).find((r) => r.name === p.name);
+      if (!row) throw new CoreError(ERR.badRequest, `no agent plugin ${p.name}`);
+      return { warnings: row.reports.claude ? await scriptWarnings(row.name, row.reports.claude.build, dir) : [] };
+    }
+    case 'plugins.set': {
+      if (typeof p.name !== 'string' || !Array.isArray(p.set) || !p.set.length || !p.set.every((a) => typeof a === 'string')) throw new CoreError(ERR.badRequest, 'plugins.set {name, set: ["<part>=on|off" | "<option>=<value>", ...]}');
+      const r = await pluginCli(dir, ['set', p.name, ...p.set]);
+      return { ...(JSON.parse(r.out) as object), warnings: r.err };
+    }
+    case 'plugins.export': {
+      if (typeof p.name !== 'string' || typeof p.to !== 'string') throw new CoreError(ERR.badRequest, 'plugins.export {name, to: claude|codex, remove?}');
+      return { results: JSON.parse((await pluginCli(dir, ['export', p.name, '--to', p.to, ...(p.remove === true ? ['--remove'] : []), '--json'])).out) };
+    }
+  }
+}
+/** `slcode plugin <args>` 를 그 상태 폴더로 — out 은 stdout(JSON), err 는 stderr 의 [slcode] 경고 줄. 실패면 그 error: 줄로 던진다 */
+function pluginCli(dir: string, args: string[]): Promise<{ out: string; err: string[] }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [path.join(PKG, 'dist', 'cli.js'), 'plugin', ...args, '--dir', dir], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    let out = '', err = '';
+    child.stdout.setEncoding('utf8').on('data', (d) => (out += d));
+    child.stderr.setEncoding('utf8').on('data', (d) => (err += d));
+    child.once('error', reject);
+    child.once('close', (code) => {
+      const lines = err.split('\n').filter((l) => l.trim());
+      if (code === 0) resolve({ out, err: lines.map((l) => l.replace(/^\[slcode\] /, '')) });
+      else reject(new CoreError(ERR.badRequest, lines.find((l) => l.startsWith('error: '))?.slice(7) ?? (lines.join(' ') || `slcode plugin exited ${code}`)));
+    });
+  });
+}
+
 /** 루프백 TCP 웹의 요청이 자기 화면에서 왔는가 (ticket slcode-loopback-origin-check, 사용자 결정 2026-10-21) — 토큰이 없는 루프백 웹에 같은 PC 브라우저의 다른 사이트가 닿지 못하게.
  *  Host 는 루프백 이름만 (DNS rebinding 은 Origin 도 공격 도메인이라 Host 로만 막힌다). Origin 은 없거나(브라우저 밖 클라이언트, 링크·이미지로 연 /file) Host 와 같은 http 출처만.
  *  포트는 서버 포트와 대지 않는다 — superlite 포트 포워드(ssh -L 127.0.0.1:N:…)로 열면 Host·Origin 이 127.0.0.1:N 이다. 다른 포트의 페이지는 Origin 이 Host 와 달라 막힌다 */
@@ -287,6 +328,8 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
           if (what !== 'old' && what !== 'compact' && what !== 'all') throw new CoreError(ERR.badRequest, 'inspect.clean what must be old, compact or all');
           return cleanInspect(P.sessionsDir, what, Date.now(), log);
         }
+        // 에이전트 플러그인 관리 (ticket slcode-agent-plugin-ui) — 상태 폴더의 일이라 입구와 상관없다
+        case 'plugins.list': case 'plugins.check': case 'plugins.set': case 'plugins.export': return pluginMethod(P.dir, m.method, m.params);
       }
     };
     answer().then((result) => send(JSON.stringify({ id: m.id, result })), (e) => send(JSON.stringify({ id: m.id, error: { code: (e as CoreError).code, message: (e as Error).message } })));

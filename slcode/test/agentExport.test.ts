@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { addPlugin, agentPaths, exportPlugin, gcBuilds, listPlugins, readConfig, removePlugin, setPlugin } from '../src/agentPlugins.ts';
+import { pluginMethod } from '../src/serve.ts';
 
 const tmp = (p: string) => fs.mkdtempSync(path.join(os.tmpdir(), `slcode-ax-${p}-`));
 function write(root: string, files: Record<string, string>) {
@@ -171,4 +172,27 @@ test('등록 실패 — 링크·마켓플레이스를 되돌리고 config 에 �
   assert.equal(readConfig(ap).plugins.core.exports, undefined);
   await assert.rejects(exportPlugin('core', ['pi'], false, dir, f.env), /export target must be claude or codex/);
   await assert.rejects(exportPlugin('nope', ['claude'], false, dir, f.env), /no agent plugin nope/);
+});
+
+test('관리 화면 요청 (ticket slcode-agent-plugin-ui): list 는 export 판 보고(exported)까지, set·export 는 slcode plugin 을 자식으로 — 여럿을 한 번에 바꾸고, 실패는 CLI 의 오류 문구', async () => {
+  const dir = tmp('state'), f = fakeEnv();
+  await addPlugin(source(), dir, f.env);
+  const saved = { PATH: process.env.PATH, HOME: process.env.HOME, CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR };
+  Object.assign(process.env, { PATH: f.env.PATH, HOME: f.env.HOME, CLAUDE_CONFIG_DIR: f.env.CLAUDE_CONFIG_DIR }); // 자식 CLI 는 serve 의 env 를 받는다
+  try {
+    const ex = (await pluginMethod(dir, 'plugins.export', { name: 'core', to: 'codex' })) as { results: { harness: string; build: string }[] };
+    assert.equal(ex.results[0].harness, 'codex');
+    let row = ((await pluginMethod(dir, 'plugins.list', {})) as { plugins: ReturnType<typeof listPlugins> }).plugins[0];
+    assert.deepEqual(row.exports, ['codex']);
+    assert.ok(row.exported.codex?.excluded.some((x) => x.startsWith('bin/')));
+    const r = (await pluginMethod(dir, 'plugins.set', { name: 'core', set: ['extra=off', 'proactive=true'] })) as { values: string; build: string; exports: { build: string }[]; warnings: string[] };
+    assert.match(r.values, /opt\.proactive=true.*part\.extra=0/);
+    assert.equal(r.exports[0].build, listPlugins(dir)[0].reports.codex?.build); // export 판도 새 빌드로
+    assert.deepEqual(r.warnings, []); // 이 훅은 경고가 없다 — 있으면 stderr 의 줄이 여기로
+    await assert.rejects(pluginMethod(dir, 'plugins.set', { name: 'core', set: ['base=off'] }), /part base is required/);
+    await assert.rejects(pluginMethod(dir, 'plugins.set', { name: 'core', set: [] }), /plugins.set \{name, set/);
+    assert.deepEqual(((await pluginMethod(dir, 'plugins.export', { name: 'core', to: 'codex', remove: true })) as { results: { removed: boolean }[] }).results[0].removed, true);
+    row = listPlugins(dir)[0];
+    assert.deepEqual([row.exports, row.exported], [[], {}]);
+  } finally { for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v; }
 });
