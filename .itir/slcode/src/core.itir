@@ -27,6 +27,9 @@ export fn stripEnv(env, rules) -> Env {
 export fn withBinPath(env, pkg, platform) -> Env {
   role: 벤더 env 의 PATH 맨 앞에 <pkg>/bin 을 넣는다 (ticket slcode-session-bin-path, 사용자 2026-10-24 — 플러그인은 일반 PATH 위치에 런처를 두지 않는다. 세션 안에서 `slcode` 를 치면 PATH 의 다른 판이 아니라 이 core 를 띄운 판이 돈다). 런처(bin/slcode, Windows 는 bin/slcode.cmd)가 없으면(소스 체크아웃의 dist) env 를 그대로 둔다. Windows 는 구분자 `;`, PATH 변수 이름의 대소문자(Path)를 그대로 쓴다
 }
+export fn codexPathArgs(env, platform) -> string[] {
+  role: codex app-server 인자 `-c shell_environment_policy.set.<PATH 이름>=<env 의 PATH>` (ticket slcode-session-path-rc-override, 사용자 2026-10-31). codex 의 셸 스냅숏은 rc(~/.profile·~/.bashrc)를 읽은 뒤의 PATH 를 저장해 명령마다 쓰므로 rc 가 ~/.local/bin 을 앞에 붙이면 세션 안의 `slcode` 가 옛 판으로 간다(0.165 실측). policy 의 set 은 스냅숏 뒤에 다시 export 된다 — 명령의 PATH 는 slcode 가 띄운 PATH(세션 판·플러그인 bin/ 이 앞)로 고정되고 rc 의 PATH 변경은 무시된다. Claude Code 의 Bash 도구도 스냅숏 끝에서 띄울 때 PATH 로 되돌려 같은 규칙이다. PATH 가 없으면 []
+}
 export fn runCore(opts) -> CoreHandle {
   role: 세션 선택·생성 → 벤더 세션 → UDS listen → meta.pid → 소유자 유예 시작 → {sock, session, close, done}. 벤더가 기동 중에 죽으면 닫고 그 사유로 던진다
 }

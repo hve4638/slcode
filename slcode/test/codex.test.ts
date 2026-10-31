@@ -174,7 +174,8 @@ test('codex: 에이전트 플러그인 — thread 전에 skills/extraRoots/set, 
     const env = JSON.parse(fs.readFileSync(envFile, 'utf8'));
     assert.equal(env.CORE_X, '1');
     assert.ok(env.PATH.startsWith(`${path.join(root, 'bin')}${path.delimiter}`), env.PATH);
-    assert.deepEqual(env.args.slice(-2), ['-c', 'mcp_servers.plugin_core_echo={"command" = "echo"}']);
+    // 명령의 PATH 고정(ticket slcode-session-path-rc-override)도 플러그인 bin/ 이 앞인 그 PATH
+    assert.deepEqual(env.args.slice(-4), ['-c', 'mcp_servers.plugin_core_echo={"command" = "echo"}', '-c', `shell_environment_policy.set.PATH=${JSON.stringify(env.PATH)}`]);
     // 다시 싣기 — part 를 켜면 새 빌드의 skill 폴더로 extraRoots 를 다시 부른다
     const c = await connectSession(h.sock);
     const reloaded = new Promise<any>((r) => c.onEvent((m) => { const ev = (m.params as any)?.ev; if (m.event === 'session.event' && ev?.kind === 'plugins.reloaded') r(ev); }));

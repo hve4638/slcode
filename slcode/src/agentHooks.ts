@@ -137,12 +137,11 @@ export function unionMatcher(matchers: (string | null)[]): string | null {
   return ms.map((m) => (SIMPLE.test(m) ? `^(?:${m})$` : `(?:${m})`)).join('|');
 }
 
-/** 훅 명령의 앞부분 — 릴리스(동봉 runtime/node 가 있는 설치)는 PATH 의 `slcode hook`: 설치 폴더는 업데이트마다 바뀌어 절대 경로를 넣으면 옛 폴더가 지워진 뒤
- *  훅이 없는 파일을 부르고 Codex 신뢰도 풀린다(export 워커 지적 2026-10-30). 런처가 hook 을 hookMain.js 로 바로 넘긴다(release.sh).
- *  개발 빌드(node dist/cli.js)는 이 node·hookMain.js 의 절대 경로 */
+/** 훅 명령의 앞부분 — 이 node·hookMain.js 의 절대 경로 (릴리스면 설치 폴더의 runtime/node). PATH 의 `slcode` 는 쓰지 않는다: 터미널의 .bashrc 가
+ *  ~/.local/bin 을 앞에 붙이면 옛 slcode 로 가 훅이 실패했다(ticket slcode-session-path-rc-override, 사용자 2026-10-31). 설치 폴더는 업데이트 때
+ *  같은 경로에 통째로 바뀌므로(superlite fetch.rs swap) 명령 문자열이 그대로다 — Codex 훅 신뢰도 유지된다 */
 export function hookLaunch(): string[] {
-  const dist = path.dirname(WORKER_FILE);
-  return fs.existsSync(path.join(dist, '..', 'runtime')) ? ['slcode', 'hook'] : [process.execPath, path.join(dist, `hookMain${EXT}`)];
+  return [process.execPath, path.join(path.dirname(WORKER_FILE), `hookMain${EXT}`)];
 }
 
 /** export 한 플러그인의 hooks.json 내용(Claude 객체 꼴 — Codex 도 같은 꼴). 이벤트마다 command 하나(플러그인의 스크립트를 모두 중간 프로세스가 돌린다).

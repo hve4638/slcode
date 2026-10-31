@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { withBinPath } from '../src/core.ts';
+import { codexPathArgs, withBinPath } from '../src/core.ts';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const FAKE = path.resolve(import.meta.dirname, 'fixtures', 'fake-codex.mjs');
@@ -38,6 +38,12 @@ test('withBinPath: Windows 는 bin/slcode.cmd 를 보고, 구분자 ; 로 있는
   assert.deepEqual(withBinPath({ PATH: 'C:\\Windows' }, pkgWith('slcode'), 'win32'), { PATH: 'C:\\Windows' }, 'slcode.cmd 가 없으면 그대로');
 });
 
+test('codexPathArgs: codex 명령의 PATH 를 env 의 PATH 로 고정하는 -c 인자 — Windows 는 있는 이름(Path), PATH 가 없으면 없음', () => {
+  assert.deepEqual(codexPathArgs({ PATH: '/s/bin:/usr/bin', X: '1' }, 'linux'), ['-c', 'shell_environment_policy.set.PATH="/s/bin:/usr/bin"']);
+  assert.deepEqual(codexPathArgs({ Path: 'C:\\s\\bin;C:\\Windows' }, 'win32'), ['-c', 'shell_environment_policy.set.Path="C:\\\\s\\\\bin;C:\\\\Windows"'], 'TOML 문자열 — 역슬래시는 겹친다');
+  assert.deepEqual(codexPathArgs({ X: '1' }, 'linux'), []);
+});
+
 test('살아 있는 세션: 벤더가 받은 PATH 맨 앞이 설치 폴더의 bin, SLCODE_SESSION_ID 도 함께', { skip: process.platform === 'win32' }, async () => {
   assert.ok(fs.existsSync(path.join(ROOT, 'dist', 'cli.js')), 'pnpm build 먼저');
   // 설치 폴더 흉내 — dist·package.json 복사, node_modules·web 은 링크, bin/slcode 런처
@@ -57,6 +63,8 @@ test('살아 있는 세션: 벤더가 받은 PATH 맨 앞이 설치 폴더의 bi
     assert.ok(fs.existsSync(envFile), err);
     const got = JSON.parse(fs.readFileSync(envFile, 'utf8'));
     assert.equal(got.PATH, `${path.join(pkg, 'bin')}:/usr/bin:/bin`);
+    // rc 가 PATH 를 바꿔도 codex 명령은 이 PATH (ticket slcode-session-path-rc-override)
+    assert.deepEqual(got.args.slice(got.args.indexOf('shell_environment_policy.set.PATH="' + got.PATH + '"') - 1).slice(0, 2), ['-c', `shell_environment_policy.set.PATH="${got.PATH}"`]);
     assert.match(got.SLCODE_SESSION_ID, /^[0-9a-f]{8}$/);
   } finally {
     if (child.exitCode === null) child.kill('SIGINT');

@@ -53,6 +53,13 @@ export function withBinPath(env: NodeJS.ProcessEnv, pkg: string, platform: NodeJ
   const key = (win && Object.keys(env).find((k) => k.toUpperCase() === 'PATH')) || 'PATH';
   return { ...env, [key]: env[key] ? `${bin}${win ? ';' : ':'}${env[key]}` : bin };
 }
+/** codex 명령의 PATH 를 이 env 의 PATH 로 고정하는 app-server 인자 (ticket slcode-session-path-rc-override, 사용자 2026-10-31).
+ *  codex 의 셸 스냅숏은 rc 를 읽은 뒤의 PATH 를 저장해 명령마다 쓴다 — rc 가 ~/.local/bin 을 앞에 붙이면 옛 slcode 로 간다(0.165 실측).
+ *  policy 의 set 은 스냅숏 뒤에 다시 export 된다. Claude Code 의 Bash 도구도 띄울 때 PATH 로 되돌리므로 같은 규칙 */
+export function codexPathArgs(env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): string[] {
+  const key = (platform === 'win32' && Object.keys(env).find((k) => k.toUpperCase() === 'PATH')) || 'PATH';
+  return env[key] ? ['-c', `shell_environment_policy.set.${key}=${JSON.stringify(env[key])}`] : [];
+}
 /** 소유자가 close 없이 끊긴 뒤(SIGKILL·크래시) 새 소유자를 기다리는 시간 — 카드 핸드오프·serve 재기동의 틈. 빈 값·숫자 아님은 기본값 */
 const OWNER_GRACE_MS = (Number(process.env.SLCODE_OWNER_GRACE_SECS) > 0 ? Number(process.env.SLCODE_OWNER_GRACE_SECS) : 10) * 1000;
 /** 벤더 종료를 기다리는 상한 — core 는 detached 라 superlite 의 SIGKILL(서비스 중지 3초 뒤)이 닿지 않는다. 넘으면 정리하고 끝낸다 */
@@ -160,7 +167,9 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     return inspectEnv(env, (await startProxy()).url);
   };
   // codex — 에이전트 플러그인의 MCP(-c mcp_servers…)는 inspect 를 바꿔 다시 띄울 때도 함께 (agent 는 아래에서 채운다)
-  const vendorArgs = async () => [...(codex ? agent?.codex.args ?? [] : []), ...(logFile.meta.inspect && codex ? codexArgs((await startProxy()).url) : [])];
+  // codex 명령의 PATH 는 띄운 PATH 로 고정 (codexPathArgs) — inspect 를 바꿔 다시 띄울 때도
+  const codexBaseArgs = () => [...(agent?.codex.args ?? []), ...codexPathArgs(codexEnv())];
+  const vendorArgs = async () => [...(codex ? codexBaseArgs() : []), ...(logFile.meta.inspect && codex ? codexArgs((await startProxy()).url) : [])];
   /** 지난 기록을 읽는 DB — 켠 적 없는 세션엔 만들지 않는다 */
   const readStore = () => {
     if (!store && InspectStore.exists(inspectDir)) {
@@ -187,16 +196,16 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     : null;
   hooks?.load(agentLoaded);
   hooks?.armSessionStart(logFile.meta.vendorSessionId ? 'resume' : 'startup');
-  // 첫 기동에서 못 켜면(이 SDK 에서 막힘·node:sqlite 없음) 끄고 띄운다 — 사유는 세션이 생긴 뒤 기록에 남긴다
-  let firstEnv = env, firstArgs: string[] = [], inspectFailed: string | null = null;
-  try { firstEnv = await vendorEnv(); firstArgs = await vendorArgs(); } catch (e) { logFile.updateMeta({ inspect: false }); inspectFailed = (e as Error).message; }
-  if (inspectFailed && codex) firstArgs = agent?.codex.args ?? [];
   // codex 는 프로세스 env 로 — manifest env 와 PATH 앞의 플러그인 bin/ (Claude 는 ClaudeSession 이 agent.env 를 얹는다)
   const codexEnv = (): NodeJS.ProcessEnv => {
     if (!agent) return env;
     const key = (process.platform === 'win32' && Object.keys(env).find((k) => k.toUpperCase() === 'PATH')) || 'PATH';
     return { ...env, ...agent.env, ...(agent.codex.bin.length ? { [key]: [...agent.codex.bin, ...(env[key] ? [env[key]] : [])].join(path.delimiter) } : {}) };
   };
+  // 첫 기동에서 못 켜면(이 SDK 에서 막힘·node:sqlite 없음) 끄고 띄운다 — 사유는 세션이 생긴 뒤 기록에 남긴다
+  let firstEnv = env, firstArgs: string[] = [], inspectFailed: string | null = null;
+  try { firstEnv = await vendorEnv(); firstArgs = await vendorArgs(); } catch (e) { logFile.updateMeta({ inspect: false }); inspectFailed = (e as Error).message; }
+  if (inspectFailed && codex) firstArgs = codexBaseArgs();
   const session: AgentSession = codex
     ? new CodexSession({ log: logFile, env: codexEnv(), permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, args: firstArgs, onConfig: (base) => gotBase(base), skillRoots: agent?.codex.roots ?? [], instructions: agent?.append ?? '' })
     : new ClaudeSession({ log: logFile, env: firstEnv, resume: logFile.meta.vendorSessionId, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, ...(agent ? { agent } : {}), ...(load ? { load } : {}), ...(hooks ? { hooks: hooks.sdkHooks() } : {}) });

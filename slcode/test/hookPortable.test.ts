@@ -8,7 +8,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { addPlugin, agentPaths } from '../src/agentPlugins.ts';
-import { codexGaps, exportHookEntries, unionMatcher, type ScriptEntry } from '../src/agentHooks.ts';
+import { codexGaps, exportHookEntries, hookLaunch, unionMatcher, type ScriptEntry } from '../src/agentHooks.ts';
 import { brokerSocket, EXPORT_SCRIPTS_DIR, toCodex } from '../src/hookBroker.ts';
 import { apiDts, checkScripts, TS_VERSION } from '../src/scriptCheck.ts';
 
@@ -80,7 +80,8 @@ test('export hooks.json 항목: 이벤트마다 command 하나·matcher 합집�
   assert.deepEqual(Object.keys(c), ['PreToolUse', 'Stop', 'SessionEnd']);
   assert.equal(c.PreToolUse[0].matcher, 'Bash|Read|Edit');
   assert.deepEqual(c.PreToolUse[0].hooks, [{ type: 'command', command: '/opt/sl/runtime/node /opt/sl/dist/hookMain.js claude "${CLAUDE_PLUGIN_ROOT}" PreToolUse', timeout: 15 }]);
-  assert.equal((exportHookEntries(scripts, 'claude', ['slcode', 'hook']) as any).Stop[0].hooks[0].command, 'slcode hook claude "${CLAUDE_PLUGIN_ROOT}" Stop', '릴리스는 PATH 의 slcode — 업데이트해도 같은 문자열');
+  // PATH 의 slcode 가 아니라 이 node·hookMain 의 절대 경로 — 터미널의 rc 가 옛 slcode 를 앞에 둬도 (ticket slcode-session-path-rc-override)
+  assert.deepEqual(hookLaunch(), [process.execPath, path.resolve(import.meta.dirname, '..', 'src', 'hookMain.ts')]);
   assert.match((exportHookEntries(scripts, 'claude', ['/a b/node', '/x']) as any).Stop[0].hooks[0].command, /^"\/a b\/node" \/x claude/);
   assert.equal(c.Stop[0].matcher, undefined, 'Stop 은 matcher 를 보지 않는다');
   assert.equal(c.Stop[0].hooks[0].timeout, 35);

@@ -1,5 +1,5 @@
 // export 한 Claude·Codex 의 js/ts 훅 (ticket slcode-agent-plugin-script-portable, 착수 결정 TICKET.md 2026-10-30) — 훅 명령과 세션 중간 프로세스.
-// 훅 명령 `slcode hook <claude|codex> <플러그인 폴더> <이벤트>`: stdin 의 훅 입력을 그 세션의 중간 프로세스에 넘기고, 받은 하네스 훅 JSON 을 stdout 에 쓴다.
+// 훅 명령 `<node> hookMain.js <claude|codex> <플러그인 폴더> <이벤트>`(`slcode hook …` 도 같다): stdin 의 훅 입력을 그 세션의 중간 프로세스에 넘기고, 받은 하네스 훅 JSON 을 stdout 에 쓴다.
 //   중간 프로세스가 없으면 띄운다 — 동시에 둘이 띄우면 소켓을 먼저 잡은 하나만 남는다. 못 띄우거나 닿지 않으면 그 이벤트만 이 프로세스 안에서 직접 돌리고 경고한다
 //   (그때는 다른 훅과 상태 수정이 겹칠 수 있다).
 // 중간 프로세스: 세션(하네스·session_id·slcode 설치)마다 하나. 플러그인 폴더마다 HookRunner 하나 — 콜백은 slcode 세션과 같은 worker 에서 돌고 모듈 변수·상태가 세션 동안 남는다.
