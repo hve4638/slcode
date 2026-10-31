@@ -24,8 +24,8 @@ import { blockInspect, CODEX_ROUTE, codexArgs, codexUpstream, inspectBlocked, in
 import { InspectStore, maybeSweep } from './inspectDb.js';
 import { Activity } from './activity.js';
 import { claudeLoad, DEFAULT_PROFILE, getProfile, listProfiles, profileSummary, sessionProfile } from './profiles.js';
-import { agentPaths, currentBuilds, loadSessionPlugins, reloadSessionPlugins, unlinkSessionPlugins, type Loaded, type SessionPlugins } from './agentPlugins.js';
-import { HookRunner } from './hookRunner.js';
+import { agentPaths, currentBuilds, loadSessionPlugins, reloadSessionPlugins, unlinkSessionPlugins, type Loaded, type SessionPlugins } from 'slcode-plugin/agentPlugins';
+import { HookRunner } from 'slcode-plugin/hookRunner';
 import { CoreError, ERR, FILES, PERMISSION_MODES, PROTOCOL_VERSION, type AgentHookEvent, type ApprovalRequest, type LoggedEvent, type Mail, type MethodName, type Methods, type RequestFrame, type SessionInfo } from './protocol.js';
 
 /** 벤더 자식(claude CLI·codex)에 넘기지 않을 env — 워커 Claude 세션 안에서 띄우면 그 세션의 표식(CLAUDECODE·CLAUDE_CODE_SESSION_ID·

@@ -47,6 +47,12 @@ jobs:
         working-directory: slcode
         run: pnpm install --frozen-lockfile && pnpm build
 
+      - name: slcode-plugin dist 대조
+        # superlite-for-agents 가 커밋한 dist 를 넣어 간다 — 빌드가 바꾼 것이 있으면 커밋이 낡은 것이다
+        run: |
+          git status --porcelain -- slcode/slcode-plugin/dist | tee /tmp/dist.diff
+          if [ -s /tmp/dist.diff ]; then echo "::error::slcode/slcode-plugin/dist 가 src 와 다르다 — pnpm build 뒤 커밋"; exit 1; fi
+
       - name: 테스트
         working-directory: slcode
         timeout-minutes: 10
@@ -63,6 +69,8 @@ jobs:
           unzip -q "slcode/release/slcode-${TAG#v}-linux-x64.zip" -d "$d/app"
           slc() { env -i "$d/app/bin/slcode" "$@"; }
           slc --help
+          [ ! -e "$d/app/node_modules/esbuild" ] || { echo "::error::zip 에 esbuild 가 들어 있다"; exit 1; }
+          [ -f "$d/app/node_modules/slcode-plugin/dist/hookMain.js" ] && [ ! -L "$d/app/node_modules/slcode-plugin" ] || { echo "::error::zip 의 slcode-plugin 이 없거나 링크다"; exit 1; }
           mkdir "$d/state" "$d/work"
           slc new "$d/work" --no-web --dir "$d/state" > "$d/new.log" 2>&1 &
           pid=$!

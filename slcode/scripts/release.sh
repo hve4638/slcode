@@ -6,7 +6,8 @@
 #   scripts/release.sh --upload        release/ 의 zip 을 GitHub release v<버전> 에 올린다 (gh 로그인·origin 필요)
 #
 # zip 안 (최상위): manifest.json {version, platform, node}, bin/slcode(sh)·bin/slcode.cmd, runtime/node(.exe),
-# dist/, web/, node_modules/ (prod 의존성 — Agent SDK 는 그 플랫폼 패키지 하나만), package.json.
+# dist/, web/, node_modules/ (prod 의존성 — Agent SDK 는 그 플랫폼 패키지 하나만, slcode-plugin 은 커밋한 dist 복사본), package.json.
+# esbuild 는 넣지 않는다 — js/ts 훅을 처음 묶을 때 slcode-plugin 이 그 플랫폼 것을 받는다 (ticket slcode-plugin-split).
 # 플러그인(slcode-plugin-selfinstall)은 자산 이름 slcode-<ver>-<platform>.zip 과 bin/ 진입만 안다 — 바꾸면 그쪽도 바꾼다.
 set -euo pipefail
 
@@ -51,6 +52,7 @@ for plat in "${platforms[@]}"; do
   st=$OUT/stage-$plat
   mkdir -p "$st/bin" "$st/runtime"
   cp -r "$ROOT/dist" "$ROOT/web" "$ROOT/package.json" "$ROOT/pnpm-lock.yaml" "$st/"
+  mkdir -p "$st/slcode-plugin" && cp -r "$ROOT/slcode-plugin/package.json" "$ROOT/slcode-plugin/dist" "$st/slcode-plugin/" # link 의존 — 설치 뒤 복사본으로 바꾼다
 
   # 대상 플랫폼 의존성 — lockfile 그대로, hoisted(심링크 없는 평평한 node_modules — zip·Windows 에서 안전)
   cat > "$st/pnpm-workspace.yaml" <<EOF
@@ -61,6 +63,7 @@ supportedArchitectures:
 EOF
   (cd "$st" && pnpm install --prod --frozen-lockfile --config.node-linker=hoisted --ignore-scripts)
   (cd "$st" && rm -rf node_modules/.bin node_modules/.modules.yaml node_modules/.pnpm-workspace-state-v1.json pnpm-workspace.yaml pnpm-lock.yaml)
+  (cd "$st" && rm -f node_modules/slcode-plugin && mv slcode-plugin node_modules/slcode-plugin) # 심링크 대신 실제 폴더 (zip·Windows)
 
   if [ $os = win32 ]; then
     fetch_node "$nodepkg.zip"
@@ -76,7 +79,7 @@ EOF
 # slcode 런처 — 동봉 node 로 dist/cli.js 를 띄운다. 심링크로 불려도 실제 위치를 따른다
 d=$(dirname "$(readlink -f "$0")")
 # export 한 플러그인의 훅 명령(slcode hook …)은 도구 호출마다 뜬다 — cli.js 를 거치지 않는 가벼운 진입점으로
-if [ "$1" = hook ]; then shift; exec "$d/../runtime/node" "$d/../dist/hookMain.js" "$@"; fi
+if [ "$1" = hook ]; then shift; exec "$d/../runtime/node" "$d/../node_modules/slcode-plugin/dist/hookMain.js" "$@"; fi
 exec "$d/../runtime/node" "$d/../dist/cli.js" "$@"
 EOF
   chmod +x "$st/bin/slcode"

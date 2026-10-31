@@ -25,7 +25,7 @@ import { readSettings, watchSettings, writeSettings } from './settings.js';
 import { CoreError, ERR, FILES, type SessionInfo, type SettingsKind, type SettingsPatch, type UpdateCheck } from './protocol.js';
 import { inspectBlocked } from './inspect.js';
 import { cleanInspect, inspectUsage } from './inspectDb.js';
-import { listPlugins, scriptWarnings } from './agentPlugins.js';
+import { listPlugins, scriptWarnings } from 'slcode-plugin/agentPlugins';
 
 export const WEB_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'web');
 const TYPES: Record<string, string> = {

@@ -11,9 +11,9 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: 0.3.282
         version: 0.3.282(@anthropic-ai/sdk@0.128.0(zod@4.6.5))(@modelcontextprotocol/sdk@1.30.1(zod@4.6.5))(zod@4.6.5)
-      esbuild:
-        specifier: ^0.28.2
-        version: 0.28.2
+      slcode-plugin:
+        specifier: link:./slcode-plugin
+        version: link:slcode-plugin
       ws:
         specifier: ^8.18.0
         version: 8.21.3
@@ -24,6 +24,9 @@ importers:
       '@types/ws':
         specifier: ^8
         version: 8.18.1
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
       tsx:
         specifier: ^4
         version: 4.23.15

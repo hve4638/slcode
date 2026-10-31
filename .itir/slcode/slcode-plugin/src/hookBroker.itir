@@ -1,0 +1,36 @@
+import { HOOK_EVENTS, HookEvent } from './hookApi'
+import { HookRunner, Notes, AgentHookEvent } from './hookRunner'
+import { BUILD_FILES } from './agentBuild'
+
+role: export 한 Claude·Codex 의 js/ts 훅 (ticket slcode-agent-plugin-script-portable, 착수 결정 TICKET.md 2026-10-30) — 훅 명령과 세션 중간 프로세스. 하네스는 이벤트마다 훅 명령을 새 프로세스로 띄우므로, 세션마다 중간 프로세스 하나가 콜백을 돌린다(사용자 결정 (나): 모듈 변수·위쪽 코드 1회·상태 동시 수정이 slcode 세션과 같다 — slcode 세션은 core 가 이 역할). 훅 명령: stdin 의 훅 입력을 그 세션의 중간 프로세스(소켓)에 넘기고 받은 하네스 훅 JSON 을 stdout 에 — 없으면 띄운다(각 훅이 스스로 확인, 동시에 띄우면 소켓을 먼저 잡은 하나만 남는다, 사용자 결정). 못 띄우거나 닿지 않거나 session_id 가 없으면 그 이벤트만 직접 돌리고 경고(그때는 상태 수정이 겹칠 수 있다); SessionEnd 에는 새로 띄우지 않는다(30분 남는다). 중간 프로세스: 세션(하네스·session_id·slcode 설치·사용자)마다 하나, 플러그인 폴더마다 HookRunner 하나. 상태 파일은 플러그인 데이터 폴더(Claude CLAUDE_PLUGIN_DATA, Codex PLUGIN_DATA)의 .slcode/state/<session_id>.json — 플러그인 폴더에는 쓰지 않고, 개발자의 다른 데이터와 겹치지 않게 .slcode 아래(사용자 결정). fork 하면 session_id 가 바뀌어 상태가 새로 시작한다(한계로 둔다 — 원래 세션 ID 가 훅 입력에 없고 복사된 메시지 uuid 로는 형제 fork 와 가를 수 없다, 실측 Claude 2.1.314 2026-10-30, 사용자 결정). resume 은 session_id 가 같아 이어진다. 끝: SessionEnd 를 받고 3초 뒤(같은 세션 다른 플러그인의 SessionEnd 도 받는다) 또는 30분 동안 요청이 없으면(사용자 결정) — 정상 종료면 소켓·로그를 지운다, 신호에도. 같은 폴더에 scripts.json 을 다시 쓰면(리빌드) worker 만 다시 띄운다(상태는 둔다). 출력: HookRunner 의 Claude 훅 JSON 을 하네스 꼴로, 콜백의 실패·경고·worker 경고는 systemMessage 에 [slcode] 줄로(slcode 화면의 빨간 줄 자리). 상수 — EXPORT_SCRIPTS_DIR: export 플러그인 폴더 안의 slcode-hooks/(세션 빌드의 scripts.json·scripts/ 를 옮긴다); DATA_SUBDIR: .slcode; IDLE_MS 30분; END_GRACE_MS 3초; SPAWN_WAIT_MS: 띄운 뒤 소켓을 기다리는 5초; CODEX_ALIASES: Codex 는 apply_patch 를 Edit·Write 로, spawn_agent 를 Agent 로도 맞춘다(Codex hooks 문서).
+
+export val HARNESSES
+export val EXPORT_SCRIPTS_DIR
+export val DATA_SUBDIR
+val IDLE_MS
+val END_GRACE_MS
+val SPAWN_WAIT_MS
+export val CODEX_ALIASES
+export fn brokerSocket(harness, sessionId, install) -> Text {
+  role: 세션의 소켓 — Unix 는 tmpdir/slcode-hooks-<uid>/<해시>.sock(폴더 0700·소켓 0600), Windows 는 named pipe
+}
+fn pluginName(root) -> Text
+export fn toCodex(event, out) {
+  role: Claude 훅 JSON → Codex — PreToolUse 의 ask(결정·사유)·continue(stop) 는 빼고 사유, updatedInput 만 있으면 permissionDecision allow 를 붙인다(Codex 는 allow 와 함께만 받는다), SubagentStart 의 continue false 는 빼고 사유. hookEventName 만 남은 칸은 뺀다
+}
+fn pluginKey(root) -> Text
+fn makePlugin(req, sessionId, log)
+fn runOne(p, req, extra) -> Text
+export fn serveBroker(sock, opts) {
+  role: 중간 프로세스 — 소켓을 이미 다른 것이 쥐고 있으면 곧바로 끝난다, 죽은 것이 남긴 소켓 파일은 지우고 다시 연다
+}
+val reachable
+fn ask(sock, req)
+export fn hookCommand(harness, root, event, stdin, env, opts) -> Text {
+  role: 훅 명령 한 번 — stdout 에 쓸 문자열. 데이터 폴더를 받지 못하면 tmpdir 아래
+}
+export fn isHookEvent(e) -> Bool
+type Harness
+type BrokerRequest
+type BrokerReply
+type Plugin

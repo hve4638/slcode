@@ -9,8 +9,9 @@
 //   세션 사이 메시지는 켜진 받는 세션의 소켓(session.deliver)으로 직접, 꺼진 세션에는 보내지 않는다 (mail.ts, ticket slcode-p2p-messaging 2026-10-19 — 우체국 없음).
 // 이벤트 어휘는 벤더 중립 15종. 각 이벤트는 선택 필드 raw 에 벤더 원문(SDK 메시지)을 같은 봉투로 싣는다 (raw:true 일 때만).
 
-import type { PluginRow } from './agentPlugins.js';
-import type { ExportHarness, ExportResult } from './agentExport.js';
+import type { PluginRow } from 'slcode-plugin/agentPlugins';
+import type { AgentHookEvent } from 'slcode-plugin/hookRunner';
+import type { ExportHarness, ExportResult } from 'slcode-plugin/agentExport';
 
 export const PROTOCOL_VERSION = 3;
 
@@ -176,12 +177,7 @@ export type CoreEventBody =
   | { kind: 'plugins.reloaded'; plugins: AgentPluginState[]; removed: string[]; later: { name: string; what: ('instructions' | 'env' | 'session.json' | 'mcp' | 'bin' | 'installed')[] }[]; sdk: { plugins: { name: string; source?: string }[]; commands: string[]; agents: string[]; mcp: McpStatus[] } }
   | { kind: 'session.exit'; reason: string };
 
-export type AgentHookEvent =
-  | { kind: 'agent.hook'; phase: 'ready'; plugin: string; callbacks: { event: string; matcher: string | null; src: string }[]; errors: string[] }
-  /** effects 는 콜백이 낸 결과 원문(잘리지 않음) — 화면은 한 일이 있을 때만 그린다. toolUseId 는 도구 이벤트(PreToolUse·PostToolUse)의 대상 도구 */
-  | { kind: 'agent.hook'; phase: 'run'; plugin: string; src: string; event: string; ms: number; outcome: 'ok' | 'error' | 'timeout'; effects: AgentHookEffects | null; toolUseId: string | null; error: string | null; message: string | null; warnings: string[] }
-  | { kind: 'agent.hook'; phase: 'warn'; plugin: string; text: string };
-export type AgentHookEffects = { block: string[]; ask: string[]; allow: string[]; stop: string[]; context: string[]; updateInput: boolean };
+export type { AgentHookEvent, AgentHookEffects } from 'slcode-plugin/hookRunner';
 
 /** 세션에 실은 에이전트 플러그인 하나 — build 는 실은 빌드, current 는 지금 설정으로 빌드하면 나올 식별자(같으면 다시 실을 것이 없다, 지웠으면 null) */
 export type AgentPluginState = { name: string; version: string; build: string; values: string; current?: string | null };

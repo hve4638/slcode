@@ -1,0 +1,67 @@
+export declare const MANIFEST = "slcode-plugin.json";
+/** 빌드기 판 — 빌드 결과가 달라지는 변경이면 올린다. 빌드 식별자에 들어가 옛 빌드를 다시 쓰지 않게 한다 */
+export declare const BUILDER = 5;
+/** 호환 등급을 매기는 하네스 — gpt 는 GPT 하네스(장기적으로 Codex 자리, 아직 slcode 가 띄우지 않는다) */
+export declare const HARNESSES: readonly ["claude", "gpt", "codex"];
+export type Harness = (typeof HARNESSES)[number];
+export type OptionType = 'boolean' | 'string' | 'number';
+export type OptionSpec = {
+    type: OptionType;
+    default: boolean | string | number;
+    label?: string;
+};
+export type PartSpec = {
+    required: boolean;
+    default: boolean;
+};
+export type Manifest = {
+    name: string;
+    version: string;
+    options: Record<string, OptionSpec>;
+    parts: Record<string, PartSpec>;
+    env: Record<string, string>;
+};
+/** 한 층의 설정 값 — 기본 설정(config.json)·프로필·세션이 같은 꼴이다. 없는 키는 아래 층의 값 */
+export type Values = {
+    parts?: Record<string, boolean>;
+    options?: Record<string, boolean | string | number>;
+};
+export type Resolved = {
+    parts: Record<string, boolean>;
+    options: Record<string, boolean | string | number>;
+};
+/** manifest 를 읽는다 — 이름·part 구성을 알 수 없으면 던진다 (slcode plugin add 가 거부하는 유일한 경우) */
+export declare function parseManifest(text: string): Manifest;
+export declare function readManifest(dir: string): Manifest;
+/** 폴더 안 일반 파일의 상대 경로(/ 구분, 정렬). 링크는 따라간다. .git 은 뺀다 */
+export declare function walk(dir: string, rel?: string): string[];
+/** 원본에서 설치·빌드에 쓰는 파일 — manifest 와 part 폴더들. 그 밖은 복사하지 않는다 */
+export declare function sourceFiles(dir: string, m: Manifest): string[];
+/** 원본 내용 해시 — 경로·실행 비트·내용 */
+export declare function sourceHash(dir: string, m: Manifest): string;
+/** markdown 머리의 --- 블록에서 맨 앞 칸의 키와 값 — 블록 스칼라(| >)와 들여 쓴 이어지는 줄은 값에 잇는다(| 는 줄바꿈, 그 밖은 공백). 중첩 맵은 키만 쓴다 */
+export declare function frontmatter(text: string): {
+    fields: Record<string, string>;
+    body: string;
+};
+/** .mcp.json 서버 하나의 연결 방식 — Claude 는 type 이 없으면 stdio. Codex 는 stdio·http 만 받는다 */
+export declare function mcpTransport(def: unknown): string;
+/** part 하나에서 하네스마다 빠지는 것 — 호환 등급과 report.json 이 같은 규칙을 쓴다. 항목은 "<part>/<경로>[: 사유]" */
+export declare function partLost(dir: string, part: string): Record<Harness, string[]>;
+/** 호환 등급 — 모든 part(켜지 않은 것도)를 본다. full 은 어느 하네스에서도 빠지는 것이 없다 */
+export declare function compat(dir: string, m: Manifest): {
+    grade: 'full' | 'partial';
+    lost: Record<Harness, string[]>;
+};
+/** 기본값(manifest) 위에 층을 차례로 덮는다 — 뒤의 것이 이긴다. 모르는 키·꼴이 틀린 값은 건너뛴다(옛 판의 설정이 남아 있을 수 있다). 필수 part 는 늘 켠다 */
+export declare function resolveValues(m: Manifest, layers: (Values | null | undefined)[]): Resolved;
+/** 정렬한 설정 문자열 — part.x=0|1, opt.y=<JSON> */
+export declare function valuesString(r: Resolved): string;
+/** 빌드 식별자 — 설정 문자열·원본 해시·하네스·빌드기 판의 해시 */
+export declare function buildId(values: string, hash: string, harness: Harness): string;
+/** `slcode plugin set` 의 `<키>=<값>` 하나를 그 층의 값으로 — part 는 on|off, 옵션은 꼴대로. 맞지 않으면 던진다 */
+export declare function parseAssignment(m: Manifest, s: string): {
+    kind: 'parts' | 'options';
+    key: string;
+    value: boolean | string | number;
+};

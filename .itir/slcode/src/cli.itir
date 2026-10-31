@@ -8,7 +8,7 @@ import { reachable, closedSessions, closedTime, sockAlive } from './live'
 import { findVendorSession, forkClaude, vendorResumeCommand } from './vendor'
 import { pullHistory } from './history'
 import { CLAUDE_EFFORTS } from './base'
-import { addPlugin, listPlugins, removePlugin, scriptWarnings, setPlugin } from './agentPlugins'
+import { pluginCommand } from '../slcode-plugin/src/cli'
 import { addProfile, getProfile, listProfiles, removeProfile, setProfile, Profile } from './profiles'
 import { summarize } from './activity'
 

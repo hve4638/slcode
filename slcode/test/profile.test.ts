@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
-import { addPlugin, agentPaths, currentBuilds, loadSessionPlugins, readConfig, reloadSessionPlugins, setPlugin } from '../src/agentPlugins.ts';
+import { addPlugin, agentPaths, currentBuilds, loadSessionPlugins, readConfig, reloadSessionPlugins, setPlugin } from 'slcode-plugin/agentPlugins';
 import { addProfile, claudeLoad, getProfile, listProfiles, removeProfile, sessionProfile, setProfile } from '../src/profiles.ts';
 import { EventLog } from '../src/eventLog.ts';
 import { corePaths } from '../src/paths.ts';

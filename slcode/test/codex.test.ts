@@ -11,7 +11,7 @@ import { EventLog } from '../src/eventLog.ts';
 import { corePaths } from '../src/paths.ts';
 import { estimateCostUsd } from '../src/codex.ts';
 import { SLCODE_PROMPT } from '../src/prompt.ts';
-import { addPlugin, setPlugin } from '../src/agentPlugins.ts';
+import { addPlugin, setPlugin } from 'slcode-plugin/agentPlugins';
 
 const FAKE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-codex.mjs');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

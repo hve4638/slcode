@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { addPlugin, agentPaths, exportPlugin, gcBuilds, listPlugins, readConfig, removePlugin, setPlugin } from '../src/agentPlugins.ts';
+import { addPlugin, agentPaths, exportPlugin, gcBuilds, listPlugins, readConfig, removePlugin, setPlugin } from 'slcode-plugin/agentPlugins';
 import { pluginMethod } from '../src/serve.ts';
 
 const tmp = (p: string) => fs.mkdtempSync(path.join(os.tmpdir(), `slcode-ax-${p}-`));

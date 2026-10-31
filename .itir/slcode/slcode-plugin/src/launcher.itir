@@ -1,0 +1,10 @@
+import { hookLaunch } from './agentHooks'
+
+role: export 훅 명령이 부르는 고정 런처 (ticket slcode-plugin-split, 착수 결정 2026-10-31) — 상태 폴더 agent-plugins/bin/hook(Windows 는 hook.cmd). 한 머신에 판이 다른 slcode-plugin 사본이 여럿이고 같은 상태 폴더를 쓴다 — 훅 명령에 사본의 node·hookMain.js 를 박으면 export 한 사본에 따라 명령이 바뀌고(Codex 는 신뢰를 다시 묻는다) 그 node 가 바뀌면(superlite 의 node 교체) 훅이 깨진다. 그래서 명령은 런처를 부르고, 런처 내용은 사본이 돌 때 맞춘다: 없거나, 가리키는 파일이 없거나, 이 사본의 판이 더 새것이면 다시 쓴다. 판은 런처의 `# slcode-plugin <판>` 줄.
+
+export val PLUGIN_VERSION
+export fn launcherPath(agentDir) -> Text
+fn newer(a, b) -> Boolean
+export fn ensureLauncher(agentDir) -> Text {
+  role: 런처를 맞추고 경로를 돌려준다 — 다른 사본이 쓴 것이 살아 있고 판이 이 판보다 낮지 않으면 그대로
+}

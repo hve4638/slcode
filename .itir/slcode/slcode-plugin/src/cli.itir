@@ -1,0 +1,9 @@
+import { addPlugin, agentPaths, exportPlugin, listPlugins, refreshLauncher, removePlugin, scriptWarnings, setPlugin } from './agentPlugins'
+import { defaultStateDir } from './paths'
+import { PLUGIN_VERSION } from './launcher'
+
+role: slcode-plugin 명령 (ticket slcode-plugin-split) — `slcode-plugin <add|remove|set|list|export|hook> …`, 상태 폴더는 --dir·$SLCODE_DIR·기본. `slcode plugin …` 도 pluginCommand 를 부른다(출력이 같다, stderr 경고 머리만 [slcode]). 쓰는 쪽(superlite-for-agents)은 넣어 간 사본을 자기 node 로 부른다. 명령마다 refreshLauncher 로 훅 런처를 이 사본에 맞춘다. 틀린 인자는 usage 로 2, 실패는 error: 줄과 1.
+
+type PluginFlags
+export fn pluginCommand(sub, args, flags, dir, usage, tag)
+export fn main(argv) -> Int

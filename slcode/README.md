@@ -33,6 +33,7 @@ new·resume·continue 는 superlite 터미널 안이면 그 터미널의 deck �
 - 메시징(세션 사이): 벤더 자식 프로세스에 `SLCODE_SESSION_ID=<세션 id>` 가 들어가 세션 안의 에이전트가 `slcode mail/check/ask/reply` 로 자기 이름을 안다. 받은 메시지는 `<slcode-message id from name kind at [via] [re]>` 머리표로 감싸고, 그 뜻과 답장 방법은 고정 지시(`src/prompt.ts`)에 있다. `ask` 는 kind=ask 로 보내고 kind=reply(re=<그 id>)가 올 때까지 기다린다(기본 무기한, `--timeout`) — 답장은 턴이 아니라 ask 의 출력으로 온다. `check` 는 진행 중 턴 안에서 밀린 메시지를 지금 꺼낸다(꺼낸 것은 턴으로 다시 오지 않는다). superlite 등록부와의 연결은 없다(스탠드얼론, 사용자 2026-10-02).
 - 비용: Codex 는 턴 비용을 알려 주지 않아서 토큰 수와 `src/codex.ts` 의 가격표로 추정한다. 가격표에 없는 모델만 쓴 세션은 `status` 와 웹 사이드바의 비용이 `-` 로 보인다.
 - 웹 프런트 `web/` 는 빌드 없는 ES 모듈. 페이지는 서버에 `server.info` 로 세션 id 를 물어 그 세션에 붙는다. 세션 목록 화면은 없다. 이미지·PDF·텍스트 파일은 붙여넣기·끌어놓기·`+` 로 첨부한다 (`session.send.attachments`, 로그엔 이름만). 모델과 effort 는 작성창의 모델 메뉴에서 바꾼다 (`session.setModel`·`session.setEffort`, 다음 턴부터, `--resume` 뒤에도 유지). 메뉴 맨 위의 claude·codex 토글은 첫 메시지 전에만 벤더를 바꾼다 (`session.setVendor`). 말풍선에 마우스를 올리면 복사·돌아가기 버튼이 나온다. 돌아가기는 claude 의 Esc-Esc 로, 답변만·코드만·둘 다 중 고른다 (`session.rewind`).
+- 에이전트 플러그인(`slcode plugin …`, 세션에 싣기, export 훅)은 `slcode-plugin/` 패키지다. slcode 는 같은 판을 zip 에 넣고, superlite-for-agents 도 커밋한 `slcode-plugin/dist` 를 넣어 간다. 바꾼 뒤 `pnpm build` 결과를 같이 커밋한다(테스트·release workflow 가 대조한다).
 - 설계 근거·결정은 ws `docs/report/agent-core-spike.md`, `docs/report/agent-core-standalone.md`, `docs/report/agent-core-split.md`, `docs/report/slcode-core-serve-split.md`.
 
 ## 바이너리 배포
@@ -51,7 +52,7 @@ workflow 가 실패하면 로컬에서 `scripts/release.sh` 로 만든 zip 을 �
 
 플러그인은 받은 zip 을 플러그인 폴더의 `bin/<platform>/` 에 풀고, 그 안의 `manifest.json` 으로 설치 여부를 판단한다 (plugin.json `binary.version` 조건과 platform 대조). 원격 세션에서는 superlite 가 그 폴더를 원격에 올린 사본의 `bin/slcode` 를 쓴다.
 
-zip 최상위에는 `manifest.json {version, platform, node}`, `bin/slcode`(sh)·`bin/slcode.cmd`, `runtime/node`(또는 `node.exe`), `dist/`·`web/`·`node_modules/`·`package.json` 이 있다. `bin/` 의 두 런처가 동봉 node 로 `dist/cli.js` 를 띄우므로 사용자 머신에 Node 가 없어도 된다. 의존성은 lockfile 그대로 대상 플랫폼 패키지만 받는다 (pnpm `supportedArchitectures`, hoisted). Node 는 `NODE_VERSION`(기본 현재 LTS)의 공식 배포에서 실행 파일과 LICENSE 만 꺼내고, 받은 파일은 SHASUMS256.txt 로 대조한다. Codex 는 넣지 않는다. Codex 세션은 사용자 PATH 의 `codex` 를 쓴다.
+zip 최상위에는 `manifest.json {version, platform, node}`, `bin/slcode`(sh)·`bin/slcode.cmd`, `runtime/node`(또는 `node.exe`), `dist/`·`web/`·`node_modules/`(slcode-plugin 포함)·`package.json` 이 있다. esbuild 는 넣지 않는다 — js/ts 훅 플러그인을 처음 빌드할 때 그 플랫폼 것을 받는다. `bin/` 의 두 런처가 동봉 node 로 `dist/cli.js` 를 띄우므로 사용자 머신에 Node 가 없어도 된다. 의존성은 lockfile 그대로 대상 플랫폼 패키지만 받는다 (pnpm `supportedArchitectures`, hoisted). Node 는 `NODE_VERSION`(기본 현재 LTS)의 공식 배포에서 실행 파일과 LICENSE 만 꺼내고, 받은 파일은 SHASUMS256.txt 로 대조한다. Codex 는 넣지 않는다. Codex 세션은 사용자 PATH 의 `codex` 를 쓴다.
 
 라이선스 조건 (Anthropic 의 Claude Code 법률 안내가 허용하는 동봉 배포):
 

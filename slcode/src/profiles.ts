@@ -7,18 +7,14 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseAssignment, readManifest, type Values } from './agentFormat.js';
-import { agentPaths, locked, readConfig, writeConfig, type AgentConfig } from './agentPlugins.js';
+import { parseAssignment, readManifest } from 'slcode-plugin/agentFormat';
+import { agentPaths, locked, readConfig, writeConfig, type AgentConfig, type PluginLayer } from 'slcode-plugin/agentPlugins';
 
 /** Claude 가 읽을 것 — 끄면 그 출처의 CLAUDE.md·skill·플러그인·MCP·훅·권한이 함께 빠진다 (SDK settingSources). Md 는 CLAUDE.md 만 따로 끈다 */
 export type ClaudeLoadSpec = { user: boolean; project: boolean; userMd: boolean; projectMd: boolean; builtinSkills: boolean };
-export type Profile = {
-  /** 플러그인별 싣기(on)와 part·옵션 값. on 이 없으면 rest 를 따른다 */
-  plugins: Record<string, Values & { on?: boolean }>;
-  /** plugins 에서 on 을 정하지 않은 플러그인(나중에 설치한 것 포함)을 실을지 */
-  rest: boolean;
-  claude: ClaudeLoadSpec;
-};
+/** plugins 는 플러그인별 싣기(on)와 part·옵션 값(on 이 없으면 rest 를 따른다), rest 는 plugins 에서 on 을 정하지 않은 플러그인(나중에 설치한 것 포함)을 실을지 —
+ *  세션에 싣는 쪽(slcode-plugin agentPlugins.PluginLayer)이 이 꼴을 받는다 */
+export type Profile = PluginLayer & { claude: ClaudeLoadSpec };
 export const DEFAULT_PROFILE = 'default';
 const ALL: ClaudeLoadSpec = { user: true, project: true, userMd: true, projectMd: true, builtinSkills: true };
 // CLAUDE.md 끄기는 출처가 켜져 있을 때만 뜻이 있다 — bare 에서 만든 프로필이 출처를 켜면 그 CLAUDE.md 도 실린다
@@ -32,7 +28,7 @@ const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const CLAUDE_KEYS: Record<string, keyof ClaudeLoadSpec> = { user: 'user', project: 'project', 'user-md': 'userMd', 'project-md': 'projectMd', 'builtin-skills': 'builtinSkills' };
 
 const clone = (p: Profile): Profile => JSON.parse(JSON.stringify(p));
-const userProfiles = (stateDir?: string): Record<string, Profile> => readConfig(agentPaths(stateDir)).profiles ?? {};
+const userProfiles = (stateDir?: string): Record<string, Profile> => (readConfig(agentPaths(stateDir)).profiles ?? {}) as Record<string, Profile>;
 
 /** 이름으로 — 없으면 null */
 export function getProfile(name: string, stateDir?: string): Profile | null {
@@ -46,13 +42,6 @@ export function sessionProfile(name: string | undefined, stateDir?: string): { n
   return p ? { name: n, profile: p, missing: null } : { name: DEFAULT_PROFILE, profile: getProfile(DEFAULT_PROFILE)!, missing: n };
 }
 
-/** 그 플러그인을 이 프로필로 싣는가 */
-export const loadsPlugin = (p: Profile, name: string): boolean => p.plugins[name]?.on ?? p.rest;
-/** 그 플러그인의 프로필 층 값 (on 은 뺀다) */
-export function profileValues(p: Profile, name: string): Values | undefined {
-  const v = p.plugins[name];
-  return v ? { parts: v.parts, options: v.options } : undefined;
-}
 
 function editable(name: string) {
   if (BUILTIN_PROFILES[name]) throw new Error(`${name} is a built-in profile and cannot be changed`);
@@ -66,7 +55,7 @@ export async function addProfile(name: string, from = DEFAULT_PROFILE, stateDir?
   return locked(ap, () => {
     const c = readConfig(ap);
     if (c.profiles?.[name]) throw new Error(`profile ${name} already exists`);
-    const base = BUILTIN_PROFILES[from] ?? c.profiles?.[from];
+    const base = BUILTIN_PROFILES[from] ?? (c.profiles?.[from] as Profile | undefined);
     if (!base) throw new Error(`no profile ${from} (slcode profile list)`);
     c.profiles = { ...c.profiles, [name]: assign(clone(base), assignments, c, ap) };
     writeConfig(ap, c);
@@ -93,7 +82,7 @@ export async function setProfile(name: string, assignments: string[], stateDir?:
   const ap = agentPaths(stateDir);
   return locked(ap, () => {
     const c = readConfig(ap);
-    const cur = c.profiles?.[name];
+    const cur = c.profiles?.[name] as Profile | undefined;
     if (!cur) throw new Error(`no profile ${name} (slcode profile add ${name})`);
     const p = assign(clone(cur), assignments, c, ap);
     c.profiles = { ...c.profiles, [name]: p };

@@ -1,0 +1,18 @@
+import { fetchTarball, placeDir, REGISTRY, untar } from './npmFetch'
+import { CODEX_METHODS, HOOK_EVENTS, METHODS, HookEvent, Method } from './hookApi'
+
+role: js/ts 훅의 하네스 호환 검사 (ticket slcode-agent-plugin-script-portable, 사용자 결정 2026-10-30) — tsc 로 스크립트 원본을 하네스별 `slcode/api` 선언에 맞춰 본다. 하네스마다 이벤트에서 쓸 수 있는 메서드가 달라(METHODS·CODEX_METHODS) 쓸 수 없는 메서드·모르는 이벤트를 경고로 낸다 — 스크립트를 빼지 않는다(실행 중에는 무시·경고, 사용자 결정). esbuild 는 메서드 호출을 검사하지 않아서(묶을 때는 named import 만 잡는다) 타입 검사를 둔다. typescript 는 릴리스에 넣지 않고(개발자 기능) 처음 검사할 때 npm 레지스트리에서 받아 slcode 데이터 폴더 typescript/<판>/ 에 둔다 — 판·무결성 고정(devDependencies·pnpm-lock 과 같다), 받지 못하면 skipped 사유(경고하고 건너뛴다, 사용자 결정). 진단은 훅 API(SlcodeHook·'slcode/api')에 걸린 것만 — @types/node 를 받지 않으므로 그 밖은 버린다. 부르는 곳: cli 의 plugin add·set(stderr), export(연결 뒤). 상수 — TS_VERSION 5.9.3; TS_INTEGRITY; TS_URL; TABLES. 받기·풀기는 npmFetch.
+
+val TABLES
+export val TS_VERSION
+val TS_INTEGRITY
+val TS_URL
+export fn apiDts(harness) -> Text {
+  role: 하네스별 declare module 'slcode/api' — 이벤트별 칸은 hookApi 와 같고 메서드는 그 하네스 표에 있는 것만(Pick). slcode.on 의 이벤트 인자로 콜백 hook 타입이 정해져 JS 도 추론된다
+}
+export fn ensureTypescript(stateDir) {
+  role: typescript 모듈 — 없으면 받아 임시 폴더에 풀고 rename(동시에 받았으면 먼저 놓인 것). 실패면 던진다
+}
+export fn checkScripts(files, harnesses, stateDir, base) -> CheckResult
+type CheckHarness
+type CheckResult
