@@ -173,6 +173,9 @@ test('main command: 카드 서비스 명령 — new 는 폴더·옵션, resume �
     // effort 는 옵션, 첫 프롬프트는 맨 끝 -- 뒤에 (ticket slcode-new-effort-prompt) — resume 에는 싣지 않는다
     assert.equal(await exposed.host.command({ spawn: { cwd: '/w', effort: 'high', prompt: "fix the 'login' bug\nnow" } }), `${bin} new '/w' --effort 'high' --stdio --no-web --dir '/d x' -- 'fix the '\\''login'\\'' bug\nnow'`);
     assert.equal(await exposed.host.command({ id: 'sess-1', spawn: { prompt: 'x' } }), `${bin} resume 'sess-1' --stdio --no-web --dir '/d x'`);
+    // 세션 env 는 쌍마다 --env (ticket slcode-new-session-env) — resume 에는 싣지 않는다
+    assert.equal(await exposed.host.command({ spawn: { cwd: '/w', env: ['A=1', "B=it's"] } }), `${bin} new '/w' --env 'A=1' --env 'B=it'\\''s' --stdio --no-web --dir '/d x'`);
+    assert.equal(await exposed.host.command({ id: 'sess-1', spawn: { env: ['A=1'] } }), `${bin} resume 'sess-1' --stdio --no-web --dir '/d x'`);
   });
 });
 
@@ -249,6 +252,22 @@ test('slcode.new 동사: 요청자 창에 key·폴더·옵션으로 카드를 �
     const m = calls.length;
     await assert.rejects(verbs['slcode.new']({ vendor: 'claude', model: 'openai:gpt-x' }, { cwd: '/w', tmux: '$3' }), /is a codex model but --vendor is claude/);
     assert.equal(calls.length, m);
+    // --env (ticket slcode-new-session-env) — 한 값의 줄바꿈 쌍, 배열(option 반복을 모으는 superlite)도. 이름 오류·SLCODE_* 는 카드를 열기 전에 거절
+    void verbs['slcode.new']({ env: 'A=1\nB=x=y\n' }, { cwd: '/w', tmux: '$3' });
+    await new Promise((r) => setTimeout(r, 10));
+    const arg6 = JSON.parse(calls.filter((c) => c.startsWith('call w$3 slcode/cards.open ')).at(-1)!.slice('call w$3 slcode/cards.open '.length));
+    assert.deepEqual(arg6.spawn.env, ['A=1', 'B=x=y']);
+    exposed.host.started(arg6.key, 'sess-6');
+    void verbs['slcode.new']({ env: ['A=1', 'B=2'] }, { cwd: '/w', tmux: '$3' });
+    await new Promise((r) => setTimeout(r, 10));
+    const arg7 = JSON.parse(calls.filter((c) => c.startsWith('call w$3 slcode/cards.open ')).at(-1)!.slice('call w$3 slcode/cards.open '.length));
+    assert.deepEqual(arg7.spawn.env, ['A=1', 'B=2']);
+    exposed.host.started(arg7.key, 'sess-7');
+    const k = calls.length;
+    await assert.rejects(verbs['slcode.new']({ env: 'SLCODE_DIR=/x' }, { cwd: '/w', tmux: '$3' }), /SLCODE_\* names cannot be given/);
+    await assert.rejects(verbs['slcode.new']({ env: 'A' }, { cwd: '/w', tmux: '$3' }), /needs NAME=VALUE/);
+    await assert.rejects(verbs['slcode.new']({ env: '1A=x' }, { cwd: '/w', tmux: '$3' }), /bad env name/);
+    assert.equal(calls.length, k, '카드를 열지 않는다');
   });
 });
 

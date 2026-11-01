@@ -34,6 +34,8 @@ export type SessionMeta = {
   agentPlugins?: Record<string, { parts?: Record<string, boolean>; options?: Record<string, boolean | string | number> } | undefined>;
   /** 세션 시작 프로필 이름 (ticket slcode-session-profile) — 없으면 default. 띄울 때마다(resume 포함) 그 프로필의 지금 값을 읽는다 */
   profile?: string;
+  /** 새 세션에 준 env (ticket slcode-new-session-env) — 띄울 때마다(resume·벤더 재기동 포함) 벤더 프로세스 env 에 넣는다. 주지 않았으면 없다 */
+  env?: Record<string, string>;
   /** 시작 화면에서 연 새 세션 — 첫 메시지 전엔 시작 화면으로 돌아갈 수 있다 (protocol SessionInfo.fromStart) */
   fromStart?: boolean;
 };

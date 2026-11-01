@@ -14,6 +14,20 @@ const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const PERMISSION_MODES = ['default', 'auto', 'bypassPermissions'];
 /** model 의 공급자 앞머리 → 벤더 (`<공급자>:<모델>`, 사용자 2026-10-24 정식 형식) — slcode/src/cli.ts PROVIDERS 와 같다 */
 const PROVIDERS = { anthropic: 'claude', openai: 'codex' };
+/** slcode.new --env → NAME=VALUE 목록 (ticket slcode-new-session-env) — slcode/src/base.ts sessionEnv 와 같은 규칙. superlite 동사 인자는 같은 option 을
+ *  여러 번 주면 마지막 값만 남겨 한 값에 줄바꿈으로 여러 쌍을 받는다. 배열(option 반복을 모으는 superlite)도 받는다. 카드를 열기 전에 거절한다 */
+function sessionEnv(v) {
+  const out = [];
+  for (const line of (Array.isArray(v) ? v : v === undefined ? [] : [v]).flatMap((p) => String(p).split(/\r?\n/))) {
+    if (!line) continue;
+    const name = line.slice(0, line.indexOf('='));
+    if (!line.includes('=')) throw new Error(`--env needs NAME=VALUE: ${line}`);
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new Error(`bad env name '${name}' (letters, digits and _, not starting with a digit)`);
+    if (/^SLCODE_/i.test(name)) throw new Error(`env ${name} is set by slcode — SLCODE_* names cannot be given`);
+    out.push(line);
+  }
+  return out;
+}
 
 // ---- 바이너리 자가 설치 (ticket slcode-plugin-selfinstall) — 순수 함수. export 는 slcode/test/plugin.test.ts 용
 // plugin.json binary {repo, version} 의 version 은 semver 조건: `1.2.3`(고정)·`^1.2.3`·`~1.2.3`(범위, 정식 release 만).
@@ -150,7 +164,7 @@ export function activate(api) {
   async function command({ id = null, spawn = null, takeover = false } = {}) {
     const [bin, dir] = await Promise.all([resolveBin(), dirOpt()]);
     const sp = spawn ?? {};
-    const verb = id ? `resume ${shq(id)}` : `new${sp.cwd ? ` ${shq(sp.cwd)}` : ''}${['vendor', 'title', 'mode', 'model', 'effort', 'profile'].map((k) => (sp[k] ? ` --${k} ${shq(sp[k])}` : '')).join('')}${sp.fromStart ? ' --from-start' : ''}`;
+    const verb = id ? `resume ${shq(id)}` : `new${sp.cwd ? ` ${shq(sp.cwd)}` : ''}${['vendor', 'title', 'mode', 'model', 'effort', 'profile'].map((k) => (sp[k] ? ` --${k} ${shq(sp[k])}` : '')).join('')}${(sp.env ?? []).map((p) => ` --env ${shq(p)}`).join('')}${sp.fromStart ? ' --from-start' : ''}`;
     return `${bin.cmd} ${verb} --stdio --no-web${takeover && id ? ' --takeover' : ''}${dir}${!id && sp.prompt ? ` -- ${shq(sp.prompt)}` : ''}`;
   }
   /** `slcode list` 행 — all 이면 꺼진 세션까지 */
@@ -265,11 +279,12 @@ export function activate(api) {
     // effort 이름 오타는 카드를 열기 전에 거절 — slcode CLI 의 checkNew 와 같은 목록 (Codex 는 모델마다 열려 있어 보지 않는다)
     if (a.effort !== undefined && vendor !== 'codex' && !CLAUDE_EFFORTS.includes(a.effort)) throw new Error(`unknown effort '${a.effort}' for claude (${CLAUDE_EFFORTS.join('|')})`);
     if (a.mode !== undefined && !PERMISSION_MODES.includes(a.mode)) throw new Error(`unknown mode '${a.mode}' (${PERMISSION_MODES.join('|')})`);
+    const env = sessionEnv(a.env);
     const key = newKey();
     const done = new Promise((resolve, reject) => waits.set(key, { resolve, reject }));
     try {
       const w = await windowFor(ctx.tmux);
-      await w.call(CARDS, 'open', { key, spawn: { cwd: a.cwd ?? ctx.cwd, vendor, title: a.title, mode: a.mode, model, effort: a.effort, profile: a.profile, prompt: a.prompt }, title: a.title, tmux: ctx.tmux, ...(a.focus ? { focus: true } : {}) });
+      await w.call(CARDS, 'open', { key, spawn: { cwd: a.cwd ?? ctx.cwd, vendor, title: a.title, mode: a.mode, model, effort: a.effort, profile: a.profile, ...(env.length ? { env } : {}), prompt: a.prompt }, title: a.title, tmux: ctx.tmux, ...(a.focus ? { focus: true } : {}) });
       return await done;
     } finally { waits.delete(key); }
   });

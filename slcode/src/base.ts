@@ -12,6 +12,27 @@ export type ContextUsage = { tokens: number; max: number; pct: number } | null;
 export type Command = { name: string; description: string; argumentHint: string };
 export type ApproveOpts = { remember?: boolean; updatedInput?: Record<string, unknown>; message?: string };
 
+/** 새 세션 env 이름이 받을 수 없으면 사유 (ticket slcode-new-session-env, 사용자 결정 2026-11-01) — SLCODE_* 는 slcode 가 넣는 값이라 덮지 못한다 */
+export function sessionEnvError(name: string): string | null {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return `bad env name '${name}' (letters, digits and _, not starting with a digit)`;
+  if (/^SLCODE_/i.test(name)) return `env ${name} is set by slcode — SLCODE_* names cannot be given`;
+  return null;
+}
+/** --env NAME=VALUE 들 → 이름→값. 값 하나에 여러 쌍을 줄바꿈으로 나눠도 된다 — superlite 동사 인자는 같은 option 을 여러 번 주면 마지막 값만 남겨
+ *  slcode.new --env 는 줄바꿈으로 받는다. 빈 줄은 건너뛰고 같은 이름은 뒤의 것. 플러그인 main.js 는 같은 규칙을 따로 둔다 */
+export function sessionEnv(pairs: readonly string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of pairs.flatMap((p) => p.split(/\r?\n/))) {
+    if (!line) continue;
+    const eq = line.indexOf('=');
+    if (eq < 0) throw new Error(`--env needs NAME=VALUE: ${line}`);
+    const name = line.slice(0, eq), why = sessionEnvError(name);
+    if (why) throw new Error(why);
+    out[name] = line.slice(eq + 1);
+  }
+  return out;
+}
+
 /** effort 가 지금 모델에 없으면 그 모델의 efforts, 맞거나 알 수 없으면 null. 지금 모델 찾기는 화면(web/app.js)과 같고, 모르면 default.
  *  벤더 기동 때 meta.effort 를 이것으로 보고 맞지 않으면 알린 뒤 벤더 기본으로 (ticket slcode-new-effort-prompt, 사용자 결정 2026-10-23) */
 export function effortMisfit(r: ModelsResult, effort: string): string[] | null {

@@ -14,7 +14,7 @@ import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { ClaudeSession } from './session.js';
 import { CodexSession, codexRunnable } from './codex.js';
-import type { AgentSession } from './base.js';
+import { sessionEnvError, type AgentSession } from './base.js';
 import { EventLog, historyPage, outline, summarize, type SessionMeta } from './eventLog.js';
 import { isLoopback, reachable, sockAlive, spawnCore } from './live.js';
 import { BUILD, PKG, VERSION, replacingMark } from './client.js';
@@ -90,6 +90,8 @@ export type CoreOptions = {
   profile?: string;
   /** 시작 화면에서 연 새 세션 — meta.fromStart 로 남긴다 */
   fromStart?: boolean;
+  /** 새 세션의 env (ticket slcode-new-session-env) — meta.env 로 남겨 띄울 때마다 벤더 env 에 넣는다. 이어받는 세션에 주면 bad_request */
+  env?: Record<string, string>;
   /** 새 세션을 inspect 로 — 입구 설정(Settings.inspect)을 CLI 가 읽어 넘긴다. 이어받는 세션은 meta.inspect 를 따르고, false 면 끈다 (--no-inspect) */
   inspect?: boolean;
   log?: (msg: string) => void;
@@ -109,6 +111,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   if (opts.permissionMode !== undefined && !isMode(opts.permissionMode)) throw new CoreError(ERR.badRequest, `mode ${PERMISSION_MODES.join('|')}`);
   let logFile: EventLog;
   if (opts.resume) {
+    if (opts.env && Object.keys(opts.env).length) throw new CoreError(ERR.badRequest, 'env is only for a new session — a resumed session keeps its own env');
     const found = EventLog.open(P.sessionsDir, opts.resume);
     if (!found) throw new CoreError(ERR.noSession, `no session ${opts.resume}`);
     if (await sockAlive(found.sockPath)) throw new CoreError(ERR.badRequest, `session ${opts.resume} is live — another slcode is serving it`);
@@ -120,19 +123,22 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     logFile = found;
   } else {
     if (opts.profile !== undefined && !getProfile(opts.profile, P.dir)) throw new CoreError(ERR.badRequest, `no profile ${opts.profile} (slcode profile list)`);
+    for (const k of Object.keys(opts.env ?? {})) { const why = sessionEnvError(k); if (why) throw new CoreError(ERR.badRequest, why); }
     const meta: SessionMeta = {
       id: randomUUID().slice(0, 8), vendor: opts.vendor ?? 'claude', cwd: opts.cwd, title: opts.title ?? null,
       vendorSessionId: null, createdAt: Date.now(), permissionMode: opts.permissionMode ?? 'auto', raw: opts.raw ?? false,
       ...(opts.model ? { model: opts.model } : {}), ...(opts.effort ? { effort: opts.effort } : {}), ...(opts.inspect ? { inspect: true } : {}),
       ...(opts.profile && opts.profile !== DEFAULT_PROFILE ? { profile: opts.profile } : {}), ...(opts.fromStart ? { fromStart: true } : {}),
+      ...(opts.env && Object.keys(opts.env).length ? { env: opts.env } : {}),
     };
     // 새 세션의 권한 모드는 생략하면 auto (사용자 2026-10-24) — 이미 있는 세션의 null(벤더 기본 = 승인 요청)은 건드리지 않는다
     logFile = EventLog.create(P.sessionsDir, meta);
   }
   const cwd = logFile.meta.cwd;
   // 벤더 자식(과 그 Bash 도구가 띄우는 명령)이 자기 세션을 알게 — 세션 안의 `slcode mail/check/ask/reply` 가 이걸 읽는다 (사용자 확정 2026-10-02).
-  // 그 `slcode` 는 이 판이다 (withBinPath)
-  const env: NodeJS.ProcessEnv = withBinPath({ ...SDK_ENV, SLCODE_SESSION_ID: logFile.meta.id }, PKG);
+  // 그 `slcode` 는 이 판이다 (withBinPath). 세션 env(meta.env, ticket slcode-new-session-env)는 셸에서 물려받은 값 위·SLCODE_SESSION_ID 아래 —
+  // 벤더를 다시 띄우는 길(rewind·reopen·교체)과 Codex env 가 모두 이 값에서 시작한다. 에이전트 플러그인 manifest env 는 그 위에 얹힌다
+  const env: NodeJS.ProcessEnv = withBinPath({ ...SDK_ENV, ...logFile.meta.env, SLCODE_SESSION_ID: logFile.meta.id }, PKG);
   // inspect (ticket slcode-inspect-proxy·slcode-inspect-default-on) — 켜져 있으면 벤더를 띄우기 전에 proxy 를 세우고 벤더 env 의 ANTHROPIC_BASE_URL 을 그리로.
   // 기록은 세션 폴더 inspect/inspect.db. proxy 를 띄운 core 는 3일마다 상태 폴더의 꺼진 세션 raw 를 정리한다 (기록이 늘어나는 것은 proxy 가 떠 있을 때뿐)
   const inspectDir = path.join(logFile.dir, 'inspect');

@@ -9,6 +9,12 @@ type Limits
 type ContextUsage
 type Command
 type ApproveOpts
+export fn sessionEnv(pairs) -> Record {
+  role: 새 세션 env(--env, ticket slcode-new-session-env, 사용자 결정 2026-11-01)를 NAME=VALUE 목록에서 이름→값으로. 값 하나에 여러 쌍을 줄바꿈으로 나눠도 된다 — superlite 동사 인자는 같은 option 을 여러 번 주면 마지막 값만 남기므로 slcode.new --env 는 줄바꿈으로 받는다(빈 줄은 건너뛴다). 이름은 [A-Za-z_][A-Za-z0-9_]*, SLCODE_ 로 시작하면 거절(slcode 가 넣는 값을 덮지 못한다), = 가 없으면 거절 — 사유를 담은 Error. 같은 이름은 뒤의 것. cli.ts 가 쓰고 core 는 sessionEnvError 로 다시 본다. 플러그인 main.js 는 같은 규칙을 따로 둔다
+}
+export fn sessionEnvError(name) -> Text? {
+  role: 새 세션 env 이름이 받을 수 없으면 사유, 받으면 null — sessionEnv·core 가 같은 규칙으로 본다
+}
 export fn effortMisfit(r, effort) -> Text[]? {
   role: effort 가 지금 모델에 없으면 그 모델의 efforts, 맞거나 알 수 없으면(목록에서 지금 모델을 못 찾음·efforts 가 없는 모델) null. 지금 모델 찾기는 화면(web/app.js)과 같다 — value 가 같거나 [..] 를 뗀 resolvedModel 이 같은 것, 지금 모델을 모르면 default. 벤더 기동 때 meta.effort 가 있으면 어댑터가 이것으로 보고, 맞지 않으면 notice 로 알린 뒤 effort 를 비워 벤더 기본으로 돈다 (ticket slcode-new-effort-prompt, 사용자 결정 2026-10-23)
 }
