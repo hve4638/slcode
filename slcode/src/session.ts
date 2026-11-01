@@ -325,9 +325,11 @@ export class ClaudeSession extends AgentSession {
         forwardSubagentText: true,      // 서브에이전트의 텍스트·thinking 도 parent_tool_use_id 를 달고 온다 — 작업 카드 안에 중첩해 그린다
         agentProgressSummaries: true,   // task_progress 에 한 줄 진행 요약 (약 30초마다 짧은 포크, 비용은 작다)
         thinking: { type: 'adaptive', display: 'summarized' },
-        // slcode 고정 지시를 기본 프롬프트 뒤에 (ticket slcode-append-system-prompt). snapshot 은 SDK 기본 — 첫 요청 때 기록하고 resume 도 그 기록이라 기존 세션엔 compact 뒤부터 (사용자 결정 2026-10-17: 새 세션부터)
-        // 에이전트 플러그인의 지시문은 그 뒤에 (ticket slcode-agent-plugin)
+        // slcode 고정 지시를 기본 프롬프트 뒤에 (ticket slcode-append-system-prompt). 에이전트 플러그인의 지시문은 그 뒤에 (ticket slcode-agent-plugin)
         systemPrompt: { type: 'preset', preset: 'claude_code', append: opts.agent?.append ? `${SLCODE_PROMPT}\n\n${opts.agent.append}` : SLCODE_PROMPT },
+        // snapshot 을 끈다 — 켜 두면 첫 요청 때 기록한 시스템 프롬프트를 resume 이 그대로 보내 바뀐 지시문이 안 들어가고, import 한 세션은 그쪽 기록이라 위 append 가 빠진다.
+        // SDK 옵션 systemPromptSnapshot:false 는 resume 에 듣지 않아 CLI 플래그로 (CLI 2.1.282 실측, ticket slcode-agent-plugin-instructions-resume, 사용자 결정 2026-11-02)
+        extraArgs: { 'system-prompt-snapshot': 'off' },
         // slcode 에이전트 플러그인 — 세션 폴더의 링크 경로를 <이름>@inline 으로 싣는다. 사용자 설정·설치 기록은 건드리지 않는다
         ...(opts.agent?.plugins.length ? { plugins: opts.agent.plugins } : {}),
         settings: settings as any,
