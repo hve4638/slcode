@@ -274,6 +274,11 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .hk-note .ic, .acf .hk-ctx .ic { display: inline-flex; width: 13px; height: 13px; flex: none; color: var(--acf-muted); align-self: center; }
 .acf .hk-note svg, .acf .hk-ctx svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .acf .hk-note .t { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* 알림 색(tone) — 옅은 배경 + 아이콘 색, 테마의 강조·ok·warn·err 를 따른다 (ticket slcode-session-open-notice, 사용자 2026-11-02 프로토타입 D) */
+.acf .hk-note.t-info { --hk-tone: var(--acf-accent); } .acf .hk-note.t-ok { --hk-tone: var(--acf-ok); }
+.acf .hk-note.t-warn { --hk-tone: var(--acf-warn); } .acf .hk-note.t-err { --hk-tone: var(--acf-err); }
+.acf .hk-note[class*=" t-"] { background: color-mix(in srgb, var(--hk-tone) 12%, transparent); border-color: color-mix(in srgb, var(--hk-tone) 30%, transparent); opacity: 1; }
+.acf .hk-note[class*=" t-"] .ic { color: var(--hk-tone); }
 .acf .hk-ctx { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; margin-top: 4px; font-size: 12px; color: var(--acf-muted); max-width: 100%; }
 .acf .hk-ctx.left { align-items: flex-start; margin: -4px 0 0 12px; }
 .acf .hk-ctx .tg { display: inline-flex; align-items: center; gap: 3px; border: 0; background: none; padding: 1px 4px; border-radius: 5px; color: inherit; cursor: pointer; font: inherit; }
@@ -370,6 +375,7 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 /* 첫 메시지 전 시작 프로필 고르기 — 빈 채팅창 가운데 (ticket slcode-session-profile) */
 .acf .hero { max-width: 560px; margin: 18vh auto 0; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .acf .hero[hidden] { display: none; }
+.acf .hero:not([hidden]) + .col { margin-top: 18px; } /* 열 때 알림(ticket slcode-session-open-notice)이 프로필 고르기에 붙지 않게 */
 .acf .hero-h { font-size: 13px; color: var(--acf-muted); }
 .acf .hero-seg { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px; padding: 2px; border-radius: 10px; background: var(--acf-soft); }
 .acf .hero-seg .seg { border: 0; padding: 6px 14px; border-radius: 8px; background: transparent; color: var(--acf-muted); font-size: 13px; cursor: pointer; }

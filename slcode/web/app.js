@@ -364,22 +364,29 @@ export function mountAgentFront(root, transport, opts = {}) {
   function endText(sc = main) { if (sc.textEl) { sc.textEl.classList.remove('streaming'); sc.textEl.append(sc.acts = acts(iconBtn('copy', '복사', copyOf(sc.textBuf)))); } sc.textEl = null; sc.textBuf = ''; sc.thinkEl = null; sc.thinkBuf = ''; }
   // 훅 실행 하나 — 아무 일도 안 했으면 흔적 없음. 알림(message)은 대상 아래 제 줄(응답처럼), 추가 컨텍스트는 대상 아래 '겹 +N'(누르면 펼침),
   // 도구 훅의 block·ask·allow·updateInput 은 카드 표시 + 카드 안 사유, 실패·경고는 빨간 줄. 플러그인·이벤트·파일·시간은 title(호버)로만.
-  // 대상: 도구 이벤트는 그 도구 카드, UserPromptSubmit·SessionStart 는 이 턴의 내 요청, 나머지는 피드 끝 (Claude TUI 의 '⎿ … says:' 자리)
+  // 대상: 도구 이벤트는 그 도구 카드, UserPromptSubmit·턴 안의 SessionStart(/clear) 는 이 턴의 내 요청, 나머지는 피드 끝 (Claude TUI 의 '⎿ … says:' 자리)
+  // 세션을 열 때 돈 SessionStart(턴 밖, ticket slcode-session-open-notice 사용자 2026-11-01)는 피드 끝 — 첫 메시지 전에는 프로필 고르기 바로 아래에 대화 너비로,
+  // 첫 메시지 뒤에는 대화 첫 줄로 남는다. 턴 없이 core 가 다시 뜨면(session.opened — 첫 메시지 전 프로필·벤더 바꾸기, 보내지 않고 닫았다 다시 열기) 앞서 그린 것은 지운다
   function hookRun(ev) {
     const who = `${ev.plugin} · ${ev.event} · ${ev.src.split('/').pop()} · ${ev.ms}ms`;
-    if (ev.outcome !== 'ok') push(h('div', { class: 'meta err', title: who }, `${ev.plugin} 훅 실패: ${ev.outcome === 'timeout' ? '시간 초과' : (ev.error ?? '').split('\n')[0]}`));
-    for (const w of ev.warnings) push(h('div', { class: 'meta err', title: who }, `${ev.plugin} 훅: ${w}`));
+    const opening = ev.event === 'SessionStart' && !main.inTurn;
+    const mark = (n) => { if (opening && n) (main.openNodes ??= []).push(n); return n; };
+    if (ev.outcome !== 'ok') mark(push(h('div', { class: 'meta err', title: who }, `${ev.plugin} 훅 실패: ${ev.outcome === 'timeout' ? '시간 초과' : (ev.error ?? '').split('\n')[0]}`)));
+    for (const w of ev.warnings) mark(push(h('div', { class: 'meta err', title: who }, `${ev.plugin} 훅: ${w}`)));
     const fx = ev.effects;
     const card = ev.toolUseId ? tools.get(ev.toolUseId) : null;
-    const anchor = card ?? (/^(UserPromptSubmit|SessionStart)$/.test(ev.event) && main.turnEl?.isConnected ? main.turnEl : null);
-    if (fx?.context.length) hookContext(anchor, fx.context, ev.event, who);
+    const anchor = card ?? (/^(UserPromptSubmit|SessionStart)$/.test(ev.event) && !opening && main.turnEl?.isConnected ? main.turnEl : null);
+    // message 마다 한 줄 — 아이콘·색(tone)은 플러그인이 목록 안에서 고른 것(ticket slcode-session-open-notice, 사용자 2026-11-02 옅은 배경). messages 가 없는 옛 기록은 message 한 줄
+    const note = () => { for (const m of ev.messages ?? (ev.message ? [{ text: ev.message }] : [])) mark(hookAfter(anchor, h('div', { class: `hk-note${m.tone ? ` t-${m.tone}` : ''}`, title: who }, h('span', { class: 'ic' }, icon(NOTE_ICONS[m.icon] ?? 'bell')), h('span', { class: 't' }, m.text)))); };
+    if (opening) note(); // 열 때는 알림 줄이 먼저, 추가 컨텍스트(겹 +N)는 그 아래
+    if (fx?.context.length) mark(hookContext(anchor, fx.context, ev.event, who));
     if (card && fx) {
       const marks = [...new Set([...fx.block.map(() => 'block'), ...fx.ask.map(() => 'ask'), ...fx.allow.map(() => 'allow'), ...(fx.updateInput ? ['updateInput'] : []), ...fx.stop.map(() => 'stop')])];
       const why = [...fx.ask, ...fx.allow, ...fx.stop].filter(Boolean); // block 사유는 도구 결과(오류)에 이미 나온다
       if (marks.length) card.querySelector('summary').append(h('span', { class: `hk-mark${fx.block.length ? ' block' : ''}`, title: who }, marks.join(', ')));
       if (why.length) card._detail.append(h('div', { class: 'hk-why', title: who }, why.join('\n')));
-    } else if (fx && (fx.block.length || fx.stop.length)) push(h('div', { class: 'meta', title: who }, [...fx.block, ...fx.stop].filter(Boolean).join(' · ') || (fx.block.length ? 'block' : 'stop')));
-    if (ev.message) hookAfter(anchor, h('div', { class: 'hk-note', title: who }, h('span', { class: 'ic' }, icon('bell')), h('span', { class: 't' }, ev.message)));
+    } else if (fx && (fx.block.length || fx.stop.length)) mark(push(h('div', { class: 'meta', title: who }, [...fx.block, ...fx.stop].filter(Boolean).join(' · ') || (fx.block.length ? 'block' : 'stop'))));
+    if (!opening) note();
   }
   /** 대상(과 그 뒤에 이미 붙은 훅 줄들) 바로 뒤에 둔다 — 대상이 없으면 피드 끝 */
   function hookAfter(anchor, node) {
@@ -401,6 +408,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     for (const t of texts) box._body.append(h('div', { class: 'it' }, h('div', { class: 'tx' }, t), h('div', { class: 'from', title: who }, `from ${event}`)));
     box._count += texts.length; box._n.textContent = `+${box._count}`;
     box.querySelector('.tg').title = `추가 컨텍스트 ${box._count}개`;
+    return box;
   }
   // 답변 시작으로 (ticket slcode-scroll-nav, 사용자 2026-10-24) — 턴의 마지막 말풍선 아이콘 줄(복사 옆)에만, 누르면 그 턴의 응답 첫 항목
   // (내 요청 바로 아래 — 글·생각·도구 카드 무엇이든)이 화면 맨 위로. 턴 안에서 도구 사이로 쪼개진 마지막 말풍선의 처음이 아니다.
@@ -478,9 +486,19 @@ export function mountAgentFront(root, transport, opts = {}) {
     retry: '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>',
     // 훅 — 알림(bell)·추가 컨텍스트(layers: 대화에 쌓인 한 겹), lucide (ticket slcode-agent-plugin-hooks, 사용자 2026-10-30)
     bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+    // 훅 알림이 고를 수 있는 아이콘(NOTE_ICONS) — lucide flag·info·triangle-alert·circle-check·star·zap·shield (ticket slcode-session-open-notice, 사용자 2026-11-02)
+    flag: '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22v-7"/>',
+    info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
+    triangleAlert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+    circleCheck: '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+    star: '<path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"/>',
+    zap: '<path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>',
+    shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
     layers: '<path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>',
     gear: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
   };
+  /** hook.message() 의 icon(slcode-plugin hookApi.MESSAGE_ICONS) → ICONS 이름 */
+  const NOTE_ICONS = { bell: 'bell', flag: 'flag', info: 'info', alert: 'triangleAlert', check: 'circleCheck', star: 'star', zap: 'zap', shield: 'shield' };
   const icon = (name) => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.innerHTML = ICONS[name]; return s; };
   const iconBtn = (name, title, onclick) => h('button', { class: 'ico', title, 'aria-label': title, onclick }, icon(name));
   const acts = (...btns) => h('div', { class: 'acts' }, ...btns);
@@ -593,7 +611,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     curSeq = e.seq;
     const ev = e.ev;
     switch (ev.kind) {
-      case 'turn.start': if (!turned) { turned = true; paintVendor(); paintHero(); } if (!replaying) busySince = e.at || Date.now(); setBusy('작업 중');
+      case 'turn.start': if (!turned) { turned = true; paintVendor(); paintHero(); } main.inTurn = true; main.openNodes = []; // 열 때 알림이 대화 기록으로 남는다 if (!replaying) busySince = e.at || Date.now(); setBusy('작업 중');
         endText(); main.acts = null; // 이 턴 마지막 응답의 아이콘 줄 — turn.end 가 inspect 버튼을 붙인다
         // main.turnEl: 이 턴의 내 요청(메시지 카드) — 그 바로 다음 항목이 '답변 시작으로' 가 가는 곳 (실행 중 줄은 늘 맨 끝으로 옮겨지므로 사이에 끼지 않는다)
         if (ev.origin === 'mail') { outlineAdd(e.seq, ev, main.turnEl = push(mailCard(ev.text, e.seq))); break; }
@@ -659,7 +677,7 @@ export function mountAgentFront(root, transport, opts = {}) {
       case 'approval.requested': endText(); renderCard(ev); break;
       case 'approval.resolved': resolveCard(ev.requestId, ev.decision); break;
       case 'turn.end': {
-        endText();
+        endText(); main.inTurn = false;
         if (live) { tally(ev); loadStatus(); loadPlugins(); } // 기록의 턴은 replayHistory 가 센다 — 열 때 턴마다 status 를 부르지 않게
         // 실패한 턴은 빨간 오류 블록 — 벤더 문구, 인증 실패면 로그인 안내 한 줄. API 를 쓰지 못한 턴(통계 0)은 통계 줄을 뺀다 (ticket slcode-auth-error-shown-as-answer)
         const failed = !ev.ok && !ev.interrupted;
@@ -679,6 +697,8 @@ export function mountAgentFront(root, transport, opts = {}) {
         break;
       }
       case 'session.state': setState(ev.state); if (live) act.refresh(); break;
+      // 마지막 턴 뒤의 열 때 알림(main.openNodes)은 다시 열리면 지운다 — 기록을 다시 그릴 때(앞 페이지 포함)도 같은 규칙
+      case 'session.opened': main.inTurn = false; for (const n of main.openNodes ?? []) n.remove(); main.openNodes = []; break;
       case 'session.ready': ready = ev; mcp = null; renderMode(); renderSide(); if (live) loadMcp(); break;
       case 'plugins.reloaded': {
         endText();

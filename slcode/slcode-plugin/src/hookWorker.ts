@@ -21,7 +21,7 @@ export function killGroup(pid: number) {
 /** 등록 하나 — id 는 worker 안의 번호 */
 export type Reg = { id: number; event: HookEvent; matcher: string | null; timeout: number; failClosed: boolean; src: string };
 /** 콜백 하나가 낸 결과 */
-export type Result = { block: string[]; ask: string[]; allow: string[]; input: Record<string, unknown> | null; context: string[]; message: string[]; stop: string[] };
+export type Result = { block: string[]; ask: string[]; allow: string[]; input: Record<string, unknown> | null; context: string[]; message: { text: string; icon?: string; tone?: string }[]; stop: string[] };
 /** core 가 보내는 이벤트 정보 — hook 객체의 정보 칸 */
 export type Info = {
   event: HookEvent; session: { id: string; cwd: string; permissionMode: string | null }; agent: { id: string; type: string | null } | null; raw: unknown;
@@ -137,10 +137,10 @@ function main(init: WorkerInit, port: NonNullable<typeof parentPort>) {
         else warnings.push('hook.state 에는 객체만 넣을 수 있어 무시했습니다');
       },
     });
-    const method = (m: Method, apply: (arg: unknown) => void) => (arg: unknown) => {
+    const method = (m: Method, apply: (arg: unknown, arg2?: unknown) => void) => (arg: unknown, arg2?: unknown) => {
       if (ctl.done) post({ t: 'warn', text: `${reg.src}: ${info.event} 콜백이 끝난 뒤 hook.${m}() 을 불러 무시했습니다` });
       else if (!allowed.has(m)) warnings.push(`hook.${m}() 은 ${info.event} 에서 쓸 수 없어 무시했습니다`);
-      else apply(arg);
+      else apply(arg, arg2);
       return hook;
     };
     const text = (v: unknown) => (v === undefined || v === null ? '' : String(v));
@@ -148,7 +148,11 @@ function main(init: WorkerInit, port: NonNullable<typeof parentPort>) {
     hook.ask = method('ask', (r) => result.ask.push(text(r)));
     hook.allow = method('allow', (r) => result.allow.push(text(r)));
     hook.context = method('context', (t) => result.context.push(text(t)));
-    hook.message = method('message', (t) => result.message.push(text(t)));
+    // look 의 icon·tone 은 문자열만 넘긴다 — 목록 검사는 core(hookRunner.merge)가 한다
+    hook.message = method('message', (t, look) => {
+      const l = (look && typeof look === 'object' ? look : {}) as Record<string, unknown>;
+      result.message.push({ text: text(t), ...(typeof l.icon === 'string' ? { icon: l.icon } : {}), ...(typeof l.tone === 'string' ? { tone: l.tone } : {}) });
+    });
     hook.stop = method('stop', (r) => result.stop.push(text(r)));
     hook.updateInput = method('updateInput', (i) => {
       if (i && typeof i === 'object' && !Array.isArray(i)) result.input = i as Record<string, unknown>;

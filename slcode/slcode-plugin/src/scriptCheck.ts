@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fetchTarball, placeDir, REGISTRY, untar } from './npmFetch.js';
-import { CODEX_METHODS, HOOK_EVENTS, MATCHER_EVENTS, METHODS, type HookEvent, type Method } from './hookApi.js';
+import { CODEX_METHODS, HOOK_EVENTS, MATCHER_EVENTS, MESSAGE_ICONS, MESSAGE_TONES, METHODS, type HookEvent, type Method } from './hookApi.js';
 
 export type CheckHarness = 'claude' | 'codex';
 const TABLES: Record<CheckHarness, Record<HookEvent, readonly Method[]>> = { claude: METHODS, codex: CODEX_METHODS };
@@ -36,9 +36,12 @@ declare module 'slcode/api' {
     PreToolUse: { tool: Tool }; PostToolUse: { tool: Tool & { response: any } }; Stop: {};
     SubagentStart: { agent: Agent }; SubagentStop: { agent: Agent }; PreCompact: { trigger: 'manual' | 'auto' }; SessionEnd: { reason: string };
   }
+  // 이름을 붙여 두어야 목록 밖 값의 진단 문구에 SlcodeHook 가 들어가 경고로 남는다
+  type SlcodeHookIcon = ${MESSAGE_ICONS.map((i) => `'${i}'`).join(' | ')};
+  type SlcodeHookTone = ${MESSAGE_TONES.map((t) => `'${t}'`).join(' | ')};
   interface Methods<H> {
     block(reason: string): H; ask(reason?: string): H; allow(reason?: string): H; updateInput(input: Record<string, any>): H;
-    context(text: string): H; message(text: string): H; stop(reason?: string): H;
+    context(text: string): H; message(text: string, look?: { icon?: SlcodeHookIcon; tone?: SlcodeHookTone }): H; stop(reason?: string): H;
   }
   interface Allowed {
 ${allowed}

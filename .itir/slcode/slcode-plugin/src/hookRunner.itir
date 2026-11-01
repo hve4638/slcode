@@ -3,7 +3,7 @@ import { killGroup, Info, Reg, Result, ToCore, ToWorker, WorkerInit } from './ho
 import { BUILD_FILES } from './agentBuild'
 import { readScripts, ScriptEntry } from './agentHooks'
 
-role: js/ts 훅의 core 쪽 (ticket slcode-agent-plugin-hooks). AgentHookEvent·AgentHookEffects 는 훅 기록의 꼴 — slcode protocol 의 CoreEventBody 가 그대로 품는다(ticket slcode-plugin-split 에서 protocol 에서 옮김) — export 한 Claude·Codex 의 세션 중간 프로세스(hookBroker)도 같은 것을 쓴다(slcode-agent-plugin-script-portable: RunnerOpts 의 stateFile·dirOf·aliases, run() 으로 이벤트를 직접 넣고 notes 로 실패·경고를 받는다) — SDK options.hooks 에 받는 이벤트마다 디스패처 하나를 늘 건다(다시 싣기로 훅이 생겨도 받게 — 걸 이벤트는 query() 때 고정된다). 실은 플러그인 중 스크립트가 있는 것마다 worker 하나 — worker 는 세션마다(core 가 세션 프로세스다), 다시 싣기로 빌드가 바뀐 플러그인만 다시 띄우고, timeout·오류로 내려가면 다음 호출 때 띄운다(사용자 결정 2026-10-29). 디스패처: matcher 판정은 core 가(Claude 규칙), 맞는 콜백을 모든 worker 에 동시에 보내고 설치 순서·등록 순서로 합친다 — 거부 > 확인 > 허용, context·message 는 잇고, updateInput 은 나중 것이 이긴다(버린 것은 경고 — part 경로·MCP 이름·session.json 과 같은 규칙, 사용자 결정). 실패·timeout 은 결과 없이 통과, failClosed 면 막는다(block 이 있는 이벤트만). 콜백마다 agent.hook run 기록을 낸다 — effects 는 결과 원문(잘리지 않음), toolUseId 는 도구 이벤트의 대상 도구. 화면은 한 일이 있을 때만 그린다(사용자 결정 2026-10-30: 알림은 대상 아래 제 줄, 추가 컨텍스트는 겹 아이콘 +N, 도구 훅은 카드 표시). SessionStart 대신 부르기: SDK(0.3.282~0.3.312 실측)는 새 세션·resume 때 SessionStart 콜백을 부르지 않는다(/clear 때만) — core 가 세션을 띄울 때 armSessionStart(startup|resume) 를 걸면 첫 UserPromptSubmit 앞에서 SessionStart 를 대신 돌리고 그 context·message 를 그 프롬프트의 결과에 합친다; SDK 가 먼저 SessionStart 를 부르면 건 것을 지워 두 번 돌지 않는다(사용자 결정 2026-10-30, 테스트가 지킨다). 상태: 주 에이전트의 것은 세션 폴더 agent-state/<플러그인>.json(resume·/clear 뒤에도 남는다 — 비우는 것은 훅이 source==='clear' 로), 서브에이전트의 것은 메모리에만 두고 SubagentStop 뒤 버린다. 상수 — READY_MS: worker 가 스크립트를 싣고 등록을 마칠 때까지 10초 — 넘으면 그 플러그인의 훅을 끈다(다음 호출 때 다시 띄운다); SDK_TIMEOUT: SDK 에 거는 디스패처 timeout 3600초 — 콜백마다의 timeout 은 디스패처가 지킨다.
+role: js/ts 훅의 core 쪽 (ticket slcode-agent-plugin-hooks). AgentHookEvent·AgentHookEffects 는 훅 기록의 꼴 — slcode protocol 의 CoreEventBody 가 그대로 품는다(ticket slcode-plugin-split 에서 protocol 에서 옮김) — export 한 Claude·Codex 의 세션 중간 프로세스(hookBroker)도 같은 것을 쓴다(slcode-agent-plugin-script-portable: RunnerOpts 의 stateFile·dirOf·aliases, run() 으로 이벤트를 직접 넣고 notes 로 실패·경고를 받는다) — SDK options.hooks 에 받는 이벤트마다 디스패처 하나를 늘 건다(다시 싣기로 훅이 생겨도 받게 — 걸 이벤트는 query() 때 고정된다). 실은 플러그인 중 스크립트가 있는 것마다 worker 하나 — worker 는 세션마다(core 가 세션 프로세스다), 다시 싣기로 빌드가 바뀐 플러그인만 다시 띄우고, timeout·오류로 내려가면 다음 호출 때 띄운다(사용자 결정 2026-10-29). 디스패처: matcher 판정은 core 가(Claude 규칙), 맞는 콜백을 모든 worker 에 동시에 보내고 설치 순서·등록 순서로 합친다 — 거부 > 확인 > 허용, context·message 는 잇고, updateInput 은 나중 것이 이긴다(버린 것은 경고 — part 경로·MCP 이름·session.json 과 같은 규칙, 사용자 결정). 실패·timeout 은 결과 없이 통과, failClosed 면 막는다(block 이 있는 이벤트만). 콜백마다 agent.hook run 기록을 낸다 — effects 는 결과 원문(잘리지 않음), toolUseId 는 도구 이벤트의 대상 도구. 화면은 한 일이 있을 때만 그린다(사용자 결정 2026-10-30: 알림은 대상 아래 제 줄, 추가 컨텍스트는 겹 아이콘 +N, 도구 훅은 카드 표시). 열 때 SessionStart(ticket slcode-session-open-notice, 사용자 결정 2026-11-01 — 2026-10-30 의 첫 프롬프트 앞 대신 부르기를 바꿨다): SDK(0.3.282~0.3.312 실측)는 새 세션·resume 때 SessionStart 콜백을 부르지 않는다(/clear 때만) — core 가 세션을 띄울 때마다(core 기동, 카드·브라우저가 다시 붙을 때는 아니다) openSession(startup|resume, cwd·권한 모드·벤더 세션 id) 을 부르면 그때 SessionStart 를 돌려 message 는 기록(run 의 message)으로 바로 화면에 나가고(터미널 Claude 가 열 때 SessionStart:startup says 를 보이는 것과 같다), context·stop 은 들고 있다가 첫 주 에이전트 UserPromptSubmit 결과 앞에 합친다(넘기는 결과에 systemMessage 는 빼서 두 번 보이지 않게). openSession 뒤 SDK 가 startup·resume 으로 SessionStart 를 부르면(고쳐진 뒤) 다시 돌리지 않고 들고 있던 것을(없으면 빈 결과) 그 답으로 준다 — 두 번 돌지 않는다(테스트가 지킨다). export 의 중간 프로세스(run)는 openSession 을 부르지 않아 그대로다. 상태: 주 에이전트의 것은 세션 폴더 agent-state/<플러그인>.json(resume·/clear 뒤에도 남는다 — 비우는 것은 훅이 source==='clear' 로), 서브에이전트의 것은 메모리에만 두고 SubagentStop 뒤 버린다. 상수 — READY_MS: worker 가 스크립트를 싣고 등록을 마칠 때까지 10초 — 넘으면 그 플러그인의 훅을 끈다(다음 호출 때 다시 띄운다); SDK_TIMEOUT: SDK 에 거는 디스패처 timeout 3600초 — 콜백마다의 timeout 은 디스패처가 지킨다.
 
 export val STATE_DIR
 val READY_MS
@@ -15,6 +15,9 @@ fn matchValue(event, input) {
   role: 도구 이벤트는 tool_name, SessionStart 는 source, PreCompact 는 trigger, SessionEnd 는 reason, Subagent* 는 agent_type. 그 밖은 matcher 를 보지 않는다(null)
 }
 fn infoOf(event, input, sessionId) -> Info
+fn lookOf(m, warnings) -> AgentHookMessage {
+  role: message 의 icon·tone 을 hookApi.MESSAGE_ICONS·MESSAGE_TONES 로 거른다 — 밖의 값은 빼고 그 콜백의 경고로
+}
 type Notes
 export class HookRunner {
   role: 세션 하나의 js/ts 훅 — 플러그인별 worker·등록·상태를 쥔다
@@ -37,9 +40,10 @@ export class HookRunner {
     role: 설치 순서로 결과를 모은다 — matcher 는 도구 이름과 그 별칭(opts.aliases, Codex apply_patch→Edit·Write) 중 하나라도 맞으면. SubagentStop 뒤 그 서브에이전트의 상태를 버린다
   }
   fn merge(event, outs, toolUseId, notes) {
-    role: PreToolUse 는 hookSpecificOutput(permissionDecision deny|ask|allow·updatedInput·additionalContext), 그 밖은 decision block·reason 과 SessionStart·UserPromptSubmit·PostToolUse·SubagentStart 의 additionalContext. message → systemMessage, stop → continue false·stopReason
+    role: PreToolUse 는 hookSpecificOutput(permissionDecision deny|ask|allow·updatedInput·additionalContext), 그 밖은 decision block·reason 과 SessionStart·UserPromptSubmit·PostToolUse·SubagentStart 의 additionalContext. message → systemMessage(글자만 이어서), stop → continue false·stopReason. run 기록의 messages 는 message 마다 {text, icon?, tone?} — 목록(hookApi.MESSAGE_ICONS·MESSAGE_TONES) 밖의 값은 빼고 그 콜백의 경고로 낸다(기본 모양으로 그린다). message 는 그 글자를 이은 것(옛 기록·글자만 보는 쪽)
   }
 }
 type RunnerOpts
 type AgentHookEvent
 type AgentHookEffects
+type AgentHookMessage

@@ -76,6 +76,8 @@ export abstract class AgentSession {
 
   /** 벤더가 아니라 core 가 알리는 일 — 기록에 error 이벤트로 남는다 (inspect 를 껐다 등) */
   notice(message: string) { this.emit({ kind: 'error', message }); }
+  /** core 가 이 세션을 열었다(기동마다) — 기록에 session.opened 로 남는다 */
+  opened(source: 'startup' | 'resume') { this.emit({ kind: 'session.opened', source }); }
 
   protected emit(ev: CoreEvent, raw?: unknown) {
     if (ev.kind === 'session.state') this.state = ev.state;

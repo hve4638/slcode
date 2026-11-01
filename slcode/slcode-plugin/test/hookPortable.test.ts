@@ -168,7 +168,7 @@ test('훅 명령 → 중간 프로세스: 상태 파일·모듈 변수가 세션
   assert.match(o.hookSpecificOutput.additionalContext, /^n=1 calls=1$/);
 });
 
-test('tsc 검사: 하네스별 slcode/api 타입 — Codex 에 없는 ask, Stop 의 context, 모르는 이벤트, matcher 를 보지 않는 이벤트의 matcher 를 경고. 훅 API 밖의 진단은 버린다', async () => {
+test('tsc 검사: 하네스별 slcode/api 타입 — Codex 에 없는 ask, Stop 의 context, 모르는 이벤트, matcher 를 보지 않는 이벤트의 matcher, 목록 밖의 message 아이콘을 경고. 훅 API 밖의 진단은 버린다', async () => {
   const stateDir = tmp('ts');
   // 받지 않게 node_modules 의 같은 판을 받아 둔 자리에 놓는다
   const have = path.join(ROOT, '..', 'node_modules/typescript'); // slcode 의 devDependencies
@@ -180,11 +180,13 @@ test('tsc 검사: 하네스별 slcode/api 타입 — Codex 에 없는 ask, Stop 
     'a.ts': "import { slcode } from 'slcode/api'; import fs from 'node:fs';\nslcode.on('PreToolUse', (h) => { h.ask('x'); h.context(String(fs)); });\nslcode.on('Stop', (h) => h.context('no'));\nslcode.run();\n",
     'b.js': "import { slcode } from 'slcode/api';\nslcode.on('ProToolUse', () => {});\nslcode.run();\n",
     'c.ts': "import { slcode } from 'slcode/api';\nslcode.on('UserPromptSubmit', { matcher: 'x' }, () => {});\nslcode.on('PreToolUse', { matcher: 'Bash' }, () => {});\nslcode.run();\n",
+    'd.ts': "import { slcode } from 'slcode/api';\nslcode.on('SessionStart', (h) => { h.message('ok', { icon: 'flag', tone: 'warn' }); });\nslcode.on('SessionStart', (h) => { h.message('bad', { icon: 'nope' }); });\nslcode.run();\n",
   });
-  const r = await checkScripts([path.join(src, 'a.ts'), path.join(src, 'b.js'), path.join(src, 'c.ts')], ['claude', 'codex'], stateDir, src);
+  const r = await checkScripts([path.join(src, 'a.ts'), path.join(src, 'b.js'), path.join(src, 'c.ts'), path.join(src, 'd.ts')], ['claude', 'codex'], stateDir, src);
   assert.equal(r.skipped, null);
-  assert.deepEqual(r.warnings.claude!.map((w) => w.split(': ')[0]), ['a.ts:3', 'b.js:2', 'c.ts:2'], 'matcher 는 matcher 를 보는 이벤트에서만');
-  assert.deepEqual(r.warnings.codex!.map((w) => w.split(': ')[0]), ['a.ts:2', 'a.ts:3', 'b.js:2', 'c.ts:2']);
+  assert.deepEqual(r.warnings.claude!.map((w) => w.split(': ')[0]), ['a.ts:3', 'b.js:2', 'c.ts:2', 'd.ts:3'], 'matcher 는 matcher 를 보는 이벤트에서만');
+  assert.deepEqual(r.warnings.codex!.map((w) => w.split(': ')[0]), ['a.ts:2', 'a.ts:3', 'b.js:2', 'c.ts:2', 'd.ts:3']);
+  assert.match(r.warnings.claude!.at(-1)!, /'"nope"' is not assignable to type 'SlcodeHookIcon'/, '목록 밖의 아이콘');
   assert.match(r.warnings.codex![0], /Property 'ask' does not exist on type 'SlcodeHook<"PreToolUse">'/);
   assert.match(apiDts('codex'), /PreToolUse: 'block' \| 'allow' \| 'updateInput' \| 'context' \| 'message';/);
 });

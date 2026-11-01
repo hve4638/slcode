@@ -17,7 +17,11 @@ export type Result = {
     allow: string[];
     input: Record<string, unknown> | null;
     context: string[];
-    message: string[];
+    message: {
+        text: string;
+        icon?: string;
+        tone?: string;
+    }[];
     stop: string[];
 };
 /** core 가 보내는 이벤트 정보 — hook 객체의 정보 칸 */

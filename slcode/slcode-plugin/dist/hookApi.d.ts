@@ -4,6 +4,14 @@ export type HookEvent = (typeof HOOK_EVENTS)[number];
 /** matcher 를 보는 이벤트 — 나머지(UserPromptSubmit·Stop)에 준 matcher 는 빌드가 경고하고 무시한다 (Claude 는 조용히 무시한다, 사용자 결정 2026-10-31) */
 export declare const MATCHER_EVENTS: readonly ["PreToolUse", "PostToolUse", "SessionStart", "PreCompact", "SessionEnd", "SubagentStart", "SubagentStop"];
 export type MatcherEvent = (typeof MATCHER_EVENTS)[number];
+/** hook.message() 알림 줄의 아이콘·색 — 정해진 목록 안에서만 고른다(ticket slcode-session-open-notice, 사용자 결정 2026-11-02). 생략하면 기본 모양(회색 종).
+ *  slcode 웹 화면만 쓴다 — export 한 Claude·Codex 화면에는 글자만 간다. 색은 웹 테마의 강조·ok·warn·err 색을 따른다 */
+export declare const MESSAGE_ICONS: readonly ["bell", "flag", "info", "alert", "check", "star", "zap", "shield"];
+export declare const MESSAGE_TONES: readonly ["info", "ok", "warn", "err"];
+export type MessageLook = {
+    icon?: (typeof MESSAGE_ICONS)[number];
+    tone?: (typeof MESSAGE_TONES)[number];
+};
 export type Method = 'block' | 'ask' | 'allow' | 'updateInput' | 'context' | 'message' | 'stop';
 /** 이벤트별 결과 메서드 (SDK 0.3.282 의 hook 출력 타입으로 확인). Stop·SubagentStop 의 context 는 SDK 가 받지만 막는다 — 그러면 Claude 가 멈추지 않는다(사용자 결정 2026-10-29).
  *  Stop·SubagentStop 의 block 은 "멈추지 말고 계속하라" */
@@ -46,8 +54,8 @@ type Base<E extends HookEvent> = {
     exec(cmd: string, args?: string[], opts?: ExecOptions): Promise<ExecResult>;
     /** 하네스가 준 원본 입력 */
     raw: any;
-    /** 사용자에게만 보이는 문구 */
-    message(text: string): Hook<E>;
+    /** 사용자에게만 보이는 문구 — look 으로 알림 줄의 아이콘·색을 고른다(MESSAGE_ICONS·MESSAGE_TONES, slcode 화면만) */
+    message(text: string, look?: MessageLook): Hook<E>;
     /** 세션 진행을 멈춘다 */
     stop(reason?: string): Hook<E>;
 };

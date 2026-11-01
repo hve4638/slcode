@@ -222,7 +222,7 @@ function render(e: LoggedEvent) {
   const ev = e.ev;
   switch (ev.kind) {
     case 'text.delta': process.stdout.write(ev.text); break;
-    case 'thinking.delta': case 'hook': case 'session.state': break; // 상태 변화는 본문이 아니다 — --json 에는 그대로 있다
+    case 'thinking.delta': case 'hook': case 'session.state': case 'session.opened': break; // 상태 변화는 본문이 아니다 — --json 에는 그대로 있다
     case 'session.ready': console.log(`\n● ready ${ev.vendor} ${ev.model} mode=${ev.permissionMode}${ev.version ? ` v${ev.version}` : ''}`); break;
     case 'turn.start': console.log(`\n› ${ev.text}`); break;
     case 'tool.start': console.log(`\n⚙ ${ev.name} ${JSON.stringify(ev.input).slice(0, 200)}`); break;

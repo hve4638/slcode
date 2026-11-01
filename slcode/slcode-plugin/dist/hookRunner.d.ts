@@ -1,7 +1,8 @@
 import type { HookCallbackMatcher, SyncHookJSONOutput } from '@anthropic-ai/claude-agent-sdk';
-import { type HookEvent } from './hookApi.js';
+import { type HookEvent, type MessageLook } from './hookApi.js';
 /** js/ts 훅의 기록 — slcode 는 세션 이벤트로 낸다 (slcode protocol.ts CoreEventBody 가 이 꼴을 그대로 품는다). ready 는 worker 가 스크립트를 싣고 등록한 콜백(errors 는 싣지 못한 스크립트·잘못된 on()),
- *  run 은 콜백 한 번(result 는 부른 메서드 요약, outcome 이 error·timeout 이면 error 에 사유, message 는 hook.message() 문구), warn 은 그 밖의 경고 */
+ *  run 은 콜백 한 번(result 는 부른 메서드 요약, outcome 이 error·timeout 이면 error 에 사유, message 는 hook.message() 문구를 이은 것,
+ *  messages 는 부른 것마다 글과 아이콘·색 — 목록 밖 값은 뺐다; 이 필드가 없는 옛 기록은 message 한 줄로 그린다), warn 은 그 밖의 경고 */
 export type AgentHookEvent = {
     kind: 'agent.hook';
     phase: 'ready';
@@ -26,6 +27,7 @@ export type AgentHookEvent = {
     toolUseId: string | null;
     error: string | null;
     message: string | null;
+    messages?: AgentHookMessage[] | null;
     warnings: string[];
 } | {
     kind: 'agent.hook';
@@ -33,6 +35,9 @@ export type AgentHookEvent = {
     plugin: string;
     text: string;
 };
+export type AgentHookMessage = {
+    text: string;
+} & MessageLook;
 export type AgentHookEffects = {
     block: string[];
     ask: string[];
@@ -67,13 +72,22 @@ export declare class HookRunner {
     private plugins;
     private nextCall;
     private closed;
-    /** 세션을 열거나 다시 열었는데 SDK 가 아직 SessionStart 를 부르지 않았다 — 첫 UserPromptSubmit 때 대신 부른다 */
-    private startSource;
+    /** 열 때 돈 SessionStart 의 결과 중 첫 프롬프트에 넣을 것(context·stop) — 아직 넣지 않았으면 있다 */
+    private opening;
+    /** openSession 을 불렀다 — 그 뒤 SDK 가 startup·resume 으로 부르는 SessionStart 는 다시 돌리지 않는다 */
+    private opened;
     constructor(opts: RunnerOpts);
-    /** SDK(0.3.282~0.3.312 실측)는 새 세션·resume 때 options.hooks 의 SessionStart 콜백을 부르지 않는다(/clear 때만) — 세션을 띄울 때 걸어 두면
-     *  첫 프롬프트의 UserPromptSubmit 앞에서 SessionStart(source) 를 대신 돌리고 그 context·message 를 그 프롬프트의 것에 합친다.
-     *  SDK 가 먼저 SessionStart 를 부르면(고쳐진 뒤) 건 것을 지운다 — 두 번 돌지 않는다 (사용자 결정 2026-10-30) */
-    armSessionStart(source: 'startup' | 'resume'): void;
+    /** 세션을 열 때(core 기동마다) SessionStart(source) 를 돌린다 — message 는 바로 기록(emit)으로 화면에 나가고, context·stop 은 들고 있다가
+     *  첫 주 에이전트 UserPromptSubmit 결과 앞에 합친다. 터미널 Claude 가 열 때 SessionStart 를 돌려 message 를 바로 보이는 것과 맞춘다 (ticket slcode-session-open-notice, 사용자 2026-11-01).
+     *  SDK(0.3.282~0.3.312 실측)는 새 세션·resume 때 options.hooks 의 SessionStart 를 부르지 않는다(/clear 때만). 고쳐져 SDK 가 startup·resume 으로 부르면
+     *  다시 돌리지 않고 들고 있던 것을 그 답으로 준다 — 두 번 돌지 않는다 */
+    openSession(source: 'startup' | 'resume', at: {
+        cwd: string;
+        permissionMode?: string | null;
+        vendorSessionId?: string | null;
+    }): void;
+    /** 들고 있던 것을 꺼낸다(한 번만) */
+    private takeOpening;
     /** 실은 플러그인 목록(설치 순서)으로 맞춘다 — 빠진 것은 내리고, 빌드가 바뀐 것은 다시 띄우고, 같은 것은 둔다. 스크립트가 없는 플러그인은 worker 를 두지 않는다 */
     load(loaded: {
         name: string;
@@ -94,6 +108,8 @@ export declare class HookRunner {
     private regsOf;
     private call;
     private dispatch;
+    /** 콜백을 돌린다 — 열 때 들고 있던 것은 보지 않는다 */
+    private fire;
     /** 결과를 합치고 콜백마다 기록을 낸다 */
     private merge;
 }

@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
-import { HOOK_EVENTS, MATCHER_EVENTS, METHODS } from './hookApi.js';
+import { HOOK_EVENTS, MATCHER_EVENTS, MESSAGE_ICONS, MESSAGE_TONES, METHODS } from './hookApi.js';
 import { killGroup } from './hookWorker.js';
 import { BUILD_FILES } from './agentBuild.js';
 import { readScripts } from './agentHooks.js';
@@ -61,7 +61,24 @@ function infoOf(event, input, sessionId) {
         info.reason = input.reason;
     return info;
 }
-/** 대신 부른 SessionStart 의 결과를 그 프롬프트의 UserPromptSubmit 결과 앞에 합친다 — message·context 는 잇고, stop 은 어느 쪽이든 */
+/** hook.message() 의 icon·tone 을 목록(MESSAGE_ICONS·MESSAGE_TONES)으로 거른다 — 밖의 값은 빼고(기본 모양으로 그린다) 그 콜백의 경고로 */
+function lookOf(m, warnings) {
+    const out = { text: m.text };
+    if (m.icon !== undefined) {
+        if (MESSAGE_ICONS.includes(m.icon))
+            out.icon = m.icon;
+        else
+            warnings.push(`hook.message() 의 icon '${m.icon}' 은 없는 값이라 기본 아이콘으로 그립니다 (${MESSAGE_ICONS.join('·')})`);
+    }
+    if (m.tone !== undefined) {
+        if (MESSAGE_TONES.includes(m.tone))
+            out.tone = m.tone;
+        else
+            warnings.push(`hook.message() 의 tone '${m.tone}' 은 없는 값이라 기본 색으로 그립니다 (${MESSAGE_TONES.join('·')})`);
+    }
+    return out;
+}
+/** 열 때 돈 SessionStart 의 결과를 첫 프롬프트의 UserPromptSubmit 결과 앞에 합친다 — message·context 는 잇고, stop 은 어느 쪽이든 */
 function joinOutputs(start, prompt) {
     const out = { ...prompt };
     const msg = [start.systemMessage, prompt.systemMessage].filter(Boolean).join('\n');
@@ -81,15 +98,29 @@ export class HookRunner {
     plugins = [];
     nextCall = 0;
     closed = false;
-    /** 세션을 열거나 다시 열었는데 SDK 가 아직 SessionStart 를 부르지 않았다 — 첫 UserPromptSubmit 때 대신 부른다 */
-    startSource = null;
+    /** 열 때 돈 SessionStart 의 결과 중 첫 프롬프트에 넣을 것(context·stop) — 아직 넣지 않았으면 있다 */
+    opening = null;
+    /** openSession 을 불렀다 — 그 뒤 SDK 가 startup·resume 으로 부르는 SessionStart 는 다시 돌리지 않는다 */
+    opened = false;
     constructor(opts) {
         this.opts = opts;
     }
-    /** SDK(0.3.282~0.3.312 실측)는 새 세션·resume 때 options.hooks 의 SessionStart 콜백을 부르지 않는다(/clear 때만) — 세션을 띄울 때 걸어 두면
-     *  첫 프롬프트의 UserPromptSubmit 앞에서 SessionStart(source) 를 대신 돌리고 그 context·message 를 그 프롬프트의 것에 합친다.
-     *  SDK 가 먼저 SessionStart 를 부르면(고쳐진 뒤) 건 것을 지운다 — 두 번 돌지 않는다 (사용자 결정 2026-10-30) */
-    armSessionStart(source) { this.startSource = source; }
+    /** 세션을 열 때(core 기동마다) SessionStart(source) 를 돌린다 — message 는 바로 기록(emit)으로 화면에 나가고, context·stop 은 들고 있다가
+     *  첫 주 에이전트 UserPromptSubmit 결과 앞에 합친다. 터미널 Claude 가 열 때 SessionStart 를 돌려 message 를 바로 보이는 것과 맞춘다 (ticket slcode-session-open-notice, 사용자 2026-11-01).
+     *  SDK(0.3.282~0.3.312 실측)는 새 세션·resume 때 options.hooks 의 SessionStart 를 부르지 않는다(/clear 때만). 고쳐져 SDK 가 startup·resume 으로 부르면
+     *  다시 돌리지 않고 들고 있던 것을 그 답으로 준다 — 두 번 돌지 않는다 */
+    openSession(source, at) {
+        const input = { hook_event_name: 'SessionStart', source, cwd: at.cwd, session_id: at.vendorSessionId ?? '', transcript_path: '', ...(at.permissionMode ? { permission_mode: at.permissionMode } : {}) };
+        // message 는 이미 화면에 나갔다 — 넘기는 결과에서 빼서 두 번 보이지 않게
+        this.opened = true;
+        this.opening = this.fire('SessionStart', input).then(({ systemMessage: _m, ...rest }) => rest);
+    }
+    /** 들고 있던 것을 꺼낸다(한 번만) */
+    async takeOpening() {
+        const opening = this.opening;
+        this.opening = null;
+        return opening;
+    }
     /** 실은 플러그인 목록(설치 순서)으로 맞춘다 — 빠진 것은 내리고, 빌드가 바뀐 것은 다시 띄우고, 같은 것은 둔다. 스크립트가 없는 플러그인은 worker 를 두지 않는다 */
     load(loaded) {
         const next = [];
@@ -232,15 +263,20 @@ export class HookRunner {
         });
     }
     async dispatch(event, input, notes) {
-        if (event === 'SessionStart')
-            this.startSource = null;
-        if (event === 'UserPromptSubmit' && this.startSource && !input.agent_id) {
-            const { prompt: _p, ...base } = input;
-            const source = this.startSource;
-            this.startSource = null;
-            const start = await this.dispatch('SessionStart', { ...base, hook_event_name: 'SessionStart', source });
-            return joinOutputs(start, await this.dispatch(event, input));
+        if (event === 'SessionStart' && !input.agent_id && (input.source === 'startup' || input.source === 'resume')) {
+            const held = await this.takeOpening();
+            if (held || this.opened)
+                return held ?? {};
         }
+        if (event === 'UserPromptSubmit' && !input.agent_id) {
+            const held = await this.takeOpening();
+            if (held)
+                return joinOutputs(held, await this.fire(event, input));
+        }
+        return this.fire(event, input, notes);
+    }
+    /** 콜백을 돌린다 — 열 때 들고 있던 것은 보지 않는다 */
+    async fire(event, input, notes) {
         const info = infoOf(event, input, this.opts.sessionId);
         const value = matchValue(event, input);
         const values = value ? [value, ...(this.opts.aliases?.[value] ?? [])] : [];
@@ -266,9 +302,10 @@ export class HookRunner {
         const lost = [];
         for (const o of outs) {
             const r = o.result;
+            const messages = r?.message.filter((m) => m.text).map((m) => lookOf(m, o.warnings)) ?? [];
             this.opts.emit({
                 kind: 'agent.hook', phase: 'run', plugin: o.plugin, src: o.reg.src, event, ms: o.ms, outcome: o.timeout ? 'timeout' : o.ok ? 'ok' : 'error',
-                effects: r && { block: r.block, ask: r.ask, allow: r.allow, stop: r.stop, context: r.context.filter(Boolean), updateInput: !!r.input }, toolUseId, error: o.error, message: r?.message.length ? r.message.join('\n') : null, warnings: o.warnings,
+                effects: r && { block: r.block, ask: r.ask, allow: r.allow, stop: r.stop, context: r.context.filter(Boolean), updateInput: !!r.input }, toolUseId, error: o.error, message: messages.length ? messages.map((m) => m.text).join('\n') : null, messages: messages.length ? messages : null, warnings: o.warnings,
             });
             if (notes) {
                 if (!o.ok)
@@ -283,7 +320,7 @@ export class HookRunner {
             ask.push(...r.ask);
             allow.push(...r.allow);
             context.push(...r.context.filter(Boolean));
-            message.push(...r.message.filter(Boolean));
+            message.push(...messages.map((m) => m.text));
             stop.push(...r.stop);
             if (r.input) {
                 if (input)

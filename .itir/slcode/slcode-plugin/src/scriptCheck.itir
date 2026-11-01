@@ -8,7 +8,7 @@ export val TS_VERSION
 val TS_INTEGRITY
 val TS_URL
 export fn apiDts(harness) -> Text {
-  role: 하네스별 declare module 'slcode/api' — 이벤트별 칸은 hookApi 와 같고 메서드는 그 하네스 표에 있는 것만(Pick). slcode.on 의 이벤트 인자로 콜백 hook 타입이 정해져 JS 도 추론된다
+  role: 하네스별 declare module 'slcode/api' — 이벤트별 칸은 hookApi 와 같고 메서드는 그 하네스 표에 있는 것만(Pick). slcode.on 의 이벤트 인자로 콜백 hook 타입이 정해져 JS 도 추론된다. message 의 look 은 hookApi.MESSAGE_ICONS·MESSAGE_TONES 로 만든 SlcodeHookIcon·SlcodeHookTone — 이름을 붙여야 목록 밖 값의 진단 문구에 SlcodeHook 가 들어가 경고로 남는다
 }
 export fn ensureTypescript(stateDir) {
   role: typescript 모듈 — 없으면 받아 임시 폴더에 풀고 rename(동시에 받았으면 먼저 놓인 것). 실패면 던진다

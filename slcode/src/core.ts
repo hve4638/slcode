@@ -201,7 +201,9 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     ? new HookRunner({ sessionDir: logFile.dir, buildDir: agentPaths(P.dir).build, sessionId: logFile.meta.id, emit: (ev) => { if (hookQueue) hookQueue.push(ev); else (session as ClaudeSession).emitHook(ev); } })
     : null;
   hooks?.load(agentLoaded);
-  hooks?.armSessionStart(logFile.meta.vendorSessionId ? 'resume' : 'startup');
+  // 세션을 열 때(core 기동마다) SessionStart 를 돌린다 — message 는 바로 화면에, context 는 첫 프롬프트에 (ticket slcode-session-open-notice, 사용자 2026-11-01)
+  const openSource = logFile.meta.vendorSessionId ? 'resume' : 'startup';
+  hooks?.openSession(openSource, { cwd, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode ?? null, vendorSessionId: logFile.meta.vendorSessionId ?? null });
   // codex 는 프로세스 env 로 — manifest env 와 PATH 앞의 플러그인 bin/ (Claude 는 ClaudeSession 이 agent.env 를 얹는다)
   const codexEnv = (): NodeJS.ProcessEnv => {
     if (!agent) return env;
@@ -215,6 +217,8 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   const session: AgentSession = codex
     ? new CodexSession({ log: logFile, env: codexEnv(), permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, args: firstArgs, onConfig: (base) => gotBase(base), skillRoots: agent?.codex.roots ?? [], instructions: agent?.append ?? '' })
     : new ClaudeSession({ log: logFile, env: firstEnv, resume: logFile.meta.vendorSessionId, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, ...(agent ? { agent } : {}), ...(load ? { load } : {}), ...(hooks ? { hooks: hooks.sdkHooks() } : {}) });
+  // 연 표지를 열 때의 훅 기록보다 먼저 — 화면은 이것을 만나면 마지막 턴 뒤의 앞선 열 때 알림(바꾸기 전 프로필·벤더의 것 등)을 지운다
+  session.opened(openSource);
   for (const ev of hookQueue ?? []) (session as ClaudeSession).emitHook(ev);
   hookQueue = null;
   const sid = session.id;

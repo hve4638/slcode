@@ -182,40 +182,77 @@ test('실패: 던지면 통과(failClosed 면 막는다), timeout 이면 worker 
   } finally { await r.close(); }
 });
 
-test('SessionStart: SDK 가 부르지 않으면 첫 프롬프트 앞에서 대신 부르고 그 context·message 를 합친다 — SDK 가 먼저 부르면(버그 수정 뒤) 두 번 돌지 않는다', async () => {
+test('SessionStart: 열 때(openSession) 돌려 message 는 바로 기록에 내고, context 는 첫 프롬프트에 합친다, SDK 가 startup·resume 으로 부르면 두 번 돌지 않는다', async () => {
   const dir = tmp('state'), sdir = tmp('session');
   const id = await install(dir, 'start', {
     'main/hooks/hooks.json': JSON.stringify({ hooks: [{ type: 'script', file: 'hooks/start.ts' }] }),
     'main/hooks/start.ts': `import { slcode } from 'slcode/api';
-      slcode.on('SessionStart', (hook: any) => { hook.state.starts = [...(hook.state.starts ?? []), hook.source]; hook.context(\`start \${hook.source}\`); hook.state.harness = slcode.vars.harness; hook.message('hello'); });
+      slcode.on('SessionStart', (hook: any) => { hook.state.starts = [...(hook.state.starts ?? []), hook.source]; hook.context(\`start \${hook.source}\`); hook.state.harness = slcode.vars.harness; hook.state.cwd = hook.session.cwd; hook.message('hello'); });
       slcode.on('UserPromptSubmit', (hook: any) => { hook.context(\`prompt \${hook.prompt}\`); });
       slcode.run();`,
   });
-  const starts = (events: AgentHookEvent[]) => events.filter((e) => e.phase === 'run' && e.event === 'SessionStart').length;
+  const starts = (events: AgentHookEvent[]) => events.filter((e) => e.phase === 'run' && e.event === 'SessionStart') as Extract<AgentHookEvent, { phase: 'run' }>[];
+  const until = async (ok: () => boolean) => { for (let i = 0; i < 200 && !ok(); i++) await new Promise((res) => setTimeout(res, 25)); assert.ok(ok()); };
 
-  // 지금의 SDK — 새 세션에서 SessionStart 가 오지 않는다: 첫 프롬프트에 합쳐서 한 번만
+  // 지금의 SDK — 새 세션에서 SessionStart 가 오지 않는다: 열 때 돌고 프롬프트 없이도 message 가 기록에 나간다
   const a = runner(dir, sdir, [{ name: 'start', build: id }]);
   try {
-    a.r.armSessionStart('startup');
+    a.r.openSession('startup', { cwd: sdir, permissionMode: 'auto' });
+    await until(() => starts(a.events).length === 1);
+    assert.equal(starts(a.events)[0].message, 'hello', '첫 프롬프트 전에 기록에 나간다');
     let o = await a.fire('UserPromptSubmit', { prompt: 'one' });
-    assert.deepEqual(o, { systemMessage: 'hello', hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: 'start startup\n\nprompt one' } });
+    assert.deepEqual(o, { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: 'start startup\n\nprompt one' } }, 'message 는 다시 넘기지 않는다');
     o = await a.fire('UserPromptSubmit', { prompt: 'two' });
     assert.equal(o.hookSpecificOutput.additionalContext, 'prompt two', '두 번째 프롬프트에는 붙이지 않는다');
-    assert.equal(starts(a.events), 1);
+    assert.equal(starts(a.events).length, 1);
     await a.fire('SessionStart', { source: 'clear' }); // /clear 는 SDK 가 부른다 — 그대로 돈다
-    assert.equal(starts(a.events), 2);
+    assert.equal(starts(a.events).length, 2);
   } finally { await a.r.close(); }
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(sdir, STATE_DIR, 'start.json'), 'utf8')).starts, ['startup', 'clear']);
-  assert.equal(JSON.parse(fs.readFileSync(path.join(sdir, STATE_DIR, 'start.json'), 'utf8')).harness, 'claude', 'slcode 세션의 slcode.vars.harness');
+  const state = () => JSON.parse(fs.readFileSync(path.join(sdir, STATE_DIR, 'start.json'), 'utf8'));
+  assert.deepEqual(state().starts, ['startup', 'clear']);
+  assert.equal(state().harness, 'claude', 'slcode 세션의 slcode.vars.harness');
+  assert.equal(state().cwd, sdir, '열 때의 cwd 를 넘긴다');
 
-  // SDK 가 고쳐져 resume 때 SessionStart 를 먼저 부르는 경우 — slcode 는 다시 부르지 않는다
+  // SDK 가 고쳐져 resume 때 SessionStart 를 부르는 경우 — 들고 있던 것을 그 답으로 주고 다시 돌리지 않는다
   const b = runner(dir, sdir, [{ name: 'start', build: id }]);
   try {
-    b.r.armSessionStart('resume');
-    await b.fire('SessionStart', { source: 'resume' });
-    const o = await b.fire('UserPromptSubmit', { prompt: 'three' });
+    b.r.openSession('resume', { cwd: sdir, vendorSessionId: 'v' });
+    let o = await b.fire('SessionStart', { source: 'resume' });
+    assert.deepEqual(o, { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: 'start resume' } });
+    o = await b.fire('UserPromptSubmit', { prompt: 'three' });
     assert.equal(o.hookSpecificOutput.additionalContext, 'prompt three');
-    assert.equal(starts(b.events), 1, 'SessionStart 는 한 번만');
+    o = await b.fire('SessionStart', { source: 'startup' });
+    assert.deepEqual(o, {}, '연 뒤의 startup·resume 은 다시 돌리지 않는다');
+    assert.equal(starts(b.events).length, 1, 'SessionStart 는 한 번만');
   } finally { await b.r.close(); }
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(sdir, STATE_DIR, 'start.json'), 'utf8')).starts, ['startup', 'clear', 'resume']);
+  assert.deepEqual(state().starts, ['startup', 'clear', 'resume']);
+
+  // 열지 않은 runner(export 의 중간 프로세스)는 하네스가 부르는 대로 돈다
+  const c = runner(dir, sdir, [{ name: 'start', build: id }]);
+  try {
+    const o = await c.fire('SessionStart', { source: 'startup' });
+    assert.deepEqual(o, { systemMessage: 'hello', hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: 'start startup' } });
+    assert.equal((await c.fire('UserPromptSubmit', { prompt: 'four' })).hookSpecificOutput.additionalContext, 'prompt four');
+  } finally { await c.r.close(); }
+});
+
+test('message(text, look): 아이콘·색은 목록 안의 것만 기록(messages)에 남고, 밖의 값은 빼고 경고한다 — systemMessage 는 글자만', async () => {
+  const dir = tmp('state'), sdir = tmp('session');
+  const id = await install(dir, 'look', {
+    'main/hooks/hooks.json': JSON.stringify({ hooks: [{ type: 'script', file: 'hooks/look.ts' }] }),
+    'main/hooks/look.ts': `import { slcode } from 'slcode/api';
+      slcode.on('UserPromptSubmit', (hook: any) => { hook.message('plain'); hook.message('flagged', { icon: 'flag', tone: 'warn' }); hook.message('odd', { icon: 'nope', tone: 'pink' }); hook.message('', { tone: 'ok' }); });
+      slcode.run();`,
+  });
+  const a = runner(dir, sdir, [{ name: 'look', build: id }]);
+  try {
+    const o = await a.fire('UserPromptSubmit', { prompt: 'x' });
+    assert.equal(o.systemMessage, 'plain\nflagged\nodd');
+    const run = a.events.find((e) => e.phase === 'run') as Extract<AgentHookEvent, { phase: 'run' }>;
+    assert.equal(run.message, 'plain\nflagged\nodd', '글자만 보는 쪽(옛 기록과 같은 꼴)');
+    assert.deepEqual(run.messages, [{ text: 'plain' }, { text: 'flagged', icon: 'flag', tone: 'warn' }, { text: 'odd' }]);
+    assert.equal(run.warnings.length, 2);
+    assert.match(run.warnings[0], /icon 'nope'/);
+    assert.match(run.warnings[1], /tone 'pink'/);
+  } finally { await a.r.close(); }
 });

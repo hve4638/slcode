@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import type { HookCallbackMatcher, HookInput, SyncHookJSONOutput } from '@anthropic-ai/claude-agent-sdk';
-import { HOOK_EVENTS, MATCHER_EVENTS, METHODS, type HookEvent } from './hookApi.js';
+import { HOOK_EVENTS, MATCHER_EVENTS, MESSAGE_ICONS, MESSAGE_TONES, METHODS, type HookEvent, type MessageLook } from './hookApi.js';
 import { killGroup, type Info, type Reg, type Result, type ToCore, type ToWorker, type WorkerInit } from './hookWorker.js';
 import { BUILD_FILES } from './agentBuild.js';
 import { readScripts, type ScriptEntry } from './agentHooks.js';
@@ -18,12 +18,14 @@ const READY_MS = 10_000;
 /** SDK 에 거는 디스패처의 timeout(초) — 콜백마다의 timeout 은 디스패처가 지킨다 */
 const SDK_TIMEOUT = 3600;
 /** js/ts 훅의 기록 — slcode 는 세션 이벤트로 낸다 (slcode protocol.ts CoreEventBody 가 이 꼴을 그대로 품는다). ready 는 worker 가 스크립트를 싣고 등록한 콜백(errors 는 싣지 못한 스크립트·잘못된 on()),
- *  run 은 콜백 한 번(result 는 부른 메서드 요약, outcome 이 error·timeout 이면 error 에 사유, message 는 hook.message() 문구), warn 은 그 밖의 경고 */
+ *  run 은 콜백 한 번(result 는 부른 메서드 요약, outcome 이 error·timeout 이면 error 에 사유, message 는 hook.message() 문구를 이은 것,
+ *  messages 는 부른 것마다 글과 아이콘·색 — 목록 밖 값은 뺐다; 이 필드가 없는 옛 기록은 message 한 줄로 그린다), warn 은 그 밖의 경고 */
 export type AgentHookEvent =
   | { kind: 'agent.hook'; phase: 'ready'; plugin: string; callbacks: { event: string; matcher: string | null; src: string }[]; errors: string[] }
   /** effects 는 콜백이 낸 결과 원문(잘리지 않음) — 화면은 한 일이 있을 때만 그린다. toolUseId 는 도구 이벤트(PreToolUse·PostToolUse)의 대상 도구 */
-  | { kind: 'agent.hook'; phase: 'run'; plugin: string; src: string; event: string; ms: number; outcome: 'ok' | 'error' | 'timeout'; effects: AgentHookEffects | null; toolUseId: string | null; error: string | null; message: string | null; warnings: string[] }
+  | { kind: 'agent.hook'; phase: 'run'; plugin: string; src: string; event: string; ms: number; outcome: 'ok' | 'error' | 'timeout'; effects: AgentHookEffects | null; toolUseId: string | null; error: string | null; message: string | null; messages?: AgentHookMessage[] | null; warnings: string[] }
   | { kind: 'agent.hook'; phase: 'warn'; plugin: string; text: string };
+export type AgentHookMessage = { text: string } & MessageLook;
 export type AgentHookEffects = { block: string[]; ask: string[]; allow: string[]; stop: string[]; context: string[]; updateInput: boolean };
 
 /** 세션 폴더 안의 상태 폴더 */
@@ -86,7 +88,15 @@ function infoOf(event: HookEvent, input: any, sessionId: string): Info {
   return info;
 }
 
-/** 대신 부른 SessionStart 의 결과를 그 프롬프트의 UserPromptSubmit 결과 앞에 합친다 — message·context 는 잇고, stop 은 어느 쪽이든 */
+/** hook.message() 의 icon·tone 을 목록(MESSAGE_ICONS·MESSAGE_TONES)으로 거른다 — 밖의 값은 빼고(기본 모양으로 그린다) 그 콜백의 경고로 */
+function lookOf(m: { text: string; icon?: string; tone?: string }, warnings: string[]): AgentHookMessage {
+  const out: AgentHookMessage = { text: m.text };
+  if (m.icon !== undefined) { if ((MESSAGE_ICONS as readonly string[]).includes(m.icon)) out.icon = m.icon as AgentHookMessage['icon']; else warnings.push(`hook.message() 의 icon '${m.icon}' 은 없는 값이라 기본 아이콘으로 그립니다 (${MESSAGE_ICONS.join('·')})`); }
+  if (m.tone !== undefined) { if ((MESSAGE_TONES as readonly string[]).includes(m.tone)) out.tone = m.tone as AgentHookMessage['tone']; else warnings.push(`hook.message() 의 tone '${m.tone}' 은 없는 값이라 기본 색으로 그립니다 (${MESSAGE_TONES.join('·')})`); }
+  return out;
+}
+
+/** 열 때 돈 SessionStart 의 결과를 첫 프롬프트의 UserPromptSubmit 결과 앞에 합친다 — message·context 는 잇고, stop 은 어느 쪽이든 */
 function joinOutputs(start: SyncHookJSONOutput, prompt: SyncHookJSONOutput): SyncHookJSONOutput {
   const out: SyncHookJSONOutput = { ...prompt };
   const msg = [start.systemMessage, prompt.systemMessage].filter(Boolean).join('\n');
@@ -101,14 +111,28 @@ export class HookRunner {
   private plugins: Plugin[] = [];
   private nextCall = 0;
   private closed = false;
-  /** 세션을 열거나 다시 열었는데 SDK 가 아직 SessionStart 를 부르지 않았다 — 첫 UserPromptSubmit 때 대신 부른다 */
-  private startSource: 'startup' | 'resume' | null = null;
+  /** 열 때 돈 SessionStart 의 결과 중 첫 프롬프트에 넣을 것(context·stop) — 아직 넣지 않았으면 있다 */
+  private opening: Promise<SyncHookJSONOutput> | null = null;
+  /** openSession 을 불렀다 — 그 뒤 SDK 가 startup·resume 으로 부르는 SessionStart 는 다시 돌리지 않는다 */
+  private opened = false;
   constructor(private opts: RunnerOpts) {}
 
-  /** SDK(0.3.282~0.3.312 실측)는 새 세션·resume 때 options.hooks 의 SessionStart 콜백을 부르지 않는다(/clear 때만) — 세션을 띄울 때 걸어 두면
-   *  첫 프롬프트의 UserPromptSubmit 앞에서 SessionStart(source) 를 대신 돌리고 그 context·message 를 그 프롬프트의 것에 합친다.
-   *  SDK 가 먼저 SessionStart 를 부르면(고쳐진 뒤) 건 것을 지운다 — 두 번 돌지 않는다 (사용자 결정 2026-10-30) */
-  armSessionStart(source: 'startup' | 'resume') { this.startSource = source; }
+  /** 세션을 열 때(core 기동마다) SessionStart(source) 를 돌린다 — message 는 바로 기록(emit)으로 화면에 나가고, context·stop 은 들고 있다가
+   *  첫 주 에이전트 UserPromptSubmit 결과 앞에 합친다. 터미널 Claude 가 열 때 SessionStart 를 돌려 message 를 바로 보이는 것과 맞춘다 (ticket slcode-session-open-notice, 사용자 2026-11-01).
+   *  SDK(0.3.282~0.3.312 실측)는 새 세션·resume 때 options.hooks 의 SessionStart 를 부르지 않는다(/clear 때만). 고쳐져 SDK 가 startup·resume 으로 부르면
+   *  다시 돌리지 않고 들고 있던 것을 그 답으로 준다 — 두 번 돌지 않는다 */
+  openSession(source: 'startup' | 'resume', at: { cwd: string; permissionMode?: string | null; vendorSessionId?: string | null }) {
+    const input = { hook_event_name: 'SessionStart', source, cwd: at.cwd, session_id: at.vendorSessionId ?? '', transcript_path: '', ...(at.permissionMode ? { permission_mode: at.permissionMode } : {}) };
+    // message 는 이미 화면에 나갔다 — 넘기는 결과에서 빼서 두 번 보이지 않게
+    this.opened = true;
+    this.opening = this.fire('SessionStart', input as HookInput).then(({ systemMessage: _m, ...rest }) => rest);
+  }
+  /** 들고 있던 것을 꺼낸다(한 번만) */
+  private async takeOpening(): Promise<SyncHookJSONOutput | null> {
+    const opening = this.opening;
+    this.opening = null;
+    return opening;
+  }
 
   /** 실은 플러그인 목록(설치 순서)으로 맞춘다 — 빠진 것은 내리고, 빌드가 바뀐 것은 다시 띄우고, 같은 것은 둔다. 스크립트가 없는 플러그인은 worker 를 두지 않는다 */
   load(loaded: { name: string; build: string }[]) {
@@ -221,14 +245,19 @@ export class HookRunner {
   }
 
   private async dispatch(event: HookEvent, input: HookInput, notes?: Notes): Promise<SyncHookJSONOutput> {
-    if (event === 'SessionStart') this.startSource = null;
-    if (event === 'UserPromptSubmit' && this.startSource && !(input as any).agent_id) {
-      const { prompt: _p, ...base } = input as any;
-      const source = this.startSource;
-      this.startSource = null;
-      const start = await this.dispatch('SessionStart', { ...base, hook_event_name: 'SessionStart', source } as HookInput);
-      return joinOutputs(start, await this.dispatch(event, input));
+    if (event === 'SessionStart' && !(input as any).agent_id && ((input as any).source === 'startup' || (input as any).source === 'resume')) {
+      const held = await this.takeOpening();
+      if (held || this.opened) return held ?? {};
     }
+    if (event === 'UserPromptSubmit' && !(input as any).agent_id) {
+      const held = await this.takeOpening();
+      if (held) return joinOutputs(held, await this.fire(event, input));
+    }
+    return this.fire(event, input, notes);
+  }
+
+  /** 콜백을 돌린다 — 열 때 들고 있던 것은 보지 않는다 */
+  private async fire(event: HookEvent, input: HookInput, notes?: Notes): Promise<SyncHookJSONOutput> {
     const info = infoOf(event, input, this.opts.sessionId);
     const value = matchValue(event, input);
     const values = value ? [value, ...(this.opts.aliases?.[value] ?? [])] : [];
@@ -250,14 +279,15 @@ export class HookRunner {
     const lost: Outcome[] = [];
     for (const o of outs) {
       const r = o.result;
+      const messages = r?.message.filter((m) => m.text).map((m) => lookOf(m, o.warnings)) ?? [];
       this.opts.emit({
         kind: 'agent.hook', phase: 'run', plugin: o.plugin, src: o.reg.src, event, ms: o.ms, outcome: o.timeout ? 'timeout' : o.ok ? 'ok' : 'error',
-        effects: r && { block: r.block, ask: r.ask, allow: r.allow, stop: r.stop, context: r.context.filter(Boolean), updateInput: !!r.input }, toolUseId, error: o.error, message: r?.message.length ? r.message.join('\n') : null, warnings: o.warnings,
+        effects: r && { block: r.block, ask: r.ask, allow: r.allow, stop: r.stop, context: r.context.filter(Boolean), updateInput: !!r.input }, toolUseId, error: o.error, message: messages.length ? messages.map((m) => m.text).join('\n') : null, messages: messages.length ? messages : null, warnings: o.warnings,
       });
       if (notes) { if (!o.ok) notes.push(`${o.plugin} ${o.reg.src}: ${o.timeout ? 'timeout' : 'error'} — ${o.error ?? ''}`.trim()); notes.push(...o.warnings.map((w) => `${o.plugin} ${o.reg.src}: ${w}`)); }
       if (!o.ok && o.reg.failClosed && canBlock) block.push(`${o.reg.src} 훅이 실패해 막았습니다 (failClosed): ${o.error ?? ''}`.trim());
       if (!r) continue;
-      block.push(...r.block); ask.push(...r.ask); allow.push(...r.allow); context.push(...r.context.filter(Boolean)); message.push(...r.message.filter(Boolean)); stop.push(...r.stop);
+      block.push(...r.block); ask.push(...r.ask); allow.push(...r.allow); context.push(...r.context.filter(Boolean)); message.push(...messages.map((m) => m.text)); stop.push(...r.stop);
       if (r.input) { if (input) lost.push(input.o); input = { v: r.input, o }; }
     }
     if (input && lost.length) this.opts.emit({ kind: 'agent.hook', phase: 'warn', plugin: input.o.plugin, text: `여러 콜백이 도구 입력을 바꿔 나중 것(${input.o.plugin} ${input.o.reg.src})을 썼습니다 — 버린 것: ${lost.map((o) => `${o.plugin} ${o.reg.src}`).join(', ')}` });

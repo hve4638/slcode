@@ -178,13 +178,13 @@ function main(init, port) {
                     warnings.push('hook.state 에는 객체만 넣을 수 있어 무시했습니다');
             },
         });
-        const method = (m, apply) => (arg) => {
+        const method = (m, apply) => (arg, arg2) => {
             if (ctl.done)
                 post({ t: 'warn', text: `${reg.src}: ${info.event} 콜백이 끝난 뒤 hook.${m}() 을 불러 무시했습니다` });
             else if (!allowed.has(m))
                 warnings.push(`hook.${m}() 은 ${info.event} 에서 쓸 수 없어 무시했습니다`);
             else
-                apply(arg);
+                apply(arg, arg2);
             return hook;
         };
         const text = (v) => (v === undefined || v === null ? '' : String(v));
@@ -192,7 +192,11 @@ function main(init, port) {
         hook.ask = method('ask', (r) => result.ask.push(text(r)));
         hook.allow = method('allow', (r) => result.allow.push(text(r)));
         hook.context = method('context', (t) => result.context.push(text(t)));
-        hook.message = method('message', (t) => result.message.push(text(t)));
+        // look 의 icon·tone 은 문자열만 넘긴다 — 목록 검사는 core(hookRunner.merge)가 한다
+        hook.message = method('message', (t, look) => {
+            const l = (look && typeof look === 'object' ? look : {});
+            result.message.push({ text: text(t), ...(typeof l.icon === 'string' ? { icon: l.icon } : {}), ...(typeof l.tone === 'string' ? { tone: l.tone } : {}) });
+        });
         hook.stop = method('stop', (r) => result.stop.push(text(r)));
         hook.updateInput = method('updateInput', (i) => {
             if (i && typeof i === 'object' && !Array.isArray(i))

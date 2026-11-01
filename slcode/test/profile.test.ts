@@ -166,18 +166,22 @@ test('CLI: Codex 세션은 프로필 이름을 남기고 플러그인 선택만 
     child.stdout!.setEncoding('utf8'); child.stdout!.on('data', (d: string) => { out += d; });
     const t0 = Date.now(); while (!out.includes('\n') && child.exitCode === null && Date.now() - t0 < 15000) await sleep(50);
     const meta = EventLog.list(corePaths(dir).sessionsDir).find((m) => m.title === title)!;
-    let evs: { kind: string; message?: string }[] = [];
+    let evs: { kind: string; message?: string; source?: string }[] = [];
     for (let i = 0; i < 50 && !evs.some((e) => e.kind === 'error' || e.kind === 'session.ready'); i++) {
       await sleep(100);
       evs = (await run(dir, ['log', meta.id, '--json'])).stdout.trim().split('\n').filter(Boolean).map((l) => JSON.parse(l).ev);
     }
     child.kill('SIGINT');
     await new Promise((r) => child.on('exit', r));
-    return { meta, notices: evs.filter((e) => e.kind === 'error').map((e) => e.message ?? '') };
+    return { meta, evs, notices: evs.filter((e) => e.kind === 'error').map((e) => e.message ?? '') };
   }
   const bare = await session('pf-bare', 'bare');
   assert.equal(bare.meta.profile, 'bare');
   assert.ok(bare.notices.some((m) => /Codex 세션은 프로필\(bare\)의 플러그인 선택만 따릅니다/.test(m)), JSON.stringify(bare.notices));
+  // 연 표지(ticket slcode-session-open-notice) — 새 세션은 startup, 기동 때의 알림보다 먼저
+  const opened = bare.evs.findIndex((e) => e.kind === 'session.opened');
+  assert.equal(bare.evs[opened]?.source, 'startup', JSON.stringify(bare.evs));
+  assert.ok(opened < bare.evs.findIndex((e) => e.kind === 'error'));
   const def = await session('pf-default', 'default');
   assert.equal(def.meta.profile, undefined);
   assert.ok(!def.notices.some((m) => /프로필/.test(m)));

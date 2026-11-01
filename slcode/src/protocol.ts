@@ -175,6 +175,9 @@ export type CoreEventBody =
    *  plugins 는 다시 실은 slcode 플러그인, removed 는 그사이 지워 뗀 것, later 는 이 세션에 반영되지 않아 새 세션부터인 것(플러그인마다 instructions·env·session.json·mcp·bin·installed —
    *  mcp·bin 은 Codex, installed 는 세션이 뜬 뒤 설치한 플러그인). sdk 는 SDK 가 답한 지금 목록 — 화면의 '로드됨' 을 갱신한다. Codex 는 빈 목록 */
   | { kind: 'plugins.reloaded'; plugins: AgentPluginState[]; removed: string[]; later: { name: string; what: ('instructions' | 'env' | 'session.json' | 'mcp' | 'bin' | 'installed')[] }[]; sdk: { plugins: { name: string; source?: string }[]; commands: string[]; agents: string[]; mcp: McpStatus[] } }
+  /** core 가 세션을 열었다 — core 기동마다(새 세션 startup, 이어받기·core 교체 resume). 카드·브라우저가 다시 붙을 때는 아니다. 열 때 돈 SessionStart 훅의 기록이 이 뒤에 온다 —
+   *  화면은 이것을 만나면 마지막 턴 뒤에 그린 열 때 알림(바꾸기 전 프로필·벤더의 것, 보내지 않고 닫은 열기의 것)을 지운다 (ticket slcode-session-open-notice) */
+  | { kind: 'session.opened'; source: 'startup' | 'resume' }
   | { kind: 'session.exit'; reason: string };
 
 export type { AgentHookEvent, AgentHookEffects } from 'slcode-plugin/hookRunner';
