@@ -9,9 +9,7 @@
 //   세션 사이 메시지는 켜진 받는 세션의 소켓(session.deliver)으로 직접, 꺼진 세션에는 보내지 않는다 (mail.ts, ticket slcode-p2p-messaging 2026-10-19 — 우체국 없음).
 // 이벤트 어휘는 벤더 중립 15종. 각 이벤트는 선택 필드 raw 에 벤더 원문(SDK 메시지)을 같은 봉투로 싣는다 (raw:true 일 때만).
 
-import type { PluginRow } from 'slcode-plugin/agentPlugins';
 import type { AgentHookEvent } from 'slcode-plugin/hookRunner';
-import type { ExportHarness, ExportResult } from 'slcode-plugin/agentExport';
 
 export const PROTOCOL_VERSION = 3;
 
@@ -332,14 +330,6 @@ export type ServeMethods = {
   'web.files': { params: Record<string, never>; result: { html: string; files: Record<string, string> } };
   /** 카드 모드의 로컬 파일 — 웹의 file?path= 와 같은 범위(절대 경로, 줄 번호 꼬리는 없으면 뗀다). 본문은 base64, 32MB 까지 */
   'file.get': { params: { path: string }; result: { mediaType: string; size: number; data: string } };
-  /** 에이전트 플러그인 관리 화면 (ticket slcode-agent-plugin-ui) — `slcode plugin list --json` 과 같은 목록 */
-  'plugins.list': { params: Record<string, never>; result: { plugins: PluginRow[] } };
-  /** 그 플러그인 Claude 빌드의 js/ts 훅 보고와 하네스별 tsc 경고 줄 (CLI add·set 이 stderr 에 내는 것). 처음엔 typescript 를 받느라 느리다 */
-  'plugins.check': { params: { name: string }; result: { warnings: string[] } };
-  /** `slcode plugin set <name> <set...>` — 결과는 그 JSON 에 stderr 의 경고 줄(warnings) */
-  'plugins.set': { params: { name: string; set: string[] }; result: { name: string; values: string; build: string; exports?: ExportResult[]; warnings: string[] } };
-  /** `slcode plugin export <name> --to <to> [--remove] --json` */
-  'plugins.export': { params: { name: string; to: ExportHarness; remove?: boolean }; result: { results: ExportResult[] } };
 };
 
 /** 새 버전 확인 결과 — restart-required 면 새 것의 version·build, failed 면 reason */

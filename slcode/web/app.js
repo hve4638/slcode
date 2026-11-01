@@ -57,7 +57,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   // 세션 종료 (사용자 2026-10-11) — 카드는 두고 세션만 끈다(카드를 제거하면 세션도 끝난다). 꺼진 세션은 resume 으로 다시 띄운다.
   // 자리는 설정 창 맨 아래 줄의 빨간 '종료', 누르면 확인 창을 한 번 더 (사용자 2026-10-16 — 전엔 헤더 사이드바 버튼 옆)
   const endSession = () => { if (current) rpc('session.close', { id: current }).catch((e) => push(h('div', { class: 'meta err' }, e.message))); };
-  const settingsUi = settingsDialog(h, (patch) => rpc('settings.set', { settings: patch }).then(setSettings), endSession, (m, p) => rpc(m, p), () => loadPlugins());
+  const settingsUi = settingsDialog(h, (patch) => rpc('settings.set', { settings: patch }).then(setSettings), endSession, (m, p) => rpc(m, p));
   const gearBtn = h('button', { class: 'ico gear', title: '설정', 'aria-label': '설정', onclick: () => settingsUi.open() });
   // 업데이트 — 헤더 오른쪽, 설정 버튼 왼쪽 (ticket slcode-core-serve-split 2단계, 사용자 2026-10-19). 누를 때만 새 버전을 확인한다(폴링 없음).
   // 새 버전이 있으면 'restart required' — 누르면 serve 를 바꾼다. 웹은 serve 가 확인하고 같은 주소로 다시 붙은 뒤 새로고침된다(아래 onStatus 의 serve.info),
@@ -966,8 +966,7 @@ export function mountAgentFront(root, transport, opts = {}) {
         kv([...(profile ? [['프로필', profile]] : []), ...plugs.plugins.map((p) => [h('span', { title: p.values }, `${p.name} ${p.version}`), p.current == null ? '지워짐' : p.current === p.build ? '최신' : '설정 바뀜']),
           ...plugs.added.map((n) => [n, '새 세션부터'])]),
         plugs.plugins.length || plugs.added.length ? h('button', { disabled: !stale || plugBusy || plugs.pending ? '' : null, title: ready?.vendor === 'codex' ? '바뀐 skill 을 이 세션에 다시 싣습니다. MCP·지시문·bin·env 는 새 세션부터 적용됩니다' : '바뀐 part·옵션을 이 세션에 다시 싣습니다. 지시문은 새 세션부터 적용됩니다', onclick: reloadPlugins },
-          plugs.pending ? '턴이 끝나면 다시 싣습니다' : plugBusy ? '다시 싣는 중…' : '다시 싣기') : null,
-        h('button', { class: 'ghost', onclick: () => settingsUi.open('plugins') }, '관리'))));
+          plugs.pending ? '턴이 끝나면 다시 싣습니다' : plugBusy ? '다시 싣는 중…' : '다시 싣기') : null)));
     }
     side.append(sec('loaded', '로드됨', ready
       ? h('div', {}, list('tools', '도구', ready.tools), list('skills', '스킬', ready.skills), list('plugins', '플러그인', ready.plugins, (p) => p.name), list('mcp', 'MCP', mcp ?? ready.mcp, mcpItem), list('slash', '슬래시 명령', ready.slashCommands), list('agents', '에이전트', ready.agents))

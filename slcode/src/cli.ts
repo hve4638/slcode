@@ -14,12 +14,12 @@ import { connectSession, diskBuild, type RpcClient } from './client.js';
 import { sendMail } from './mail.js';
 import { EventLog } from './eventLog.js';
 import { corePaths, readOrCreateToken } from './paths.js';
-import { serveSession } from './serve.js';
 import { readSettings } from './settings.js';
 import { inspectBlocked } from './inspect.js';
 import { runEntry, type EntryHandle } from './entry.js';
 import { reachable, closedSessions, closedTime, discardSession, isLoopback, sockAlive } from './live.js';
 import { startList, startPageHtml } from './startPage.js';
+import { pluginMethod, PLUGIN_METHODS, serveSession } from './serve.js';
 import { findVendorSession, forkClaude, vendorResumeCommand } from './vendor.js';
 import { pullHistory } from './history.js';
 import { CLAUDE_EFFORTS, sessionEnv } from './base.js';
@@ -108,6 +108,7 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
                                  (off 면 Claude 내장 skill 을 숨긴다 — ~/.claude 에 설치한 Claude 플러그인의 skill 도 함께 숨겨진다)
   profile list [--json]
   start-page [folder] [--json]   superlite 카드의 시작 화면 html, --json 이면 그 목록 (플러그인이 쓴다)
+  start-call <method> [<json>]   superlite 카드 시작 화면의 에이전트 플러그인 관리 요청 (plugins.list|check|set|export, 플러그인이 쓴다)
   discard <s>                    시작 화면에서 연 빈 세션(첫 메시지 전)을 닫고 지운다 — 카드의 '시작 화면으로' (플러그인이 쓴다, new --from-start 로 연 세션)
 공통: --dir D (SLCODE_DIR 대체), --help, --version [--json] (--json 이면 {"version","build"} — build 는 dist/cli.js 의 mtime)`;
 
@@ -710,6 +711,12 @@ try {
     case 'start-page': { // superlite 카드의 시작 화면 (views/session.js) — css·모듈을 넣은 html 한 장. --json 이면 화면의 list(프로필·플러그인·그 폴더의 꺼진 세션)
       const cwd = path.resolve(rest[0] ?? process.cwd());
       if (flags.json) print(await startList(P.dir, cwd)); else process.stdout.write(startPageHtml(P.dir, 'superlite', cwd, true));
+      break;
+    }
+    case 'start-call': { // 카드 시작 화면의 에이전트 플러그인 관리 (ticket slcode-agent-plugin-export-action) — 웹 시작 화면의 api/<method> 와 같은 것을 카드가 CLI 로
+      const [method, params] = rest;
+      if (!(PLUGIN_METHODS as readonly string[]).includes(method)) usage(`start-call <${PLUGIN_METHODS.join('|')}> [<json>]`);
+      print(await pluginMethod(P.dir, method as (typeof PLUGIN_METHODS)[number], params ? JSON.parse(params) : {}));
       break;
     }
     default: usage(`unknown verb: ${cmd}`);

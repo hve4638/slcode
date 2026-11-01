@@ -3,7 +3,7 @@
 // 오른쪽은 아직 누르지 못한다. 프로필은 세션에 들어가 대화 화면 가운데에서 고른다 — 프로필 설정은 나중에 이 화면의 설정에 둔다(사용자).
 // 웹(entry.ts 가 세션을 띄우기 전에 서빙)과 superlite 카드(views/session.js 가 주소 없는 iframe 에 넣는다)가 같은 화면을 쓴다. <html data-start> 가 입구:
 // web 이면 같은 출처의 api/<동작> 에 POST, card 면 카드에 {type: 'slcode.start.<동작>', id} 를 보내고 {re: id, result|error} 를 받는다.
-// 동작은 list({cwd, here, all} — startPage.ts StartList), go({new: true} | {resume: <id>}).
+// 동작은 list({cwd, here, all} — startPage.ts StartList), go({new: true} | {resume: <id>}), 에이전트 플러그인 관리의 plugins.list·check·set·export (serve.pluginMethod).
 
 const root = document.getElementById('start');
 const html = document.documentElement;
@@ -138,9 +138,10 @@ function column(key, head, full, rows, pick, where) {
     rows.length > shown.length ? el('button', { class: 'more', on: { click: () => { state.open[key] = true; draw(); } } }, `모두 보기 (${rows.length})`) : null);
 }
 
-/** 에이전트 플러그인 관리 (ticket slcode-agent-plugin-ui) — 웹 입구만. 모듈은 누를 때 읽는다: 카드(srcdoc)에는 이 파일만 들어 있어 import 가 닿지 않는다 */
+/** 에이전트 플러그인 관리 (ticket slcode-agent-plugin-ui) — slcode 의 유일한 입구 (ticket slcode-agent-plugin-export-action, 사용자 2026-11-01: 세션 화면에는 두지 않는다).
+ *  웹은 모듈을 누를 때 읽고, 카드(srcdoc)는 import 가 닿지 않아 startPageHtml 이 넣어 둔 globalThis.slcodePlugins 를 쓴다. 요청은 call — 카드는 slcode.start.plugins.* 로 중계 */
 async function openPlugins() {
-  const { pluginsPanel } = await import('./plugins.js');
+  const { pluginsPanel } = globalThis.slcodePlugins ?? await import('./plugins.js');
   state.plugins = pluginsPanel(call);
   draw();
   state.plugins.load();
@@ -160,7 +161,7 @@ function draw() {
     state.busy ? el('div', { class: 'busy' }, `${state.busy} — 여는 중…`) : null,
     l ? el('div', { class: 'cols' }, column('here', pathHead(l.cwd), l.cwd, l.here, true, false), column('all', 'all sessions', null, l.all, false, true)) : null,
     state.error ? el('div', { class: 'err' }, state.error) : null,
-    mode === 'web' ? el('button', { class: 'more plug', on: { click: () => void openPlugins() } }, '에이전트 플러그인') : null));
+    el('button', { class: 'more plug', on: { click: () => void openPlugins() } }, '에이전트 플러그인')));
 }
 
 draw();

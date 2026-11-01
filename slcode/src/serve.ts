@@ -36,7 +36,7 @@ const TYPES: Record<string, string> = {
 /** 화면 연결(웹·stdio)에서는 부를 수 없는 제어 메서드 — 소유권·웹 주소 등록(토큰이 붙은 url 을 돌려준다)·core 교체는 serve 의 제어 연결만 */
 const CONTROL_ONLY = new Set(['core.own', 'serve.register', 'core.retire']);
 /** serve 가 답하는 메서드 (ServeMethods) — core 로 넘기지 않는다 */
-const SERVE_METHODS = new Set(['settings.get', 'settings.set', 'serve.info', 'update.run', 'serve.restart', 'start.back', 'inspect.usage', 'inspect.clean', 'web.files', 'file.get', 'plugins.list', 'plugins.check', 'plugins.set', 'plugins.export']);
+const SERVE_METHODS = new Set(['settings.get', 'settings.set', 'serve.info', 'update.run', 'serve.restart', 'start.back', 'inspect.usage', 'inspect.clean', 'web.files', 'file.get']);
 /** 프레임의 요청·응답 id — 앞머리만 본다 (첨부가 실린 큰 프레임을 해석하지 않게). 화면·core 는 id 를 맨 앞에 쓴다 ({id, method, params}·{id, result}). 아니면 null */
 const idOf = (line: string): string | null => /^\{"id":(-?\d+|"(?:[^"\\]|\\.)*")[,}]/.exec(line)?.[1] ?? null;
 /** 인증 전 줄 세워 둘 수 있는 요청 수 — 인증 안 된 원격 클라이언트가 serve 메모리를 키우지 못하게 */
@@ -177,7 +177,8 @@ export function fileHandler(req: http.IncomingMessage, res: http.ServerResponse,
 }
 
 export const PLUGIN_METHODS = ['plugins.list', 'plugins.check', 'plugins.set', 'plugins.export'] as const;
-/** 에이전트 플러그인 관리 화면의 요청 (ticket slcode-agent-plugin-ui) — 대화 화면(serve)과 웹 시작 화면(startPage)이 같이 쓴다. 바꾸는 것은 `slcode plugin set·export` 를 자식으로 돌린다:
+/** 에이전트 플러그인 관리 화면의 요청 (ticket slcode-agent-plugin-ui) — 시작 화면만 쓴다: 웹은 startPage 의 api/, superlite 카드는 `slcode start-call`.
+ *  대화 화면(serve)에는 두지 않는다 (ticket slcode-agent-plugin-export-action, 사용자 2026-11-01). 바꾸는 것은 `slcode plugin set·export` 를 자식으로 돌린다:
  *  같은 경로이고, 빌드·하네스 CLI(claude·codex)가 serve 의 중계를 멈추지 않게 */
 export async function pluginMethod(dir: string, method: (typeof PLUGIN_METHODS)[number], params: unknown): Promise<unknown> {
   const p = (params ?? {}) as { name?: unknown; set?: unknown; to?: unknown; remove?: unknown };
@@ -330,8 +331,6 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
           if (what !== 'old' && what !== 'compact' && what !== 'all') throw new CoreError(ERR.badRequest, 'inspect.clean what must be old, compact or all');
           return cleanInspect(P.sessionsDir, what, Date.now(), log);
         }
-        // 에이전트 플러그인 관리 (ticket slcode-agent-plugin-ui) — 상태 폴더의 일이라 입구와 상관없다
-        case 'plugins.list': case 'plugins.check': case 'plugins.set': case 'plugins.export': return pluginMethod(P.dir, m.method, m.params);
       }
     };
     answer().then((result) => send(JSON.stringify({ id: m.id, result })), (e) => send(JSON.stringify({ id: m.id, error: { code: (e as CoreError).code, message: (e as Error).message } })));

@@ -380,6 +380,8 @@ export function mount(el, ctx) {
     // 시작 화면 (renderStart)
     'slcode.start.list': () => host('startList', c.start),
     'slcode.start.go': (d) => { begin(typeof d.resume === 'string' ? { resume: d.resume } : { new: true }); return {}; },
+    // 에이전트 플러그인 관리 — slcode 의 입구는 시작 화면뿐이라 카드도 중계한다 (ticket slcode-agent-plugin-export-action)
+    ...Object.fromEntries(['list', 'check', 'set', 'export'].map((m) => [`slcode.start.plugins.${m}`, ({ type, id, ...params }) => host('startCall', `plugins.${m}`, params)])),
     'slcode.back': backToStart,
   };
   const onFrame = (e) => {

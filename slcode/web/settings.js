@@ -8,8 +8,6 @@
 // 'auto'(시스템 라이트·다크를 따른다)는 라이트·다크 두 분류에 다 맨 앞, 라이트·다크로 가르기 애매한 것은 'other'(기타).
 // Graphite·Clay·Cobalt·Slate 는 ChatGPT·Claude·Gemini·GitHub 의 색이다 — 다른 회사 상표를 테마 이름에 쓰지 않고(AI 셋은 벤더·모델 고르기와도
 // 헷갈린다), 이름만 바꿨다. Superlite 는 VS Code Modern 의 짝 (사용자 2026-10-16)
-import { pluginsPanel } from './plugins.js';
-
 const PALETTES = [['graphite', 'Graphite'], ['clay', 'Clay'], ['cobalt', 'Cobalt'], ['superlite', 'Superlite'], ['slate', 'Slate'], ['catppuccin', 'Catppuccin'], ['solarized', 'Solarized', ['light']]]; // 셋째 값이 있으면 그 모드만 — Solarized 다크는 대비가 낮아 뺐다
 export const THEMES = [
   { id: 'system', label: '시스템', mode: 'auto' },
@@ -49,7 +47,7 @@ const CLEANS = [
 
 /** 설정 창 — <dialog>. set(patch) 는 settings.set 을 부르고, 바뀐 값은 settings.changed 로 와서 update 가 다시 그린다.
  *  end 는 세션 종료 (확인 창에서 '종료'를 눌렀을 때), rpc 는 serve 요청 (inspect 캐시). h 는 app.js 의 요소 도우미 */
-export function settingsDialog(h, set, end, rpc, onPlugins) {
+export function settingsDialog(h, set, end, rpc) {
   const close = h('button', { class: 'ghost x', title: '닫기', 'aria-label': '닫기', onclick: () => dlg.close() }, '✕');
   const err = h('div', { class: 'meta err', hidden: '' });
   /** 설정 한 줄 — [이름 ··· 버튼] (사용자 2026-10-20) */
@@ -161,31 +159,25 @@ export function settingsDialog(h, set, end, rpc, onPlugins) {
   const inspState = h('span', { class: 'val' });
   const title = h('h2', {}, '설정');
   const back = h('button', { class: 'ghost x', title: '뒤로', 'aria-label': '뒤로', hidden: '', onclick: () => show('main') }, '‹');
-  // 에이전트 플러그인 (ticket slcode-agent-plugin-ui) — inspect 와 같은 하위 창. 세션이 아니라 상태 폴더의 설정이다
-  const plugins = pluginsPanel(rpc, { onChange: onPlugins });
   const mainBody = h('div', { class: 'body' },
     sec('테마', cats, themes),
     h('section', {}, h('label', { class: 'switch' }, h('h3', {}, 'context 경고'), warn), ctxBody),
     h('section', { class: 'nav' }, h('button', { class: 'nav', onclick: () => show('inspect') }, h('h3', {}, 'inspect'), h('span', { class: 'go' }, inspState, h('span', { class: 'chev', 'aria-hidden': 'true' }, '›')))),
-    h('section', { class: 'nav' }, h('button', { class: 'nav', onclick: () => show('plugins') }, h('h3', {}, '에이전트 플러그인'), h('span', { class: 'go' }, h('span', { class: 'chev', 'aria-hidden': 'true' }, '›')))),
     endRow,
     err,
     ver);
   const inspBody = h('div', { class: 'body', hidden: '' },
     h('section', {}, h('label', { class: 'switch' }, h('h3', {}, '새 세션 inspect'), insp), inspNote),
     h('section', { class: 'cache' }, row(h('h3', {}, '캐시 사용량'), total), ...cleanRows.map((r) => r.el), liveNote));
-  const plugBody = h('div', { class: 'body plugs-body' }, plugins.el);
-  /** view: main | inspect | plugins */
+  /** view: main | inspect */
   function show(view) {
-    dlg.classList.toggle('wide', view === 'plugins'); // 목록 | 자세한 내용 두 칸이라 넓게
-    mainBody.hidden = view !== 'main'; inspBody.hidden = view !== 'inspect'; plugBody.hidden = view !== 'plugins'; back.hidden = view === 'main';
-    title.textContent = { main: '설정', inspect: 'inspect', plugins: '에이전트 플러그인' }[view];
+    mainBody.hidden = view !== 'main'; inspBody.hidden = view !== 'inspect'; back.hidden = view === 'main';
+    title.textContent = { main: '설정', inspect: 'inspect' }[view];
     if (view === 'inspect') loadUsage();
-    if (view === 'plugins') plugins.load();
   }
   const dlg = h('dialog', { class: 'settings' },
     h('header', {}, back, title, close),
-    mainBody, inspBody, plugBody,
+    mainBody, inspBody,
     confirmEnd, confirmClean);
   closeOnBackdrop(dlg);
 

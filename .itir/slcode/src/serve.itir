@@ -15,7 +15,7 @@ val HELD_MAX
 val SERVE_METHODS
 export val PLUGIN_METHODS
 export fn pluginMethod(dir, method, params) {
-  role: 에이전트 플러그인 관리 화면의 요청 (ticket slcode-agent-plugin-ui, 사용자 2026-10-31) — SERVE_METHODS 의 plugins.list(listPlugins)·plugins.check(scriptWarnings)·plugins.set·plugins.export 와 웹 시작 화면(startPage)의 api/<같은 이름>이 같이 쓴다. 상태 폴더의 일이라 입구와 상관없다. set·export 는 `slcode plugin set·export --dir <dir>` 을 자식으로 돌린다(pluginCli) — CLI 와 같은 경로이고, 빌드·tsc 검사·하네스 CLI(claude·codex)가 serve 의 중계를 멈추지 않게. set 결과에는 stderr 의 경고 줄(warnings), 실패는 그 error: 줄로 bad_request. 화면은 바꾼 것을 모아 적용 때 한 번 set 한다
+  role: 에이전트 플러그인 관리 화면의 요청 (ticket slcode-agent-plugin-ui, 사용자 2026-10-31) — plugins.list(listPlugins)·plugins.check(scriptWarnings)·plugins.set·plugins.export. 시작 화면만 쓴다: 웹은 startPage 의 api/<같은 이름>, superlite 카드는 `slcode start-call`. 대화 화면(SERVE_METHODS)에는 두지 않는다 — 관리 화면의 입구는 시작 화면뿐 (ticket slcode-agent-plugin-export-action, 사용자 2026-11-01: export 는 다른 하네스로 내보내는 일이라 slcode 세션 사용자의 관심사가 아니다). 상태 폴더의 일이라 입구와 상관없다. set·export 는 `slcode plugin set·export --dir <dir>` 을 자식으로 돌린다(pluginCli) — CLI 와 같은 경로이고, 빌드·tsc 검사·하네스 CLI(claude·codex)가 serve 의 중계를 멈추지 않게. set 결과에는 stderr 의 경고 줄(warnings), 실패는 그 error: 줄로 bad_request. 화면은 바꾼 것을 모아 적용 때 한 번 set 한다
 }
 fn pluginCli(dir, args)
 export fn serveSession(opts) -> ServeHandle {

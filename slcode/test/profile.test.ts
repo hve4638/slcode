@@ -204,6 +204,11 @@ test('시작 화면(동사 없는 slcode): 카드용 html 은 css·모듈을 넣
   const card = (await run(dir, ['start-page', work])).stdout;
   assert.match(card, /<html lang="ko" data-start="card" data-cwd="[^"]+"/);
   assert.ok(!card.includes('./start.js') && !card.includes('./style.css') && card.includes('slcode.start.'), '주소 없이 돈다');
+  // 에이전트 플러그인 관리의 입구는 시작 화면뿐 — 카드는 plugins.js 를 넣어 두고 요청은 start-call 로 (ticket slcode-agent-plugin-export-action)
+  assert.ok(card.includes('globalThis.slcodePlugins = { pluginsPanel }') && !card.includes('export function pluginsPanel'), '카드에 관리 화면 모듈');
+  assert.deepEqual(JSON.parse((await run(dir, ['start-call', 'plugins.list'])).stdout).plugins.map((p: { name: string }) => p.name).sort(), ['core', 'sfa']);
+  assert.match((await run(dir, ['start-call', 'plugins.check', '{"name":"nope"}'])).stderr, /no agent plugin nope/);
+  assert.match((await run(dir, ['start-call', 'session.list'])).stderr, /start-call <plugins.list\|/);
   const json = JSON.parse((await run(dir, ['start-page', work, '--json'])).stdout);
   assert.deepEqual([json.here.map((m: { id: string }) => m.id), json.all.map((m: { id: string }) => m.id)], [['new22222', 'old11111'], ['new22222', 'far33333', 'old11111']]);
   const child = spawn(process.execPath, ['--import', TSX, CLI], { cwd: work, env: baseEnv(dir), stdio: ['ignore', 'pipe', 'pipe'] });

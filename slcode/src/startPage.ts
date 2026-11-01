@@ -32,14 +32,17 @@ export async function startList(dir: string, cwd: string): Promise<StartList> {
 }
 
 const attr = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-/** start.html 에 테마·입구(data-start: web|card)·폴더를 넣는다. inline 이면 style.css·start.js 를 넣어 주소 없이 돈다 (카드 iframe srcdoc) */
+/** start.html 에 테마·입구(data-start: web|card)·폴더를 넣는다. inline 이면 style.css·plugins.js·start.js 를 넣어 주소 없이 돈다 (카드 iframe srcdoc).
+ *  plugins.js 는 import 가 닿지 않아 export 를 떼고 globalThis.slcodePlugins 로 건넨다 — start.js 의 openPlugins 가 그것을 먼저 본다 */
 export function startPageHtml(dir: string, kind: SettingsKind, cwd: string | null, inline: boolean): string {
   const read = (f: string) => fs.readFileSync(path.join(WEB_DIR, f), 'utf8');
   let html = withPageAttrs(read('start.html'), dir, kind).replace('<html lang="ko"', `<html lang="ko" data-start="${inline ? 'card' : 'web'}"${cwd ? ` data-cwd="${attr(cwd)}"` : ''}`);
   if (inline) {
     // 스크립트 안의 </script 는 html 을 끊는다 — 모듈 글에는 없지만 막아 둔다
     html = html.replace('<link rel="stylesheet" href="./style.css">', () => `<style>${read('style.css')}</style>`)
-      .replace('<script type="module" src="./start.js"></script>', () => `<script type="module">${read('start.js').replace(/<\/script/gi, '<\\/script')}</script>`);
+      .replace('<script type="module" src="./start.js"></script>', () => [
+        `${read('plugins.js').replace('export function pluginsPanel', 'function pluginsPanel')}\nglobalThis.slcodePlugins = { pluginsPanel };`, read('start.js'),
+      ].map((js) => `<script type="module">${js.replace(/<\/script/gi, '<\\/script')}</script>`).join('\n'));
   }
   return html;
 }

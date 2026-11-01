@@ -53,7 +53,7 @@ export fn listPlugins(stateDir) -> PluginRow[] {
   role: 설치 순서로 — 판, 호환 등급과 하네스별 빠지는 것, part(필수·켬)·옵션 값(기본 설정 기준), 하네스별 마지막 빌드의 report.json, export 한 하네스와 그 export 판의 report.json(exported — 빠지거나 다르게 도는 것, ticket slcode-agent-plugin-ui)
 }
 export fn scriptWarnings(name, build, stateDir) -> String[] {
-  role: Claude 빌드의 js/ts 훅 보고 줄 — 묶지 못한 것(failed)·고칠 것(warning)과 하네스별 tsc 검사 경고(checkScripts). CLI add·set 이 stderr 에, 웹 관리 화면(serve plugins.check)이 플러그인 칸에 보인다 (ticket slcode-agent-plugin-ui 에서 cli 의 scriptReport 를 옮김). 경고일 뿐 빌드는 그대로
+  role: Claude 빌드의 js/ts 훅 보고 줄 — 묶지 못한 것(failed)·고칠 것(warning)과 하네스별 tsc 검사 경고(checkScripts). CLI add·set 이 stderr 에, 시작 화면의 관리 화면(plugins.check)이 플러그인 칸에 보인다 (ticket slcode-agent-plugin-ui 에서 cli 의 scriptReport 를 옮김). 경고일 뿐 빌드는 그대로
 }
 export fn claudeDataDir(name, env) -> Path {
   role: Claude 의 플러그인 데이터 폴더 <CLAUDE_CONFIG_DIR 또는 ~/.claude>/plugins/data/<이름>-inline — 지시문의 ${CLAUDE_PLUGIN_DATA}. 빌드가 바꾸지 않는다(훅 명령 문자열과 Claude 가 주는 env 가 다른 폴더를 가리키게 된다)

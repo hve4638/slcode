@@ -204,6 +204,11 @@ export function activate(api) {
   const startPage = (cwd) => cli(`start-page ${shq(cwd)}`);
   /** 화면의 list — 그 폴더의 세션과 모든 세션, 마지막 활동 순 (startPage.ts StartList) */
   const startList = async (cwd) => JSON.parse(await cli(`start-page ${shq(cwd)} --json`));
+  /** 시작 화면의 에이전트 플러그인 관리 요청 — plugins.list·check·set·export (ticket slcode-agent-plugin-export-action). 오류는 slcode 의 error: 줄에서 */
+  const startCall = async (method, params) => {
+    try { return JSON.parse(await cli(`start-call ${shq(method)} ${shq(JSON.stringify(params ?? {}))}`)); }
+    catch (e) { throw new Error(String(e?.message ?? e).replace(/^error: /, '')); }
+  };
   /** 시작 화면으로 — 시작 화면에서 연 빈 세션(첫 메시지 전)을 닫고 지운다. 아니면 slcode 가 거절한다 */
   const discard = async (id) => { await cli(`discard ${shq(String(id))}`); return {}; };
   /** 사이드바 강제 종료 (사용자 2026-10-11) — `slcode close --force`: 정상 종료, 3초 안에 안 닫히면 kill */
@@ -259,7 +264,7 @@ export function activate(api) {
   const waits = new Map();
 
   api.expose('host', {
-    command, list, sidebar, cards, closed, forceClose, checkUpdate, startPage, startList, discard,
+    command, list, sidebar, cards, closed, forceClose, checkUpdate, startPage, startList, startCall, discard,
     started(key, id) { const w = waits.get(key); if (w) { waits.delete(key); w.resolve(id); } },
     failed(key, reason) { const w = waits.get(key); if (w) { waits.delete(key); w.reject(new Error(String(reason))); } },
   });
