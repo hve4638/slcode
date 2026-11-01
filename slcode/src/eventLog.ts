@@ -36,6 +36,8 @@ export type SessionMeta = {
   profile?: string;
   /** 새 세션에 준 env (ticket slcode-new-session-env) — 띄울 때마다(resume·벤더 재기동 포함) 벤더 프로세스 env 에 넣는다. 주지 않았으면 없다 */
   env?: Record<string, string>;
+  /** 새 세션에 준 세션 인자 (ticket slcode-agent-plugin-part-when) — 띄울 때마다 SLCODE_PARAM_<이름> env·에이전트 플러그인 part 조건·js/ts 훅에. 주지 않았으면 없다 */
+  params?: Record<string, string>;
   /** 시작 화면에서 연 새 세션 — 첫 메시지 전엔 시작 화면으로 돌아갈 수 있다 (protocol SessionInfo.fromStart) */
   fromStart?: boolean;
 };

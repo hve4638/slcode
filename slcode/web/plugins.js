@@ -119,7 +119,7 @@ export function pluginsPanel(call, { onChange } = {}) {
         el('span', { class: `grade ${r.grade}` }, r.grade),
         s.busy ? el('span', { class: 'busy' }, `${s.busy}…`) : null),
       lost.length ? el('div', { class: 'lost' }, ...lost.map((h) => fold(s, `lost.${h}`, `${HARNESS[h]} 에서 빠지는 것 ${r.lost[h].length}`, el('ul', {}, ...r.lost[h].map((x) => el('li', {}, x)))))) : null,
-      r.parts.length ? el('div', { class: 'grp' }, el('h4', {}, 'part'), ...r.parts.map((p) => line(p.name, p.required ? '필수' : null,
+      r.parts.length ? el('div', { class: 'grp' }, el('h4', {}, 'part'), ...r.parts.map((p) => line(p.name, [p.required ? '필수' : null, p.when ? `조건 ${p.when}` : null].filter(Boolean).join(' · ') || null, // 조건은 세션마다 본다 — 스위치는 사용자 설정 (ticket slcode-agent-plugin-part-when)
         sw(s.pending.has(p.name) ? s.pending.get(p.name) === 'on' : p.on, off || p.required, (e) => stage(s, p.name, e.target.checked ? 'on' : 'off', p.on ? 'on' : 'off', e.target), p.name), s.pending.has(p.name) ? 'changed' : null))) : null,
       r.options.length ? el('div', { class: 'grp' }, el('h4', {}, '옵션'), ...r.options.map((o) => option(r, o, off))) : null,
       hasScripts(r) ? el('div', { class: 'grp' }, el('h4', {}, 'js/ts 훅'),

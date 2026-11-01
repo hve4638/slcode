@@ -64,6 +64,8 @@ export type ServeOptions = {
   profile?: string;
   /** 새 세션의 env — core 로 넘긴다 (CoreOptions.env, ticket slcode-new-session-env) */
   env?: Record<string, string>;
+  /** 새 세션의 세션 인자 — core 로 넘긴다 (CoreOptions.params, ticket slcode-agent-plugin-part-when) */
+  params?: Record<string, string>;
   /** 시작 화면에서 연 새 세션 (CoreOptions.fromStart — 카드가 new --from-start 로) */
   fromStart?: boolean;
   /** 웹 서버 — 기본 켬. false 면 웹 없이 (superlite 카드 서비스) */
@@ -256,7 +258,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
       resume = (await closedSessions(P.sessionsDir, opts.cwd))[0]?.id;
       if (!resume) log(`no closed session in ${opts.cwd} — starting a new one`);
     }
-    ({ id: sid, sock, session } = await spawnCore({ dir: P.dir, cwd: opts.cwd, resume, title: opts.title, raw: opts.raw, inspect: opts.inspect, permissionMode: opts.permissionMode, model: opts.model, effort: opts.effort, prompt: opts.prompt, vendor: opts.vendor, profile: opts.profile, env: opts.env, fromStart: opts.fromStart }));
+    ({ id: sid, sock, session } = await spawnCore({ dir: P.dir, cwd: opts.cwd, resume, title: opts.title, raw: opts.raw, inspect: opts.inspect, permissionMode: opts.permissionMode, model: opts.model, effort: opts.effort, prompt: opts.prompt, vendor: opts.vendor, profile: opts.profile, env: opts.env, params: opts.params, fromStart: opts.fromStart }));
   }
   let control = await connectSession(sock);
   // 소유권을 빼앗기면(core.owner — 카드 핸드오프) 이 serve 가 닫혀도 세션을 닫지 않는다

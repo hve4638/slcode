@@ -14,7 +14,7 @@ import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { ClaudeSession } from './session.js';
 import { CodexSession, codexRunnable } from './codex.js';
-import { sessionEnvError, type AgentSession } from './base.js';
+import { PARAM_ENV, sessionEnvError, sessionParamsError, type AgentSession } from './base.js';
 import { EventLog, historyPage, outline, summarize, type SessionMeta } from './eventLog.js';
 import { isLoopback, reachable, sockAlive, spawnCore } from './live.js';
 import { BUILD, PKG, VERSION, replacingMark } from './client.js';
@@ -92,6 +92,8 @@ export type CoreOptions = {
   fromStart?: boolean;
   /** 새 세션의 env (ticket slcode-new-session-env) — meta.env 로 남겨 띄울 때마다 벤더 env 에 넣는다. 이어받는 세션에 주면 bad_request */
   env?: Record<string, string>;
+  /** 새 세션의 세션 인자 (ticket slcode-agent-plugin-part-when) — meta.params 로 남겨 띄울 때마다 SLCODE_PARAM_<이름> env·에이전트 플러그인 part 조건·js/ts 훅에 준다. 이어받는 세션에 주면 bad_request */
+  params?: Record<string, string>;
   /** 새 세션을 inspect 로 — 입구 설정(Settings.inspect)을 CLI 가 읽어 넘긴다. 이어받는 세션은 meta.inspect 를 따르고, false 면 끈다 (--no-inspect) */
   inspect?: boolean;
   log?: (msg: string) => void;
@@ -112,6 +114,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   let logFile: EventLog;
   if (opts.resume) {
     if (opts.env && Object.keys(opts.env).length) throw new CoreError(ERR.badRequest, 'env is only for a new session — a resumed session keeps its own env');
+    if (opts.params && Object.keys(opts.params).length) throw new CoreError(ERR.badRequest, 'params are only for a new session — a resumed session keeps its own params');
     const found = EventLog.open(P.sessionsDir, opts.resume);
     if (!found) throw new CoreError(ERR.noSession, `no session ${opts.resume}`);
     if (await sockAlive(found.sockPath)) throw new CoreError(ERR.badRequest, `session ${opts.resume} is live — another slcode is serving it`);
@@ -124,12 +127,14 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   } else {
     if (opts.profile !== undefined && !getProfile(opts.profile, P.dir)) throw new CoreError(ERR.badRequest, `no profile ${opts.profile} (slcode profile list)`);
     for (const k of Object.keys(opts.env ?? {})) { const why = sessionEnvError(k); if (why) throw new CoreError(ERR.badRequest, why); }
+    { const why = sessionParamsError(opts.params ?? {}); if (why) throw new CoreError(ERR.badRequest, why); }
     const meta: SessionMeta = {
       id: randomUUID().slice(0, 8), vendor: opts.vendor ?? 'claude', cwd: opts.cwd, title: opts.title ?? null,
       vendorSessionId: null, createdAt: Date.now(), permissionMode: opts.permissionMode ?? 'auto', raw: opts.raw ?? false,
       ...(opts.model ? { model: opts.model } : {}), ...(opts.effort ? { effort: opts.effort } : {}), ...(opts.inspect ? { inspect: true } : {}),
       ...(opts.profile && opts.profile !== DEFAULT_PROFILE ? { profile: opts.profile } : {}), ...(opts.fromStart ? { fromStart: true } : {}),
       ...(opts.env && Object.keys(opts.env).length ? { env: opts.env } : {}),
+      ...(opts.params && Object.keys(opts.params).length ? { params: opts.params } : {}),
     };
     // 새 세션의 권한 모드는 생략하면 auto (사용자 2026-10-24) — 이미 있는 세션의 null(벤더 기본 = 승인 요청)은 건드리지 않는다
     logFile = EventLog.create(P.sessionsDir, meta);
@@ -138,7 +143,11 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   // 벤더 자식(과 그 Bash 도구가 띄우는 명령)이 자기 세션을 알게 — 세션 안의 `slcode mail/check/ask/reply` 가 이걸 읽는다 (사용자 확정 2026-10-02).
   // 그 `slcode` 는 이 판이다 (withBinPath). 세션 env(meta.env, ticket slcode-new-session-env)는 셸에서 물려받은 값 위·SLCODE_SESSION_ID 아래 —
   // 벤더를 다시 띄우는 길(rewind·reopen·교체)과 Codex env 가 모두 이 값에서 시작한다. 에이전트 플러그인 manifest env 는 그 위에 얹힌다
-  const env: NodeJS.ProcessEnv = withBinPath({ ...SDK_ENV, ...logFile.meta.env, SLCODE_SESSION_ID: logFile.meta.id }, PKG);
+  // 세션 인자(meta.params, ticket slcode-agent-plugin-part-when)는 SLCODE_PARAM_<이름> 으로 — 물려받은 SLCODE_PARAM_* 는 지운다. leader 세션 안에서 친 slcode new 의
+  // core 는 leader 의 env 를 물려받으므로, 지우지 않으면 worker 의 훅이 leader 의 값을 읽는다 (사용자 2026-11-02)
+  const params = logFile.meta.params ?? {};
+  const shell = Object.fromEntries(Object.entries(SDK_ENV).filter(([k]) => !k.toUpperCase().startsWith(PARAM_ENV)));
+  const env: NodeJS.ProcessEnv = withBinPath({ ...shell, ...logFile.meta.env, ...Object.fromEntries(Object.entries(params).map(([k, v]) => [PARAM_ENV + k, v])), SLCODE_SESSION_ID: logFile.meta.id }, PKG);
   // inspect (ticket slcode-inspect-proxy·slcode-inspect-default-on) — 켜져 있으면 벤더를 띄우기 전에 proxy 를 세우고 벤더 env 의 ANTHROPIC_BASE_URL 을 그리로.
   // 기록은 세션 폴더 inspect/inspect.db. proxy 를 띄운 core 는 3일마다 상태 폴더의 꺼진 세션 raw 를 정리한다 (기록이 늘어나는 것은 proxy 가 떠 있을 때뿐)
   const inspectDir = path.join(logFile.dir, 'inspect');
@@ -192,13 +201,13 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   /** 다시 싣기 때의 프로필 — 그사이 고쳤으면 고친 값, 지웠으면 기동 때 값 */
   const profileNow = () => getProfile(prof.name, P.dir) ?? prof.profile;
   let agent: SessionPlugins | null = null, agentFailed: string | null = null;
-  try { agent = loadSessionPlugins(logFile.dir, env, logFile.meta.agentPlugins ?? {}, P.dir, harness, prof.profile); } catch (e) { agentFailed = (e as Error).message; }
+  try { agent = loadSessionPlugins(logFile.dir, env, logFile.meta.agentPlugins ?? {}, P.dir, harness, prof.profile, params); } catch (e) { agentFailed = (e as Error).message; }
   const load = codex ? undefined : claudeLoad(prof.profile.claude, cwd, env, (agent?.loaded ?? []).map((l, i) => ({ name: l.name, path: agent!.plugins[i].path })));
   let agentLoaded: Loaded[] = agent?.loaded ?? [];
   // js/ts 훅 (ticket slcode-agent-plugin-hooks) — Claude 만. 플러그인을 하나라도 실었으면 디스패처를 건다(다시 싣기로 훅이 생겨도 받게). 세션이 생기기 전의 기록은 모았다가 낸다
   let hookQueue: AgentHookEvent[] | null = [];
   const hooks = !codex && agentLoaded.length
-    ? new HookRunner({ sessionDir: logFile.dir, buildDir: agentPaths(P.dir).build, sessionId: logFile.meta.id, emit: (ev) => { if (hookQueue) hookQueue.push(ev); else (session as ClaudeSession).emitHook(ev); } })
+    ? new HookRunner({ sessionDir: logFile.dir, buildDir: agentPaths(P.dir).build, sessionId: logFile.meta.id, params, emit: (ev) => { if (hookQueue) hookQueue.push(ev); else (session as ClaudeSession).emitHook(ev); } })
     : null;
   hooks?.load(agentLoaded);
   // 세션을 열 때(core 기동마다) SessionStart 를 돌린다 — message 는 바로 화면에, context 는 첫 프롬프트에 (ticket slcode-session-open-notice, 사용자 2026-11-01)
@@ -409,7 +418,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     },
     'session.plugins': (_c, p) => {
       mine(p?.id);
-      const cur = currentBuilds(logFile.meta.agentPlugins ?? {}, P.dir, harness, profileNow());
+      const cur = currentBuilds(logFile.meta.agentPlugins ?? {}, P.dir, harness, profileNow(), params);
       return { profile: prof.name, plugins: agentLoaded.map((l) => ({ name: l.name, version: l.version, build: l.build, values: l.values, current: cur[l.name] ?? null })), added: Object.keys(cur).filter((n) => !agentLoaded.some((l) => l.name === n)), pending: reloadWanted };
     },
     'session.reloadPlugins': async (_c, p) => {
@@ -490,7 +499,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   async function reloadPlugins() {
     reloadWanted = false;
     try {
-      const r = reloadSessionPlugins(logFile.dir, agentLoaded, env, logFile.meta.agentPlugins ?? {}, P.dir, harness, profileNow());
+      const r = reloadSessionPlugins(logFile.dir, agentLoaded, env, logFile.meta.agentPlugins ?? {}, P.dir, harness, profileNow(), params);
       if (session instanceof CodexSession) {
         await session.setSkillRoots(r.roots);
         agentLoaded = r.loaded;

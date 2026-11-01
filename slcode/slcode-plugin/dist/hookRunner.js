@@ -47,8 +47,8 @@ function matchValue(event, input) {
         default: return null;
     }
 }
-function infoOf(event, input, sessionId) {
-    const info = { event, session: { id: sessionId, cwd: input.cwd, permissionMode: input.permission_mode ?? null }, agent: input.agent_id ? { id: input.agent_id, type: input.agent_type ?? null } : null, raw: input };
+function infoOf(event, input, sessionId, params) {
+    const info = { event, session: { id: sessionId, cwd: input.cwd, permissionMode: input.permission_mode ?? null, params }, agent: input.agent_id ? { id: input.agent_id, type: input.agent_type ?? null } : null, raw: input };
     if (event === 'PreToolUse' || event === 'PostToolUse')
         info.tool = { name: input.tool_name, input: input.tool_input ?? {}, useId: input.tool_use_id, ...(event === 'PostToolUse' ? { response: input.tool_response } : {}) };
     if (event === 'UserPromptSubmit')
@@ -277,7 +277,7 @@ export class HookRunner {
     }
     /** 콜백을 돌린다 — 열 때 들고 있던 것은 보지 않는다 */
     async fire(event, input, notes) {
-        const info = infoOf(event, input, this.opts.sessionId);
+        const info = infoOf(event, input, this.opts.sessionId, this.opts.params ?? {});
         const value = matchValue(event, input);
         const values = value ? [value, ...(this.opts.aliases?.[value] ?? [])] : [];
         const lists = await Promise.all(this.plugins.map(async (p) => {

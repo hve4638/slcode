@@ -14,13 +14,17 @@ export type Harness = (typeof HARNESSES)[number];
 
 export type OptionType = 'boolean' | 'string' | 'number';
 export type OptionSpec = { type: OptionType; default: boolean | string | number; label?: string };
-export type PartSpec = { required: boolean; default: boolean };
+/** part 를 켜는 조건 (ticket slcode-agent-plugin-part-when) — 세션 인자(slcode new --param) 이름마다 true(있고 비어 있지 않음)·"값"(같음)·["값", …](그중 하나). 모두 참이어야 참 */
+export type When = { param: Record<string, true | string | string[]> };
+export type PartSpec = { required: boolean; default: boolean; when?: When };
 export type Manifest = { name: string; version: string; options: Record<string, OptionSpec>; parts: Record<string, PartSpec>; env: Record<string, string> };
 /** 한 층의 설정 값 — 기본 설정(config.json)·프로필·세션이 같은 꼴이다. 없는 키는 아래 층의 값 */
 export type Values = { parts?: Record<string, boolean>; options?: Record<string, boolean | string | number> };
 export type Resolved = { parts: Record<string, boolean>; options: Record<string, boolean | string | number> };
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+/** 세션 인자 이름 — SLCODE_PARAM_<이름> env 가 된다 */
+export const PARAM_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const ZERO: Record<OptionType, boolean | string | number> = { boolean: false, string: '', number: 0 };
 
@@ -44,7 +48,7 @@ export function parseManifest(text: string): Manifest {
   for (const [k, v] of Object.entries((j.parts ?? {}) as Record<string, unknown>)) {
     if (!NAME.test(k) || k.includes('..') || !isObj(v)) throw new Error(`${MANIFEST}: bad part ${k}`);
     if (k in options) throw new Error(`${MANIFEST}: ${k} is both a part and an option`);
-    parts[k] = { required: v.required === true, default: v.required === true || v.default !== false };
+    parts[k] = { required: v.required === true, default: v.required === true || v.default !== false, ...(v.when !== undefined ? { when: parseWhen(k, v.when) } : {}) };
   }
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries((j.env ?? {}) as Record<string, unknown>)) {
@@ -52,6 +56,33 @@ export function parseManifest(text: string): Manifest {
     env[k] = v;
   }
   return { name: j.name, version: (j.version as string | undefined) ?? '0.0.0', options, parts, env };
+}
+
+/** part 의 when — {param: {NAME: true | "값" | ["값", …]}} 꼴이 아니면 던진다 (꼴을 모르면 part 를 켤지 알 수 없다) */
+function parseWhen(part: string, w: unknown): When {
+  const bad = (why: string) => new Error(`${MANIFEST}: part ${part} when ${why}`);
+  if (!isObj(w) || Object.keys(w).some((k) => k !== 'param') || !isObj(w.param) || !Object.keys(w.param).length) throw bad('must be {"param": {NAME: true | "value" | ["value", ...]}}');
+  const param: When['param'] = {};
+  for (const [k, v] of Object.entries(w.param)) {
+    if (!PARAM_NAME.test(k)) throw bad(`param name ${k} must match ${PARAM_NAME}`);
+    if (v === true || typeof v === 'string') param[k] = v;
+    else if (Array.isArray(v) && v.length && v.every((x) => typeof x === 'string')) param[k] = [...v];
+    else throw bad(`param ${k} must be true, a string or a non-empty list of strings`);
+  }
+  return { param };
+}
+
+/** when 조건 — 이름마다 true 는 값이 있고 비어 있지 않음, 문자열은 같음, 목록은 그중 하나. 모두 참이어야 참 */
+export function whenHolds(w: When, params: Record<string, string>): boolean {
+  return Object.entries(w.param).every(([k, want]) => {
+    const v = Object.hasOwn(params, k) ? params[k] : undefined;
+    return want === true ? !!v : typeof want === 'string' ? v === want : v !== undefined && want.includes(v);
+  });
+}
+
+/** 조건 글 — 목록·export excluded·화면에 보인다 */
+export function whenText(w: When): string {
+  return Object.entries(w.param).map(([k, v]) => `param ${k}${v === true ? '' : `=${typeof v === 'string' ? v : v.join('|')}`}`).join(' ');
 }
 
 export function readManifest(dir: string): Manifest {
@@ -162,8 +193,9 @@ export function compat(dir: string, m: Manifest): { grade: 'full' | 'partial'; l
   return { grade: HARNESSES.some((h) => lost[h].length) ? 'partial' : 'full', lost };
 }
 
-/** 기본값(manifest) 위에 층을 차례로 덮는다 — 뒤의 것이 이긴다. 모르는 키·꼴이 틀린 값은 건너뛴다(옛 판의 설정이 남아 있을 수 있다). 필수 part 는 늘 켠다 */
-export function resolveValues(m: Manifest, layers: (Values | null | undefined)[]): Resolved {
+/** 기본값(manifest) 위에 층을 차례로 덮는다 — 뒤의 것이 이긴다. 모르는 키·꼴이 틀린 값은 건너뛴다(옛 판의 설정이 남아 있을 수 있다). 필수 part 는 늘 켠다.
+ *  part 조건 when 은 보지 않는다 — 사용자 설정 그대로(목록·관리 화면의 스위치) */
+export function userValues(m: Manifest, layers: (Values | null | undefined)[]): Resolved {
   const parts = Object.fromEntries(Object.entries(m.parts).map(([k, p]) => [k, p.default]));
   const options = Object.fromEntries(Object.entries(m.options).map(([k, o]) => [k, o.default]));
   for (const l of layers) {
@@ -171,6 +203,15 @@ export function resolveValues(m: Manifest, layers: (Values | null | undefined)[]
     for (const [k, v] of Object.entries(l?.options ?? {})) if (k in m.options && typeof v === m.options[k].type) options[k] = v;
   }
   return { parts, options };
+}
+
+/** 빌드에 쓰는 값 — userValues 다음, when 이 있는 켠 part 는 세션 인자 params 로 조건이 참일 때만 남긴다. 사용자가 끈 part 는 켜지 않고,
+ *  필수 part 도 조건이 거짓이면 꺼진다(사용자 결정 2026-11-02). params 가 없으면(기본 빌드·export 판) 인자가 없는 것으로 본다.
+ *  인자 값은 빌드 식별자에 들어가지 않는다 — 켜진 part 만 설정 문자열에 남는다 */
+export function resolveValues(m: Manifest, layers: (Values | null | undefined)[], params: Record<string, string> = {}): Resolved {
+  const r = userValues(m, layers);
+  for (const [k, p] of Object.entries(m.parts)) if (p.when && r.parts[k]) r.parts[k] = whenHolds(p.when, params);
+  return r;
 }
 
 /** 정렬한 설정 문자열 — part.x=0|1, opt.y=<JSON> */

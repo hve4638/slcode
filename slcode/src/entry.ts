@@ -59,7 +59,7 @@ export async function runEntry(opts: EntryOptions): Promise<EntryHandle> {
     core = 'resume' in got ? { dir: opts.dir, cwd: opts.cwd, resume: got.resume, raw: opts.raw } : { ...opts, fromStart: true };
   }
   let id: string, sock: string, session: SessionInfo;
-  try { ({ id, sock, session } = await spawnCore({ dir, cwd: core.cwd, resume: core.resume, title: core.title, raw: core.raw, inspect: core.inspect, permissionMode: core.permissionMode, model: core.model, effort: core.effort, prompt: core.prompt, vendor: core.vendor, profile: core.profile, env: core.env, fromStart: core.fromStart })); }
+  try { ({ id, sock, session } = await spawnCore({ dir, cwd: core.cwd, resume: core.resume, title: core.title, raw: core.raw, inspect: core.inspect, permissionMode: core.permissionMode, model: core.model, effort: core.effort, prompt: core.prompt, vendor: core.vendor, profile: core.profile, env: core.env, params: core.params, fromStart: core.fromStart })); }
   catch (e) { tcp.close(); for (const s of held ?? []) s.destroy(); throw e; }
   let control = await connectSession(sock);
   const closeSession = async () => { await control.request('session.close', { id }).catch(() => {}); control.close(); };

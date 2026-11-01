@@ -50,7 +50,7 @@ export async function pluginCommand(sub: string | undefined, args: string[], fla
     };
     console.log([
       `${r.name} ${r.version}  ${r.grade}`,
-      `  parts    ${r.parts.map((x) => `${x.name}${x.required ? '(required)' : ''} ${x.on ? 'on' : 'off'}`).join(' · ') || '-'}`,
+      `  parts    ${r.parts.map((x) => `${x.name}${x.required ? '(required)' : ''} ${x.on ? 'on' : 'off'}${x.when ? ` (when ${x.when})` : ''}`).join(' · ') || '-'}`,
       ...(r.options.length ? [`  options  ${r.options.map((o) => `${o.name}=${JSON.stringify(o.value)}${o.label ? ` (${o.label})` : ''}`).join(' · ')}`] : []),
       ...lost.map(([h, l]) => `  lost in ${h}: ${l.join('; ')}`),
       build('claude'),

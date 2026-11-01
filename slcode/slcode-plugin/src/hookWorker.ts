@@ -24,7 +24,7 @@ export type Reg = { id: number; event: HookEvent; matcher: string | null; timeou
 export type Result = { block: string[]; ask: string[]; allow: string[]; input: Record<string, unknown> | null; context: string[]; message: { text: string; icon?: string; tone?: string }[]; stop: string[] };
 /** core 가 보내는 이벤트 정보 — hook 객체의 정보 칸 */
 export type Info = {
-  event: HookEvent; session: { id: string; cwd: string; permissionMode: string | null }; agent: { id: string; type: string | null } | null; raw: unknown;
+  event: HookEvent; session: { id: string; cwd: string; permissionMode: string | null; params: Record<string, string> }; agent: { id: string; type: string | null } | null; raw: unknown;
   tool?: { name: string; input: Record<string, unknown>; useId: string; response?: unknown }; prompt?: string; source?: string; trigger?: string; reason?: string;
 };
 export type WorkerInit = { slcodeHooks: true; scripts: { src: string; js: string }[]; states: Record<string, Record<string, unknown>>; methods: Record<HookEvent, readonly Method[]>; matchers: readonly HookEvent[]; vars: Vars };
@@ -127,7 +127,9 @@ function main(init: WorkerInit, port: NonNullable<typeof parentPort>) {
   function makeHook(info: Info, reg: Reg, result: Result, ctl: { done: boolean }, warnings: string[]) {
     const allowed = new Set<Method>(METHODS[info.event]);
     const key = info.agent?.id ?? '';
-    const hook: Record<string, unknown> = { event: info.event, session: info.session, agent: info.agent, raw: info.raw, exec: (cmd: string, args?: string[], o?: ExecOptions) => exec(info.session.cwd, cmd, args, o) };
+    // 세션 인자는 읽기 전용 — 콜백이 바꿔도 다음 콜백에 남지 않게 콜백마다 얼린 사본 (ticket slcode-agent-plugin-part-when)
+    const session = Object.freeze({ ...info.session, params: Object.freeze({ ...(info.session.params ?? {}) }) });
+    const hook: Record<string, unknown> = { event: info.event, session, agent: info.agent, raw: info.raw, exec: (cmd: string, args?: string[], o?: ExecOptions) => exec(info.session.cwd, cmd, args, o) };
     for (const k of ['tool', 'prompt', 'source', 'trigger', 'reason'] as const) if (info[k] !== undefined) hook[k] = info[k];
     Object.defineProperty(hook, 'state', {
       enumerable: true,

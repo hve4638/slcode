@@ -93,11 +93,13 @@ export type PluginRow = {
     lost: Record<Harness, string[]>;
     source: string;
     installedAt: number;
+    /** on 은 사용자 설정(기본 설정 기준) — when 은 조건 글(whenText)이고 세션마다 따로 본다. 기본 빌드·export 판은 인자가 없어 조건 part 를 뺀다 */
     parts: {
         name: string;
         on: boolean;
         required: boolean;
         default: boolean;
+        when: string | null;
     }[];
     options: {
         name: string;
@@ -161,12 +163,14 @@ export type SessionPlugins = {
 };
 /** 세션 단위 설정 값 — 플러그인 이름별 (slcode-session-profile 이 meta 에 채운다) */
 export type SessionValues = Record<string, Values | undefined>;
+/** 세션 인자 (slcode new --param, ticket slcode-agent-plugin-part-when) — part 조건 when 이 본다. 플러그인 모두에 같다 */
+export type SessionParams = Record<string, string>;
 /** Claude 가 플러그인 데이터 폴더로 쓰는 곳 — <설정 폴더>/plugins/data/<이름>-inline (SDK 로 실은 플러그인의 출처는 inline) */
 export declare function claudeDataDir(name: string, env: NodeJS.ProcessEnv): string;
 /** 세션을 띄울 때 — 설치한 플러그인마다 그 하네스의 빌드를 만들고(있으면 다시 쓰고) 세션 폴더에 링크를 건다. 싣지 못한 것은 notes 에.
  *  Codex 는 링크로 빌드를 정리에서 지킬 뿐, 넘기는 경로는 빌드 폴더 그대로다 (빌드 안의 경로 변수를 이미 그 경로로 바꿨다).
- *  프로필이 있으면 그 프로필이 싣는 플러그인만, 설정 값은 기본 설정 < 프로필 < 세션 (ticket slcode-session-profile) */
-export declare function loadSessionPlugins(sessionDir: string, env: NodeJS.ProcessEnv, session?: SessionValues, stateDir?: string, harness?: SessionHarness, profile?: PluginLayer): SessionPlugins;
+ *  프로필이 있으면 그 프로필이 싣는 플러그인만, 설정 값은 기본 설정 < 프로필 < 세션 (ticket slcode-session-profile). params 는 세션 인자 — 켠 part 의 조건 when 이 본다 */
+export declare function loadSessionPlugins(sessionDir: string, env: NodeJS.ProcessEnv, session?: SessionValues, stateDir?: string, harness?: SessionHarness, profile?: PluginLayer, params?: SessionParams): SessionPlugins;
 /** 다시 싣기 — 실은 플러그인의 링크를 지금 설정의 빌드로 바꾼다. 지운 플러그인은 링크를 뗀다. SDK reloadPlugins()·Codex skills/extraRoots/set 은 부른 쪽이 한다.
  *  later 는 이 세션에 반영되지 않아 새 세션부터인 것 (지시문·env·session.json·Codex 의 MCP·bin 이 바뀐 플러그인, 세션 뒤에 설치한 플러그인).
  *  Codex 는 skill 만 다시 싣는다 — 기동 때의 빌드는 <이름> 링크로 남기고(MCP·bin 이 아직 그것을 쓴다) 새 빌드는 <이름>@skills 링크로 지킨다. roots 는 새 extra root 들 */
@@ -174,14 +178,14 @@ export type Later = {
     name: string;
     what: ('instructions' | 'env' | 'session.json' | 'mcp' | 'bin' | 'installed')[];
 };
-export declare function reloadSessionPlugins(sessionDir: string, loaded: Loaded[], env: NodeJS.ProcessEnv, session?: SessionValues, stateDir?: string, harness?: SessionHarness, profile?: PluginLayer): {
+export declare function reloadSessionPlugins(sessionDir: string, loaded: Loaded[], env: NodeJS.ProcessEnv, session?: SessionValues, stateDir?: string, harness?: SessionHarness, profile?: PluginLayer, params?: SessionParams): {
     loaded: Loaded[];
     later: Later[];
     removed: string[];
     roots: string[];
 };
 /** 지금 설정으로 빌드하면 나올 식별자 — 세션이 실은 것과 다르면 다시 실을 것이 있다. 빌드하지 않는다 */
-export declare function currentBuilds(session?: SessionValues, stateDir?: string, harness?: SessionHarness, profile?: PluginLayer): Record<string, string | null>;
+export declare function currentBuilds(session?: SessionValues, stateDir?: string, harness?: SessionHarness, profile?: PluginLayer, params?: SessionParams): Record<string, string | null>;
 /** 세션이 닫힐 때 — 링크를 떼어 그 빌드를 정리 대상으로 */
 export declare function unlinkSessionPlugins(sessionDir: string): void;
 /** 아무도 가리키지 않는 오래된 빌드를 지운다 — config 의 마지막 빌드, 세션 폴더의 링크, export/ 아래 링크가 가리키는 것은 남긴다.

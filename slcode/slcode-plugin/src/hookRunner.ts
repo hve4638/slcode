@@ -54,6 +54,8 @@ export type RunnerOpts = {
   aliases?: Record<string, readonly string[]>;
   /** 콜백을 돌리는 하네스 — 스크립트의 slcode.vars.harness. 기본 claude(slcode 세션) */
   harness?: 'claude' | 'codex';
+  /** 세션 인자 — hook.session.params (ticket slcode-agent-plugin-part-when). slcode core 가 주고, export 의 중간 프로세스는 주지 않는다({}) */
+  params?: Record<string, string>;
 };
 /** 콜백의 실패·경고 한 줄씩 — export 쪽은 이것을 하네스 화면(systemMessage)에 보인다 */
 export type Notes = string[];
@@ -78,8 +80,8 @@ function matchValue(event: HookEvent, input: any): string | undefined | null {
   }
 }
 
-function infoOf(event: HookEvent, input: any, sessionId: string): Info {
-  const info: Info = { event, session: { id: sessionId, cwd: input.cwd, permissionMode: input.permission_mode ?? null }, agent: input.agent_id ? { id: input.agent_id, type: input.agent_type ?? null } : null, raw: input };
+function infoOf(event: HookEvent, input: any, sessionId: string, params: Record<string, string>): Info {
+  const info: Info = { event, session: { id: sessionId, cwd: input.cwd, permissionMode: input.permission_mode ?? null, params }, agent: input.agent_id ? { id: input.agent_id, type: input.agent_type ?? null } : null, raw: input };
   if (event === 'PreToolUse' || event === 'PostToolUse') info.tool = { name: input.tool_name, input: input.tool_input ?? {}, useId: input.tool_use_id, ...(event === 'PostToolUse' ? { response: input.tool_response } : {}) };
   if (event === 'UserPromptSubmit') info.prompt = input.prompt;
   if (event === 'SessionStart') info.source = input.source;
@@ -258,7 +260,7 @@ export class HookRunner {
 
   /** 콜백을 돌린다 — 열 때 들고 있던 것은 보지 않는다 */
   private async fire(event: HookEvent, input: HookInput, notes?: Notes): Promise<SyncHookJSONOutput> {
-    const info = infoOf(event, input, this.opts.sessionId);
+    const info = infoOf(event, input, this.opts.sessionId, this.opts.params ?? {});
     const value = matchValue(event, input);
     const values = value ? [value, ...(this.opts.aliases?.[value] ?? [])] : [];
     const lists = await Promise.all(this.plugins.map(async (p) => {

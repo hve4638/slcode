@@ -28,7 +28,7 @@ declare module 'slcode/api' {
   type ExecOptions = { timeout?: number; cwd?: string; input?: string; env?: Record<string, string> };
   type ExecResult = { code: number | null; signal: string | null; stdout: string; stderr: string; timedOut: boolean };
   type Base<E extends SlcodeHookEvent> = {
-    event: E; session: { id: string; cwd: string; permissionMode: string | null }; agent: Agent | null;
+    event: E; session: { id: string; cwd: string; permissionMode: string | null; readonly params: Readonly<Record<string, string>> }; agent: Agent | null;
     state: Record<string, any>; exec(cmd: string, args?: string[], opts?: ExecOptions): Promise<ExecResult>; raw: any;
   };
   interface Fields {

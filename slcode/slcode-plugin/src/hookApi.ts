@@ -43,14 +43,16 @@ export const CODEX_METHODS: Record<HookEvent, readonly Method[]> = {
 
 /** 세션×플러그인 상태 — JSON 으로 왕복하는 값만 저장한다(아니면 그 키는 저장하지 않고 경고). 플러그인 하나에 1MB 까지 */
 export type HookState = Record<string, any>;
+/** 세션 인자 (slcode new --param, ticket slcode-agent-plugin-part-when) — 읽기 전용. slcode 세션에서만 차고, export 한 Claude·Codex 에서는 {} */
+export type SessionParams = Readonly<Record<string, string>>;
 
 export type ExecOptions = { timeout?: number; cwd?: string; input?: string; env?: Record<string, string> };
 export type ExecResult = { code: number | null; signal: string | null; stdout: string; stderr: string; timedOut: boolean };
 
 type Base<E extends HookEvent> = {
   event: E;
-  /** id 는 slcode 세션 id (resume·rewind 해도 같다) */
-  session: { id: string; cwd: string; permissionMode: string | null };
+  /** id 는 slcode 세션 id (resume·rewind 해도 같다). params 는 세션 인자 — 쓰면 TypeError */
+  session: { id: string; cwd: string; permissionMode: string | null; params: SessionParams };
   /** 서브에이전트 안에서 불렸으면 그 id·종류 — 주 에이전트면 null */
   agent: { id: string; type: string | null } | null;
   /** 이 세션에서 이 플러그인이 쓰는 상태. 서브에이전트는 빈 상태로 시작한다. 콜백이 끝나면 바뀐 키만 저장한다 */

@@ -14,7 +14,9 @@ export fn matches(matcher, value) -> Bool {
 fn matchValue(event, input) {
   role: 도구 이벤트는 tool_name, SessionStart 는 source, PreCompact 는 trigger, SessionEnd 는 reason, Subagent* 는 agent_type. 그 밖은 matcher 를 보지 않는다(null)
 }
-fn infoOf(event, input, sessionId) -> Info
+fn infoOf(event, input, sessionId, params) -> Info {
+  role: 콜백에 넘길 칸 — session 은 slcode 세션 id·cwd·권한 모드·params(RunnerOpts.params, slcode core 가 세션 인자를 준다 — export 의 중간 프로세스는 주지 않아 {})
+}
 fn lookOf(m, warnings) -> AgentHookMessage {
   role: message 의 icon·tone 을 hookApi.MESSAGE_ICONS·MESSAGE_TONES 로 거른다 — 밖의 값은 빼고 그 콜백의 경고로
 }

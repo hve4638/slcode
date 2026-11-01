@@ -10,6 +10,8 @@ export const BUILDER = 5; // 2: slcode 형식 hooks.json·js/ts 훅 묶기 (slco
 /** 호환 등급을 매기는 하네스 — gpt 는 GPT 하네스(장기적으로 Codex 자리, 아직 slcode 가 띄우지 않는다) */
 export const HARNESSES = ['claude', 'gpt', 'codex'];
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+/** 세션 인자 이름 — SLCODE_PARAM_<이름> env 가 된다 */
+export const PARAM_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const ZERO = { boolean: false, string: '', number: 0 };
 /** manifest 를 읽는다 — 이름·part 구성을 알 수 없으면 던진다 (slcode plugin add 가 거부하는 유일한 경우) */
@@ -47,7 +49,7 @@ export function parseManifest(text) {
             throw new Error(`${MANIFEST}: bad part ${k}`);
         if (k in options)
             throw new Error(`${MANIFEST}: ${k} is both a part and an option`);
-        parts[k] = { required: v.required === true, default: v.required === true || v.default !== false };
+        parts[k] = { required: v.required === true, default: v.required === true || v.default !== false, ...(v.when !== undefined ? { when: parseWhen(k, v.when) } : {}) };
     }
     const env = {};
     for (const [k, v] of Object.entries((j.env ?? {}))) {
@@ -56,6 +58,35 @@ export function parseManifest(text) {
         env[k] = v;
     }
     return { name: j.name, version: j.version ?? '0.0.0', options, parts, env };
+}
+/** part 의 when — {param: {NAME: true | "값" | ["값", …]}} 꼴이 아니면 던진다 (꼴을 모르면 part 를 켤지 알 수 없다) */
+function parseWhen(part, w) {
+    const bad = (why) => new Error(`${MANIFEST}: part ${part} when ${why}`);
+    if (!isObj(w) || Object.keys(w).some((k) => k !== 'param') || !isObj(w.param) || !Object.keys(w.param).length)
+        throw bad('must be {"param": {NAME: true | "value" | ["value", ...]}}');
+    const param = {};
+    for (const [k, v] of Object.entries(w.param)) {
+        if (!PARAM_NAME.test(k))
+            throw bad(`param name ${k} must match ${PARAM_NAME}`);
+        if (v === true || typeof v === 'string')
+            param[k] = v;
+        else if (Array.isArray(v) && v.length && v.every((x) => typeof x === 'string'))
+            param[k] = [...v];
+        else
+            throw bad(`param ${k} must be true, a string or a non-empty list of strings`);
+    }
+    return { param };
+}
+/** when 조건 — 이름마다 true 는 값이 있고 비어 있지 않음, 문자열은 같음, 목록은 그중 하나. 모두 참이어야 참 */
+export function whenHolds(w, params) {
+    return Object.entries(w.param).every(([k, want]) => {
+        const v = Object.hasOwn(params, k) ? params[k] : undefined;
+        return want === true ? !!v : typeof want === 'string' ? v === want : v !== undefined && want.includes(v);
+    });
+}
+/** 조건 글 — 목록·export excluded·화면에 보인다 */
+export function whenText(w) {
+    return Object.entries(w.param).map(([k, v]) => `param ${k}${v === true ? '' : `=${typeof v === 'string' ? v : v.join('|')}`}`).join(' ');
 }
 export function readManifest(dir) {
     let text;
@@ -202,8 +233,9 @@ export function compat(dir, m) {
     }
     return { grade: HARNESSES.some((h) => lost[h].length) ? 'partial' : 'full', lost };
 }
-/** 기본값(manifest) 위에 층을 차례로 덮는다 — 뒤의 것이 이긴다. 모르는 키·꼴이 틀린 값은 건너뛴다(옛 판의 설정이 남아 있을 수 있다). 필수 part 는 늘 켠다 */
-export function resolveValues(m, layers) {
+/** 기본값(manifest) 위에 층을 차례로 덮는다 — 뒤의 것이 이긴다. 모르는 키·꼴이 틀린 값은 건너뛴다(옛 판의 설정이 남아 있을 수 있다). 필수 part 는 늘 켠다.
+ *  part 조건 when 은 보지 않는다 — 사용자 설정 그대로(목록·관리 화면의 스위치) */
+export function userValues(m, layers) {
     const parts = Object.fromEntries(Object.entries(m.parts).map(([k, p]) => [k, p.default]));
     const options = Object.fromEntries(Object.entries(m.options).map(([k, o]) => [k, o.default]));
     for (const l of layers) {
@@ -215,6 +247,16 @@ export function resolveValues(m, layers) {
                 options[k] = v;
     }
     return { parts, options };
+}
+/** 빌드에 쓰는 값 — userValues 다음, when 이 있는 켠 part 는 세션 인자 params 로 조건이 참일 때만 남긴다. 사용자가 끈 part 는 켜지 않고,
+ *  필수 part 도 조건이 거짓이면 꺼진다(사용자 결정 2026-11-02). params 가 없으면(기본 빌드·export 판) 인자가 없는 것으로 본다.
+ *  인자 값은 빌드 식별자에 들어가지 않는다 — 켜진 part 만 설정 문자열에 남는다 */
+export function resolveValues(m, layers, params = {}) {
+    const r = userValues(m, layers);
+    for (const [k, p] of Object.entries(m.parts))
+        if (p.when && r.parts[k])
+            r.parts[k] = whenHolds(p.when, params);
+    return r;
 }
 /** 정렬한 설정 문자열 — part.x=0|1, opt.y=<JSON> */
 export function valuesString(r) {

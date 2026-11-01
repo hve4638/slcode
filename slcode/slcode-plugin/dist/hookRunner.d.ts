@@ -62,6 +62,8 @@ export type RunnerOpts = {
     aliases?: Record<string, readonly string[]>;
     /** 콜백을 돌리는 하네스 — 스크립트의 slcode.vars.harness. 기본 claude(slcode 세션) */
     harness?: 'claude' | 'codex';
+    /** 세션 인자 — hook.session.params (ticket slcode-agent-plugin-part-when). slcode core 가 주고, export 의 중간 프로세스는 주지 않는다({}) */
+    params?: Record<string, string>;
 };
 /** 콜백의 실패·경고 한 줄씩 — export 쪽은 이것을 하네스 화면(systemMessage)에 보인다 */
 export type Notes = string[];

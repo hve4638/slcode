@@ -12,6 +12,13 @@ type ApproveOpts
 export fn sessionEnv(pairs) -> Record {
   role: 새 세션 env(--env, ticket slcode-new-session-env, 사용자 결정 2026-11-01)를 NAME=VALUE 목록에서 이름→값으로. 값 하나에 여러 쌍을 줄바꿈으로 나눠도 된다 — superlite 동사 인자는 같은 option 을 여러 번 주면 마지막 값만 남기므로 slcode.new --env 는 줄바꿈으로 받는다(빈 줄은 건너뛴다). 이름은 [A-Za-z_][A-Za-z0-9_]*, SLCODE_ 로 시작하면 거절(slcode 가 넣는 값을 덮지 못한다), = 가 없으면 거절 — 사유를 담은 Error. 같은 이름은 뒤의 것. cli.ts 가 쓰고 core 는 sessionEnvError 로 다시 본다. 플러그인 main.js 는 같은 규칙을 따로 둔다
 }
+export fn sessionParams(pairs) -> Record {
+  role: 새 세션 인자(--param·-P, ticket slcode-agent-plugin-part-when, 사용자 결정 2026-11-02)를 NAME=VALUE 목록에서 이름→값으로 — 줄바꿈으로 나눈 여러 쌍·빈 줄·같은 이름은 sessionEnv 와 같다. 이름은 [A-Za-z_][A-Za-z0-9_]*(SLCODE_PARAM_<이름> env 가 된다), 대소문자만 다른 두 이름은 거절(Windows env 는 대소문자를 가리지 않는다), = 가 없으면 거절. 플러그인 main.js 는 같은 규칙을 따로 둔다
+}
+export fn sessionParamsError(params) -> Text? {
+  role: 세션 인자 묶음이 받을 수 없으면 사유 — 이름 글자·대소문자 겹침. sessionParams·core 가 같은 규칙으로 본다
+}
+export val PARAM_ENV
 export fn sessionEnvError(name) -> Text? {
   role: 새 세션 env 이름이 받을 수 없으면 사유, 받으면 null — sessionEnv·core 가 같은 규칙으로 본다
 }

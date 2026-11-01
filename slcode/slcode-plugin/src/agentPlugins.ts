@@ -7,11 +7,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { buildId, compat, HARNESSES, MANIFEST, parseAssignment, readManifest, resolveValues, sourceFiles, sourceHash, valuesString, walk, type Harness, type Manifest, type Values } from './agentFormat.js';
+import { buildId, compat, HARNESSES, MANIFEST, parseAssignment, readManifest, resolveValues, sourceFiles, sourceHash, valuesString, userValues, walk, whenText, type Harness, type Manifest, type Values } from './agentFormat.js';
 import { BUILD_FILES, ensureBuild, type Report } from './agentBuild.js';
 import { acquireLock, releaseLock } from './lock.js';
 import { defaultStateDir } from './paths.js';
-import { exportTo, refreshExport, unexport, EXPORT_HARNESSES, type ExportHarness, type ExportReport, type ExportResult } from './agentExport.js';
+import { exportTo, refreshExport, unexport, withPartConditions, EXPORT_HARNESSES, type ExportHarness, type ExportReport, type ExportResult } from './agentExport.js';
 import { checkScripts } from './scriptCheck.js';
 import { ensureLauncher, PLUGIN_VERSION } from './launcher.js';
 
@@ -231,7 +231,8 @@ export async function setPlugin(name: string, assignments: string[], stateDir?: 
 
 export type PluginRow = {
   name: string; version: string; grade: 'full' | 'partial'; lost: Record<Harness, string[]>; source: string; installedAt: number;
-  parts: { name: string; on: boolean; required: boolean; default: boolean }[];
+  /** on 은 사용자 설정(기본 설정 기준) — when 은 조건 글(whenText)이고 세션마다 따로 본다. 기본 빌드·export 판은 인자가 없어 조건 part 를 뺀다 */
+  parts: { name: string; on: boolean; required: boolean; default: boolean; when: string | null }[];
   options: { name: string; type: string; value: unknown; default: unknown; label: string | null }[];
   /** 하네스별 마지막 빌드의 report.json — 빌드가 없으면 null */
   reports: Partial<Record<Harness, Report | null>>;
@@ -247,14 +248,14 @@ export function listPlugins(stateDir?: string): PluginRow[] {
   return Object.entries(readConfig(ap).plugins).map(([name, e]) => {
     let m: Manifest | null = null;
     try { m = readManifest(path.join(ap.installed, name)); } catch {}
-    const r = m ? resolveValues(m, [e.values]) : { parts: {}, options: {} };
+    const r = m ? userValues(m, [e.values]) : { parts: {}, options: {} };
     const reports: PluginRow['reports'] = {};
     for (const h of HARNESSES) if (e.builds[h]) { try { reports[h] = JSON.parse(fs.readFileSync(path.join(ap.build, e.builds[h]!, BUILD_FILES.report), 'utf8')); } catch { reports[h] = null; } }
     const exported: PluginRow['exported'] = {};
-    for (const h of e.exports ?? []) { try { exported[h] = JSON.parse(fs.readFileSync(path.join(ap.build, e.builds[h]!, 'export', h, BUILD_FILES.report), 'utf8')); } catch { exported[h] = null; } }
+    for (const h of e.exports ?? []) { try { const x = JSON.parse(fs.readFileSync(path.join(ap.build, e.builds[h]!, 'export', h, BUILD_FILES.report), 'utf8')); exported[h] = m ? withPartConditions(x, m, e) : x; } catch { exported[h] = null; } }
     return {
       name, version: e.version, grade: e.grade, lost: e.lost, source: e.source, installedAt: e.installedAt,
-      parts: m ? Object.entries(m.parts).map(([k, p]) => ({ name: k, on: r.parts[k], required: p.required, default: p.default })) : [],
+      parts: m ? Object.entries(m.parts).map(([k, p]) => ({ name: k, on: r.parts[k], required: p.required, default: p.default, when: p.when ? whenText(p.when) : null })) : [],
       options: m ? Object.entries(m.options).map(([k, o]) => ({ name: k, type: o.type, value: r.options[k], default: o.default, label: o.label ?? null })) : [],
       reports, exports: e.exports ?? [], exported,
     };
@@ -300,6 +301,8 @@ export type SessionPlugins = {
 };
 /** 세션 단위 설정 값 — 플러그인 이름별 (slcode-session-profile 이 meta 에 채운다) */
 export type SessionValues = Record<string, Values | undefined>;
+/** 세션 인자 (slcode new --param, ticket slcode-agent-plugin-part-when) — part 조건 when 이 본다. 플러그인 모두에 같다 */
+export type SessionParams = Record<string, string>;
 
 /** Claude 가 플러그인 데이터 폴더로 쓰는 곳 — <설정 폴더>/plugins/data/<이름>-inline (SDK 로 실은 플러그인의 출처는 inline) */
 export function claudeDataDir(name: string, env: NodeJS.ProcessEnv): string {
@@ -310,10 +313,10 @@ export function claudeDataDir(name: string, env: NodeJS.ProcessEnv): string {
 type Plan = Loaded & { target: string };
 /** 플러그인 하나의 지금 빌드 — 기본 설정 < 프로필 < 세션 값. Claude 는 지시문의 경로 변수를 세션 링크 경로로 바꾼다 (Claude 는 지시문을 치환하지 않는다).
  *  Codex 빌드는 이미 바꿨다 — 데이터 폴더만 만든다 */
-function plan(ap: AgentPaths, name: string, e: PluginEntry, link: string, layers: (Values | undefined)[], env: NodeJS.ProcessEnv, harness: SessionHarness = 'claude'): Plan {
+function plan(ap: AgentPaths, name: string, e: PluginEntry, link: string, layers: (Values | undefined)[], env: NodeJS.ProcessEnv, harness: SessionHarness = 'claude', params: SessionParams = {}): Plan {
   const inst = path.join(ap.installed, name);
   const m = readManifest(inst);
-  const b = ensureBuild(ap.build, inst, m, resolveValues(m, [e.values, ...layers]), e.hash, harness);
+  const b = ensureBuild(ap.build, inst, m, resolveValues(m, [e.values, ...layers], params), e.hash, harness);
   const read = (f: string) => { try { return fs.readFileSync(path.join(b.dir, f), 'utf8'); } catch { return null; } };
   const base = { name, version: m.version, build: b.id, values: b.report.values, env: m.env };
   if (harness === 'codex') {
@@ -339,8 +342,8 @@ function relink(link: string, target: string) {
 
 /** 세션을 띄울 때 — 설치한 플러그인마다 그 하네스의 빌드를 만들고(있으면 다시 쓰고) 세션 폴더에 링크를 건다. 싣지 못한 것은 notes 에.
  *  Codex 는 링크로 빌드를 정리에서 지킬 뿐, 넘기는 경로는 빌드 폴더 그대로다 (빌드 안의 경로 변수를 이미 그 경로로 바꿨다).
- *  프로필이 있으면 그 프로필이 싣는 플러그인만, 설정 값은 기본 설정 < 프로필 < 세션 (ticket slcode-session-profile) */
-export function loadSessionPlugins(sessionDir: string, env: NodeJS.ProcessEnv, session: SessionValues = {}, stateDir?: string, harness: SessionHarness = 'claude', profile?: PluginLayer): SessionPlugins {
+ *  프로필이 있으면 그 프로필이 싣는 플러그인만, 설정 값은 기본 설정 < 프로필 < 세션 (ticket slcode-session-profile). params 는 세션 인자 — 켠 part 의 조건 when 이 본다 */
+export function loadSessionPlugins(sessionDir: string, env: NodeJS.ProcessEnv, session: SessionValues = {}, stateDir?: string, harness: SessionHarness = 'claude', profile?: PluginLayer, params: SessionParams = {}): SessionPlugins {
   const ap = agentPaths(stateDir);
   const links = path.join(sessionDir, SESSION_LINKS);
   fs.rmSync(links, { recursive: true, force: true }); // 지난 기동의 링크 — 지운 플러그인이 남지 않게
@@ -354,7 +357,7 @@ export function loadSessionPlugins(sessionDir: string, env: NodeJS.ProcessEnv, s
   for (const [name, e] of entries) {
     const link = path.join(links, name);
     try {
-      const { target, ...p } = plan(ap, name, e, link, [profile && profileValues(profile, name), session[name]], env, harness);
+      const { target, ...p } = plan(ap, name, e, link, [profile && profileValues(profile, name), session[name]], env, harness, params);
       relink(link, target);
       if (p.codex) {
         if (p.codex.skills) out.codex.roots.push(p.codex.skills);
@@ -375,7 +378,7 @@ export function loadSessionPlugins(sessionDir: string, env: NodeJS.ProcessEnv, s
  *  later 는 이 세션에 반영되지 않아 새 세션부터인 것 (지시문·env·session.json·Codex 의 MCP·bin 이 바뀐 플러그인, 세션 뒤에 설치한 플러그인).
  *  Codex 는 skill 만 다시 싣는다 — 기동 때의 빌드는 <이름> 링크로 남기고(MCP·bin 이 아직 그것을 쓴다) 새 빌드는 <이름>@skills 링크로 지킨다. roots 는 새 extra root 들 */
 export type Later = { name: string; what: ('instructions' | 'env' | 'session.json' | 'mcp' | 'bin' | 'installed')[] };
-export function reloadSessionPlugins(sessionDir: string, loaded: Loaded[], env: NodeJS.ProcessEnv, session: SessionValues = {}, stateDir?: string, harness: SessionHarness = 'claude', profile?: PluginLayer): { loaded: Loaded[]; later: Later[]; removed: string[]; roots: string[] } {
+export function reloadSessionPlugins(sessionDir: string, loaded: Loaded[], env: NodeJS.ProcessEnv, session: SessionValues = {}, stateDir?: string, harness: SessionHarness = 'claude', profile?: PluginLayer, params: SessionParams = {}): { loaded: Loaded[]; later: Later[]; removed: string[]; roots: string[] } {
   const ap = agentPaths(stateDir);
   const plugins = readConfig(ap).plugins;
   const links = path.join(sessionDir, SESSION_LINKS);
@@ -386,7 +389,7 @@ export function reloadSessionPlugins(sessionDir: string, loaded: Loaded[], env: 
     const link = path.join(links, old.name);
     const e = plugins[old.name];
     if (!e || (profile && !loadsPlugin(profile, old.name))) { fs.rmSync(link, { force: true }); fs.rmSync(`${link}@skills`, { force: true }); removed.push(old.name); continue; }
-    const { target, ...p } = plan(ap, old.name, e, link, [profile && profileValues(profile, old.name), session[old.name]], env, harness);
+    const { target, ...p } = plan(ap, old.name, e, link, [profile && profileValues(profile, old.name), session[old.name]], env, harness, params);
     if (p.codex) {
       let start = '';
       try { start = fs.readlinkSync(link); } catch {}
@@ -410,14 +413,14 @@ export function reloadSessionPlugins(sessionDir: string, loaded: Loaded[], env: 
 }
 
 /** 지금 설정으로 빌드하면 나올 식별자 — 세션이 실은 것과 다르면 다시 실을 것이 있다. 빌드하지 않는다 */
-export function currentBuilds(session: SessionValues = {}, stateDir?: string, harness: SessionHarness = 'claude', profile?: PluginLayer): Record<string, string | null> {
+export function currentBuilds(session: SessionValues = {}, stateDir?: string, harness: SessionHarness = 'claude', profile?: PluginLayer, params: SessionParams = {}): Record<string, string | null> {
   const ap = agentPaths(stateDir);
   const out: Record<string, string | null> = {};
   for (const [name, e] of Object.entries(readConfig(ap).plugins)) {
     if (profile && !loadsPlugin(profile, name)) continue;
     try {
       const m = readManifest(path.join(ap.installed, name));
-      out[name] = buildId(valuesString(resolveValues(m, [e.values, profile && profileValues(profile, name), session[name]])), e.hash, harness);
+      out[name] = buildId(valuesString(resolveValues(m, [e.values, profile && profileValues(profile, name), session[name]], params)), e.hash, harness);
     } catch { out[name] = null; }
   }
   return out;

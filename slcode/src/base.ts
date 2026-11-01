@@ -33,6 +33,34 @@ export function sessionEnv(pairs: readonly string[]): Record<string, string> {
   return out;
 }
 
+/** 세션 인자가 에이전트에 들어가는 env 이름 앞부분 (ticket slcode-agent-plugin-part-when, 사용자 결정 2026-11-02) — SLCODE_PARAM_<이름>.
+ *  SLCODE_* 라 --env 로는 줄 수 없고, core 는 물려받은 것을 지우고 세션 기록 값만 넣는다 */
+export const PARAM_ENV = 'SLCODE_PARAM_';
+/** 세션 인자 묶음이 받을 수 없으면 사유 — 이름은 env 이름 글자, 대소문자만 다른 두 이름은 거절(Windows env 는 대소문자를 가리지 않는다) */
+export function sessionParamsError(params: Record<string, string>): string | null {
+  const seen = new Map<string, string>();
+  for (const name of Object.keys(params)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return `bad param name '${name}' (letters, digits and _, not starting with a digit)`;
+    const up = name.toUpperCase(), other = seen.get(up);
+    if (other !== undefined) return `params ${other} and ${name} differ only in case`;
+    seen.set(up, name);
+  }
+  return null;
+}
+/** --param NAME=VALUE 들 → 이름→값 (ticket slcode-agent-plugin-part-when) — 줄바꿈으로 나눈 여러 쌍·빈 줄·같은 이름은 sessionEnv 와 같다. 플러그인 main.js 는 같은 규칙을 따로 둔다 */
+export function sessionParams(pairs: readonly string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of pairs.flatMap((p) => p.split(/\r?\n/))) {
+    if (!line) continue;
+    const eq = line.indexOf('=');
+    if (eq < 0) throw new Error(`--param needs NAME=VALUE: ${line}`);
+    out[line.slice(0, eq)] = line.slice(eq + 1);
+  }
+  const why = sessionParamsError(out);
+  if (why) throw new Error(why);
+  return out;
+}
+
 /** effort 가 지금 모델에 없으면 그 모델의 efforts, 맞거나 알 수 없으면 null. 지금 모델 찾기는 화면(web/app.js)과 같고, 모르면 default.
  *  벤더 기동 때 meta.effort 를 이것으로 보고 맞지 않으면 알린 뒤 벤더 기본으로 (ticket slcode-new-effort-prompt, 사용자 결정 2026-10-23) */
 export function effortMisfit(r: ModelsResult, effort: string): string[] | null {

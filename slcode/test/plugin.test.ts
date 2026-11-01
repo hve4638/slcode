@@ -176,6 +176,9 @@ test('main command: 카드 서비스 명령 — new 는 폴더·옵션, resume �
     // 세션 env 는 쌍마다 --env (ticket slcode-new-session-env) — resume 에는 싣지 않는다
     assert.equal(await exposed.host.command({ spawn: { cwd: '/w', env: ['A=1', "B=it's"] } }), `${bin} new '/w' --env 'A=1' --env 'B=it'\\''s' --stdio --no-web --dir '/d x'`);
     assert.equal(await exposed.host.command({ id: 'sess-1', spawn: { env: ['A=1'] } }), `${bin} resume 'sess-1' --stdio --no-web --dir '/d x'`);
+    // 세션 인자는 쌍마다 --param (ticket slcode-agent-plugin-part-when) — resume 에는 싣지 않는다
+    assert.equal(await exposed.host.command({ spawn: { cwd: '/w', params: ['ORCH_ROLE=worker', 'B=x y'] } }), `${bin} new '/w' --param 'ORCH_ROLE=worker' --param 'B=x y' --stdio --no-web --dir '/d x'`);
+    assert.equal(await exposed.host.command({ id: 'sess-1', spawn: { params: ['A=1'] } }), `${bin} resume 'sess-1' --stdio --no-web --dir '/d x'`);
   });
 });
 
@@ -268,6 +271,17 @@ test('slcode.new 동사: 요청자 창에 key·폴더·옵션으로 카드를 �
     await assert.rejects(verbs['slcode.new']({ env: 'A' }, { cwd: '/w', tmux: '$3' }), /needs NAME=VALUE/);
     await assert.rejects(verbs['slcode.new']({ env: '1A=x' }, { cwd: '/w', tmux: '$3' }), /bad env name/);
     assert.equal(calls.length, k, '카드를 열지 않는다');
+    // --param (ticket slcode-agent-plugin-part-when) — --env 와 같은 줄바꿈 쌍. 이름 오류·대소문자만 다른 이름은 카드를 열기 전에 거절, SLCODE_ 로 시작해도 된다
+    void verbs['slcode.new']({ param: 'ORCH_ROLE=worker\nSLCODE_X=1' }, { cwd: '/w', tmux: '$3' });
+    await new Promise((r) => setTimeout(r, 10));
+    const arg8 = JSON.parse(calls.filter((c) => c.startsWith('call w$3 slcode/cards.open ')).at(-1)!.slice('call w$3 slcode/cards.open '.length));
+    assert.deepEqual(arg8.spawn.params, ['ORCH_ROLE=worker', 'SLCODE_X=1']);
+    exposed.host.started(arg8.key, 'sess-8');
+    const j = calls.length;
+    await assert.rejects(verbs['slcode.new']({ param: 'role=a\nROLE=b' }, { cwd: '/w', tmux: '$3' }), /differ only in case/);
+    await assert.rejects(verbs['slcode.new']({ param: 'A' }, { cwd: '/w', tmux: '$3' }), /--param needs NAME=VALUE/);
+    await assert.rejects(verbs['slcode.new']({ param: 'A-B=x' }, { cwd: '/w', tmux: '$3' }), /bad param name/);
+    assert.equal(calls.length, j, '카드를 열지 않는다');
   });
 });
 

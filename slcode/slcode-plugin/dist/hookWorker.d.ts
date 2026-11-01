@@ -31,6 +31,7 @@ export type Info = {
         id: string;
         cwd: string;
         permissionMode: string | null;
+        params: Record<string, string>;
     };
     agent: {
         id: string;

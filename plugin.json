@@ -21,6 +21,7 @@
         { "name": "effort", "kind": "option", "help": "effort of the new session — claude: low | medium | high | xhigh | max (default: the vendor's default; a value the model lacks warns in the session and falls back to the default)" },
         { "name": "profile", "kind": "option", "help": "start profile of the new session — default | bare | one made with slcode profile add (default: default; before the first message it can be changed in the middle of the chat)" },
         { "name": "env", "kind": "option", "value": "NAME=VALUE", "help": "env of the session's Claude/Codex process, kept for resume and vendor restarts; several pairs go in one value, one per line (a repeated --env keeps only the last); SLCODE_* names are refused" },
+        { "name": "param", "kind": "option", "value": "NAME=VALUE", "help": "session param, kept for resume: agent plugin parts with a when param condition read it, js/ts hooks see hook.session.params and the agent process env SLCODE_PARAM_<NAME>; several pairs go in one value, one per line" },
         { "name": "prompt", "kind": "option", "help": "first prompt — starts the first turn as soon as the session is up" },
         { "name": "focus", "kind": "flag", "help": "show the new card if you are looking at this terminal right then (default: attach it quietly; slcode new passes it when a person types it)" }
       ]

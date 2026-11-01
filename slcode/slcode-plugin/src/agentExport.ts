@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readManifest, resolveValues } from './agentFormat.js';
+import { readManifest, resolveValues, userValues, whenText, type Manifest } from './agentFormat.js';
 import { BUILD_FILES, buildCodex, type Report } from './agentBuild.js';
 import { codexGaps, exportHookEntries, readScripts, type ScriptEntry } from './agentHooks.js';
 import { ensureLauncher } from './launcher.js';
@@ -52,13 +52,21 @@ function claudeExportData(name: string, env: NodeJS.ProcessEnv) {
 }
 
 /** 그 하네스의 export 판 — build/<식별자>/export/<하네스>/{<이름>/, report.json}. 있으면 다시 쓰고, 없으면 옆에 만든 뒤 rename */
+/** 켜 둔 조건 part — 세션 인자가 없어 기본 빌드에서 이미 빠졌다 (ticket slcode-agent-plugin-part-when, 사용자 결정 2026-11-02).
+ *  조건으로 꺼진 빌드와 사용자가 끈 빌드는 식별자가 같아 export 판의 report.json 을 함께 쓴다 — 그래서 저장하지 않고 읽을 때마다 붙인다 */
+export function withPartConditions(report: ExportReport, m: Manifest, e: PluginEntry): ExportReport {
+  const on = userValues(m, [e.values]).parts;
+  const lines = Object.entries(m.parts).filter(([k, p]) => p.when && on[k]).map(([k, p]) => `${k}: part condition ${whenText(p.when!)} (slcode session params only)`);
+  return lines.length ? { ...report, excluded: [...report.excluded, ...lines] } : report;
+}
+
 export function exportBuild(ap: AgentPaths, name: string, e: PluginEntry, h: ExportHarness, env: NodeJS.ProcessEnv): { id: string; plugin: string; report: ExportReport } {
   const id = e.builds[h];
   if (!id) throw new Error(`${name} has no ${h} build (slcode plugin add again)`);
   const bdir = path.join(ap.build, id);
   const out = path.join(bdir, 'export', h);
   const have = readJson(path.join(out, BUILD_FILES.report));
-  if (have?.harness === h) return { id, plugin: path.join(out, name), report: have };
+  if (have?.harness === h) return { id, plugin: path.join(out, name), report: withPartConditions(have, readManifest(path.join(ap.installed, name)), e) };
   const base: Report = readJson(path.join(bdir, BUILD_FILES.report));
   if (!base) throw new Error(`build ${id} of ${name} is missing`);
   const inst = path.join(ap.installed, name);
@@ -106,7 +114,7 @@ export function exportBuild(ap: AgentPaths, name: string, e: PluginEntry, h: Exp
     const report: ExportReport = { harness: h, name, version: m.version, build: id, values: base.values, excluded };
     fs.writeFileSync(path.join(tmp, BUILD_FILES.report), JSON.stringify(report, null, 2));
     try { fs.renameSync(tmp, out); } catch { fs.rmSync(tmp, { recursive: true, force: true }); } // 동시에 둘이 만들면 먼저 놓인 것
-    return { id, plugin: path.join(out, name), report: readJson(path.join(out, BUILD_FILES.report)) ?? report };
+    return { id, plugin: path.join(out, name), report: withPartConditions(readJson(path.join(out, BUILD_FILES.report)) ?? report, m, e) };
   } catch (err) { fs.rmSync(tmp, { recursive: true, force: true }); throw err; }
 }
 

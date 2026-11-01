@@ -7,11 +7,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { buildId, compat, HARNESSES, MANIFEST, parseAssignment, readManifest, resolveValues, sourceFiles, sourceHash, valuesString, walk } from './agentFormat.js';
+import { buildId, compat, HARNESSES, MANIFEST, parseAssignment, readManifest, resolveValues, sourceFiles, sourceHash, valuesString, userValues, walk, whenText } from './agentFormat.js';
 import { BUILD_FILES, ensureBuild } from './agentBuild.js';
 import { acquireLock, releaseLock } from './lock.js';
 import { defaultStateDir } from './paths.js';
-import { exportTo, refreshExport, unexport, EXPORT_HARNESSES } from './agentExport.js';
+import { exportTo, refreshExport, unexport, withPartConditions, EXPORT_HARNESSES } from './agentExport.js';
 import { checkScripts } from './scriptCheck.js';
 import { ensureLauncher, PLUGIN_VERSION } from './launcher.js';
 export const AGENT_DIR = 'agent-plugins';
@@ -236,7 +236,7 @@ export function listPlugins(stateDir) {
             m = readManifest(path.join(ap.installed, name));
         }
         catch { }
-        const r = m ? resolveValues(m, [e.values]) : { parts: {}, options: {} };
+        const r = m ? userValues(m, [e.values]) : { parts: {}, options: {} };
         const reports = {};
         for (const h of HARNESSES)
             if (e.builds[h]) {
@@ -250,7 +250,8 @@ export function listPlugins(stateDir) {
         const exported = {};
         for (const h of e.exports ?? []) {
             try {
-                exported[h] = JSON.parse(fs.readFileSync(path.join(ap.build, e.builds[h], 'export', h, BUILD_FILES.report), 'utf8'));
+                const x = JSON.parse(fs.readFileSync(path.join(ap.build, e.builds[h], 'export', h, BUILD_FILES.report), 'utf8'));
+                exported[h] = m ? withPartConditions(x, m, e) : x;
             }
             catch {
                 exported[h] = null;
@@ -258,7 +259,7 @@ export function listPlugins(stateDir) {
         }
         return {
             name, version: e.version, grade: e.grade, lost: e.lost, source: e.source, installedAt: e.installedAt,
-            parts: m ? Object.entries(m.parts).map(([k, p]) => ({ name: k, on: r.parts[k], required: p.required, default: p.default })) : [],
+            parts: m ? Object.entries(m.parts).map(([k, p]) => ({ name: k, on: r.parts[k], required: p.required, default: p.default, when: p.when ? whenText(p.when) : null })) : [],
             options: m ? Object.entries(m.options).map(([k, o]) => ({ name: k, type: o.type, value: r.options[k], default: o.default, label: o.label ?? null })) : [],
             reports, exports: e.exports ?? [], exported,
         };
@@ -294,10 +295,10 @@ export function claudeDataDir(name, env) {
 }
 /** 플러그인 하나의 지금 빌드 — 기본 설정 < 프로필 < 세션 값. Claude 는 지시문의 경로 변수를 세션 링크 경로로 바꾼다 (Claude 는 지시문을 치환하지 않는다).
  *  Codex 빌드는 이미 바꿨다 — 데이터 폴더만 만든다 */
-function plan(ap, name, e, link, layers, env, harness = 'claude') {
+function plan(ap, name, e, link, layers, env, harness = 'claude', params = {}) {
     const inst = path.join(ap.installed, name);
     const m = readManifest(inst);
-    const b = ensureBuild(ap.build, inst, m, resolveValues(m, [e.values, ...layers]), e.hash, harness);
+    const b = ensureBuild(ap.build, inst, m, resolveValues(m, [e.values, ...layers], params), e.hash, harness);
     const read = (f) => { try {
         return fs.readFileSync(path.join(b.dir, f), 'utf8');
     }
@@ -328,8 +329,8 @@ function relink(link, target) {
 }
 /** 세션을 띄울 때 — 설치한 플러그인마다 그 하네스의 빌드를 만들고(있으면 다시 쓰고) 세션 폴더에 링크를 건다. 싣지 못한 것은 notes 에.
  *  Codex 는 링크로 빌드를 정리에서 지킬 뿐, 넘기는 경로는 빌드 폴더 그대로다 (빌드 안의 경로 변수를 이미 그 경로로 바꿨다).
- *  프로필이 있으면 그 프로필이 싣는 플러그인만, 설정 값은 기본 설정 < 프로필 < 세션 (ticket slcode-session-profile) */
-export function loadSessionPlugins(sessionDir, env, session = {}, stateDir, harness = 'claude', profile) {
+ *  프로필이 있으면 그 프로필이 싣는 플러그인만, 설정 값은 기본 설정 < 프로필 < 세션 (ticket slcode-session-profile). params 는 세션 인자 — 켠 part 의 조건 when 이 본다 */
+export function loadSessionPlugins(sessionDir, env, session = {}, stateDir, harness = 'claude', profile, params = {}) {
     const ap = agentPaths(stateDir);
     const links = path.join(sessionDir, SESSION_LINKS);
     fs.rmSync(links, { recursive: true, force: true }); // 지난 기동의 링크 — 지운 플러그인이 남지 않게
@@ -347,7 +348,7 @@ export function loadSessionPlugins(sessionDir, env, session = {}, stateDir, harn
     for (const [name, e] of entries) {
         const link = path.join(links, name);
         try {
-            const { target, ...p } = plan(ap, name, e, link, [profile && profileValues(profile, name), session[name]], env, harness);
+            const { target, ...p } = plan(ap, name, e, link, [profile && profileValues(profile, name), session[name]], env, harness, params);
             relink(link, target);
             if (p.codex) {
                 if (p.codex.skills)
@@ -372,7 +373,7 @@ export function loadSessionPlugins(sessionDir, env, session = {}, stateDir, harn
     out.append = texts.join('\n\n');
     return out;
 }
-export function reloadSessionPlugins(sessionDir, loaded, env, session = {}, stateDir, harness = 'claude', profile) {
+export function reloadSessionPlugins(sessionDir, loaded, env, session = {}, stateDir, harness = 'claude', profile, params = {}) {
     const ap = agentPaths(stateDir);
     const plugins = readConfig(ap).plugins;
     const links = path.join(sessionDir, SESSION_LINKS);
@@ -388,7 +389,7 @@ export function reloadSessionPlugins(sessionDir, loaded, env, session = {}, stat
             removed.push(old.name);
             continue;
         }
-        const { target, ...p } = plan(ap, old.name, e, link, [profile && profileValues(profile, old.name), session[old.name]], env, harness);
+        const { target, ...p } = plan(ap, old.name, e, link, [profile && profileValues(profile, old.name), session[old.name]], env, harness, params);
         if (p.codex) {
             let start = '';
             try {
@@ -427,7 +428,7 @@ export function reloadSessionPlugins(sessionDir, loaded, env, session = {}, stat
     return { loaded: next, later, removed, roots };
 }
 /** 지금 설정으로 빌드하면 나올 식별자 — 세션이 실은 것과 다르면 다시 실을 것이 있다. 빌드하지 않는다 */
-export function currentBuilds(session = {}, stateDir, harness = 'claude', profile) {
+export function currentBuilds(session = {}, stateDir, harness = 'claude', profile, params = {}) {
     const ap = agentPaths(stateDir);
     const out = {};
     for (const [name, e] of Object.entries(readConfig(ap).plugins)) {
@@ -435,7 +436,7 @@ export function currentBuilds(session = {}, stateDir, harness = 'claude', profil
             continue;
         try {
             const m = readManifest(path.join(ap.installed, name));
-            out[name] = buildId(valuesString(resolveValues(m, [e.values, profile && profileValues(profile, name), session[name]])), e.hash, harness);
+            out[name] = buildId(valuesString(resolveValues(m, [e.values, profile && profileValues(profile, name), session[name]], params)), e.hash, harness);
         }
         catch {
             out[name] = null;
