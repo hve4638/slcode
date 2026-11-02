@@ -29,3 +29,15 @@ type SubagentStartHook
 type SubagentStopHook
 type PreCompactHook
 type SessionEndHook
+export val COMMAND_NAME
+export val COMPLETE_MAX
+type CommandSession
+type CommandCall
+type CompleteInput
+type CompleteItem
+type CommandDef
+// 명령 (ticket slcode-agent-plugin-command, 착수 결정 TICKET.md 2026-11-02): part 의 commands/<이름>/COMMAND.ts|js 하나가 명령 하나, 이름은 폴더 이름(COMMAND_NAME — 소문자·숫자·-, 대소문자를 가리지 않고 견준다).
+// 파일 안에서 slcode.command({ description, argumentHint?, timeout?, complete?, run }) 를 정확히 한 번 — export { run, complete } 꼴도 검토했지만 칸이 넷이라 객체 하나에 모으고 콜백 타입이 저절로 붙는 쪽(사용자 결정). slcode.run() 은 요구하지 않는다.
+// run(cmd): 사용자가 slcode 입력창에서 `/<이름> <인자>` 를 치면 턴 없이 돈다 — cmd.state 는 훅과 같은 주 에이전트 상태(성공했을 때만 저장), cmd.context() 는 보관했다가 다음 턴에 한 번, cmd.message() 는 훅과 같은 알림 줄.
+// complete(input): 칠 때마다 — 인자 낱말·커서 낱말(index·value)·원문·커서와 저장된 상태의 얼린 사본. 후보는 문자열 또는 {value,label?,description?}, COMPLETE_MAX 개까지. 따로 도는 worker 라 run·훅과 모듈 변수를 나누지 않는다.
+// slcode 의 Claude 세션 전용 — export 판·Codex 세션에는 없다.

@@ -4,14 +4,18 @@
 // 상태: 주 에이전트의 것은 세션 폴더 agent-state/<플러그인>.json (resume·/clear 뒤에도 남는다), 서브에이전트의 것은 메모리에만 두고 SubagentStop 뒤에 버린다.
 // worker 는 세션마다(core 가 세션 프로세스다) — 다시 싣기로 빌드가 바뀐 플러그인만 다시 띄운다.
 // export 한 Claude·Codex 의 세션 중간 프로세스(hookBroker)도 이것을 쓴다 — stateFile·dirOf·aliases 를 주고 run() 으로 이벤트를 넣는다 (ticket slcode-agent-plugin-script-portable).
+// 명령 (ticket slcode-agent-plugin-command): 빌드의 commands.json 에 적힌 COMMAND 파일도 같은 worker 에 싣는다 — runCommand 가 run 을 부르고, 낸 컨텍스트는 세션 폴더의
+// agent-command-context.json 에 보관했다가 다음 주 에이전트 UserPromptSubmit 결과에 합친다(열 때 SessionStart 것 → 명령 보관분 → 그 턴의 훅 결과). complete 는 플러그인마다
+// 따로 띄운 worker(role complete, 처음 부를 때)가 저장된 상태의 사본으로 돈다 — 플러그인마다 한 번에 하나, 기다리는 것은 최신 하나만, 늦으면 그 worker 만 내린다.
 import fs from 'node:fs';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import type { HookCallbackMatcher, HookInput, SyncHookJSONOutput } from '@anthropic-ai/claude-agent-sdk';
 import { HOOK_EVENTS, MATCHER_EVENTS, MESSAGE_ICONS, MESSAGE_TONES, METHODS, type HookEvent, type MessageLook } from './hookApi.js';
-import { killGroup, type Info, type Reg, type Result, type ToCore, type ToWorker, type WorkerInit } from './hookWorker.js';
+import { COMPLETE_MAX } from './hookApi.js';
+import { killGroup, type CmdInfo, type CmdResult, type CompleteInfo, type Info, type Item, type Reg, type Result, type ToCore, type ToWorker, type WorkerInit } from './hookWorker.js';
 import { BUILD_FILES } from './agentBuild.js';
-import { readScripts, type ScriptEntry } from './agentHooks.js';
+import { readCommands, readScripts, type CommandEntry, type ScriptEntry } from './agentHooks.js';
 
 /** worker 가 스크립트를 싣고 등록을 마칠 때까지 */
 const READY_MS = 10_000;
@@ -26,18 +30,38 @@ export type AgentHookEvent =
   | { kind: 'agent.hook'; phase: 'run'; plugin: string; src: string; event: string; ms: number; outcome: 'ok' | 'error' | 'timeout'; effects: AgentHookEffects | null; toolUseId: string | null; error: string | null; message: string | null; messages?: AgentHookMessage[] | null; warnings: string[] }
   | { kind: 'agent.hook'; phase: 'warn'; plugin: string; text: string };
 export type AgentHookMessage = { text: string } & MessageLook;
+/** 명령의 기록 (ticket slcode-agent-plugin-command) — run 은 명령 한 번(context 는 이번에 보관한 글, cleared 는 앞의 보관분을 지웠음), attached 는 보관분을 이 턴에 붙였음 */
+export type AgentCommandEvent =
+  | { kind: 'agent.command'; phase: 'run'; plugin: string; name: string; args: string; ms: number; outcome: 'ok' | 'error' | 'timeout'; error: string | null; messages: AgentHookMessage[] | null; context: string[]; cleared: boolean; warnings: string[] }
+  | { kind: 'agent.command'; phase: 'attached'; items: { plugin: string; name: string; text: string }[] };
+/** 실은 명령 하나 — 입력창 목록·판정에 쓴다 */
+export type LoadedCommand = { plugin: string; name: string; description: string; argumentHint: string; complete: boolean };
+/** 명령 결과 — 부른 쪽(core)이 응답으로 */
+export type CommandOutcome = { outcome: 'ok' | 'error' | 'timeout'; error: string | null };
 export type AgentHookEffects = { block: string[]; ask: string[]; allow: string[]; stop: string[]; context: string[]; updateInput: boolean };
 
 /** 세션 폴더 안의 상태 폴더 */
 export const STATE_DIR = 'agent-state';
+/** 세션 폴더 안의 명령 보관분 — [{plugin, name, text}] (친 순서) */
+export const HELD_FILE = 'agent-command-context.json';
+/** 명령 하나가 보관할 수 있는 컨텍스트 */
+const HELD_LIMIT = 64 * 1024;
+/** complete 를 기다리는 상한 — 넘으면 complete worker 를 내린다(화면은 100ms 에서 먼저 포기한다) */
+const COMPLETE_MS = 500;
 // 테스트(tsx)는 .ts 를, 빌드(dist)는 .js 를 띄운다
 const WORKER_URL = new URL(`./hookWorker${import.meta.url.endsWith('.ts') ? '.ts' : '.js'}`, import.meta.url);
 
 type Outcome = { reg: Reg; plugin: string; ok: boolean; timeout: boolean; error: string | null; result: Result | null; ms: number; warnings: string[] };
+type CmdDone = { ok: boolean; timeout: boolean; error: string | null; result: CmdResult | null; ms: number; warnings: string[] };
+type Completer = { worker: Worker; ready: Promise<void>; pending: Map<number, (r: { items: Item[]; error: string | null }) => void> };
 type Plugin = {
-  name: string; build: string; dir: string; scripts: ScriptEntry[];
+  name: string; build: string; dir: string; scripts: ScriptEntry[]; commands: CommandEntry[];
   worker: Worker | null; ready: Promise<Reg[]> | null;
   pending: Map<number, (o: Omit<Outcome, 'reg' | 'plugin'>) => void>;
+  cmdPending: Map<number, (o: CmdDone) => void>;
+  completer: Completer | null;
+  /** complete 줄 — 도는 것이 있으면 기다리는 것은 최신 하나만 */
+  cq: { busy: boolean; next: { go: () => void; drop: () => void } | null };
   pgids: Set<number>;
   /** 에이전트('' 는 주 에이전트)별 키 → JSON */
   states: Map<string, Map<string, string>>;
@@ -45,7 +69,7 @@ type Plugin = {
 
 /** slcode core 는 sessionDir·buildDir 를, export 의 중간 프로세스(hookBroker)는 stateFile·dirOf·aliases 를 준다 */
 export type RunnerOpts = {
-  sessionDir?: string; buildDir?: string; sessionId: string; emit: (ev: AgentHookEvent) => void;
+  sessionDir?: string; buildDir?: string; sessionId: string; emit: (ev: AgentHookEvent | AgentCommandEvent) => void;
   /** 주 에이전트 상태 파일 — 기본은 sessionDir/agent-state/<플러그인>.json */
   stateFile?: (plugin: string) => string;
   /** 빌드 식별자 → scripts.json 이 있는 폴더 — 기본은 buildDir/<식별자> */
@@ -117,7 +141,28 @@ export class HookRunner {
   private opening: Promise<SyncHookJSONOutput> | null = null;
   /** openSession 을 불렀다 — 그 뒤 SDK 가 startup·resume 으로 부르는 SessionStart 는 다시 돌리지 않는다 */
   private opened = false;
-  constructor(private opts: RunnerOpts) {}
+  /** 명령이 보관한 컨텍스트 (친 순서) — 세션 폴더가 있으면 파일에도 */
+  private held: { plugin: string; name: string; text: string }[] = [];
+  constructor(private opts: RunnerOpts) {
+    if (opts.sessionDir) try { const j = JSON.parse(fs.readFileSync(path.join(opts.sessionDir, HELD_FILE), 'utf8')); if (Array.isArray(j)) this.held = j.filter((x) => typeof x?.plugin === 'string' && typeof x?.name === 'string' && typeof x?.text === 'string'); } catch {}
+  }
+  private saveHeld() {
+    if (!this.opts.sessionDir) return;
+    const f = path.join(this.opts.sessionDir, HELD_FILE);
+    if (!this.held.length) { fs.rmSync(f, { force: true }); return; }
+    const tmp = `${f}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(this.held));
+    fs.renameSync(tmp, f);
+  }
+  /** 보관분을 꺼낸다(한 번만) — 기록(attached)을 내고 파일을 비운다 */
+  private takeHeld(): string | null {
+    if (!this.held.length) return null;
+    const items = this.held;
+    this.held = [];
+    try { this.saveHeld(); } catch {}
+    this.opts.emit({ kind: 'agent.command', phase: 'attached', items });
+    return items.map((x) => x.text).join('\n\n');
+  }
 
   /** 세션을 열 때(core 기동마다) SessionStart(source) 를 돌린다 — message 는 바로 기록(emit)으로 화면에 나가고, context·stop 은 들고 있다가
    *  첫 주 에이전트 UserPromptSubmit 결과 앞에 합친다. 터미널 Claude 가 열 때 SessionStart 를 돌려 message 를 바로 보이는 것과 맞춘다 (ticket slcode-session-open-notice, 사용자 2026-11-01).
@@ -145,8 +190,9 @@ export class HookRunner {
       if (old) this.stop(old, 'reloaded');
       const dir = this.opts.dirOf ? this.opts.dirOf(l.build) : path.join(this.opts.buildDir!, l.build);
       const scripts = readScripts(path.join(dir, BUILD_FILES.scripts));
-      if (!scripts.length) continue;
-      const p: Plugin = { name: l.name, build: l.build, dir, scripts, worker: null, ready: null, pending: new Map(), pgids: new Set(), states: old?.states ?? new Map([['', this.readState(l.name)]]) };
+      const commands = readCommands(path.join(dir, BUILD_FILES.commands));
+      if (!scripts.length && !commands.length) continue;
+      const p: Plugin = { name: l.name, build: l.build, dir, scripts, commands, worker: null, ready: null, pending: new Map(), cmdPending: new Map(), completer: null, cq: { busy: false, next: null }, pgids: new Set(), states: old?.states ?? new Map([['', this.readState(l.name)]]) };
       next.push(p);
       this.start(p);
     }
@@ -161,6 +207,109 @@ export class HookRunner {
 
   /** 이벤트 하나를 돌린다 — 하네스 훅 입력(Claude 꼴)을 받아 Claude 훅 JSON 출력을 돌려준다. notes 에 콜백의 실패·경고를 더한다 (hookBroker) */
   run(event: HookEvent, input: unknown, notes?: Notes): Promise<SyncHookJSONOutput> { return this.dispatch(event, input as HookInput, notes); }
+
+  /** 실은 명령 (설치 순서, 플러그인 안은 이름 순) */
+  commands(): LoadedCommand[] {
+    return this.plugins.flatMap((p) => p.commands.map((c) => ({ plugin: p.name, name: c.name, description: c.description, argumentHint: c.argumentHint, complete: c.complete })));
+  }
+
+  /** 명령 하나를 돌린다 — 성공이면 상태를 저장하고 보관분을 바꾼다(같은 명령의 앞 보관분은 지우고 새 것은 끝에, context 가 없으면 지우기만).
+   *  실패·시간 초과면 상태·보관분은 그대로. 기록(agent.command run)을 낸다 */
+  async runCommand(plugin: string, name: string, args: string, at: { cwd: string }): Promise<CommandOutcome> {
+    const p = this.plugins.find((x) => x.name === plugin);
+    const c = p?.commands.find((x) => x.name === name);
+    if (!p || !c) return { outcome: 'error', error: `no command ${plugin}:${name}` };
+    await this.regsOf(p);
+    const timeout = c.timeout ?? 10;
+    const info: CmdInfo = { plugin, name, args, session: { id: this.opts.sessionId, cwd: at.cwd, permissionMode: null, params: this.opts.params ?? {} } };
+    const o = await new Promise<CmdDone>((resolve) => {
+      const w = p.worker;
+      if (!w) { resolve({ ok: false, timeout: false, error: 'worker stopped', result: null, ms: 0, warnings: [] }); return; }
+      const id = this.nextCall++;
+      const timer = setTimeout(() => {
+        p.cmdPending.delete(id);
+        resolve({ ok: false, timeout: true, error: `${timeout}초 안에 끝나지 않았습니다`, result: null, ms: timeout * 1000, warnings: [] });
+        this.terminate(p, w, `/${name} timed out`);
+      }, timeout * 1000);
+      p.cmdPending.set(id, (d) => { clearTimeout(timer); p.cmdPending.delete(id); resolve(d); });
+      w.postMessage({ t: 'cmd', id, info } satisfies ToWorker);
+    });
+    const warnings = [...o.warnings];
+    const messages = o.result?.message.filter((m) => m.text).map((m) => lookOf(m, warnings)) ?? [];
+    const context = o.ok ? (o.result?.context.filter(Boolean) ?? []) : [];
+    let cleared = false;
+    if (o.ok) {
+      const text = context.join('\n\n');
+      if (text.length > HELD_LIMIT) { warnings.push(`컨텍스트가 ${Math.round(text.length / 1024)}KB 로 ${HELD_LIMIT / 1024}KB 를 넘어 보관하지 않았습니다`); context.length = 0; }
+      else {
+        const before = this.held.length;
+        this.held = this.held.filter((x) => !(x.plugin === plugin && x.name === name));
+        cleared = this.held.length < before && !text;
+        if (text) this.held.push({ plugin, name, text });
+        try { this.saveHeld(); } catch (e) { warnings.push(`보관분을 저장하지 못했습니다: ${(e as Error).message}`); }
+      }
+    }
+    const outcome = o.timeout ? 'timeout' : o.ok ? 'ok' : 'error';
+    this.opts.emit({ kind: 'agent.command', phase: 'run', plugin, name, args, ms: o.ms, outcome, error: o.error, messages: messages.length ? messages : null, context, cleared, warnings });
+    return { outcome, error: o.error };
+  }
+
+  /** 인자 후보 — 따로 띄운 worker 에서 저장된 상태의 사본으로. 도는 것이 있으면 기다리는 것은 최신 하나만(밀린 것은 stale 로 바로 푼다) */
+  complete(plugin: string, name: string, input: Omit<CompleteInfo, 'plugin' | 'name' | 'session' | 'state'>, at: { cwd: string }): Promise<{ items: Item[]; error: string | null; stale?: boolean }> {
+    const p = this.plugins.find((x) => x.name === plugin);
+    const c = p?.commands.find((x) => x.name === name);
+    if (!p || !c || this.closed) return Promise.resolve({ items: [], error: `no command ${plugin}:${name}` });
+    if (!c.complete) return Promise.resolve({ items: [], error: null });
+    return new Promise((resolve) => {
+      const go = () => {
+        p.cq.busy = true;
+        const state = Object.fromEntries([...(p.states.get('') ?? new Map())].map(([k, j]) => [k, JSON.parse(j)]));
+        const info: CompleteInfo = { ...input, plugin, name, session: { id: this.opts.sessionId, cwd: at.cwd, permissionMode: null, params: this.opts.params ?? {} }, state };
+        void this.completeOnce(p, info).then((r) => {
+          p.cq.busy = false;
+          resolve(r);
+          const next = p.cq.next; p.cq.next = null; next?.go();
+        });
+      };
+      if (!p.cq.busy) { go(); return; }
+      p.cq.next?.drop();
+      p.cq.next = { go, drop: () => resolve({ items: [], error: null, stale: true }) };
+    });
+  }
+  private async completeOnce(p: Plugin, info: CompleteInfo): Promise<{ items: Item[]; error: string | null }> {
+    const cp = p.completer ?? this.startCompleter(p);
+    await cp.ready;
+    if (p.completer !== cp) return { items: [], error: 'completer stopped' };
+    return new Promise((resolve) => {
+      const id = this.nextCall++;
+      const timer = setTimeout(() => { cp.pending.delete(id); resolve({ items: [], error: `complete 가 ${COMPLETE_MS}ms 안에 끝나지 않았습니다` }); this.stopCompleter(p); }, COMPLETE_MS);
+      cp.pending.set(id, (r) => { clearTimeout(timer); cp.pending.delete(id); resolve(r); });
+      cp.worker.postMessage({ t: 'complete', id, info } satisfies ToWorker);
+    });
+  }
+  private startCompleter(p: Plugin): Completer {
+    const init: WorkerInit = { slcodeHooks: true, role: 'complete', methods: METHODS, matchers: MATCHER_EVENTS, vars: { harness: this.opts.harness ?? 'claude' }, scripts: [], commands: p.commands.map((c) => ({ name: c.name, src: c.src, js: path.join(p.dir, c.js) })), states: {}, completeMax: COMPLETE_MAX };
+    const w = new Worker(WORKER_URL, { workerData: init, execArgv: [...process.execArgv, '--enable-source-maps'] });
+    let settle: () => void = () => {};
+    const cp: Completer = { worker: w, ready: new Promise<void>((r) => { settle = r; }), pending: new Map() };
+    p.completer = cp;
+    const timer = setTimeout(() => { settle(); this.stopCompleter(p); }, READY_MS);
+    w.on('message', (m: ToCore) => {
+      if (m.t === 'ready') { clearTimeout(timer); settle(); }
+      else if (m.t === 'completeDone') cp.pending.get(m.id)?.({ items: m.items, error: m.error });
+    });
+    w.on('error', () => {});
+    w.on('exit', () => { clearTimeout(timer); settle(); if (p.completer === cp) this.stopCompleter(p); });
+    return cp;
+  }
+  private stopCompleter(p: Plugin) {
+    const cp = p.completer;
+    if (!cp) return;
+    p.completer = null;
+    void cp.worker.terminate();
+    for (const done of cp.pending.values()) done({ items: [], error: 'completer stopped' });
+    cp.pending.clear();
+  }
 
   async close() {
     this.closed = true;
@@ -189,6 +338,7 @@ export class HookRunner {
     const init: WorkerInit = {
       slcodeHooks: true, methods: METHODS, matchers: MATCHER_EVENTS, vars: { harness: this.opts.harness ?? 'claude' },
       scripts: p.scripts.map((s) => ({ src: s.src, js: path.join(p.dir, s.js) })),
+      commands: p.commands.map((c) => ({ name: c.name, src: c.src, js: path.join(p.dir, c.js) })),
       states: Object.fromEntries([...p.states].map(([k, m]) => [k, Object.fromEntries([...m].map(([kk, j]) => [kk, JSON.parse(j)]))])),
     };
     const w = new Worker(WORKER_URL, { workerData: init, execArgv: [...process.execArgv, '--enable-source-maps'] });
@@ -207,6 +357,12 @@ export class HookRunner {
         p.states.set(m.agent, st);
         if (m.agent === '' && Object.keys(m.changes).length) { try { this.writeState(p); } catch (e) { this.opts.emit({ kind: 'agent.hook', phase: 'warn', plugin: p.name, text: `상태를 저장하지 못했습니다: ${(e as Error).message}` }); } }
         p.pending.get(m.id)?.({ ok: !m.error, timeout: false, error: m.error, result: m.result, ms: m.ms, warnings: m.warnings });
+      } else if (m.t === 'cmdDone') {
+        const st = p.states.get('') ?? new Map<string, string>();
+        for (const [k, j] of Object.entries(m.changes)) { if (j === null) st.delete(k); else st.set(k, j); }
+        p.states.set('', st);
+        if (Object.keys(m.changes).length) { try { this.writeState(p); } catch (e) { this.opts.emit({ kind: 'agent.hook', phase: 'warn', plugin: p.name, text: `상태를 저장하지 못했습니다: ${(e as Error).message}` }); } }
+        p.cmdPending.get(m.id)?.({ ok: !m.error, timeout: false, error: m.error, result: m.result, ms: m.ms, warnings: m.warnings });
       } else if (m.t === 'pgid') { if (m.on) p.pgids.add(m.pid); else p.pgids.delete(m.pid); }
       else if (m.t === 'warn') this.opts.emit({ kind: 'agent.hook', phase: 'warn', plugin: p.name, text: m.text });
     });
@@ -223,8 +379,10 @@ export class HookRunner {
     p.pgids.clear();
     for (const done of p.pending.values()) done({ ok: false, timeout: false, error: why, result: null, ms: 0, warnings: [] });
     p.pending.clear();
+    for (const done of p.cmdPending.values()) done({ ok: false, timeout: false, error: why, result: null, ms: 0, warnings: [] });
+    p.cmdPending.clear();
   }
-  private stop(p: Plugin, why: string) { if (p.worker) this.terminate(p, p.worker, why); }
+  private stop(p: Plugin, why: string) { if (p.worker) this.terminate(p, p.worker, why); this.stopCompleter(p); }
 
   private async regsOf(p: Plugin): Promise<Reg[]> {
     if (!p.worker) this.start(p);
@@ -252,8 +410,11 @@ export class HookRunner {
       if (held || this.opened) return held ?? {};
     }
     if (event === 'UserPromptSubmit' && !(input as any).agent_id) {
-      const held = await this.takeOpening();
-      if (held) return joinOutputs(held, await this.fire(event, input));
+      // 열 때 SessionStart 것 → 명령 보관분 → 이 턴의 훅 결과 순서 (ticket slcode-agent-plugin-command, 사용자 결정 2026-11-02)
+      const opening = await this.takeOpening();
+      const cmd = this.takeHeld();
+      const before = cmd ? joinOutputs(opening ?? {}, { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: cmd } }) : opening;
+      if (before) return joinOutputs(before, await this.fire(event, input));
     }
     return this.fire(event, input, notes);
   }

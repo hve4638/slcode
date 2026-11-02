@@ -3,6 +3,7 @@
 // 스크립트는 세션마다 한 번 실리고(slcode 세션은 core 안의 worker, export 한 Claude·Codex 는 세션 중간 프로세스 안의 worker) 모듈 변수는 세션 동안 남는다.
 // 콜백은 hook 객체 하나를 받고 결과는 메서드로 낸다(호출만 해도, return hook.block() 해도 같다). 이벤트마다 쓸 수 있는 메서드는 METHODS — 타입도 같은 표를 따른다.
 // 이 파일은 타입과 표만 둔다(런타임 의존 없음). 구현은 hookScript.ts(빌드가 alias 로 함께 묶는다).
+// 명령(slcode.command, ticket slcode-agent-plugin-command)의 계약도 여기 — 아래 "명령" 절.
 /** 받는 이벤트 — Claude 이름 */
 export const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop', 'SubagentStart', 'SubagentStop', 'PreCompact', 'SessionEnd'];
 /** matcher 를 보는 이벤트 — 나머지(UserPromptSubmit·Stop)에 준 matcher 는 빌드가 경고하고 무시한다 (Claude 는 조용히 무시한다, 사용자 결정 2026-10-31) */
@@ -31,3 +32,9 @@ export const CODEX_METHODS = {
     PreToolUse: METHODS.PreToolUse.filter((m) => m !== 'ask' && m !== 'stop'),
     SubagentStart: METHODS.SubagentStart.filter((m) => m !== 'stop'),
 };
+// ---- 명령 (ticket slcode-agent-plugin-command, 착수 결정 TICKET.md 2026-11-02) — part 의 commands/<이름>/COMMAND.ts(.js) 하나가 명령 하나다. 이름은 폴더 이름.
+// 사용자가 slcode 입력창에서 `/<이름> <인자>`(겹치면 `/<플러그인>:<이름>`)를 치면 턴 없이 run 이 돈다. slcode 의 Claude 세션 전용 — export 판·Codex 세션에는 없다.
+/** 명령 이름 — 폴더 이름. 소문자·숫자·- (대소문자를 가리지 않고 견준다) */
+export const COMMAND_NAME = /^[a-z0-9][a-z0-9-]{0,31}$/;
+/** complete 가 돌려주는 후보의 상한 — 넘는 것은 버린다 */
+export const COMPLETE_MAX = 50;

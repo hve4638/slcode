@@ -218,11 +218,16 @@ export function mountAgentFront(root, transport, opts = {}) {
   const anchor = (menu, btn, start = false) => () => { if (menu.matches(':popover-open')) { const r = btn.getBoundingClientRect(); menu.style.left = `${start ? r.left : r.right - menu.offsetWidth}px`; menu.style.bottom = `${innerHeight - r.top + 6}px`; } };
   modelMenu.ontoggle = anchor(modelMenu, modelBtn); modeMenu.ontoggle = anchor(modeMenu, modeBtn, true);
   // 슬래시 명령 자동완성 — 입력이 `/` 로 시작하면 입력창 위에 목록. ↑↓ 고르고 Tab·Enter 로 넣는다. 목록은 session.commands (2026-09-30)
+  // 에이전트 플러그인 명령(kind 'command', ticket slcode-agent-plugin-command)은 '명령' 표지를 단다. 이름 뒤에 공백을 치면 인자 단계 — 맨 위에 argumentHint,
+  // 그 아래 session.completeCommand 의 후보(50ms 간격, 입력이 바뀐 뒤 온 답·밀린 답은 버리고, 100ms 넘게 걸린 답이면 메뉴를 닫는다). 고르면 커서가 있는 낱말을 바꾼다
   let commands = [], slashSel = 0;
+  let argRes = null, argSeq = 0, argTimer = null;
+  const COMPLETE_LATE_MS = 100;
   const slashMenu = h('div', { class: 'menu slash', id: 'acf-slash', popover: 'manual' });
   // 플러그인 접두(core:)는 생략해도 된다: 짧은 이름으로도 맞추고, 짧은 이름이 정확히 같은 것을 앞에 둔다 (사용자 2026-09-30)
   const shortOf = (name) => name.slice(name.indexOf(':') + 1);
   function slashItems() {
+    if (argRes) return argRes.items;
     const t = input.value; if (!t.startsWith('/') || /\s/.test(t)) return [];
     const q = t.slice(1).toLowerCase();
     const rank = (c) => { const n = c.name.toLowerCase(), sh = shortOf(n); return n === q || sh === q ? 0 : n.startsWith(q) ? 1 : sh.startsWith(q) ? 2 : 9; };
@@ -236,20 +241,62 @@ export function mountAgentFront(root, transport, opts = {}) {
     const hits = commands.filter((c) => shortOf(c.name.toLowerCase()) === tok);
     return hits.length === 1 ? `/${hits[0].name}${m[2]}` : text;
   }
+  /** 입력의 첫 낱말이 플러그인 명령이고 그 뒤에 공백이 있으면 그 명령 — 전체 이름이거나, 짧은 이름으로 맞는 것이 그것 하나뿐일 때 (core 의 판정과 같다) */
+  function argCommand(text) {
+    const m = /^\/(\S+)\s/.exec(text); if (!m) return null;
+    const tok = m[1].toLowerCase();
+    const hits = commands.filter((c) => c.name.toLowerCase() === tok || (!tok.includes(':') && shortOf(c.name.toLowerCase()) === tok));
+    return hits.length === 1 && hits[0].kind === 'command' ? hits[0] : null;
+  }
+  function argQuery() {
+    clearTimeout(argTimer);
+    const text = input.value, cursor = input.selectionStart ?? text.length;
+    const c = argCommand(text);
+    if (!c) { argRes = null; return; }
+    if (argRes?.cmd !== c) argRes = { cmd: c, hint: c.argumentHint, items: [], start: cursor, end: cursor };
+    const seq = ++argSeq;
+    argTimer = setTimeout(async () => {
+      const t0 = performance.now();
+      const r = await rpc('session.completeCommand', { id: current, text, cursor }).catch(() => null);
+      if (seq !== argSeq || input.value !== text || !r || r.stale || !argRes) return;
+      const late = performance.now() - t0 > COMPLETE_LATE_MS; // 늦은 답은 쓰지 않고 메뉴를 닫는다 (사용자 2026-11-02)
+      argRes = { cmd: c, hint: r.hint, items: late ? [] : r.items.map((x) => ({ ...x, arg: true })), start: r.start, end: r.end };
+      slashSel = 0; slashDraw();
+    }, 50);
+  }
   function slashDraw() {
     const items = slashItems();
-    if (!items.length) { if (slashMenu.matches(':popover-open')) slashMenu.hidePopover(); return; }
-    slashSel = Math.min(slashSel, items.length - 1);
-    slashMenu.replaceChildren(...items.map((c, i) => h('button', { class: 'item', 'aria-selected': String(i === slashSel), onmousedown: (e) => { e.preventDefault(); slashPick(c); } },
-      h('span', { class: 'name' }, `/${c.name}`, c.argumentHint ? h('span', { class: 'hint' }, ` ${c.argumentHint}`) : null), h('span', { class: 'desc' }, c.description))));
+    const hint = argRes ? h('div', { class: 'item argh' }, h('span', { class: 'name' }, `/${argRes.cmd.name}`, argRes.hint ? h('span', { class: 'hint' }, ` ${argRes.hint}`) : null), h('span', { class: 'desc' }, argRes.cmd.description)) : null;
+    // complete 가 있는 명령은 후보가 없으면(다 적었거나 맞는 것이 없다) 힌트 줄도 닫는다 — 힌트만 남기는 것은 complete 가 없는 명령 (사용자 2026-11-02)
+    if (!items.length && !(hint && argRes.hint && !argRes.cmd.complete)) { if (slashMenu.matches(':popover-open')) slashMenu.hidePopover(); return; }
+    slashSel = Math.min(slashSel, Math.max(0, items.length - 1));
+    slashMenu.replaceChildren(...(hint ? [hint] : []), ...items.map((c, i) => h('button', { class: 'item', 'aria-selected': String(i === slashSel), onmousedown: (e) => { e.preventDefault(); slashPick(c); } },
+      c.arg ? h('span', { class: 'name' }, c.label ?? c.value) : h('span', { class: 'name' }, `/${c.name}`, c.argumentHint ? h('span', { class: 'hint' }, ` ${c.argumentHint}`) : null),
+      c.kind === 'command' ? h('span', { class: 'tag' }, '명령') : null, h('span', { class: 'desc' }, c.description ?? ''))));
     if (!slashMenu.matches(':popover-open')) slashMenu.showPopover();
     const r = input.getBoundingClientRect(); slashMenu.style.left = `${r.left}px`; slashMenu.style.bottom = `${innerHeight - r.top + 12}px`; slashMenu.style.width = `${r.width}px`;
   }
-  function slashPick(c) { input.value = `/${c.name} `; input.focus(); slashDraw(); }
+  function slashPick(c) {
+    if (c.arg) {
+      const t = input.value, { start, end } = argRes, tail = t.slice(end);
+      input.value = `${t.slice(0, start)}${c.value}${tail.startsWith(' ') ? '' : ' '}${tail}`;
+      const at = start + c.value.length + 1; input.setSelectionRange(at, at);
+    } else input.value = `/${c.name} `;
+    input.focus(); argQuery(); slashDraw();
+  }
   async function loadCommands() { try { commands = await rpc('session.commands', { id: current }); } catch { commands = []; } }
   // 작성창 = 입력칸 위, 아래 한 줄: 왼쪽 끝 첨부·권한 모드, 오른쪽 모델(effort 포함)·보내기 (Codex Desktop 꼴, 사용자 2026-10-13). 상자 밖 아래에 폴더·repo·리밋·context·비용 한 줄(stat)
   const stat = h('div', { class: 'stat' });
-  const composer = h('div', { class: 'composer' }, h('div', { class: 'box' }, chips, input, h('div', { class: 'row' }, addBtn, modeBtn, modeMenu, h('span', { class: 'gap' }), modelBtn, modelMenu, stopBtn, sendBtn), slashMenu, filePick), stat);
+  // 입력 큐 (ticket slcode-agent-plugin-command, 사용자 2026-11-02) — 턴 중에 친 명령과 그 뒤 메시지는 피드에 섞지 않고 입력창 바로 위에 보통 내 메시지와 같은 말풍선으로 순서대로 붙여 둔다. 처리되면 여기서 빠지고 피드에 보통 줄로 들어간다
+  const queueTray = h('div', { class: 'queue', hidden: '' });
+  const paintQueue = (items) => {
+    const stick = atBottom();
+    queueTray.hidden = !items.length;
+    placeBusy();
+    if (stick) feed.scrollTop = feed.scrollHeight;
+    queueTray.replaceChildren(...items.map((q) => h('div', { class: 'user' }, h('div', { class: 'bubble' }, q.text || `첨부 ${q.attachments}개`))));
+  };
+  const composer = h('div', { class: 'composer' }, queueTray, h('div', { class: 'box' }, chips, input, h('div', { class: 'row' }, addBtn, modeBtn, modeMenu, h('span', { class: 'gap' }), modelBtn, modelMenu, stopBtn, sendBtn), slashMenu, filePick), stat);
   const side = h('aside', { class: 'side' });
   const dock = h('div', { class: 'dock' });
   // 실행 중 표시 — 피드 맨 끝(내 요청 바로 아래)에 한 줄: 맥동 점 · 지금 하는 일 · 경과. state 가 running 일 때만, 새 항목이 와도 늘 마지막 (사용자 2026-09-30)
@@ -259,12 +306,14 @@ export function mountAgentFront(root, transport, opts = {}) {
   const busy = h('div', { class: 'busy', hidden: '' }, busyGlyph, busyWhat, busyInfo);
   // busySince 는 서버 시각(e.at) — 브라우저 시계와 어긋나면 음수로 시작해서, 실시간 이벤트가 올 때마다 재는 skew 로 보정한다 (2026-10-01 -2s 지적)
   let busySince = 0, busyTimer = null, busyTick = 0, skew = 0;
+  // 자리: 보통은 피드 끝. 큐가 있으면 큐 바로 위 — 출력이 나오는 자리(그 위 피드의 끝)를 보인다 (사용자 2026-11-02)
+  const placeBusy = () => { if (queueTray.hidden) col.append(busy); else queueTray.before(busy); };
   const setBusy = (what) => { if (what && !replaying) busyWhat.textContent = `${what}…`; };
   const fmtDur = (ms) => { const s = Math.round(ms / 1000); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`; };
   const busyRefresh = () => { busyGlyph.textContent = SPIN[busyTick++ % SPIN.length]; busyInfo.textContent = `(${[fmtDur(Math.max(0, Date.now() - skew - busySince)), effortNow ? `effort ${effortNow}` : null, 'esc 중단'].filter(Boolean).join(' · ')})`; };
   function showBusy(on) {
     busy.hidden = !on;
-    if (on) { col.append(busy); if (follow) feed.scrollTop = feed.scrollHeight; }
+    if (on) { placeBusy(); if (follow) feed.scrollTop = feed.scrollHeight; }
     if (on && !busyTimer) { busySince = busySince || Date.now(); busyRefresh(); busyTimer = setInterval(busyRefresh, 200); }
     if (!on && busyTimer) { clearInterval(busyTimer); busyTimer = null; busySince = 0; }
   } // 승인·질문 카드는 입력창 자리에 뜬다 — 피드에는 호출 표식만 (사용자 2026-09-30)
@@ -360,7 +409,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   };
   const toBottom = () => { follow = true; jump(feed.scrollHeight); paintJump(); };
   const atBottom = () => follow;
-  function push(node, sc = main) { const stick = atBottom(); node.dataset.seq = curSeq; (sc.col ?? col).append(node); if (!busy.hidden && !replaying) col.append(busy); if (stick && !replaying) feed.scrollTop = feed.scrollHeight; return node; }
+  function push(node, sc = main) { const stick = atBottom(); node.dataset.seq = curSeq; (sc.col ?? col).append(node); if (!busy.hidden && !replaying) placeBusy(); if (stick && !replaying) feed.scrollTop = feed.scrollHeight; return node; }
   function endText(sc = main) { if (sc.textEl) { sc.textEl.classList.remove('streaming'); sc.textEl.append(sc.acts = acts(iconBtn('copy', '복사', copyOf(sc.textBuf)))); } sc.textEl = null; sc.textBuf = ''; sc.thinkEl = null; sc.thinkBuf = ''; }
   // 훅 실행 하나 — 아무 일도 안 했으면 흔적 없음. 알림(message)은 대상 아래 제 줄(응답처럼), 추가 컨텍스트는 대상 아래 '겹 +N'(누르면 펼침),
   // 도구 훅의 block·ask·allow·updateInput 은 카드 표시 + 카드 안 사유, 실패·경고는 빨간 줄. 플러그인·이벤트·파일·시간은 title(호버)로만.
@@ -387,6 +436,18 @@ export function mountAgentFront(root, transport, opts = {}) {
       if (why.length) card._detail.append(h('div', { class: 'hk-why', title: who }, why.join('\n')));
     } else if (fx && (fx.block.length || fx.stop.length)) mark(push(h('div', { class: 'meta', title: who }, [...fx.block, ...fx.stop].filter(Boolean).join(' · ') || (fx.block.length ? 'block' : 'stop'))));
     if (!opening) note();
+  }
+  // 에이전트 플러그인 명령 (ticket slcode-agent-plugin-command) — 친 명령은 보통 내 메시지와 같은 말풍선(사용자 2026-11-02), 그 아래 알림 줄과 보관한 컨텍스트(겹 +N, 펼치면 글).
+  // 보관분을 붙인 턴(attached)은 그 턴의 내 요청 아래 겹 +N 에 '/명령' 출처로 더한다. 실패·경고는 빨간 줄
+  function commandRun(ev) {
+    if (ev.phase === 'attached') { if (main.turnEl?.isConnected) for (const x of ev.items) hookContext(main.turnEl, [x.text], `/${x.name}`, `${x.plugin} · /${x.name}`); return; }
+    const who = `${ev.plugin} · /${ev.name} · ${ev.ms}ms`;
+    const line = push(h('div', { class: 'user' }, h('div', { class: 'bubble', title: who }, `/${ev.name}${ev.args ? ` ${ev.args}` : ''}`)));
+    if (ev.outcome !== 'ok') push(h('div', { class: 'meta err', title: who }, `/${ev.name} 실패: ${ev.outcome === 'timeout' ? '시간 초과' : (ev.error ?? '').split('\n')[0]}`));
+    for (const w of ev.warnings) push(h('div', { class: 'meta err', title: who }, `/${ev.name}: ${w}`));
+    for (const m of ev.messages ?? []) hookAfter(line, h('div', { class: `hk-note${m.tone ? ` t-${m.tone}` : ''}`, title: who }, h('span', { class: 'ic' }, icon(NOTE_ICONS[m.icon] ?? 'bell')), h('span', { class: 't' }, m.text)));
+    if (ev.context.length) hookContext(line, ev.context, `/${ev.name} · 다음 메시지에 붙음`, who);
+    if (ev.cleared) push(h('div', { class: 'meta', title: who }, `/${ev.name} 이 보관한 컨텍스트를 지웠습니다`));
   }
   /** 대상(과 그 뒤에 이미 붙은 훅 줄들) 바로 뒤에 둔다 — 대상이 없으면 피드 끝 */
   function hookAfter(anchor, node) {
@@ -611,7 +672,8 @@ export function mountAgentFront(root, transport, opts = {}) {
     curSeq = e.seq;
     const ev = e.ev;
     switch (ev.kind) {
-      case 'turn.start': if (!turned) { turned = true; paintVendor(); paintHero(); } main.inTurn = true; main.openNodes = []; // 열 때 알림이 대화 기록으로 남는다 if (!replaying) busySince = e.at || Date.now(); setBusy('작업 중');
+      case 'turn.start': if (!turned) { turned = true; paintVendor(); paintHero(); } main.inTurn = true; main.openNodes = []; // 열 때 알림이 대화 기록으로 남는다
+        if (!replaying) busySince = e.at || Date.now(); setBusy('작업 중');
         endText(); main.acts = null; // 이 턴 마지막 응답의 아이콘 줄 — turn.end 가 inspect 버튼을 붙인다
         // main.turnEl: 이 턴의 내 요청(메시지 카드) — 그 바로 다음 항목이 '답변 시작으로' 가 가는 곳 (실행 중 줄은 늘 맨 끝으로 옮겨지므로 사이에 끼지 않는다)
         if (ev.origin === 'mail') { outlineAdd(e.seq, ev, main.turnEl = push(mailCard(ev.text, e.seq))); break; }
@@ -705,6 +767,7 @@ export function mountAgentFront(root, transport, opts = {}) {
         push(h('div', { class: 'notice' }, ['에이전트 플러그인 다시 실음', ...ev.plugins.map((p) => `${p.name} ${p.version}`), ev.removed.length ? `뗌 ${ev.removed.join(', ')}` : null].filter(Boolean).join(' · ')));
         if (ev.later.length) push(h('div', { class: 'meta' }, `새 세션부터 적용: ${ev.later.map((l) => `${l.name} ${l.what.map((w) => LATER[w] ?? w).join('·')}`).join(', ')}`));
         if (live && ready) { ready = { ...ready, plugins: ev.sdk.plugins, slashCommands: ev.sdk.commands, agents: ev.sdk.agents, mcp: ev.sdk.mcp }; mcp = null; renderSide(); }
+        if (live) loadCommands(); // 다시 실은 플러그인의 명령
         break;
       }
       case 'session.imported': push(h('div', { class: 'notice' }, `imported from ${ev.vendor} (${ev.vendorSessionId.slice(0, 8)})`)); break; // 표지는 옮겨 온 대화 뒤에 선다 (사용자 2026-10-15: 짧게)
@@ -717,6 +780,7 @@ export function mountAgentFront(root, transport, opts = {}) {
         hookRun(ev);
         break;
       }
+      case 'agent.command': endText(); commandRun(ev); break;
       case 'error': endText(); push(h('div', { class: 'meta err' }, ev.message)); break;
       case 'review': {
         endText();
@@ -1198,6 +1262,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     info = r.info; setTitle(info.title); syncInspect();
     if (r.draft && !input.value) { input.value = r.draft; input.oninput(); } // 다시 로드된 화면 — 쓰던 글을 되살린다 (치던 중이면 그대로)
     replayHistory(r.history, first ? r.summary : null);
+    paintQueue(r.queue ?? []);
     for (const p of r.pending) renderCard(p);
     setState(info.state);
     loadModels(); loadStatus(); loadCommands(); loadMcp(); loadPlugins(); loadProfiles(); renderMode(); prefetch(); act.refresh();
@@ -1206,7 +1271,8 @@ export function mountAgentFront(root, transport, opts = {}) {
   transport.onEvent((m) => {
     if (m.event === 'session.event' && m.params.id === current) render(m.params, true);
     else if (m.event === 'session.changed' && m.params.id === current) { info = m.params; setTitle(info.title); syncInspect(); renderMode(); renderSide(); paintVendor(); }
-    else if (m.event === 'session.closed' && m.params.id === current) { /* session.exit 이벤트가 이미 그렸다 */ }
+    else if (m.event === 'session.queue' && m.params.id === current) paintQueue(m.params.items);
+    else if (m.event === 'session.closed' && m.params.id === current) paintQueue([]); // 큐는 메모리에만 있어 함께 사라진다. 나머지는 session.exit 이벤트가 이미 그렸다
     else if (m.event === 'settings.changed') setSettings(m.params);
   });
   transport.onStatus(async (s) => {
@@ -1295,7 +1361,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     const t = resolveSlash(input.value.trim()); if ((!t && !pendingFiles.length) || !current) return;
     const attachments = pendingFiles.splice(0).map(({ dataUrl, ...a }) => { if (a.mediaType.startsWith('image/')) sentFiles.set(a.name, dataUrl); return a; });
     chips.innerHTML = '';
-    input.value = ''; input.style.height = ''; canSend();
+    input.value = ''; input.style.height = ''; canSend(); argRes = null; argSeq++;
     rpc('session.send', { id: current, text: t, ...(attachments.length ? { attachments } : {}) }).catch((e) => push(h('div', { class: 'meta err' }, e.message)));
     saveDraft(true);
     toBottom();
@@ -1338,14 +1404,19 @@ export function mountAgentFront(root, transport, opts = {}) {
   input.onkeydown = (e) => {
     if (slashMenu.matches(':popover-open')) {
       const items = slashItems();
-      if (e.key === 'ArrowDown') { e.preventDefault(); slashSel = (slashSel + 1) % items.length; slashDraw(); return; }
-      if (e.key === 'ArrowUp') { e.preventDefault(); slashSel = (slashSel + items.length - 1) % items.length; slashDraw(); return; }
+      if (items.length && e.key === 'ArrowDown') { e.preventDefault(); slashSel = (slashSel + 1) % items.length; slashDraw(); return; }
+      if (items.length && e.key === 'ArrowUp') { e.preventDefault(); slashSel = (slashSel + items.length - 1) % items.length; slashDraw(); return; }
+      // 인자 단계: Tab 은 고른 후보를 넣고, Enter 는 커서 낱말이 아직 그 후보와 다를 때만 넣는다(같으면 보낸다)
+      if (argRes) {
+        const cur = input.value.slice(argRes.start, argRes.end), pick = items[slashSel];
+        if (pick && (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && !e.isComposing && cur !== pick.value))) { e.preventDefault(); slashPick(pick); return; }
+      } else
       // Enter: 친 것이 전체 이름이거나 유일한 짧은 이름이면 그대로 보낸다, 아니면 고른 항목을 넣는다
       if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && !e.isComposing && resolveSlash(input.value.trim()) === input.value.trim() && !commands.some((c) => c.name.toLowerCase() === input.value.trim().slice(1).toLowerCase()))) { e.preventDefault(); slashPick(items[slashSel]); return; }
       if (e.key === 'Escape') { e.preventDefault(); slashMenu.hidePopover(); return; }
     }
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (slashMenu.matches(':popover-open')) slashMenu.hidePopover(); send(); } else if (e.key === 'Escape' && !busy.hidden && current) { e.preventDefault(); rpc('session.interrupt', { id: current }); } };
-  input.oninput = () => { input.style.height = ''; input.style.height = Math.min(input.scrollHeight, 220) + 'px'; canSend(); slashSel = 0; slashDraw(); saveDraft(); };
+  input.oninput = () => { input.style.height = ''; input.style.height = Math.min(input.scrollHeight, 220) + 'px'; canSend(); slashSel = 0; argQuery(); slashDraw(); saveDraft(); };
   // 어디서 쳐도 입력창으로 (ticket slcode-input-type-anywhere, 사용자 2026-11-02 — chatgpt.com 실측을 따른다). 포커스가 입력창 밖(대화·헤더·사이드바·버튼)이면
   // 글자 키와 붙여넣기는 포커스만 입력창으로 옮겨 브라우저 기본 동작이 그 자리에 넣게 한다 — focus() 는 직전 커서·선택을 그대로 둔다.
   // Space·Enter·화살표·Ctrl 조합(복사 등)은 넘기지 않는다. 다른 입력 요소·dialog·메뉴가 키를 받는 중이거나 승인 카드가 입력창 자리를 차지하면 그대로 둔다.

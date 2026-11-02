@@ -5,4 +5,5 @@ export declare const slcode: {
     }>;
     on(event: unknown, a: unknown, b?: unknown): void;
     run(): void;
+    command(def: unknown): void;
 };

@@ -58,3 +58,14 @@ export fn buildId(values, hash, harness) -> Text {
 export fn parseAssignment(m, s) {
   role: slcode plugin set 의 <키>=<값> — part 는 on|off(필수 part 의 off 는 오류), boolean 옵션은 true|false|on|off, number 는 유한한 수, string 은 그대로. 모르는 키는 part·옵션 목록과 함께 오류
 }
+export val COMMANDS_DIR
+export val CLAUDE_BUILTIN_COMMANDS
+export fn commandFiles(dir, part) {
+  role: 명령 (ticket slcode-agent-plugin-command) — part 의 commands/<이름>/COMMAND.ts|js. COMMAND 파일이 없는 commands/ 아래 폴더(공용 코드)는 명령이 아니다. 이름이 hookApi.COMMAND_NAME 밖이거나 .ts·.js 가 함께 있으면 errors
+}
+fn skillNames(dir, part) {
+  role: 같은 플러그인의 skill 이름 — skills/<폴더>(와 frontmatter name), raw/claude/skills/<폴더>. 소문자
+}
+export fn commandErrors(dir, m) -> Text[] {
+  role: 명령의 정적 검사 — 모든 part(켜지 않은 것도): commandFiles 의 errors, part 끼리 같은 명령, 같은 플러그인 skill 과 같은 이름, CLAUDE_BUILTIN_COMMANDS(Claude 내장 명령 이름·별칭의 정적 목록 — SDK 0.3.282 supportedCommands builtin 실측, 사용자 결정 2026-11-02)와 같은 이름. 하나라도 있으면 add 가 거부한다(사용자 결정 2026-11-02 — 플러그인 적용 실패). partLost 는 명령을 gpt·codex 가 잃는 것으로 적는다(slcode 의 Claude 세션 전용). BUILDER 6: 빌드가 commands/ 를 플러그인 폴더에서 빼고 commands.json 을 쓴다
+}

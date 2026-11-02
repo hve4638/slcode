@@ -15,7 +15,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import type { SyncHookJSONOutput } from '@anthropic-ai/claude-agent-sdk';
 import { HOOK_EVENTS, type HookEvent } from './hookApi.js';
-import { HookRunner, type AgentHookEvent, type Notes } from './hookRunner.js';
+import { HookRunner, type AgentCommandEvent, type AgentHookEvent, type Notes } from './hookRunner.js';
 import { BUILD_FILES } from './agentBuild.js';
 
 export type Harness = 'claude' | 'codex';
@@ -81,7 +81,8 @@ function pluginKey(root: string): string {
 function makePlugin(req: BrokerRequest, sessionId: string, log: (t: string) => void): Plugin {
   const name = pluginName(req.root);
   const notes: Notes = [];
-  const emit = (ev: AgentHookEvent) => {
+  const emit = (ev: AgentHookEvent | AgentCommandEvent) => {
+    if (ev.kind === 'agent.command') return; // export 판에는 명령이 없다
     if (ev.phase === 'warn') { notes.push(`${name}: ${ev.text}`); log(`${name}: ${ev.text}`); }
     else if (ev.phase === 'ready') { for (const e of ev.errors) { notes.push(`${name}: ${e}`); log(`${name}: ${e}`); } }
   };

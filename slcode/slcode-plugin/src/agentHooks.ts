@@ -98,6 +98,44 @@ export function buildPartHooks(pdir: string, part: string, j: unknown, out: stri
   return r;
 }
 
+// ---- 명령 (ticket slcode-agent-plugin-command) — part 의 commands/<이름>/COMMAND.ts|js 를 훅 스크립트처럼 묶고(slcode/api alias, node 내장·상대 import 만),
+// 목록 모드(hookWorker --list-command)로 한 번 실어 꼴을 검사해 commands.json 에 적는다. slcode 의 Claude 세션만 쓴다 — 플러그인 폴더·export 판에는 넣지 않는다
+
+/** 빌드 폴더의 명령 하나 — src 는 "<part>/commands/<이름>/COMMAND.ts", js 는 빌드 폴더 기준 경로 */
+export type CommandEntry = { name: string; src: string; js: string; description: string; argumentHint: string; timeout: number | null; complete: boolean };
+
+/** part 하나의 명령들을 out/commands/ 에 묶어 commands 에 더한다. failed 는 묶거나 싣지 못한 것과 사유, missing 은 esbuild 를 받지 못한 사유 */
+export function buildPartCommands(pdir: string, part: string, files: { name: string; file: string }[], out: string, commands: CommandEntry[], tools = ''): { failed: string[]; warnings: string[]; missing: string | null } {
+  const r = { failed: [] as string[], warnings: [] as string[], missing: null as string | null };
+  for (const { name, file } of files) {
+    const src = `${part}/${file}`;
+    let esbuild;
+    try { esbuild = loadEsbuild(tools); } catch (e) { r.missing = (e as Error).message; r.failed.push(`${src}: ${r.missing}`); continue; }
+    const js = `commands/${name}.mjs`;
+    const err = bundle(esbuild, pdir, path.join(pdir, file), path.join(out, js));
+    if (err) { r.failed.push(`${src}: ${err}`); continue; }
+    const l = listCommand(path.join(out, js));
+    if (!l.def) { fs.rmSync(path.join(out, js), { force: true }); r.failed.push(`${src}: ${l.error}`); continue; }
+    r.warnings.push(...l.warnings.map((w) => `${src}: ${w}`));
+    commands.push({ name, src, js, ...l.def });
+  }
+  return r;
+}
+
+/** 묶은 COMMAND 파일을 따로 띄운 node 에서 한 번 실어 검사한다 */
+export function listCommand(file: string): { def: Omit<CommandEntry, 'name' | 'src' | 'js'> | null; error: string | null; warnings: string[] } {
+  const p = spawnSync(process.execPath, [WORKER_FILE, '--list-command', file], { encoding: 'utf8', timeout: LIST_MS, cwd: path.dirname(file), windowsHide: true });
+  try {
+    const j = JSON.parse(p.stdout.trim().split('\n').pop()!);
+    return { def: j.def, error: j.error, warnings: j.warnings ?? [] };
+  } catch { return { def: null, error: p.error ? `could not load: ${p.error.message}` : `could not load: ${(p.stderr || '').trim().split('\n').slice(-3).join(' ') || `exit ${p.status}`}`, warnings: [] }; }
+}
+
+/** 빌드 폴더의 commands.json — 없거나 깨졌으면 [] */
+export function readCommands(file: string): CommandEntry[] {
+  try { const j = JSON.parse(fs.readFileSync(file, 'utf8')); return Array.isArray(j) ? j.filter((c) => typeof c?.name === 'string' && typeof c?.js === 'string') : []; } catch { return []; }
+}
+
 /** 스크립트 하나를 묶는다 — 실패면 사유 */
 function bundle(esbuild: Esbuild, pdir: string, entry: string, outfile: string): string | null {
   try {

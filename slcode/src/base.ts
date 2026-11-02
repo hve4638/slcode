@@ -9,7 +9,8 @@ export const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 export type ModelsResult = { current: string | null; effort: string | null; models: { value: string; resolvedModel?: string; displayName: string; description: string; efforts?: string[] }[] };
 export type Limits = { fiveHour: LimitWindow | null; sevenDay: LimitWindow | null } | null;
 export type ContextUsage = { tokens: number; max: number; pct: number } | null;
-export type Command = { name: string; description: string; argumentHint: string };
+/** 슬래시 명령 하나 — builtin·aliases 는 Claude SDK 가 준 것(내장 명령 표시와 별칭), kind 'command' 는 에이전트 플러그인 명령(이름은 <플러그인>:<명령>, ticket slcode-agent-plugin-command) */
+export type Command = { name: string; description: string; argumentHint: string; builtin?: boolean; aliases?: string[]; kind?: 'command'; complete?: boolean };
 export type ApproveOpts = { remember?: boolean; updatedInput?: Record<string, unknown>; message?: string };
 
 /** 새 세션 env 이름이 받을 수 없으면 사유 (ticket slcode-new-session-env, 사용자 결정 2026-11-01) — SLCODE_* 는 slcode 가 넣는 값이라 덮지 못한다 */

@@ -138,12 +138,65 @@ export type Vars = {
     harness: 'claude' | 'codex';
 };
 export type Callback<E extends HookEvent> = (hook: HookOf[E]) => unknown;
+/** 명령 이름 — 폴더 이름. 소문자·숫자·- (대소문자를 가리지 않고 견준다) */
+export declare const COMMAND_NAME: RegExp;
+/** complete 가 돌려주는 후보의 상한 — 넘는 것은 버린다 */
+export declare const COMPLETE_MAX = 50;
+/** 명령·complete 가 보는 세션 — 읽기 전용 */
+export type CommandSession = {
+    id: string;
+    cwd: string;
+    params: SessionParams;
+};
+/** run 이 받는 것. state 는 그 플러그인의 주 에이전트 상태(훅과 같은 객체) — run 이 성공했을 때만 저장한다(던지면 바꾼 것을 버린다) */
+export type CommandCall = {
+    plugin: string;
+    name: string;
+    /** 명령 이름 뒤의 글 그대로(앞뒤 공백은 뺀다) */
+    args: string;
+    session: CommandSession;
+    state: HookState;
+    exec(cmd: string, args?: string[], opts?: ExecOptions): Promise<ExecResult>;
+    /** 보관했다가 다음 턴에 UserPromptSubmit 훅 컨텍스트로 한 번 붙는다(사용자 글 앞인지 뒤인지는 모델에 따라 다르다). 같은 명령을 다시 성공시키면 앞의 보관분을 바꾼다(context 없이 성공하면 지운다) */
+    context(text: string): CommandCall;
+    /** 사용자에게만 보이는 줄 — look 은 훅의 message 와 같다 */
+    message(text: string, look?: MessageLook): CommandCall;
+};
+/** complete 가 받는 것 — 인자는 공백으로 나눈 낱말. index 는 커서가 있는 낱말, value 는 그 낱말의 커서 앞부분. state 는 저장된 상태의 읽기 전용 사본 */
+export type CompleteInput = {
+    plugin: string;
+    name: string;
+    args: readonly string[];
+    index: number;
+    value: string;
+    /** 명령 이름 뒤의 글 그대로 — 따옴표 등 공백으로 나누지 않는 인자를 직접 해석할 때 */
+    raw: string;
+    session: CommandSession;
+    state: Readonly<HookState>;
+};
+/** 후보 — 문자열이면 value. 고르면 커서가 있는 낱말을 value 로 바꾼다 */
+export type CompleteItem = string | {
+    value: string;
+    label?: string;
+    description?: string;
+};
+/** slcode.command() 에 넘기는 것. complete 는 칠 때마다 불린다 — 가볍게(100ms 안), 따로 도는 worker 에서 돈다(run·훅과 모듈 변수를 나누지 않는다). timeout 은 run 의 초(기본 10) */
+export type CommandDef = {
+    description: string;
+    /** `/` 자동 완성에 이름 옆에 보이는 인자 힌트 — complete 가 없거나 늦을 때도 보인다 */
+    argumentHint?: string;
+    timeout?: number;
+    complete?(input: CompleteInput): readonly CompleteItem[] | Promise<readonly CompleteItem[]>;
+    run(cmd: CommandCall): unknown;
+};
 /** `slcode/api` 의 api — run() 뒤(또는 스크립트를 다 실은 뒤)의 on() 은 무시하고 경고한다 */
 export type Api = {
     readonly vars: Readonly<Vars>;
     on<E extends HookEvent>(event: E, callback: Callback<E>): void;
     on<E extends HookEvent>(event: E, opts: OnOptions<E>, callback: Callback<E>): void;
-    /** 등록이 끝났다는 신호 — 맨 위 코드의 끝에서 부른다 */
+    /** 등록이 끝났다는 신호 — 맨 위 코드의 끝에서 부른다. COMMAND 파일에는 필요 없다 */
     run(): void;
+    /** 명령 하나 — commands/<이름>/COMMAND.ts 에서 정확히 한 번 부른다(훅 스크립트에서는 쓸 수 없다) */
+    command(def: CommandDef): void;
 };
 export {};

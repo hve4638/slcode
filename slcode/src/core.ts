@@ -14,7 +14,7 @@ import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { ClaudeSession } from './session.js';
 import { CodexSession, codexRunnable } from './codex.js';
-import { PARAM_ENV, sessionEnvError, sessionParamsError, type AgentSession } from './base.js';
+import { PARAM_ENV, sessionEnvError, sessionParamsError, type AgentSession, type Command } from './base.js';
 import { EventLog, historyPage, outline, summarize, type SessionMeta } from './eventLog.js';
 import { isLoopback, reachable, sockAlive, spawnCore } from './live.js';
 import { BUILD, PKG, VERSION, replacingMark } from './client.js';
@@ -25,8 +25,9 @@ import { InspectStore, maybeSweep } from './inspectDb.js';
 import { Activity } from './activity.js';
 import { claudeLoad, DEFAULT_PROFILE, getProfile, listProfiles, profileSummary, sessionProfile } from './profiles.js';
 import { agentPaths, currentBuilds, loadSessionPlugins, reloadSessionPlugins, unlinkSessionPlugins, type Loaded, type SessionPlugins } from 'slcode-plugin/agentPlugins';
-import { HookRunner } from 'slcode-plugin/hookRunner';
-import { CoreError, ERR, FILES, PERMISSION_MODES, PROTOCOL_VERSION, type AgentHookEvent, type ApprovalRequest, type LoggedEvent, type Mail, type MethodName, type Methods, type RequestFrame, type SessionInfo } from './protocol.js';
+import { HookRunner, type LoadedCommand } from 'slcode-plugin/hookRunner';
+import { commandTable, completeInput, fullName, resolveCommand } from './pluginCommands.js';
+import { CoreError, ERR, FILES, PERMISSION_MODES, PROTOCOL_VERSION, type AgentCommandEvent, type AgentHookEvent, type ApprovalRequest, type Attachment, type LoggedEvent, type Mail, type QueueItem, type MethodName, type Methods, type RequestFrame, type SessionInfo } from './protocol.js';
 
 /** 벤더 자식(claude CLI·codex)에 넘기지 않을 env — 워커 Claude 세션 안에서 띄우면 그 세션의 표식(CLAUDECODE·CLAUDE_CODE_SESSION_ID·
  *  CLAUDE_CODE_CHILD_SESSION·CLAUDE_CODE_ENTRYPOINT·CLAUDE_CODE_MESSAGING_* 등, claude 2.1.282·2.1.300 실측)이 딸려 가 자식이 남의 세션 안이라 여긴다.
@@ -205,7 +206,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   const load = codex ? undefined : claudeLoad(prof.profile.claude, cwd, env, (agent?.loaded ?? []).map((l, i) => ({ name: l.name, path: agent!.plugins[i].path })));
   let agentLoaded: Loaded[] = agent?.loaded ?? [];
   // js/ts 훅 (ticket slcode-agent-plugin-hooks) — Claude 만. 플러그인을 하나라도 실었으면 디스패처를 건다(다시 싣기로 훅이 생겨도 받게). 세션이 생기기 전의 기록은 모았다가 낸다
-  let hookQueue: AgentHookEvent[] | null = [];
+  let hookQueue: (AgentHookEvent | AgentCommandEvent)[] | null = [];
   const hooks = !codex && agentLoaded.length
     ? new HookRunner({ sessionDir: logFile.dir, buildDir: agentPaths(P.dir).build, sessionId: logFile.meta.id, params, emit: (ev) => { if (hookQueue) hookQueue.push(ev); else (session as ClaudeSession).emitHook(ev); } })
     : null;
@@ -240,6 +241,18 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   if (codex && prof.name !== DEFAULT_PROFILE) session.notice(`Codex 세션은 프로필(${prof.name})의 플러그인 선택만 따릅니다 — 사용자 설정·AGENTS.md·skill 은 그대로 실립니다`);
   if (agentFailed) session.notice(`에이전트 플러그인을 싣지 못했습니다: ${agentFailed}`);
   for (const n of agent?.notes ?? []) session.notice(`에이전트 플러그인을 싣지 못했습니다 — ${n}`);
+  // 에이전트 플러그인 명령 (ticket slcode-agent-plugin-command) — Claude 세션만(hooks). 벤더 명령 목록은 session.commands 때 새로 받고, 그 사이는 지난 것을 쓴다.
+  // Claude 내장 명령과 겹치는 명령은 쓸 수 없다 — 열 때(와 다시 싣기 뒤) 한 번씩 알린다
+  let vendorCmds: Promise<Command[]> | null = null;
+  const vendorCommands = () => (vendorCmds ??= session.commands());
+  const told = new Set<string>();
+  const commandsNow = async () => {
+    const vendor = await vendorCommands();
+    const t = commandTable(hooks?.commands() ?? [], vendor);
+    for (const b of t.blocked) { const k = `${fullName(b.cmd)} ${b.why}`; if (!told.has(k)) { told.add(k); session.notice(`에이전트 플러그인 명령 /${b.cmd.name} (${b.cmd.plugin}) 을 쓸 수 없습니다: ${b.why}`); } }
+    return { usable: t.usable, vendor };
+  };
+  if (hooks?.commands().length) void commandsNow().catch(() => {});
   if (!opts.resume && opts.prompt?.trim()) session.send(opts.prompt);
   // codex 감시 (사용자 결정 2026-10-19) — proxy 를 세운 뒤 처음 성공한 턴까지 모델 호출(/responses)이 하나도 기록되지 않았으면 codex 가 proxy 를 거치지 않는다
   // (openai 가 아닌 model_provider·workspace routing 등). 알리고 이 세션만 끈다 — 새 세션은 막지 않는다
@@ -277,7 +290,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     let trying = false;
     const off = () => {
       const s = session as ClaudeSession | CodexSession;
-      if (trying || closed || s.state !== 'idle' || switching || s.queued) return;
+      if (trying || closed || s.state !== 'idle' || switching || s.queued || waiting.length || draining) return;
       if (!logFile.meta.inspect) { stop(); return; } // 그사이 사이드바로 껐다
       trying = true;
       setInspect(false).then(() => stop(), (e) => { trying = false; log(`inspect off failed, retrying at the next idle: ${(e as Error).message}`); });
@@ -302,7 +315,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   /** 첫 메시지 전·쉬는 중에만 바꾸는 것(벤더·시작 프로필) — 바꾸면 core 를 다시 띄우므로 그 교체를 따라올 소유자여야 한다 */
   function beforeFirst(s: AgentSession, what: string) {
     if (s.log.all.some((e) => e.ev.kind === 'turn.start')) throw new CoreError(ERR.badRequest, `the ${what} is fixed after the first message`);
-    if (closed || retire || switching || (s.state !== 'idle' && s.state !== 'starting') || s.pendingApprovals().length || pending.length || asks.size) throw new CoreError(ERR.badRequest, `the ${what} can be switched only while the session is idle`);
+    if (closed || retire || switching || (s.state !== 'idle' && s.state !== 'starting') || s.pendingApprovals().length || pending.length || asks.size || waiting.length || draining) throw new CoreError(ERR.badRequest, `the ${what} can be switched only while the session is idle`);
     if (owner && !owner.follows) throw new CoreError(ERR.badRequest, 'the session owner cannot follow a core replacement (an older slcode started it)');
   }
   const handlers: { [K in MethodName]: Handler<K> } = {
@@ -349,18 +362,37 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       // limit 이면 끝 한 페이지와 합계 (ticket slcode-history-paging)·요청 목록 (ticket slcode-prompt-outline) — 구독과 같은 틱이라 페이지와 실시간 사이에 빠지는 이벤트가 없다
       const page = p.limit ? { ...historyPage(s.log.all, Infinity, Number(p.limit)), summary: summarize(s.log.all), prompts: outline(s.log.all) } : { history: s.since(Number(p.since ?? 0)) };
       conn.detach = s.onEvent((e: LoggedEvent) => conn.send({ event: 'session.event', params: { id: sid, ...e } }));
-      return { info: s.info(), ...page, pending: s.pendingApprovals() as ApprovalRequest[], draft };
+      return { info: s.info(), ...page, pending: s.pendingApprovals() as ApprovalRequest[], draft, queue: queueItems() };
     },
     'session.history': (_c, p) => {
       if (typeof p?.before !== 'number' || !(p.limit > 0)) throw new CoreError(ERR.badRequest, 'before and limit required');
       return historyPage(mine(p.id).log.all, p.before, p.limit);
     },
     'session.detach': (conn, p) => { mine(p?.id); conn.detach?.(); conn.detach = null; return { ok: true }; },
-    'session.send': (_c, p) => {
+    'session.send': async (_c, p) => {
       const s = mine(p?.id);
       const att = Array.isArray(p.attachments) ? p.attachments : [];
+      // 사람이 친 `/<명령>` 이 플러그인 명령이면 턴 없이 그것만 — 메시지 턴(origin)은 보지 않는다
+      if (!p.origin && hooks && typeof p.text === 'string' && p.text.trimStart().startsWith('/') && hooks.commands().length) {
+        const { usable, vendor } = await commandsNow();
+        const hit = resolveCommand(p.text.trim(), usable, vendor);
+        if (hit) {
+          if (att.length) throw new CoreError(ERR.badRequest, `에이전트 플러그인 명령 /${hit.cmd.name} 은 첨부와 함께 보낼 수 없습니다`);
+          if (waiting.length || draining || !calmForCommand()) {
+            waiting.push({ cmd: hit.cmd, args: hit.args });
+            queueChanged();
+            return { ok: true, state: s.state, command: { plugin: hit.cmd.plugin, name: hit.cmd.name, queued: true as const } };
+          }
+          draining = true; // 도는 동안 친 것은 그 뒤에 선다
+          try {
+            const r = await hooks.runCommand(hit.cmd.plugin, hit.cmd.name, hit.args, { cwd });
+            return { ok: true, state: s.state, command: { plugin: hit.cmd.plugin, name: hit.cmd.name, ...r } };
+          } finally { draining = false; drainWaiting(); }
+        }
+      }
       if (typeof p.text !== 'string' || (!p.text.trim() && !att.length)) throw new CoreError(ERR.badRequest, 'text or attachments required');
       for (const a of att) if (typeof a?.name !== 'string' || typeof a.mediaType !== 'string' || typeof a.data !== 'string') throw new CoreError(ERR.badRequest, 'attachment {name, mediaType, data}');
+      if (!p.origin && (waiting.length || draining)) { waiting.push({ text: p.text, att }); queueChanged(); activity.sent(); return { ok: true, state: s.state }; } // 기다리는 명령 뒤에 선다
       s.send(p.text, p.origin ?? null, att);
       if (!p.origin) activity.sent(); // 메시지 턴(origin mail 등)은 사람이 보낸 것이 아니다
       return { ok: true, state: s.state };
@@ -402,7 +434,26 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     },
     'session.interrupt': async (_c, p) => { await mine(p?.id).interrupt(); return { ok: true }; },
     'session.setMode': async (_c, p) => { const s = mine(p?.id); if (!isMode(p.mode)) throw new CoreError(ERR.badRequest, `mode ${PERMISSION_MODES.join('|')}`); await s.setMode(p.mode); broadcast('session.changed', s.info()); return { ok: true }; },
-    'session.commands': (_c, p) => mine(p?.id).commands(),
+    'session.commands': async (_c, p) => {
+      const s = mine(p?.id);
+      vendorCmds = s.commands();
+      if (!hooks?.commands().length) return vendorCmds;
+      const { usable, vendor } = await commandsNow();
+      return [...vendor, ...usable.map((c) => ({ name: fullName(c), description: c.description, argumentHint: c.argumentHint, kind: 'command' as const, complete: c.complete }))];
+    },
+    'session.completeCommand': async (_c, p) => {
+      mine(p?.id);
+      if (typeof p?.text !== 'string') throw new CoreError(ERR.badRequest, 'text required');
+      const cursor = typeof p.cursor === 'number' ? p.cursor : p.text.length;
+      const none = { command: null, hint: '', items: [], start: cursor, end: cursor, error: null };
+      if (!hooks?.commands().length) return none;
+      const { usable, vendor } = await commandsNow();
+      const hit = resolveCommand(p.text, usable, vendor);
+      if (!hit || cursor < hit.argsAt) return none;
+      const { start, end, ...input } = completeInput(p.text, cursor, hit.argsAt);
+      const r = hit.cmd.complete ? await hooks.complete(hit.cmd.plugin, hit.cmd.name, input, { cwd }) : { items: [], error: null };
+      return { command: fullName(hit.cmd), hint: hit.cmd.argumentHint, start, end, ...r };
+    },
     'session.status': async (_c, p) => {
       const s = mine(p?.id);
       // repo·브랜치는 부를 때마다 git 에 묻는다 — 세션 중에 바뀔 수 있다. git 이 없거나 repo 가 아니면 null, detached 면 브랜치만 null (첫 커밋 전 브랜치도 보인다)
@@ -510,6 +561,8 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       const sdk = await s.reloadPlugins();
       agentLoaded = r.loaded;
       hooks?.load(r.loaded); // 빌드가 바뀐 플러그인의 worker 만 다시 띄운다
+      vendorCmds = null;
+      if (hooks?.commands().length) void commandsNow().catch(() => {}); // 새로 실린 명령이 내장 명령과 겹치면 알린다
       s.emitPlugins({
         plugins: r.loaded.map((l) => ({ name: l.name, version: l.version, build: l.build, values: l.values })), removed: r.removed, later: r.later,
         sdk: { plugins: sdk.plugins.map((x) => ({ name: x.name, ...(x.source ? { source: x.source } : {}) })), commands: sdk.commands.map((c) => c.name), agents: sdk.agents.map((a) => a.name), mcp: sdk.mcpServers.map((m) => ({ name: m.name, status: m.status, ...(m.error ? { error: m.error } : {}) })) },
@@ -537,7 +590,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   let earlyExit: string | null = null;
   session.onEvent((e) => {
     if (e.ev.kind === 'session.state') broadcast('session.changed', session.info());
-    if (e.ev.kind === 'session.state' && (e.ev.state === 'idle' || e.ev.state === 'starting')) flushMail();
+    if (e.ev.kind === 'session.state' && (e.ev.state === 'idle' || e.ev.state === 'starting')) { drainWaiting(); flushMail(); }
     if (e.ev.kind === 'session.exit') { broadcast('session.closed', { id: sid, reason: e.ev.reason }); const r = `session exited: ${e.ev.reason}`; if (closeFn) void closeFn(r); else earlyExit = r; }
     if (e.ev.kind === 'task') { if (e.ev.phase === 'ended') bg.delete(e.ev.taskId); else if (e.ev.background) bg.add(e.ev.taskId); }
     if (retire) setImmediate(maybeRetire); // idle 에서 밀린 메시지가 턴으로 들어갔는지 본 뒤에
@@ -592,6 +645,27 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     pending.push(m);
     flushMail();
   }
+  // 턴 중에 친 에이전트 플러그인 명령 (사용자 결정 2026-11-02) — 바로 돌리지 않고 idle(첫 프롬프트 전 starting 포함)로 돌아온 뒤 친 순서대로 돌린다. 화면은 입력창 위 대기 영역(session.queue)으로 보인다.
+  // 기다리는 명령이 있는 동안 사람이 보낸 메시지도 그 뒤에 선다 — '/roleas lead' 다음에 친 요청이 바뀐 역할로 돌게. 메시지 하나를 넣으면 턴이 시작되니 다음 idle 까지 멈춘다
+  const waiting: ({ cmd: LoadedCommand; args: string } | { text: string; att: Attachment[] })[] = [];
+  let draining = false; // 명령 하나가 도는 중
+  const calmForCommand = () => session.state === 'idle' || session.state === 'starting';
+  const queueItems = (): QueueItem[] => waiting.map((w) => ('cmd' in w ? { kind: 'command', text: `/${w.cmd.name}${w.args ? ` ${w.args}` : ''}` } : { kind: 'message', text: w.text, ...(w.att.length ? { attachments: w.att.length } : {}) }));
+  const queueChanged = () => broadcast('session.queue', { id: sid, items: queueItems() });
+  function drainWaiting() {
+    if (draining || closed || !waiting.length || !calmForCommand()) return;
+    draining = true;
+    void (async () => {
+      try {
+        while (waiting.length && !closed && calmForCommand()) {
+          const w = waiting.shift()!;
+          queueChanged();
+          if ('cmd' in w) await hooks!.runCommand(w.cmd.plugin, w.cmd.name, w.args, { cwd });
+          else session.send(w.text, null, w.att);
+        }
+      } finally { draining = false; }
+    })();
+  }
   // claude 의 메시지처럼: idle(첫 프롬프트 전 starting 포함)이면 즉시, 아니면 다음 idle 에. 여러 통은 한 턴으로 (사용자 결정 2026-09-27)
   function flushMail() {
     if (closed || !pending.length || (session.state !== 'idle' && session.state !== 'starting')) return;
@@ -636,7 +710,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   const bg = new Set<string>();
   /** 내려도 잃는 것이 초안뿐인 때 — 진행 턴·대기 승인·줄 선 턴·밀린 메시지·대기 ask·background task·inspect 토글이 없다 */
   const calm = () => !closed && !switching && session.state === 'idle' && !session.pendingApprovals().length
-    && !(session instanceof ClaudeSession && session.queued) && !pending.length && !asks.size && !bg.size;
+    && !(session instanceof ClaudeSession && session.queued) && !pending.length && !asks.size && !bg.size && !waiting.length && !draining;
   function maybeRetire() {
     if (!retire || retiring || !calm()) return;
     if (owner && !owner.follows) { log('replacement cancelled: the session owner cannot follow it'); retire = null; return; }

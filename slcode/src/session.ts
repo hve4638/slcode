@@ -3,9 +3,9 @@
 // 승인(canUseTool)은 Deferred 로 무기한 기다린다 — interrupt·close·프로세스 종료만 cancelled 로 푼다 (사용자 결정 2026-09-26).
 import { query, type Options, type Query, type SDKMessage, type SDKUserMessage, type PermissionResult, type PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
 import { randomUUID } from 'node:crypto';
-import type { AgentHookEvent, ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, Usage, LimitWindow, McpStatus } from './protocol.js';
+import type { AgentCommandEvent, AgentHookEvent, ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, Usage, LimitWindow, McpStatus } from './protocol.js';
 import { EventLog, unrewound } from './eventLog.js';
-import { AgentSession, CLAUDE_EFFORTS, effortMisfit } from './base.js';
+import { AgentSession, CLAUDE_EFFORTS, effortMisfit, type Command } from './base.js';
 import { SLCODE_PROMPT } from './prompt.js';
 import type { ClaudeLoad } from './profiles.js';
 
@@ -136,9 +136,9 @@ export class ClaudeSession extends AgentSession {
   }
 
   /** 슬래시 명령 목록 — SDK supportedCommands (중간에 바뀌면 SDK 가 최신을 준다) */
-  async commands(): Promise<{ name: string; description: string; argumentHint: string }[]> {
+  async commands(): Promise<Command[]> {
     if (!this.q) return [];
-    try { return (await this.q.supportedCommands()).map((c) => ({ name: c.name, description: c.description ?? '', argumentHint: c.argumentHint ?? '' })); } catch { return []; }
+    try { return (await this.q.supportedCommands()).map((c) => ({ name: c.name, description: c.description ?? '', argumentHint: c.argumentHint ?? '', ...(c.builtin ? { builtin: true } : {}), ...(c.aliases?.length ? { aliases: c.aliases } : {}) })); } catch { return []; }
   }
 
   /** 컨텍스트 창 사용량 — SDK getContextUsage(summary). 벤더가 안 떠 있으면 null */
@@ -290,7 +290,7 @@ export class ClaudeSession extends AgentSession {
   }
 
   /** js/ts 훅의 기록 (hookRunner) */
-  emitHook(ev: AgentHookEvent) { if (!this.ended) this.emit(ev); }
+  emitHook(ev: AgentHookEvent | AgentCommandEvent) { if (!this.ended) this.emit(ev); }
 
   async close(reason = 'closed', quiet = false) {
     if (this.ended) return;

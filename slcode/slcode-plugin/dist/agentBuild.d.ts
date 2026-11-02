@@ -24,6 +24,12 @@ export type Report = {
         failed: string[];
         warnings: string[];
     };
+    /** 명령 (Claude, ticket slcode-agent-plugin-command) — built 는 실은 명령의 COMMAND 파일("<part>/commands/<이름>/COMMAND.ts"), failed 는 묶거나 싣지 못한 것 */
+    commands?: {
+        built: string[];
+        failed: string[];
+        warnings: string[];
+    };
     /** esbuild 를 받지 못해 js/ts 훅을 뺀 사유 (ticket slcode-plugin-split) — 이 빌드는 다음 ensureBuild 때 다시 만든다 */
     toolMissing?: string;
 };
@@ -37,6 +43,7 @@ export declare const BUILD_FILES: {
     readonly codexMcp: "codex-mcp.json";
     readonly codexHooks: "codex-hooks.json";
     readonly scripts: "scripts.json";
+    readonly commands: "commands.json";
 };
 /** src(설치한 원본)의 켠 part 를 out 에 Claude 빌드로 쓴다 — out/claude/<이름>/ (플러그인 폴더), instructions.md, session.json(있으면), report.json. tools 는 esbuild 캐시 폴더 */
 export declare function buildClaude(src: string, m: Manifest, r: Resolved, id: string, out: string, tools?: string): Report;

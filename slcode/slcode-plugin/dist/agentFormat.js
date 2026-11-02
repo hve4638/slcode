@@ -4,9 +4,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { COMMAND_NAME } from './hookApi.js';
 export const MANIFEST = 'slcode-plugin.json';
 /** 빌드기 판 — 빌드 결과가 달라지는 변경이면 올린다. 빌드 식별자에 들어가 옛 빌드를 다시 쓰지 않게 한다 */
-export const BUILDER = 5; // 2: slcode 형식 hooks.json·js/ts 훅 묶기 (slcode-agent-plugin-hooks). 3: command 의 ${slcode.vars.harness}, Codex 빌드의 codex-mcp.json·codex-hooks.json (slcode-agent-plugin-export). 4: slcode/api 묶기·하네스별 등록 목록, export 판의 js/ts 훅 (slcode-agent-plugin-script-portable). 5: export 훅 명령은 상태 폴더의 고정 런처 (slcode-plugin-split)
+export const BUILDER = 6; // 2: slcode 형식 hooks.json·js/ts 훅 묶기 (slcode-agent-plugin-hooks). 3: command 의 ${slcode.vars.harness}, Codex 빌드의 codex-mcp.json·codex-hooks.json (slcode-agent-plugin-export). 4: slcode/api 묶기·하네스별 등록 목록, export 판의 js/ts 훅 (slcode-agent-plugin-script-portable). 5: export 훅 명령은 상태 폴더의 고정 런처 (slcode-plugin-split). 6: commands/ 는 플러그인 폴더에서 빼고 commands.json·묶은 명령 (slcode-agent-plugin-command)
 /** 호환 등급을 매기는 하네스 — gpt 는 GPT 하네스(장기적으로 Codex 자리, 아직 slcode 가 띄우지 않는다) */
 export const HARNESSES = ['claude', 'gpt', 'codex'];
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -209,6 +210,8 @@ export function partLost(dir, part) {
             if (t !== 'stdio' && t !== 'http')
                 add(['codex'], `.mcp.json ${name}: ${t}`);
         }
+    for (const c of commandFiles(dir, part).commands)
+        add(['gpt', 'codex'], `commands/${c.name}: slcode command (slcode Claude sessions only)`);
     if (exists(path.join(p, 'raw/claude')))
         add(['gpt', 'codex'], 'raw/claude');
     if (exists(path.join(p, 'raw/pi')))
@@ -222,6 +225,86 @@ export function partLost(dir, part) {
             add(['gpt', 'codex'], `skills/${s[1]}: ${only.join(', ')}`);
     }
     return lost;
+}
+// ---- 명령 (ticket slcode-agent-plugin-command) — part 의 commands/<이름>/COMMAND.ts|js. 이름은 폴더 이름(COMMAND_NAME)
+export const COMMANDS_DIR = 'commands';
+/** part 하나의 명령 파일 — file 은 part 기준 경로. COMMAND 파일이 없는 commands/ 아래 폴더(공용 코드 등)는 명령이 아니다.
+ *  errors: 이름이 규칙 밖, COMMAND.ts·COMMAND.js 가 함께 있음 */
+export function commandFiles(dir, part) {
+    const found = new Map();
+    for (const r of walk(path.join(dir, part), COMMANDS_DIR)) {
+        const m = /^commands\/([^/]+)\/COMMAND\.(ts|js)$/.exec(r);
+        if (m)
+            found.set(m[1], [...(found.get(m[1]) ?? []), r]);
+    }
+    const out = [], errors = [];
+    for (const [name, files] of [...found].sort(([a], [b]) => (a < b ? -1 : 1))) {
+        if (!COMMAND_NAME.test(name)) {
+            errors.push(`${part}/commands/${name}: command name must match ${COMMAND_NAME} (lowercase letters, digits, -)`);
+            continue;
+        }
+        if (files.length > 1) {
+            errors.push(`${part}/commands/${name}: both COMMAND.ts and COMMAND.js — keep one`);
+            continue;
+        }
+        out.push({ name, file: files[0] });
+    }
+    return { commands: out, errors };
+}
+/** 같은 플러그인 skill 이름 — 폴더 이름과 frontmatter name (Claude 는 name 이 있으면 그것을 쓴다) */
+function skillNames(dir, part) {
+    const out = [];
+    for (const r of walk(path.join(dir, part), 'skills')) {
+        const s = /^skills\/([^/]+)\/SKILL\.md$/.exec(r);
+        if (!s)
+            continue;
+        out.push(s[1].toLowerCase());
+        const n = frontmatter(fs.readFileSync(path.join(dir, part, r), 'utf8')).fields.name;
+        if (n)
+            out.push(n.toLowerCase());
+    }
+    for (const r of walk(path.join(dir, part), 'raw/claude/skills')) {
+        const s = /^raw\/claude\/skills\/([^/]+)\/SKILL\.md$/.exec(r);
+        if (s)
+            out.push(s[1].toLowerCase());
+    }
+    return out;
+}
+/** 명령의 정적 검사 — 모든 part(켜지 않은 것도)를 본다. 이름 규칙·COMMAND 파일 둘·part 끼리 같은 이름·같은 플러그인 skill 과 같은 이름.
+ *  하나라도 있으면 add 가 거부한다(플러그인 적용 실패, 사용자 결정 2026-11-02) */
+/** Claude 내장 명령의 이름·별칭 — add 때 미리 거른다(사용자 결정 2026-11-02). Claude Agent SDK 0.3.282 의 supportedCommands 중 builtin 인 것(API 키 계정, 2026-11-02 실측).
+ *  계정·기능 플래그나 새 판에서 늘어난 것은 slcode 가 세션을 열 때 SDK 목록으로 다시 본다 — 이 목록은 그 판정을 대신하지 않는다 */
+export const CLAUDE_BUILTIN_COMMANDS = new Set([
+    'deep-research', 'design', 'design-sync', 'dataviz', 'update-config', 'verify', 'debug', 'code-review', 'review', 'simplify', 'batch',
+    'fewer-permission-prompts', 'doctor', 'checkup', 'loop', 'proactive', 'claude-api', 'workflow-authoring', 'run', 'run-skill-generator',
+    'advisor', 'agents', 'auto-mode-setup', 'autocompact', 'clear', 'reset', 'new', 'color', 'compact', 'config', 'settings', 'output-style',
+    'context', 'effort', 'fast', 'focus', 'heapdump', 'init', 'mcp', 'import', 'model', 'workflow-launch-exec', 'reload-plugins',
+    'reload-skills', 'rename', 'name', 'security-review', 'usage', 'cost', 'stats', 'insights', 'recap', 'skill-doctor', 'goal',
+    'design-consent', 'design-revoke', 'list-agents', 'peers', 'team-onboarding',
+]);
+export function commandErrors(dir, m) {
+    const errors = [];
+    const seen = new Map();
+    const skills = new Map();
+    for (const part of Object.keys(m.parts))
+        for (const s of skillNames(dir, part))
+            if (!skills.has(s))
+                skills.set(s, part);
+    for (const part of Object.keys(m.parts)) {
+        const c = commandFiles(dir, part);
+        errors.push(...c.errors);
+        for (const { name } of c.commands) {
+            if (seen.has(name))
+                errors.push(`${part}/commands/${name}: command ${name} is also in part ${seen.get(name)}`);
+            else
+                seen.set(name, part);
+            if (skills.has(name))
+                errors.push(`${part}/commands/${name}: command ${name} has the same name as skill ${name} (part ${skills.get(name)}) of this plugin`);
+            if (CLAUDE_BUILTIN_COMMANDS.has(name))
+                errors.push(`${part}/commands/${name}: command ${name} has the same name as the Claude built-in command /${name}`);
+        }
+    }
+    return errors;
 }
 /** 호환 등급 — 모든 part(켜지 않은 것도)를 본다. full 은 어느 하네스에서도 빠지는 것이 없다 */
 export function compat(dir, m) {

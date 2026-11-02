@@ -133,6 +133,58 @@ export function buildPartHooks(pdir, part, j, out, scripts, harness = 'claude', 
     });
     return r;
 }
+/** part 하나의 명령들을 out/commands/ 에 묶어 commands 에 더한다. failed 는 묶거나 싣지 못한 것과 사유, missing 은 esbuild 를 받지 못한 사유 */
+export function buildPartCommands(pdir, part, files, out, commands, tools = '') {
+    const r = { failed: [], warnings: [], missing: null };
+    for (const { name, file } of files) {
+        const src = `${part}/${file}`;
+        let esbuild;
+        try {
+            esbuild = loadEsbuild(tools);
+        }
+        catch (e) {
+            r.missing = e.message;
+            r.failed.push(`${src}: ${r.missing}`);
+            continue;
+        }
+        const js = `commands/${name}.mjs`;
+        const err = bundle(esbuild, pdir, path.join(pdir, file), path.join(out, js));
+        if (err) {
+            r.failed.push(`${src}: ${err}`);
+            continue;
+        }
+        const l = listCommand(path.join(out, js));
+        if (!l.def) {
+            fs.rmSync(path.join(out, js), { force: true });
+            r.failed.push(`${src}: ${l.error}`);
+            continue;
+        }
+        r.warnings.push(...l.warnings.map((w) => `${src}: ${w}`));
+        commands.push({ name, src, js, ...l.def });
+    }
+    return r;
+}
+/** 묶은 COMMAND 파일을 따로 띄운 node 에서 한 번 실어 검사한다 */
+export function listCommand(file) {
+    const p = spawnSync(process.execPath, [WORKER_FILE, '--list-command', file], { encoding: 'utf8', timeout: LIST_MS, cwd: path.dirname(file), windowsHide: true });
+    try {
+        const j = JSON.parse(p.stdout.trim().split('\n').pop());
+        return { def: j.def, error: j.error, warnings: j.warnings ?? [] };
+    }
+    catch {
+        return { def: null, error: p.error ? `could not load: ${p.error.message}` : `could not load: ${(p.stderr || '').trim().split('\n').slice(-3).join(' ') || `exit ${p.status}`}`, warnings: [] };
+    }
+}
+/** 빌드 폴더의 commands.json — 없거나 깨졌으면 [] */
+export function readCommands(file) {
+    try {
+        const j = JSON.parse(fs.readFileSync(file, 'utf8'));
+        return Array.isArray(j) ? j.filter((c) => typeof c?.name === 'string' && typeof c?.js === 'string') : [];
+    }
+    catch {
+        return [];
+    }
+}
 /** 스크립트 하나를 묶는다 — 실패면 사유 */
 function bundle(esbuild, pdir, entry, outfile) {
     try {

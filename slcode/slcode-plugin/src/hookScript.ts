@@ -4,7 +4,8 @@
 // 묶인 사본마다 따로 평가되므로 slcode 의 다른 모듈을 import 하지 않는다. 수집기는 이 모듈이 평가될 때(스크립트를 싣는 중) 한 번 잡는다.
 // slcode.vars 는 싣는 쪽이 수집기에 넣은 값(지금은 harness 하나, 사용자 결정 2026-10-31) — 묶은 파일 하나를 하네스들이 같이 쓰므로 묶을 때가 아니라 실을 때 정한다. 얼려서 읽기 전용.
 export const COLLECT = Symbol.for('slcode.hooks.collect');
-type Collect = { on(event: unknown, a: unknown, b?: unknown): void; run(): void; vars: Record<string, unknown> };
+// slcode.command() 은 COMMAND 파일의 명령 하나(ticket slcode-agent-plugin-command) — 같은 수집기에 넣고, 꼴 검사는 싣는 쪽(hookWorker.checkCommand)이 한다.
+type Collect = { on(event: unknown, a: unknown, b?: unknown): void; run(): void; command(def: unknown): void; vars: Record<string, unknown> };
 const collect = (globalThis as Record<symbol, Collect | undefined>)[COLLECT];
 
 export const slcode = {
@@ -14,4 +15,8 @@ export const slcode = {
     collect.on(event, a, b);
   },
   run(): void { collect?.run(); },
+  command(def: unknown): void {
+    if (!collect) throw new Error('slcode/api: this script runs only through slcode (agent plugin commands)');
+    collect.command(def);
+  },
 };

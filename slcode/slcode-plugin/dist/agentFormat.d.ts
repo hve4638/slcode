@@ -1,6 +1,6 @@
 export declare const MANIFEST = "slcode-plugin.json";
 /** 빌드기 판 — 빌드 결과가 달라지는 변경이면 올린다. 빌드 식별자에 들어가 옛 빌드를 다시 쓰지 않게 한다 */
-export declare const BUILDER = 5;
+export declare const BUILDER = 6;
 /** 호환 등급을 매기는 하네스 — gpt 는 GPT 하네스(장기적으로 Codex 자리, 아직 slcode 가 띄우지 않는다) */
 export declare const HARNESSES: readonly ["claude", "gpt", "codex"];
 export type Harness = (typeof HARNESSES)[number];
@@ -59,6 +59,22 @@ export declare function frontmatter(text: string): {
 export declare function mcpTransport(def: unknown): string;
 /** part 하나에서 하네스마다 빠지는 것 — 호환 등급과 report.json 이 같은 규칙을 쓴다. 항목은 "<part>/<경로>[: 사유]" */
 export declare function partLost(dir: string, part: string): Record<Harness, string[]>;
+export declare const COMMANDS_DIR = "commands";
+/** part 하나의 명령 파일 — file 은 part 기준 경로. COMMAND 파일이 없는 commands/ 아래 폴더(공용 코드 등)는 명령이 아니다.
+ *  errors: 이름이 규칙 밖, COMMAND.ts·COMMAND.js 가 함께 있음 */
+export declare function commandFiles(dir: string, part: string): {
+    commands: {
+        name: string;
+        file: string;
+    }[];
+    errors: string[];
+};
+/** 명령의 정적 검사 — 모든 part(켜지 않은 것도)를 본다. 이름 규칙·COMMAND 파일 둘·part 끼리 같은 이름·같은 플러그인 skill 과 같은 이름.
+ *  하나라도 있으면 add 가 거부한다(플러그인 적용 실패, 사용자 결정 2026-11-02) */
+/** Claude 내장 명령의 이름·별칭 — add 때 미리 거른다(사용자 결정 2026-11-02). Claude Agent SDK 0.3.282 의 supportedCommands 중 builtin 인 것(API 키 계정, 2026-11-02 실측).
+ *  계정·기능 플래그나 새 판에서 늘어난 것은 slcode 가 세션을 열 때 SDK 목록으로 다시 본다 — 이 목록은 그 판정을 대신하지 않는다 */
+export declare const CLAUDE_BUILTIN_COMMANDS: ReadonlySet<string>;
+export declare function commandErrors(dir: string, m: Manifest): string[];
 /** 호환 등급 — 모든 part(켜지 않은 것도)를 본다. full 은 어느 하네스에서도 빠지는 것이 없다 */
 export declare function compat(dir: string, m: Manifest): {
     grade: 'full' | 'partial';

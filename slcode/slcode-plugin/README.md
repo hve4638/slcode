@@ -16,6 +16,17 @@ part 에 `when` 을 적으면 세션 인자(`slcode new --param NAME=VALUE`, 짧
 "parts": { "main": { "required": true }, "orchestration": { "when": { "param": { "ORCH_ROLE": true } } } }
 ```
 
+part 의 `commands/<이름>/COMMAND.ts`(또는 `.js`) 하나가 명령 하나다. slcode 의 Claude 세션에서 사용자가 입력창에 `/<이름> <인자>` 를 치면 턴 없이 `run` 이 돈다. 모델이 답하는 중이면 그 답이 끝난 뒤에 돈다. 다른 플러그인의 명령·skill 과 짧은 이름이 겹치면 `/<플러그인>:<이름>` 으로 부른다. `cmd.state` 는 훅과 같은 상태이고 run 이 성공했을 때만 저장된다. `cmd.context()` 로 낸 글은 보관했다가 다음 턴에 UserPromptSubmit 훅 컨텍스트로 한 번 붙는다. 같은 명령을 다시 치면 앞의 보관분을 바꾼다. `complete` 는 칠 때마다 커서가 있는 낱말(`c.index` 번째, 앞부분 `c.value`)의 후보를 낸다. 따로 도는 worker 에서 저장된 상태의 읽기 전용 사본을 보므로 가볍게 쓴다. 이름은 소문자·숫자·`-` 이고, 같은 플러그인의 skill 이나 다른 part 의 명령과 이름이 같거나 `slcode.command()` 를 정확히 한 번 부르지 않으면 add 가 거부한다. Claude 내장 명령(`clear`·`compact`·`model` 등과 그 별칭)과 같은 이름도 add 가 거부한다. 목록에 없던 내장 명령과 겹치면 세션을 열 때 그 명령만 끄고 알린다. Codex 세션과 export 판에는 실리지 않는다.
+
+```ts
+import { slcode } from 'slcode/api';
+slcode.command({
+  description: '이 세션의 역할을 정한다', argumentHint: '<역할>',
+  complete: (c) => c.index > 0 ? [] : (c.state.roles ?? []).filter((r: string) => r.startsWith(c.value)),
+  run: (cmd) => { cmd.state.role = cmd.args; cmd.context(`당신의 역할은 ${cmd.args} 입니다`); cmd.message(`역할: ${cmd.args}`, { icon: 'flag' }); },
+});
+```
+
 esbuild(js/ts 훅을 묶을 때)와 typescript(훅 타입 검사)는 처음 필요할 때 npm 레지스트리에서 받는다. 판과 무결성은 고정이다. 받지 못하면 js/ts 훅만 빠지고 경고가 남으며, 다음 add·set 때 다시 받아 본다.
 
 소스는 `src/`, 빌드는 slcode 폴더에서 `pnpm build`. `dist/` 는 커밋한다.

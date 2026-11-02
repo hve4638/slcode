@@ -40,3 +40,11 @@ type ListedReg
 type ListHarness
 type ScriptEntry
 type PartHooks
+type CommandEntry
+export fn buildPartCommands(pdir, part, files, out, commands, tools) {
+  role: 명령 (ticket slcode-agent-plugin-command) — part 의 COMMAND 파일들을 out/commands/<이름>.mjs 로 묶고(훅과 같은 bundle — slcode/api alias, node 내장·상대 import 만) listCommand 로 검사해 commands 에 더한다. 묶거나 싣지 못한 것은 failed, esbuild 를 받지 못하면 missing. 빌드(buildClaude)와 add 의 검사(agentPlugins.checkCommands)가 같이 쓴다
+}
+export fn listCommand(file) {
+  role: 따로 띄운 node 로 hookWorker --list-command — description·argumentHint·timeout·complete 유무 또는 error
+}
+export fn readCommands(file) -> CommandEntry[]

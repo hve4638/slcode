@@ -1,5 +1,5 @@
 // 에이전트 플러그인 관리 (ticket slcode-agent-plugin-ui) — `slcode plugin list` 가 보이는 것: 플러그인마다 호환 등급과 하네스별 빠지는 것, part 켜고 끄기(필수 part 는 잠금),
-// 옵션 값, export(claude·codex, 해제 포함), 하네스별 마지막 빌드의 report.json, js/ts 훅의 tsc 경고. 바꾸는 것은 plugins.set·export 가 `slcode plugin set·export` 로 한다.
+// 옵션 값, export(claude·codex, 해제 포함), 하네스별 마지막 빌드의 report.json, js/ts 훅·명령의 tsc 경고. 바꾸는 것은 plugins.set·export 가 `slcode plugin set·export` 로 한다.
 // 시작 화면(start.js)에서만 연다 — 세션 화면에는 입구가 없다 (ticket slcode-agent-plugin-export-action, 사용자 2026-11-01: export 는 다른 하네스로 내보내는 일이라
 // slcode 세션 사용자의 관심사가 아니다). 웹은 시작 화면 서버의 api/, superlite 카드는 카드가 `slcode start-page --call` 로 중계한다 — call(method, params) 만 다르다.
 // 요소 도우미·스타일(style.css .ppanel)은 이 파일의 것.
@@ -32,7 +32,9 @@ export function pluginsPanel(call, { onChange } = {}) {
     draw();
     for (const r of rows ?? []) if (hasScripts(r) && of(r.name).check === undefined) check(r.name);
   }
-  const hasScripts = (r) => !!(r.reports.claude?.scripts && r.reports.claude.scripts.built.length + r.reports.claude.scripts.failed.length);
+  // 훅 스크립트나 명령 파일(ticket slcode-agent-plugin-command)이 있으면 tsc 경고 칸을 둔다 — plugins.check 가 둘 다 본다
+  const count = (x) => (x ? x.built.length + x.failed.length : 0);
+  const hasScripts = (r) => !!(count(r.reports.claude?.scripts) + count(r.reports.claude?.commands));
   async function check(name) {
     const s = of(name);
     s.check = null; draw();
@@ -122,7 +124,7 @@ export function pluginsPanel(call, { onChange } = {}) {
       r.parts.length ? el('div', { class: 'grp' }, el('h4', {}, 'part'), ...r.parts.map((p) => line(p.name, [p.required ? '필수' : null, p.when ? `조건 ${p.when}` : null].filter(Boolean).join(' · ') || null, // 조건은 세션마다 본다 — 스위치는 사용자 설정 (ticket slcode-agent-plugin-part-when)
         sw(s.pending.has(p.name) ? s.pending.get(p.name) === 'on' : p.on, off || p.required, (e) => stage(s, p.name, e.target.checked ? 'on' : 'off', p.on ? 'on' : 'off', e.target), p.name), s.pending.has(p.name) ? 'changed' : null))) : null,
       r.options.length ? el('div', { class: 'grp' }, el('h4', {}, '옵션'), ...r.options.map((o) => option(r, o, off))) : null,
-      hasScripts(r) ? el('div', { class: 'grp' }, el('h4', {}, 'js/ts 훅'),
+      hasScripts(r) ? el('div', { class: 'grp' }, el('h4', {}, 'js/ts 훅·명령'),
         s.check == null ? el('p', { class: 'note' }, '확인하는 중…') : s.check.length ? el('ul', { class: 'warns' }, ...s.check.map((x) => el('li', {}, x.trim()))) : el('p', { class: 'note' }, '경고 없음')) : null,
       el('div', { class: 'grp' }, el('h4', {}, '마지막 빌드'),
         ...SHOWN.map((h) => r.reports[h] ? fold(s, `rep.${h}`, el('span', {}, `${HARNESS[h]} `, el('code', {}, r.reports[h].build.slice(0, 12)), ' report.json'), el('pre', {}, JSON.stringify(r.reports[h], null, 2)))

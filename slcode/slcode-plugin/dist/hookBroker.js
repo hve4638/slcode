@@ -89,6 +89,8 @@ function makePlugin(req, sessionId, log) {
     const name = pluginName(req.root);
     const notes = [];
     const emit = (ev) => {
+        if (ev.kind === 'agent.command')
+            return; // export 판에는 명령이 없다
         if (ev.phase === 'warn') {
             notes.push(`${name}: ${ev.text}`);
             log(`${name}: ${ev.text}`);

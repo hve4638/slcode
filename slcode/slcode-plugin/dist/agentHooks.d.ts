@@ -36,6 +36,33 @@ export declare function partCommandHooks(j: unknown, part: string, harness: Hook
 } | null;
 /** part 하나의 hooks.json 내용 j — 목록이 아니면 null(파일째 뺀다). script 는 out 아래에 묶어 scripts 에 더한다. tools 는 esbuild 캐시 폴더 */
 export declare function buildPartHooks(pdir: string, part: string, j: unknown, out: string, scripts: ScriptEntry[], harness?: HookHarness, tools?: string): PartHooks | null;
+/** 빌드 폴더의 명령 하나 — src 는 "<part>/commands/<이름>/COMMAND.ts", js 는 빌드 폴더 기준 경로 */
+export type CommandEntry = {
+    name: string;
+    src: string;
+    js: string;
+    description: string;
+    argumentHint: string;
+    timeout: number | null;
+    complete: boolean;
+};
+/** part 하나의 명령들을 out/commands/ 에 묶어 commands 에 더한다. failed 는 묶거나 싣지 못한 것과 사유, missing 은 esbuild 를 받지 못한 사유 */
+export declare function buildPartCommands(pdir: string, part: string, files: {
+    name: string;
+    file: string;
+}[], out: string, commands: CommandEntry[], tools?: string): {
+    failed: string[];
+    warnings: string[];
+    missing: string | null;
+};
+/** 묶은 COMMAND 파일을 따로 띄운 node 에서 한 번 실어 검사한다 */
+export declare function listCommand(file: string): {
+    def: Omit<CommandEntry, 'name' | 'src' | 'js'> | null;
+    error: string | null;
+    warnings: string[];
+};
+/** 빌드 폴더의 commands.json — 없거나 깨졌으면 [] */
+export declare function readCommands(file: string): CommandEntry[];
 /** 묶은 스크립트를 따로 띄운 node 에서 한 번 실어 등록 목록을 받는다 — 싣다가 던지거나 옛 꼴이면 error, 잘못된 등록·slcode.run() 이 없는 것은 warnings */
 export declare function listScript(file: string, harness: ListHarness): {
     regs: ListedReg[];

@@ -28,3 +28,19 @@ type Info
 type WorkerInit
 type ToCore
 type ToWorker
+export fn checkCommand(cmds, onCalls) {
+  role: COMMAND 파일의 등록 검사 (ticket slcode-agent-plugin-command) — slcode.command() 정확히 한 번, slcode.on() 없음, description(비지 않은 글)·run(함수) 필수, complete 함수·argumentHint 글·timeout 양수. 틀리면 error(add 거부 — 플러그인 적용 실패, 사용자 결정 2026-11-02), 모르는 칸은 warnings(새 판의 칸일 수 있다)
+}
+fn listCommand(js) {
+  role: 명령 목록 모드(--list-command <묶은 COMMAND 파일>) — 실어 checkCommand 결과와 description·argumentHint·timeout·complete 유무를 JSON 한 줄로
+}
+fn deepFreeze(v) {
+  role: complete 에 넘길 상태 사본을 깊게 얼린다 — complete 는 상태를 바꾸지 못한다
+}
+type CmdScript
+type CmdInfo
+type CompleteInfo
+type CmdResult
+type Item
+// 명령: 같은 worker 가 WorkerInit.commands 의 COMMAND 파일도 싣는다(loadScript kind 'command' — 훅 스크립트의 command() 는 무시·경고). cmd 메시지면 run 을 부르고 성공이면 바뀐 키를, 던지면 상태를 저장한 값으로 되돌린다(훅과 달리 부분 적용이 없다).
+// role 'complete' worker 는 COMMAND 파일만 싣고(훅 스크립트는 싣지 않는다) complete 메시지마다 core 가 준 상태 사본(deepFreeze)으로 부른다 — 오래 붙잡으면 core 가 그 worker 만 내린다.

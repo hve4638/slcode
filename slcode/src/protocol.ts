@@ -9,7 +9,7 @@
 //   세션 사이 메시지는 켜진 받는 세션의 소켓(session.deliver)으로 직접, 꺼진 세션에는 보내지 않는다 (mail.ts, ticket slcode-p2p-messaging 2026-10-19 — 우체국 없음).
 // 이벤트 어휘는 벤더 중립 15종. 각 이벤트는 선택 필드 raw 에 벤더 원문(SDK 메시지)을 같은 봉투로 싣는다 (raw:true 일 때만).
 
-import type { AgentHookEvent } from 'slcode-plugin/hookRunner';
+import type { AgentCommandEvent, AgentHookEvent } from 'slcode-plugin/hookRunner';
 
 export const PROTOCOL_VERSION = 3;
 
@@ -162,6 +162,8 @@ export type CoreEventBody =
   /** 에이전트 플러그인 js/ts 훅 (ticket slcode-agent-plugin-hooks) — ready 는 worker 가 스크립트를 싣고 등록한 콜백(errors 는 싣지 못한 스크립트·잘못된 on()),
    *  run 은 콜백 한 번(result 는 부른 메서드 요약, outcome 이 error·timeout 이면 error 에 사유, message 는 hook.message() 문구), warn 은 그 밖의 경고 */
   | AgentHookEvent
+  /** 에이전트 플러그인 명령 (ticket slcode-agent-plugin-command) — run: 입력창에서 친 명령 한 번, attached: 보관한 컨텍스트를 이 턴에 붙임 */
+  | AgentCommandEvent
   | { kind: 'error'; message: string }
   /** auto 모드에서 승인 요청을 사람 대신 모델이 판단한 결과 (지금은 Codex auto_review). action 은 대상의 사람이 읽는 한 줄, risk 는 low|medium|high|critical */
   | { kind: 'review'; toolUseId: string | null; decision: 'approved' | 'denied' | 'timedOut' | 'aborted'; risk: string | null; action: string; rationale: string | null }
@@ -178,7 +180,7 @@ export type CoreEventBody =
   | { kind: 'session.opened'; source: 'startup' | 'resume' }
   | { kind: 'session.exit'; reason: string };
 
-export type { AgentHookEvent, AgentHookEffects } from 'slcode-plugin/hookRunner';
+export type { AgentCommandEvent, AgentHookEvent, AgentHookEffects } from 'slcode-plugin/hookRunner';
 
 /** 세션에 실은 에이전트 플러그인 하나 — build 는 실은 빌드, current 는 지금 설정으로 빌드하면 나올 식별자(같으면 다시 실을 것이 없다, 지웠으면 null) */
 export type AgentPluginState = { name: string; version: string; build: string; values: string; current?: string | null };
@@ -232,12 +234,13 @@ export type Methods = {
   /** limit 이 있으면 history 는 끝 한 페이지(되돌린 턴을 빼고 화면 항목 limit 개 안팎, 열린 도구·승인·작업이 없는 turn.start 에서 자른 것)이고 more·summary 가 붙는다 — since 는 보지 않는다.
    *  옛 core 는 limit 을 모르고 전체를 보낸다 (summary 없음) (ticket slcode-history-paging, 2026-10-17).
    *  limit 응답의 prompts 는 되돌린 턴을 뺀 기록 전체의 요청 목록 — 웹 왼쪽 목록이 아직 받지 않은 옛 요청도 보인다 (ticket slcode-prompt-outline) */
-  'session.attach': { params: { id: string; since?: number; limit?: number }; result: { info: SessionInfo; history: LoggedEvent[]; pending: ApprovalRequest[]; draft: string; more?: boolean; summary?: HistorySummary; prompts?: OutlineItem[] } };
+  'session.attach': { params: { id: string; since?: number; limit?: number }; result: { info: SessionInfo; history: LoggedEvent[]; pending: ApprovalRequest[]; draft: string; queue: QueueItem[]; more?: boolean; summary?: HistorySummary; prompts?: OutlineItem[] } };
   /** seq before 앞의 한 페이지 (attach limit 과 같은 규칙). more 는 그 앞이 더 있는가 */
   'session.history': { params: { id: string; before: number; limit: number }; result: { history: LoggedEvent[]; more: boolean } };
   'session.detach': { params: { id: string }; result: { ok: true } };
   /** idle·running 가리지 않고 큐에 넣는다 — 한 호출. origin 은 발신자 표식 (메시지로 들어온 턴은 'mail') */
-  'session.send': { params: { id: string; text: string; origin?: string; attachments?: Attachment[] }; result: { ok: true; state: SessionState } };
+  /** 사람이 보낸 글(origin 없음)이 `/<명령>` 이고 에이전트 플러그인 명령이면 턴 없이 그 명령을 돌린다 — command 는 그 결과 (ticket slcode-agent-plugin-command) */
+  'session.send': { params: { id: string; text: string; origin?: string; attachments?: Attachment[] }; result: { ok: true; state: SessionState; command?: { plugin: string; name: string; outcome: 'ok' | 'error' | 'timeout'; error: string | null } | { plugin: string; name: string; queued: true } } };
   /** 벤더가 고를 수 있는 모델 목록과 지금 모델·effort */
   'session.models': { params: { id: string }; result: { current: string | null; effort: string | null; models: { value: string; resolvedModel?: string; displayName: string; description: string; efforts?: string[] }[] } };
   /** 다음 턴부터 쓸 모델 — meta 에 남아 --resume 뒤에도 유지 */
@@ -251,7 +254,11 @@ export type Methods = {
   /** 권한 모드 전환 — 즉시 적용, meta 에 남아 --resume 뒤에도 유지. 현재 값은 SessionInfo.permissionMode (session.changed 로 갱신) */
   'session.setMode': { params: { id: string; mode: PermissionMode }; result: { ok: true } };
   /** 벤더 슬래시 명령 목록 — 입력창 `/` 자동완성. session.ready 전에도 답한다 */
-  'session.commands': { params: { id: string }; result: { name: string; description: string; argumentHint: string }[] };
+  /** 벤더의 슬래시 명령 + 에이전트 플러그인 명령(kind 'command', 이름 <플러그인>:<명령>). 내장 명령과 겹쳐 쓸 수 없는 플러그인 명령은 빠진다 */
+  'session.commands': { params: { id: string }; result: { name: string; description: string; argumentHint: string; builtin?: boolean; aliases?: string[]; kind?: 'command'; complete?: boolean }[] };
+  /** 플러그인 명령의 인자 후보 — text 는 입력창 글 전체, cursor 는 그 안의 커서. 명령이 아니거나 complete 가 없으면 items 는 빈 목록.
+   *  start·end 는 고른 후보로 바꿀 자리(text 기준), hint 는 argumentHint. stale 이면 더 새 요청에 밀렸다 */
+  'session.completeCommand': { params: { id: string; text: string; cursor?: number }; result: { command: string | null; hint: string; items: { value: string; label?: string; description?: string }[]; start: number; end: number; error: string | null; stale?: boolean } };
   /** 사이드바 상단(claude 상태줄과 같은 정보) — cwd 의 git repo 이름·브랜치, 벤더 플랜 리밋 창(5시간·7일, 0-100 %), 컨텍스트 창 사용량. 플랜이 없거나 벤더가 답을 못 주면 그 항목은 null. 폴링 없이 attach·turn.end 때 한 번씩 (사용자 2026-09-29) */
   'session.status': { params: { id: string }; result: { repo: string | null; branch: string | null; limits: { fiveHour: LimitWindow | null; sevenDay: LimitWindow | null } | null; context: { tokens: number; max: number; pct: number } | null } };
   /** MCP 서버 상태 — 벤더가 지금 아는 값. session.ready 의 mcp 는 기동 때 것이고 실패 사유가 없다. 벤더가 안 떠 있거나 Codex 면 [] */
@@ -335,11 +342,16 @@ export type ServeMethods = {
 /** 새 버전 확인 결과 — restart-required 면 새 것의 version·build, failed 면 reason */
 export type UpdateCheck = { status: 'latest' | 'restart-required' | 'failed'; version?: string; build?: number; reason?: string };
 
+/** 턴 중에 친 명령과 그 뒤에 보낸 메시지 — idle 로 돌아오면 앞에서부터 하나씩 처리한다. text 는 화면에 보일 글(명령은 /<이름> <인자>), attachments 는 첨부 개수 */
+export type QueueItem = { kind: 'command' | 'message'; text: string; attachments?: number };
+
 /** 세션 소켓·웹의 이벤트 — 붙은 세션의 이벤트와 세션 상태 */
 export type Broadcasts = {
   'session.event': { id: string } & LoggedEvent;
   'session.changed': SessionInfo;
   'session.closed': { id: string; reason: string };
+  /** 입력 큐가 바뀔 때마다 큐 전체 — 메모리에만 있으므로 이벤트 로그에 남기지 않는다 (ticket slcode-agent-plugin-command) */
+  'session.queue': { id: string; items: QueueItem[] };
   /** 소유권을 빼앗긴 연결에만 — 새 소유자의 pid (protocol 3) */
   'core.owner': { pid: number | null };
   /** 내려가는 core 가 연결을 끊기 직전에 모든 연결에 — 새 core 의 pid·version. 받은 쪽은 닫힘이 아니라 같은 소켓에 다시 붙기로 다룬다 (3단계) */

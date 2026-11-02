@@ -1,0 +1,17 @@
+import { LoadedCommand } from '../slcode-plugin/src/hookRunner'
+import { Command } from './base'
+
+role: 입력창의 `/<명령>` 판정 (ticket slcode-agent-plugin-command, 사용자 결정 2026-11-02) — 에이전트 플러그인 명령인지는 core 가 정한다(화면은 후보를 보이고 짧은 이름을 넓혀 보낼 뿐). 대소문자는 가리지 않는다.
+
+export fn fullName(c) -> Text {
+  role: <플러그인>:<명령>
+}
+export fn commandTable(cmds, vendor) {
+  role: 쓸 수 있는 것과 막힌 것(사유) — Claude 내장 명령(SDK supportedCommands 의 builtin, 이름·별칭)과 이름이 같거나 전체 이름이 벤더 명령과 정확히 같으면 막는다. add 가 정적 목록(agentFormat.CLAUDE_BUILTIN_COMMANDS)으로 먼저 거르고, 여기서는 계정·기능 플래그·새 SDK 판에서 늘어난 것을 SDK 의 내장 표시로 다시 본다
+}
+export fn resolveCommand(text, usable, vendor) {
+  role: 첫 낱말 → 명령과 인자. 전체 이름은 그대로, 짧은 이름은 그 이름으로 맞는 것(플러그인 명령 이름, 벤더 명령의 전체 이름·':' 뒤 이름)이 하나뿐일 때만 — 다른 플러그인의 명령·skill, 사용자·프로젝트 skill 과 겹치면 전체 이름으로만(웹 자동 완성의 축약과 같은 규칙)
+}
+export fn completeInput(text, cursor, argsAt) {
+  role: complete 입력 — 인자 글을 공백으로 나눈 낱말, 커서 낱말(index)과 그 앞부분(value), 고른 후보로 바꿀 자리(start·end). 낱말 사이 빈자리는 새 낱말
+}

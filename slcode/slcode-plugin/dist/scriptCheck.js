@@ -1,6 +1,7 @@
 // js/ts 훅의 하네스 호환 검사 (ticket slcode-agent-plugin-script-portable, 사용자 결정 2026-10-30) — tsc 로 스크립트를 하네스별 `slcode/api` 타입에 맞춰 본다.
 // 하네스마다 이벤트에서 쓸 수 있는 메서드가 다르다(hookApi 의 METHODS·CODEX_METHODS). 쓸 수 없는 메서드·모르는 이벤트를 경고로 낸다 — 스크립트를 빼지 않는다(실행 중에는 무시·경고).
 // typescript 는 slcode·slcode-plugin 에 넣지 않는다: 처음 검사할 때 npm 레지스트리에서 받아 slcode 데이터 폴더에 둔다(버전·무결성 고정, 개발자 기능이라). 받지 못하면 경고하고 검사를 건너뛴다.
+// 명령(slcode.command, ticket slcode-agent-plugin-command)의 꼴도 같은 선언에 둔다 — 칸 이름 오타는 SlcodeCommandDef 진단으로 남는다.
 // 진단은 훅 API 에 걸린 것만 낸다 — node 타입(@types/node)은 받지 않으므로 그 밖의 진단(node 내장 import 등)은 버린다.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -48,11 +49,29 @@ ${allowed}
   interface SlcodeHookMatcherOptions extends SlcodeHookOptions { matcher?: string }
   type MatcherEvent = ${MATCHER_EVENTS.map((e) => `'${e}'`).join(' | ')};
   export type OnOptions<E extends SlcodeHookEvent> = E extends MatcherEvent ? SlcodeHookMatcherOptions : SlcodeHookOptions;
+  // 명령 (commands/<이름>/COMMAND.ts) — hookApi 의 CommandDef 와 같다
+  type SlcodeCommandSession = { id: string; cwd: string; readonly params: Readonly<Record<string, string>> };
+  export type SlcodeCommandCall = {
+    plugin: string; name: string; args: string; session: SlcodeCommandSession; state: Record<string, any>;
+    exec(cmd: string, args?: string[], opts?: ExecOptions): Promise<ExecResult>;
+    context(text: string): SlcodeCommandCall; message(text: string, look?: { icon?: SlcodeHookIcon; tone?: SlcodeHookTone }): SlcodeCommandCall;
+  };
+  export type SlcodeCommandCompleteInput = {
+    plugin: string; name: string; args: readonly string[]; index: number; value: string; raw: string;
+    session: SlcodeCommandSession; state: Readonly<Record<string, any>>;
+  };
+  export type SlcodeCommandItem = string | { value: string; label?: string; description?: string };
+  export type SlcodeCommandDef = {
+    description: string; argumentHint?: string; timeout?: number;
+    complete?(input: SlcodeCommandCompleteInput): readonly SlcodeCommandItem[] | Promise<readonly SlcodeCommandItem[]>;
+    run(cmd: SlcodeCommandCall): unknown;
+  };
   export const slcode: {
     readonly vars: Readonly<{ harness: 'claude' | 'codex' }>;
     on<E extends SlcodeHookEvent>(event: E, callback: (hook: SlcodeHook<E>) => unknown): void;
     on<E extends SlcodeHookEvent>(event: E, opts: OnOptions<E>, callback: (hook: SlcodeHook<E>) => unknown): void;
     run(): void;
+    command(def: SlcodeCommandDef): void;
   };
 }
 `;
@@ -94,7 +113,7 @@ export async function checkScripts(files, harnesses, stateDir, base) {
             out.warnings[h] = ts.getPreEmitDiagnostics(program)
                 .filter((d) => d.file && mine.has(path.resolve(d.file.fileName)))
                 .map((d) => ({ d, text: ts.flattenDiagnosticMessageText(d.messageText, ' ') }))
-                .filter(({ text }) => /SlcodeHook|'slcode\/api'/.test(text))
+                .filter(({ text }) => /SlcodeHook|SlcodeCommand|'slcode\/api'/.test(text))
                 .map(({ d, text }) => `${path.relative(base, d.file.fileName).split(path.sep).join('/')}:${d.file.getLineAndCharacterOfPosition(d.start).line + 1}: ${text}`);
         }
     }

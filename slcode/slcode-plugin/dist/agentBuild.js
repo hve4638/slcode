@@ -5,11 +5,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { buildId, frontmatter, mcpTransport, partLost, valuesString, walk } from './agentFormat.js';
-import { buildPartHooks, CODEX_EVENTS, partCommandHooks } from './agentHooks.js';
+import { buildId, commandFiles, COMMANDS_DIR, frontmatter, mcpTransport, partLost, valuesString, walk } from './agentFormat.js';
+import { buildPartCommands, buildPartHooks, CODEX_EVENTS, partCommandHooks } from './agentHooks.js';
 /** 빌드 폴더 안의 이름들 — build/<식별자>/ 아래. codexArgs 는 Codex 빌드의 app-server 인자(-c mcp_servers…).
  *  codexMcp·codexHooks 는 Codex export 가 플러그인의 .mcp.json·hooks/hooks.json 으로 쓴다 — slcode 의 Codex 세션은 쓰지 않는다 */
-export const BUILD_FILES = { report: 'report.json', instructions: 'instructions.md', settings: 'session.json', codexArgs: 'codex-args.json', codexMcp: 'codex-mcp.json', codexHooks: 'codex-hooks.json', scripts: 'scripts.json' };
+export const BUILD_FILES = { report: 'report.json', instructions: 'instructions.md', settings: 'session.json', codexArgs: 'codex-args.json', codexMcp: 'codex-mcp.json', codexHooks: 'codex-hooks.json', scripts: 'scripts.json', commands: 'commands.json' };
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const readJson = (f) => { try {
     return JSON.parse(fs.readFileSync(f, 'utf8'));
@@ -22,8 +22,9 @@ const RAW = 'raw/claude/';
 const CODEX_SHORT = new Set(['SessionEnd', 'Interrupt']);
 /** src(설치한 원본)의 켠 part 를 out 에 Claude 빌드로 쓴다 — out/claude/<이름>/ (플러그인 폴더), instructions.md, session.json(있으면), report.json. tools 는 esbuild 캐시 폴더 */
 export function buildClaude(src, m, r, id, out, tools = '') {
-    const report = { harness: 'claude', name: m.name, version: m.version, build: id, values: valuesString(r), parts: [], instructions: { used: [], skipped: [] }, overridden: [], dropped: [], lost: [], scripts: { built: [], failed: [], warnings: [] } };
+    const report = { harness: 'claude', name: m.name, version: m.version, build: id, values: valuesString(r), parts: [], instructions: { used: [], skipped: [] }, overridden: [], dropped: [], lost: [], scripts: { built: [], failed: [], warnings: [] }, commands: { built: [], failed: [], warnings: [] } };
     const scripts = [];
+    const commands = [];
     const files = new Map();
     const hooks = {};
     const mcp = {};
@@ -36,7 +37,12 @@ export function buildClaude(src, m, r, id, out, tools = '') {
         report.parts.push(part);
         report.lost.push(...partLost(src, part).claude);
         const pdir = path.join(src, part);
-        const all = walk(pdir);
+        const all = walk(pdir).filter((f) => !f.startsWith(`${COMMANDS_DIR}/`)); // 명령은 slcode 전용 — 플러그인 폴더에 넣지 않는다
+        const cmds = buildPartCommands(pdir, part, commandFiles(src, part).commands, out, commands, tools);
+        if (cmds.missing)
+            report.toolMissing = cmds.missing;
+        report.commands.failed.push(...cmds.failed);
+        report.commands.warnings.push(...cmds.warnings);
         // 바깥 항목 먼저, 그 위에 raw/claude/ — raw/ 의 다른 폴더는 무시한다
         const entries = [...all.filter((f) => !f.startsWith('raw/')).map((f) => ({ rel: f, raw: false })), ...all.filter((f) => f.startsWith(RAW)).map((f) => ({ rel: f.slice(RAW.length), raw: true }))];
         for (const { rel, raw } of entries) {
@@ -142,6 +148,9 @@ export function buildClaude(src, m, r, id, out, tools = '') {
     report.scripts.built = scripts.map((x) => x.src);
     if (scripts.length)
         fs.writeFileSync(path.join(out, BUILD_FILES.scripts), JSON.stringify(scripts, null, 2));
+    report.commands.built = commands.map((c) => c.src);
+    if (commands.length)
+        fs.writeFileSync(path.join(out, BUILD_FILES.commands), JSON.stringify(commands, null, 2));
     fs.writeFileSync(path.join(out, BUILD_FILES.report), JSON.stringify(report, null, 2));
     return report;
 }
@@ -170,6 +179,8 @@ export function buildCodex(src, m, r, id, out, root, data) {
         report.lost.push(...partLost(src, part).codex);
         const pdir = path.join(src, part);
         for (const rel of walk(pdir)) {
+            if (rel.startsWith(`${COMMANDS_DIR}/`))
+                continue; // 명령은 slcode 의 Claude 세션 전용 — partLost 가 적었다
             if (rel === 'hooks/hooks.json') { // slcode 의 Codex 세션은 싣지 않는다(partLost 가 적었다) — export 만 쓴다
                 const h = partCommandHooks(readJson(path.join(pdir, rel)), part, 'codex', CODEX_EVENTS);
                 if (!h) {

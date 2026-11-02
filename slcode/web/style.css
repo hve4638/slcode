@@ -161,6 +161,7 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .user .acts { justify-content: flex-end; }
 .acf .assistant .acts { margin-left: -6px; }
 .acf .user .origin { display: block; font-size: 11px; color: var(--acf-muted); margin-bottom: 2px; }
+/* 에이전트 플러그인 명령 (ticket slcode-agent-plugin-command) — 턴이 아니라 내 쪽의 옅은 테두리 한 줄, 이름은 고정폭 */
 .acf .assistant { word-break: break-word; }
 /* 마지막 블록의 아래 여백은 없앤다 — 끝에 붙는 아이콘 줄(.acts)은 세지 않는다 */
 .acf .assistant > :first-child { margin-top: 0; } .acf .assistant > :nth-last-child(1 of :not(.acts)) { margin-bottom: 0; }
@@ -323,6 +324,9 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .card details.in > summary:hover { color: var(--acf-fg); }
 .acf .card details.in[open] > summary { margin-bottom: 6px; }
 .acf .composer { padding: 8px 16px 14px; }
+.acf .composer .queue { max-width: 780px; max-height: 30vh; overflow-y: auto; margin: 0 auto 8px; display: flex; flex-direction: column; gap: 6px; }
+.acf .composer .queue[hidden] { display: none; }
+.acf .composer > .busy { max-width: 780px; margin: 0 auto 8px; }
 .acf .composer .box { max-width: 780px; margin: 0 auto; background: var(--acf-panel); border: 1px solid var(--acf-line); border-radius: 14px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
 /* 아래 줄: 왼쪽 첨부·권한 모드, 오른쪽 모델·effort·보내기 (사용자 2026-10-13). 좁으면 모델 이름만 잘린다 — 권한 모드·effort 는 짧아서 그대로 */
 .acf .composer .row { display: flex; gap: 6px; align-items: center; min-width: 0; }
@@ -501,6 +505,8 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 /* 인자 힌트가 길면 이름 쪽이 먼저 잘린다 — 설명이 화면 밖으로 밀리지 않게 */
 .acf .menu.slash .name { flex: 0 1 auto; min-width: 0; max-width: 60%; font-family: var(--acf-mono); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .acf .menu.slash .hint { color: var(--acf-muted); }
+.acf .menu.slash .tag { flex: none; font-size: 11px; padding: 0 6px; border-radius: 4px; background: var(--acf-soft); color: var(--acf-accent); }
+.acf .menu.slash .argh { display: flex; gap: 12px; padding: 5px 10px; border-bottom: 1px solid var(--acf-line); cursor: default; }
 .acf .menu.slash .desc { flex: 1; min-width: 0; color: var(--acf-muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .acf .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .acf .chips:empty { display: none; }

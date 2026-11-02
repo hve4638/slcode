@@ -7,8 +7,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { buildId, compat, HARNESSES, MANIFEST, parseAssignment, readManifest, resolveValues, sourceFiles, sourceHash, valuesString, userValues, walk, whenText, type Harness, type Manifest, type Values } from './agentFormat.js';
+import { buildId, commandErrors, commandFiles, compat, HARNESSES, MANIFEST, parseAssignment, readManifest, resolveValues, sourceFiles, sourceHash, valuesString, userValues, walk, whenText, type Harness, type Manifest, type Values } from './agentFormat.js';
 import { BUILD_FILES, ensureBuild, type Report } from './agentBuild.js';
+import { buildPartCommands } from './agentHooks.js';
 import { acquireLock, releaseLock } from './lock.js';
 import { defaultStateDir } from './paths.js';
 import { exportTo, refreshExport, unexport, withPartConditions, EXPORT_HARNESSES, type ExportHarness, type ExportReport, type ExportResult } from './agentExport.js';
@@ -130,6 +131,22 @@ export function refreshLauncher(ap: AgentPaths, c = readConfig(ap)) {
 /** 마지막 Claude 빌드가 esbuild 를 받지 못해 js/ts 훅을 뺀 것인가 — 같은 원본을 다시 add 하면 받아 본다 */
 const toolMissing = (ap: AgentPaths, e: PluginEntry) => { try { return !!JSON.parse(fs.readFileSync(path.join(ap.build, e.builds.claude ?? '-', BUILD_FILES.report), 'utf8')).toolMissing; } catch { return false; } };
 
+/** 명령 검사 (ticket slcode-agent-plugin-command) — 이름(commandErrors)과 COMMAND 파일의 꼴(묶어 한 번 싣는다)을 모든 part 에서 본다. 틀리면 던진다(플러그인 적용 실패, 사용자 결정 2026-11-02).
+ *  esbuild 를 받지 못하면 꼴 검사는 건너뛴다 — 빌드가 그 명령을 빼고 다음 add 때 다시 받아 본다 */
+function checkCommands(src: string, m: Manifest, tools: string) {
+  const errors = commandErrors(src, m);
+  if (!errors.length) {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-cmd-check-'));
+    try {
+      for (const part of Object.keys(m.parts)) {
+        const r = buildPartCommands(path.join(src, part), part, commandFiles(src, part).commands, tmp, [], tools);
+        if (!r.missing) errors.push(...r.failed);
+      }
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  }
+  if (errors.length) throw new Error(`${m.name}: agent plugin commands are invalid —\n  ${errors.join('\n  ')}`);
+}
+
 /** 원본을 installed/<이름>/ 에 복사한다. 내용 해시가 같으면 아무것도 하지 않는다. 새 판이면 기본 설정(맞는 값만 남긴다)으로 다시 빌드한다.
  *  manifest 가 없거나 깨졌으면 던진다 — 설치를 거부하는 유일한 경우 */
 export async function addPlugin(src: string, stateDir?: string, env: NodeJS.ProcessEnv = process.env): Promise<AddResult> {
@@ -142,6 +159,7 @@ export async function addPlugin(src: string, stateDir?: string, env: NodeJS.Proc
     const prev = c.plugins[m.name];
     const inst = path.join(ap.installed, m.name);
     if (prev && prev.hash === hash && fs.existsSync(path.join(inst, MANIFEST)) && !toolMissing(ap, prev)) return { name: m.name, version: prev.version, changed: false, grade: prev.grade, lost: prev.lost, build: prev.builds.claude ?? null };
+    checkCommands(abs, m, path.join(ap.dir, 'tools'));
     fs.mkdirSync(ap.installed, { recursive: true });
     replaceDir(inst, (tmp) => {
       for (const rel of sourceFiles(abs, m)) {
@@ -268,13 +286,16 @@ export async function scriptWarnings(name: string, build: string, stateDir?: str
   const ap = agentPaths(stateDir);
   let rep: Report;
   try { rep = JSON.parse(fs.readFileSync(path.join(ap.build, build, BUILD_FILES.report), 'utf8')); } catch { return []; }
-  const sc = rep.scripts;
-  if (!sc || !(sc.built.length + sc.failed.length)) return [];
-  const lines = [...sc.failed.map((x) => `  failed: ${x}`), ...sc.warnings.map((x) => `  warning: ${x}`)];
+  const sc = rep.scripts ?? { built: [], failed: [], warnings: [] }, cm = rep.commands ?? { built: [], failed: [], warnings: [] };
+  if (!(sc.built.length + sc.failed.length + cm.built.length + cm.failed.length)) return [];
+  const lines = [...sc.failed, ...cm.failed].map((x) => `  failed: ${x}`).concat([...sc.warnings, ...cm.warnings].map((x) => `  warning: ${x}`));
   const inst = path.join(ap.installed, name);
   const c = await checkScripts(sc.built.map((s) => path.join(inst, s)), ['claude', 'codex'], stateDir ?? defaultStateDir(), inst);
-  if (c.skipped) lines.push(`  type check skipped: ${c.skipped}`);
-  for (const [h, ws] of Object.entries(c.warnings)) lines.push(...ws.map((w) => `  ${h === 'codex' ? 'codex export' : h}: ${w}`));
+  // 명령은 slcode 의 Claude 세션에서만 돈다 — claude 표로만 본다
+  const k = await checkScripts(cm.built.map((s) => path.join(inst, s)), ['claude'], stateDir ?? defaultStateDir(), inst);
+  const skipped = c.skipped ?? k.skipped;
+  if (skipped) lines.push(`  type check skipped: ${skipped}`);
+  for (const r of [c, k]) for (const [h, ws] of Object.entries(r.warnings)) lines.push(...ws.map((w) => `  ${h === 'codex' ? 'codex export' : h}: ${w}`));
   return lines;
 }
 

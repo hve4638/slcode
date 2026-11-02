@@ -13,4 +13,9 @@ export const slcode = {
         collect.on(event, a, b);
     },
     run() { collect?.run(); },
+    command(def) {
+        if (!collect)
+            throw new Error('slcode/api: this script runs only through slcode (agent plugin commands)');
+        collect.command(def);
+    },
 };
