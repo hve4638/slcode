@@ -1346,6 +1346,28 @@ export function mountAgentFront(root, transport, opts = {}) {
     }
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (slashMenu.matches(':popover-open')) slashMenu.hidePopover(); send(); } else if (e.key === 'Escape' && !busy.hidden && current) { e.preventDefault(); rpc('session.interrupt', { id: current }); } };
   input.oninput = () => { input.style.height = ''; input.style.height = Math.min(input.scrollHeight, 220) + 'px'; canSend(); slashSel = 0; slashDraw(); saveDraft(); };
+  // 어디서 쳐도 입력창으로 (ticket slcode-input-type-anywhere, 사용자 2026-11-02 — chatgpt.com 실측을 따른다). 포커스가 입력창 밖(대화·헤더·사이드바·버튼)이면
+  // 글자 키와 붙여넣기는 포커스만 입력창으로 옮겨 브라우저 기본 동작이 그 자리에 넣게 한다 — focus() 는 직전 커서·선택을 그대로 둔다.
+  // Space·Enter·화살표·Ctrl 조합(복사 등)은 넘기지 않는다. 다른 입력 요소·dialog·메뉴가 키를 받는 중이거나 승인 카드가 입력창 자리를 차지하면 그대로 둔다.
+  // superlite 우선 단축키는 카드 문서의 전달 스크립트가 window capture 에서 먼저 받아 전파를 끊으므로 여기 오지 않는다
+  const typingIn = (t) => t instanceof Element && t.closest('input, textarea, select, [contenteditable]:not([contenteditable=false]), dialog, [popover]');
+  const canTake = () => !input.disabled && !composer.hidden && !el.querySelector('.menu:popover-open:not(.slash)');
+  document.addEventListener('keydown', (e) => {
+    if (e.defaultPrevented || e.isComposing || typingIn(e.target) || !canTake()) return;
+    const mod = e.ctrlKey || e.metaKey || e.altKey;
+    const char = e.key.length === 1 && e.key !== ' ' && (!mod || e.getModifierState('AltGraph'));
+    const paste = ((e.ctrlKey || e.metaKey) && !e.altKey && e.code === 'KeyV') || (e.shiftKey && !mod && e.key === 'Insert');
+    if (char || paste) input.focus({ preventScroll: true });
+  });
+  // 빈 곳·글자 위를 누르면 입력창으로 — IME 가 첫 글자부터 켜진다 (chatgpt.com 과 같게, 사용자 2026-11-02). 누를 거리(버튼·링크·접기)와 끌어서 고른 글은 그대로.
+  // 이렇게 옮긴 포커스는 치기 전까지 커서를 숨긴다(parked) — 입력창을 누르지 않았는데 커서가 깜빡이면 거기 포커스를 둔 것처럼 보인다 (사용자 2026-11-02)
+  el.addEventListener('click', (e) => {
+    if (e.button !== 0 || e.defaultPrevented || !canTake() || !getSelection().isCollapsed) return;
+    if (typingIn(e.target) || e.target.closest('a, button, label, summary, [tabindex], [role=button]')) return;
+    input.focus({ preventScroll: true });
+    input.classList.add('parked');
+  });
+  for (const t of ['keydown', 'input', 'mousedown', 'blur']) input.addEventListener(t, () => input.classList.remove('parked'));
   renderSide();
   return { rpc, get sessionId() { return current; } };
 }
