@@ -38,3 +38,17 @@ test('markdown: <…> 로 감싼 주소와 상대 경로(./ ../ 맨 이름) — 
   assert.equal(renderMarkdown('[x](javascript:alert(1)) [y](<mailto:a@b>) [z](#top)', '/w'), '<p>[x](javascript:alert(1)) [y](&lt;mailto:a@b&gt;) [z](#top)</p>', '다른 scheme·앵커는 원문');
   assert.equal(renderMarkdown('그 [메모](참고 자료) 처럼', '/w'), '<p>그 [메모](참고 자료) 처럼</p>', '꺾쇠 없이 공백이 든 괄호는 원문');
 });
+
+test('markdown: 목록 중첩 — 표지보다 깊게 들여쓴 줄은 그 항목에 속한다 (2칸도 하위), 빈 줄로 띄운 항목은 한 목록, 번호는 원문의 첫 번호부터 (ticket slcode-markdown-nested-list)', () => {
+  assert.equal(renderMarkdown('1. 폴더 이름표\n    - 가: 없앰\n    - 나: 남김\n2. 입력 칸\n    - 가: 같은 칸\n3. 끝'),
+    '<ol><li>폴더 이름표<ul><li>가: 없앰</li><li>나: 남김</li></ul></li><li>입력 칸<ul><li>가: 같은 칸</li></ul></li><li>끝</li></ol>', '보고된 꼴: 번호 아래 4칸 불릿');
+  assert.equal(renderMarkdown('- a\n  - b\n    - c\n- d'), '<ul><li>a<ul><li>b<ul><li>c</li></ul></li></ul></li><li>d</li></ul>', '2칸씩 세 단계');
+  assert.equal(renderMarkdown('1. a\n  1. b\n  2. c\n2. d'), '<ol><li>a<ol><li>b</li><li>c</li></ol></li><li>d</li></ol>', '번호 아래 2칸 번호도 하위 (CommonMark 는 형제로 본다)');
+  assert.equal(renderMarkdown('- a\n  more\n- b'), '<ul><li>a<br>more</li><li>b</li></ul>', '들여쓴 이어진 줄은 같은 항목');
+  assert.equal(renderMarkdown('1. a\n\n   para\n\n2. b'), '<ol><li>a<p>para</p></li><li>b</li></ol>', '빈 줄 뒤 들여쓴 문단도 항목 안, 번호는 이어진다');
+  assert.equal(renderMarkdown('1. run\n   ```sh\n   ls -a\n     x\n   ```\n2. done'),
+    '<ol><li>run<pre><code class="lang-sh">ls -a\n  x</code></pre></li><li>done</li></ol>', '항목 안 코드 펜스는 상대 들여쓰기를 지킨다');
+  assert.equal(renderMarkdown('1. a\n\n2. b\n\n3. c'), '<ol><li>a</li><li>b</li><li>c</li></ol>', '빈 줄로 띄운 항목');
+  assert.equal(renderMarkdown('1. a\n- x\n2. b'), '<ol><li>a</li></ol><ul><li>x</li></ul><ol start="2"><li>b</li></ol>', '꼴이 바뀌면 목록이 끊기고, 번호는 원문대로');
+  assert.equal(renderMarkdown('- a\n- b\n\ntext'), '<ul><li>a</li><li>b</li></ul><p>text</p>', '들여쓰지 않은 문단은 목록 밖');
+});

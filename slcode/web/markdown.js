@@ -1,5 +1,5 @@
 // 최소 마크다운 → HTML. 스트리밍 중 매 델타마다 전체를 다시 그리므로 가볍게 둔다.
-// 지원: 제목, 코드 펜스, 인라인 코드, 굵게·기울임, 목록(-, *, 1.), 인용, 링크, 이미지, 표, 단락. 중첩 목록은 원문 그대로.
+// 지원: 제목, 코드 펜스, 인라인 코드, 굵게·기울임, 목록(-, *, 1. 중첩·항목 안 블록 포함), 인용, 링크, 이미지, 표, 단락.
 // 링크·이미지는 웹 주소와 로컬 파일 절대 경로 — 에이전트에게 알리는 문구는 src/prompt.ts (ticket slcode-append-system-prompt). 형식을 바꾸면 같이 바꾼다.
 // 상대 경로(./ ../ 맨 이름)와 <…> 로 감싼 주소도 받는다 — 고정 지시 없는 세션이 쓴다. 상대 경로는 세션 cwd 기준 절대 경로로 풀고, cwd 를 모르면 원문 (ticket slcode-markdown-relative-links).
 
@@ -59,10 +59,44 @@ const SEP = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
 const cells = (line) => line.trim().replace(/^\||\|$/g, '').split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, '|'));
 const isTable = (lines, i) => lines[i].trimStart().startsWith('|') && i + 1 < lines.length && lines[i + 1].includes('-') && SEP.test(lines[i + 1]);
 
+// 목록 — 표지보다 깊게 들여쓴 줄(빈 줄 뒤라도)은 그 항목에 속해 블록으로 다시 그린다. CommonMark 는 내용 칸(1. 이면 3칸)까지 들여써야 하위로 보지만,
+// 모델이 흔히 쓰는 2칸 하위 목록도 하위로 보도록 표지보다 한 칸이라도 깊으면 받는다 (ticket slcode-markdown-nested-list)
+const LI = /^(\s*)([-*]|\d+\.)\s+/;
+const indent = (l) => l.match(/^\s*/)[0].length;
+const startsBlock = (l) => /^(```|#{1,4}\s|\s*([-*]|\d+\.)\s|>)/.test(l);
+function list(lines, i, html) {
+  const m0 = lines[i].match(LI), base = m0[1].length, ordered = /\d/.test(m0[2]);
+  const items = [];
+  for (let m; i < lines.length && (m = lines[i].match(LI)) && m[1].length <= base && /\d/.test(m[2]) === ordered;) {
+    const head = [lines[i++].slice(m[0].length)], body = [];
+    for (let j = i; j < lines.length; j++) {
+      if (!lines[j].trim()) continue;
+      if (indent(lines[j]) <= base) break;
+      while (i <= j) body.push(lines[i++]);
+    }
+    const cut = body.length ? indent(body.find((l) => l.trim())) : 0;
+    const rest = body.map((l) => l.slice(Math.min(cut, indent(l))));
+    while (rest.length && rest[0].trim() && !startsBlock(rest[0])) head.push(rest.shift());
+    items.push(`<li>${inline(head.join('\n')).replace(/\n/g, '<br>')}${blocks(rest)}</li>`);
+    // 빈 줄 뒤라도 같은 꼴의 다음 항목이면 한 목록으로 잇는다 — 끊으면 번호가 1. 부터 다시 시작한다 (사용자 결정 2026-11-02)
+    let k = i;
+    while (k < lines.length && !lines[k].trim()) k++;
+    const n = lines[k]?.match(LI);
+    if (n && n[1].length <= base && /\d/.test(n[2]) === ordered) i = k;
+  }
+  // 번호 목록은 원문의 첫 번호부터 — 사이에 다른 블록이 끼어 끊겨도 번호가 이어진다 (사용자 결정 2026-11-02)
+  const start = ordered ? parseInt(m0[2], 10) : 1;
+  html.push(ordered ? `<ol${start !== 1 ? ` start="${start}"` : ''}>${items.join('')}</ol>` : `<ul>${items.join('')}</ul>`);
+  return i;
+}
+
 /** base: 세션 cwd — 상대 경로 링크·이미지를 풀 기준. 그리는 동안만 쓴다 */
 export function renderMarkdown(src, base = '') {
   cwd = base;
-  const lines = src.split('\n');
+  return blocks(src.split('\n'));
+}
+
+function blocks(lines) {
   const html = [];
   let i = 0;
   while (i < lines.length) {
@@ -77,13 +111,7 @@ export function renderMarkdown(src, base = '') {
     }
     const h = line.match(/^(#{1,4})\s+(.*)/);
     if (h) { html.push(`<h${h[1].length + 1}>${inline(h[2])}</h${h[1].length + 1}>`); i++; continue; }
-    if (/^\s*([-*]|\d+\.)\s+/.test(line)) {
-      const ordered = /^\s*\d+\./.test(line);
-      const items = [];
-      while (i < lines.length && /^\s*([-*]|\d+\.)\s+/.test(lines[i])) items.push(lines[i++].replace(/^\s*([-*]|\d+\.)\s+/, ''));
-      html.push(`<${ordered ? 'ol' : 'ul'}>${items.map((t) => `<li>${inline(t)}</li>`).join('')}</${ordered ? 'ol' : 'ul'}>`);
-      continue;
-    }
+    if (LI.test(line)) { i = list(lines, i, html); continue; }
     if (isTable(lines, i)) {
       const head = cells(line);
       const align = cells(lines[i + 1]).map((c) => (c.startsWith(':') && c.endsWith(':') ? 'center' : c.endsWith(':') ? 'right' : ''));
@@ -101,7 +129,7 @@ export function renderMarkdown(src, base = '') {
     }
     if (!line.trim()) { i++; continue; }
     const buf = [];
-    while (i < lines.length && lines[i].trim() && !/^(```|#{1,4}\s|\s*([-*]|\d+\.)\s|>)/.test(lines[i]) && !(buf.length && isTable(lines, i))) buf.push(lines[i++]);
+    while (i < lines.length && lines[i].trim() && !startsBlock(lines[i]) && !(buf.length && isTable(lines, i))) buf.push(lines[i++]);
     html.push(`<p>${inline(buf.join('\n')).replace(/\n/g, '<br>')}</p>`);
   }
   return html.join('');
