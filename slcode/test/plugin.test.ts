@@ -406,6 +406,26 @@ test('카드: {fatal} 을 내고 끝나면 다시 띄우지 않고 그 오류와
   } finally { await c.restore(); }
 });
 
+test('카드: 핸드오프의 새 카드가 기동에 실패하면 [다시 시도] 도 --takeover 로 띄운다. 붙은 뒤의 다시 붙기는 takeover 없이 (ticket slcode-update-no-session-old-dir)', async () => {
+  const asked: { takeover?: boolean }[] = [];
+  const c = await mountCard({ key: 'k', id: 's1', takeover: true, from: 'old' }, async (m, a) => { if (m === 'command') asked.push(a as { takeover?: boolean }); return 'cmd'; });
+  const find = (el: any): any => (el.textContent === '다시 시도' ? el : el.children.map(find).find(Boolean));
+  try {
+    assert.equal(asked.at(-1)?.takeover, true);
+    c.msg({ fatal: 'no session s1' });
+    await c.exit();
+    find(c.el).onclick();
+    await tick();
+    assert.equal(c.opens.length, 2);
+    assert.equal(asked.at(-1)?.takeover, true, '아직 소유권을 가져오지 못했다 — 없이 붙으면 옛 카드를 정리할 때 옛 serve 가 세션을 닫는다');
+    c.msg({ url: null, id: 's1', sock: '/s' });
+    await c.exit();
+    await new Promise((r) => setTimeout(r, 1100));
+    assert.equal(c.opens.length, 3);
+    assert.equal(asked.at(-1)?.takeover, false, '붙은 뒤에는 그 사이 소유권이 다른 카드로 갔을 수 있다');
+  } finally { await c.restore(); }
+});
+
 test('카드: {fatal} 없이 끝나면 한 번 더 띄워 보고, 또 끝나면 --version 의 stderr 를 보인다', async () => {
   const c = await mountCard({ key: 'k', id: null, spawn: { cwd: '/w' } }, async (m) => (m === 'checkUpdate' ? { status: 'failed', reason: 'sh: slcode: not found' } : 'cmd'));
   try {

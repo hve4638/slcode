@@ -14,6 +14,7 @@ import type { InspectCall, InspectRecord, InspectUsage } from './protocol.js';
 import { pidAlive } from './lock.js';
 import { sockAlive } from './live.js';
 import { EventLog } from './eventLog.js';
+import { sessionRoots } from './paths.js';
 
 const DAY = 24 * 3600 * 1000;
 /** 세션 하나의 raw 합 상한 — 넘으면 오래된 raw 부터 지운다 (사용자 2026-10-17: 세션의 74% 가 통째로 남는 크기) */
@@ -328,7 +329,7 @@ type Entry = { dir: string; bytes: number; live: boolean };
 async function sessionInspects(sessionsDir: string): Promise<Entry[]> {
   const ls = (d: string) => { try { return fs.readdirSync(d, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path.join(d, e.name)); } catch { return []; } };
   const out: Entry[] = [];
-  for (const sdir of ls(sessionsDir).flatMap(ls)) {
+  for (const sdir of sessionRoots(sessionsDir).flatMap(ls).flatMap(ls)) {
     const dir = path.join(sdir, 'inspect');
     if (!InspectStore.exists(dir)) continue;
     out.push({ dir, bytes: folderBytes(dir), live: await liveSession(sessionsDir, sdir) });

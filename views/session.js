@@ -239,7 +239,7 @@ export function mount(el, ctx) {
         c.hello = false; c.fatal = null;
         // 곧바로 끝난 프로세스(실행 파일 없음 등)는 붙기 전에 사라져 open 이 거절한다 — superlite 의 문구("실행 중이 아니다")보다 실제 사유를
         const conn = await ctx.services.open(SVC, { owner, command }).catch(async (e) => { throw new Error(await exitReason(String(e?.message ?? e))); });
-        c.conn = conn; c.lost = false; c.takeover = false; // 다시 띄울 때는 보통 resume — 그 사이 소유권이 다른 카드로 갔을 수 있다
+        c.conn = conn; c.lost = false;
         conn.onClose((reason) => {
           c.conn = null; c.attached = false; c.url = null; c.lost = true; dropped = true; badge();
           portStatus(false); // 카드 모드 화면은 그대로 두고 끊겼다고만 — 다시 붙으면 같은 포트로 이어진다
@@ -354,6 +354,7 @@ export function mount(el, ctx) {
   }
   /** 핸드오프의 새 카드에 serve 가 붙었다(소유권을 가져왔다) — 옛 카드를 옮겨진 카드로(이 창의 renderer 가 전한다), state 의 takeover 는 지운다 */
   function handedOver() {
+    c.takeover = false; // 다시 띄울 때는 보통 resume — 그 사이 소유권이 다른 카드로 갔을 수 있다. 기동에 실패한 동안은 남긴다 — [다시 시도] 가 takeover 없이 붙으면 옛 카드를 정리할 때 옛 serve 가 세션을 닫는다
     if (!c.from) return;
     void ctx.post({ type: 'moveOut', from: c.from });
     c.from = null;

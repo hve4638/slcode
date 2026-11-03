@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { HistorySummary, LoggedEvent, OutlineItem, PromptTurn, SessionInfo, Vendor } from './protocol.js';
-import { cwdSlug, sessionDir } from './paths.js';
+import { cwdSlug, sessionDir, sessionRoots } from './paths.js';
 
 export type SessionMeta = {
   id: string;
@@ -138,8 +138,9 @@ export class EventLog {
   meta: SessionMeta;
 
   constructor(sessionsDir: string, meta: SessionMeta) {
-    this.sessionsDir = sessionsDir;
-    this.dir = sessionDir(sessionsDir, meta.cwd, meta.id);
+    // 그 세션이 있는 쪽 — 없으면(새 세션) sessionsDir. 옛 폴더의 세션은 소켓도 거기다 (옛 폴더 호환, 1.0.0 에서 지운다: ticket slcode-remove-legacy-state-dir)
+    this.sessionsDir = sessionRoots(sessionsDir).find((r) => fs.existsSync(EventLog.metaPath(sessionDir(r, meta.cwd, meta.id)))) ?? sessionsDir;
+    this.dir = sessionDir(this.sessionsDir, meta.cwd, meta.id);
     this.meta = meta;
   }
 
@@ -172,20 +173,24 @@ export class EventLog {
 
   /** 세션 폴더 찾기 — cwd 없이 id 만 알 때 (CLI 관리 명령). 슬러그 폴더를 훑는다 */
   static find(sessionsDir: string, id: string): string | null {
-    let slugs: string[] = [];
-    try { slugs = fs.readdirSync(sessionsDir); } catch { return null; }
-    for (const s of slugs) { const d = path.join(sessionsDir, s, id); if (fs.existsSync(EventLog.metaPath(d))) return d; }
+    for (const root of sessionRoots(sessionsDir)) {
+      let slugs: string[] = [];
+      try { slugs = fs.readdirSync(root); } catch { continue; }
+      for (const s of slugs) { const d = path.join(root, s, id); if (fs.existsSync(EventLog.metaPath(d))) return d; }
+    }
     return null;
   }
 
   /** 저장 세션 meta — cwd 를 주면 그 슬러그 폴더만 (--continue), 없으면 전부 */
   static list(sessionsDir: string, cwd?: string): SessionMeta[] {
-    const slugs = cwd ? [cwdSlug(cwd)] : (() => { try { return fs.readdirSync(sessionsDir); } catch { return []; } })();
     const out: SessionMeta[] = [];
-    for (const s of slugs) {
-      let ids: string[] = [];
-      try { ids = fs.readdirSync(path.join(sessionsDir, s)); } catch { continue; }
-      for (const id of ids) { try { out.push(JSON.parse(fs.readFileSync(EventLog.metaPath(path.join(sessionsDir, s, id)), 'utf8'))); } catch {} }
+    for (const root of sessionRoots(sessionsDir)) {
+      const slugs = cwd ? [cwdSlug(cwd)] : (() => { try { return fs.readdirSync(root); } catch { return []; } })();
+      for (const s of slugs) {
+        let ids: string[] = [];
+        try { ids = fs.readdirSync(path.join(root, s)); } catch { continue; }
+        for (const id of ids) { try { out.push(JSON.parse(fs.readFileSync(EventLog.metaPath(path.join(root, s, id)), 'utf8'))); } catch {} }
+      }
     }
     return out.sort((a, b) => a.createdAt - b.createdAt);
   }

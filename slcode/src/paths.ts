@@ -9,18 +9,34 @@ import fs from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { FILES } from './protocol.js';
 
+const defaultDir = (name: 'slcode' | 'agent-core') => path.join(os.homedir(), '.local', 'state', name);
+
 export function coreDir(): string {
-  // 2026-10-02 개명 agent-core → slcode. 옛 이름은 한 버전 동안 폴백: 환경 변수 AGENT_CORE_DIR, 기본 폴더는 새 폴더가 없고 옛 폴더가 있으면 옛 폴더를 그대로 쓴다 (세션 이주 없음)
+  // 2026-10-02 개명 agent-core → slcode. 옛 이름은 한 버전 동안 폴백: 환경 변수 AGENT_CORE_DIR
   const fromEnv = process.env.SLCODE_DIR ?? process.env.AGENT_CORE_DIR;
-  if (fromEnv) return fromEnv;
-  const state = path.join(os.homedir(), '.local', 'state');
-  const cur = path.join(state, 'slcode'), old = path.join(state, 'agent-core');
-  return !fs.existsSync(cur) && fs.existsSync(old) ? old : cur;
+  return fromEnv || defaultDir('slcode');
+}
+
+// 옛 상태 폴더 호환 (ticket slcode-update-no-session-old-dir, 사용자 결정 2026-11-04). 1.0.0 에서 지운다 (ticket slcode-remove-legacy-state-dir).
+// 개명 전 세션은 ~/.local/state/agent-core 에 그대로 두고 함께 찾는다. 새 세션과 그 밖의 상태(프로필·플러그인·core.log·쓰는 설정)는 새 폴더다.
+// 지정한 폴더(--dir·$SLCODE_DIR)는 그 폴더만 본다 — 격리한 시험이 사용자의 세션을 찾아가면 안 된다.
+
+/** 세션을 찾을 sessions 폴더들 — 먼저 나온 쪽이 이긴다 */
+export function sessionRoots(sessionsDir: string): string[] {
+  return path.resolve(sessionsDir) === path.join(defaultDir('slcode'), FILES.sessionsDir) ? [sessionsDir, path.join(defaultDir('agent-core'), FILES.sessionsDir)] : [sessionsDir];
+}
+
+/** 읽을 상태 파일 — 기본 폴더에 없고 옛 폴더에 있으면 옛 폴더의 것. 쓰기는 늘 dir 에 */
+export function stateFile(dir: string, name: string): string {
+  const file = path.join(dir, name), old = path.join(defaultDir('agent-core'), name);
+  return path.resolve(dir) === defaultDir('slcode') && !fs.existsSync(file) && fs.existsSync(old) ? old : file;
 }
 
 export type CorePaths = { dir: string; coreLog: string; token: string; sessionsDir: string };
 
 export function corePaths(dir = coreDir()): CorePaths {
+  // 옛 core 는 자기를 교체할 때 옛 폴더를 dir 로 넘긴다 — 교체된 세션도 새로 연 세션과 같은 프로필·플러그인을 쓴다 (옛 폴더 호환, 1.0.0 에서 지운다: ticket slcode-remove-legacy-state-dir)
+  if (path.resolve(dir) === defaultDir('agent-core')) dir = defaultDir('slcode');
   return {
     dir,
     coreLog: path.join(dir, FILES.coreLog),
@@ -47,7 +63,7 @@ export function ensureDir(dir: string) {
 /** 토큰 파일을 읽고, 없으면 만든다 (0600). 브라우저 localStorage 의 토큰이 재기동 뒤에도 유효하도록 재사용한다 */
 export function readOrCreateToken(p: CorePaths): string {
   try {
-    const t = fs.readFileSync(p.token, 'utf8').trim();
+    const t = fs.readFileSync(stateFile(p.dir, FILES.token), 'utf8').trim();
     if (t.length >= 32) return t;
   } catch {}
   ensureDir(p.dir);

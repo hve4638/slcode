@@ -4,6 +4,7 @@
 // 테마 id 의 목록은 웹(web/settings.js)이 정한다 — 여기서는 꼴만 맞추고, 모르는 id 는 웹이 기본값으로 읽는다.
 import fs from 'node:fs';
 import path from 'node:path';
+import { stateFile } from './paths.js';
 import { FILES, type Settings, type SettingsKind, type SettingsPatch } from './protocol.js';
 
 /** 기본값 — 두 입구 같다. context 경계 30·50 은 사용자 결정 (2026-10-16), inspect 기본 끔은 2026-10-19 */
@@ -27,7 +28,7 @@ const fileOf = (dir: string, kind: SettingsKind) => path.join(dir, kind === 'web
 
 /** 없거나 읽을 수 없으면 기본값 */
 export function readSettings(dir: string, kind: SettingsKind): Settings {
-  try { return normalizeSettings(JSON.parse(fs.readFileSync(fileOf(dir, kind), 'utf8'))); } catch { return { ...DEFAULT_SETTINGS, context: { ...DEFAULT_SETTINGS.context } }; }
+  try { return normalizeSettings(JSON.parse(fs.readFileSync(stateFile(dir, path.basename(fileOf(dir, kind))), 'utf8'))); } catch { return { ...DEFAULT_SETTINGS, context: { ...DEFAULT_SETTINGS.context } }; }
 }
 
 /** 지금 파일에 patch 를 겹쳐 쓴다 (context 는 항목별로). 임시 파일 + rename — 감시하는 다른 serve 가 반쯤 쓴 파일을 읽지 않게 */

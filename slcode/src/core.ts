@@ -18,7 +18,7 @@ import { PARAM_ENV, sessionEnvError, sessionParamsError, type AgentSession, type
 import { EventLog, historyPage, outline, promptTurns, summarize, type SessionMeta } from './eventLog.js';
 import { isLoopback, reachable, sockAlive, spawnCore } from './live.js';
 import { BUILD, PKG, VERSION, replacingMark } from './client.js';
-import { corePaths, ensureDir, readOrCreateToken } from './paths.js';
+import { corePaths, ensureDir, readOrCreateToken, sessionDir } from './paths.js';
 import { formatMail, newMail, parseMails, sendMail, sessionMeta } from './mail.js';
 import { blockInspect, CODEX_ROUTE, codexArgs, codexUpstream, inspectBlocked, inspectEnv, keepsFirstParty, sdkVersion, startInspect, turnCalls, upstreamOf, type InspectProxy } from './inspect.js';
 import { InspectStore, maybeSweep } from './inspectDb.js';
@@ -207,7 +207,9 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   /** 다시 싣기 때의 프로필 — 그사이 고쳤으면 고친 값, 지웠으면 기동 때 값 */
   const profileNow = () => getProfile(prof.name, P.dir) ?? prof.profile;
   let agent: SessionPlugins | null = null, agentFailed: string | null = null;
-  try { agent = loadSessionPlugins(logFile.dir, env, logFile.meta.agentPlugins ?? {}, P.dir, harness, prof.profile, params); } catch (e) { agentFailed = (e as Error).message; }
+  // 링크는 옛 폴더의 세션이어도 이 상태 폴더 쪽에 둔다 — 빌드 정리(gcBuilds)가 상태 폴더의 sessions 만 훑어, 옛 폴더의 링크로는 쓰는 빌드를 지키지 못한다 (옛 폴더 호환, 1.0.0 에서 지운다: ticket slcode-remove-legacy-state-dir)
+  const linksDir = sessionDir(P.sessionsDir, cwd, logFile.meta.id);
+  try { agent = loadSessionPlugins(linksDir, env, logFile.meta.agentPlugins ?? {}, P.dir, harness, prof.profile, params); } catch (e) { agentFailed = (e as Error).message; }
   const load = codex ? undefined : claudeLoad(prof.profile.claude, cwd, env, (agent?.loaded ?? []).map((l, i) => ({ name: l.name, path: agent!.plugins[i].path })));
   let agentLoaded: Loaded[] = agent?.loaded ?? [];
   // js/ts 훅 (ticket slcode-agent-plugin-hooks) — Claude 만. 플러그인을 하나라도 실었으면 디스패처를 건다(다시 싣기로 훅이 생겨도 받게). 세션이 생기기 전의 기록은 모았다가 낸다
@@ -561,7 +563,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   async function reloadPlugins() {
     reloadWanted = false;
     try {
-      const r = reloadSessionPlugins(logFile.dir, agentLoaded, env, logFile.meta.agentPlugins ?? {}, P.dir, harness, profileNow(), params);
+      const r = reloadSessionPlugins(linksDir, agentLoaded, env, logFile.meta.agentPlugins ?? {}, P.dir, harness, profileNow(), params);
       for (const n of r.notes) session.notice(`에이전트 플러그인을 싣지 못했습니다 — ${n}`);
       if (session instanceof CodexSession) {
         await session.setSkillRoots(r.roots);
@@ -710,7 +712,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     uds.close();
     for (const s of socks) s.end(); // serve 의 중계·제어 연결이 닫힘을 본다
     try { fs.unlinkSync(sockPath); } catch {}
-    try { unlinkSessionPlugins(logFile.dir); } catch {} // 이 세션이 쓰던 빌드를 정리 대상으로
+    try { unlinkSessionPlugins(linksDir); if (linksDir !== logFile.dir) fs.rmdirSync(linksDir); } catch {} // 이 세션이 쓰던 빌드를 정리 대상으로
     resolveDone();
   })());
   closeFn = close;
