@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileHandler, loadWeb, serveSession, staticHandler } from '../src/serve.ts';
@@ -478,4 +479,31 @@ test('MCP 상태: failed 는 사유가 붙고, 다시 연결은 그 서버만 �
   await assert.rejects(c.request('session.mcpReconnect', { id: h.session.id }), /name required/);
   c.close();
   await h.close('test');
+});
+
+test('없는 폴더: 새 세션은 not a folder, 폴더가 사라진 세션의 이어받기는 session folder is gone 으로 거절한다 (core 가 벤더를 띄우기 전에)', { timeout: 30000 }, async () => {
+  const dir = isolated();
+  const missing = path.join(os.tmpdir(), `slcode-none-${process.pid}-${Date.now()}`);
+  await assert.rejects(serveSession({ dir, cwd: missing, web: false, vendor: 'codex' }), /not a folder/);
+  assert.deepEqual(EventLog.list(corePaths(dir).sessionsDir, missing), [], '거절한 새 세션은 기록을 남기지 않는다');
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
+  const log = EventLog.create(corePaths(dir).sessionsDir, { id: 'gone0001', vendor: 'codex', cwd: work, title: null, vendorSessionId: null, createdAt: Date.now(), permissionMode: 'auto', raw: false });
+  log.updateMeta({ closedAt: Date.now() });
+  fs.rmdirSync(work);
+  await assert.rejects(serveSession({ dir, cwd: work, resume: 'gone0001', web: false }), /session folder is gone/);
+});
+
+test('core 가 기동 중에 끊겨도 serveSession 의 거절로 끝난다 — shutdown 선언 전 호출(unhandledRejection)이 없다', { timeout: 15000 }, async (t) => {
+  const dir = isolated();
+  const unhandled: string[] = [];
+  const onUnhandled = (e: unknown) => { unhandled.push((e as Error).message); };
+  process.on('unhandledRejection', onUnhandled);
+  t.after(() => { process.off('unhandledRejection', onUnhandled); });
+  const sock = path.join(dir, 'fake.sock');
+  const srv = net.createServer((s) => { s.on('data', () => s.destroy()); s.on('error', () => {}); }); // 첫 요청(core.own)에 답하지 않고 끊는다
+  await new Promise<void>((r) => srv.listen(sock, () => r()));
+  t.after(() => { srv.close(); });
+  await assert.rejects(serveSession({ dir, cwd: '', web: false, attach: { id: 'x', sock, url: null, takeover: true } }), /connection closed/);
+  await sleep(50);
+  assert.deepEqual(unhandled, []);
 });

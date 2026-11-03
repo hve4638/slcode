@@ -102,6 +102,9 @@ export type CoreOptions = {
 
 export type CoreHandle = { sock: string; session: SessionInfo; close: (reason?: string) => Promise<void>; done: Promise<void> };
 
+/** 없는 폴더로는 벤더가 뜨지 못한다 — core 가 뜬 뒤 죽기 전에 사유를 알려 거절한다 (ticket slcode-small-fixes-1025) */
+const isDir = (p: string) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } };
+
 export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   const log = opts.log ?? (() => {});
   const P = corePaths(opts.dir);
@@ -119,6 +122,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     const found = EventLog.open(P.sessionsDir, opts.resume);
     if (!found) throw new CoreError(ERR.noSession, `no session ${opts.resume}`);
     if (await sockAlive(found.sockPath)) throw new CoreError(ERR.badRequest, `session ${opts.resume} is live — another slcode is serving it`);
+    if (!isDir(found.meta.cwd)) throw new CoreError(ERR.badRequest, `session folder is gone: ${found.meta.cwd}`);
     if (opts.title !== undefined) found.updateMeta({ title: opts.title });
     // --no-inspect 는 켜져 있던 세션만 끈다 — 켠 적 없는 세션엔 값을 남기지 않는다 (inspect 버튼은 켠 적 있는 세션에만 보인다)
     if (opts.inspect === false && found.meta.inspect) found.updateMeta({ inspect: false });
@@ -126,6 +130,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     if (found.meta.permissionMode && !isMode(found.meta.permissionMode)) found.updateMeta({ permissionMode: 'auto' });
     logFile = found;
   } else {
+    if (!isDir(opts.cwd)) throw new CoreError(ERR.badRequest, `not a folder: ${opts.cwd}`);
     if (opts.profile !== undefined && !getProfile(opts.profile, P.dir)) throw new CoreError(ERR.badRequest, `no profile ${opts.profile} (slcode profile list)`);
     for (const k of Object.keys(opts.env ?? {})) { const why = sessionEnvError(k); if (why) throw new CoreError(ERR.badRequest, why); }
     { const why = sessionParamsError(opts.params ?? {}); if (why) throw new CoreError(ERR.badRequest, why); }

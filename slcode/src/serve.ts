@@ -261,6 +261,20 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
     ({ id: sid, sock, session } = await spawnCore({ dir: P.dir, cwd: opts.cwd, resume, title: opts.title, raw: opts.raw, inspect: opts.inspect, permissionMode: opts.permissionMode, model: opts.model, effort: opts.effort, prompt: opts.prompt, vendor: opts.vendor, profile: opts.profile, env: opts.env, params: opts.params, fromStart: opts.fromStart }));
   }
   let control = await connectSession(sock);
+  const stopAll: (() => void)[] = [];
+  const relays = new Set<net.Socket>();
+  // ---- 수명 — hook 앞에 둔다: core 가 기동 중에 끝나면(벤더가 곧 죽는 세션 등) 제어 연결의 done 이 이 아래 await 도중에 shutdown 을 부른다
+  let resolveDone!: () => void;
+  const done = new Promise<void>((r) => (resolveDone = r));
+  let down = false;
+  const shutdown = () => {
+    if (down) return;
+    down = true;
+    for (const f of stopAll) f();
+    for (const s of relays) s.destroy();
+    control.close();
+    resolveDone();
+  };
   // 소유권을 빼앗기면(core.owner — 카드 핸드오프) 이 serve 가 닫혀도 세션을 닫지 않는다
   let owns = owner;
   /** serve.register 로 알린 웹 주소 — core 가 바뀌면 새 core 에 다시 알린다 */
@@ -340,7 +354,6 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
   }
 
   // ---- 중계: 화면 연결 하나 ↔ 세션 소켓 연결 하나
-  const relays = new Set<net.Socket>();
   /** gate 면 core.auth 가 통과할 때까지 다른 요청을 막고 core 의 프레임을 넘기지 않는다. 그 사이 온 요청은 줄 세워 두었다가(HELD_MAX 까지) 통과하면 보낸다.
    *  제어 메서드(CONTROL_ONLY)는 화면 연결에서 늘 거절한다. kind 는 이 연결이 들어온 입구 — 화면 설정의 묶음 */
   function relay(send: (line: string) => void, end: () => void, gate: boolean, kind: SettingsKind, fix?: (line: string) => string) {
@@ -355,6 +368,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
     const attaches = new Set<string>(); // 그중 session.attach — 응답에서 마지막 seq 를 읽는다
     const internal = new Map<string, (line: string) => void>(); // 다시 붙을 때 serve 가 보낸 요청
     let paused: string[] | null = null; // core.replaced 뒤 새 core 에 붙을 때까지 줄 세운 화면 요청
+    let replacedLine = ''; // 다시 붙은 뒤 화면에 알릴 core.replaced — 옛 core 에서 받은 목록을 새로 받게 한다 (ticket slcode-update-command-menu-stale)
     let gone = false; // 화면이 닫았다
     const toCore = (line: string) => {
       const k = idOf(line);
@@ -377,7 +391,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
         let i;
         while ((i = buf.indexOf('\n')) >= 0) {
           const l = buf.slice(0, i); buf = buf.slice(i + 1);
-          if (l.startsWith('{"event":"core.replaced"')) { paused ??= []; continue; }
+          if (l.startsWith('{"event":"core.replaced"')) { paused ??= []; replacedLine = l; continue; }
           const k = idOf(l);
           if (k !== null && internal.has(k)) { internal.get(k)!(l); internal.delete(k); continue; }
           if (!authed) {
@@ -430,6 +444,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
         // 끊긴 동안의 기록은 실시간 이벤트처럼 — 화면은 attach 를 다시 부르지 않았다
         for (const e of res.history ?? []) { lastSeq = Math.max(lastSeq, e.seq); send(JSON.stringify({ event: 'session.event', params: { id: attached, ...e } })); }
         send(JSON.stringify({ event: 'session.changed', params: res.info }));
+        if (replacedLine) send(replacedLine);
       }
       const again = [...asked.values(), ...(paused ?? [])];
       asked.clear(); paused = null;
@@ -469,7 +484,6 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
     });
     return w;
   };
-  const stopAll: (() => void)[] = [];
   for (const kind of ['web', 'superlite'] as const) stopAll.push(watchSettings(P.dir, kind, (st) => { const l = JSON.stringify({ event: 'settings.changed', params: st }); for (const f of screens[kind]) f(l); }));
   const fail = async (e: unknown): Promise<never> => { if (spawned) await control.request('session.close', { id: sid }).catch(() => {}); control.close(); for (const f of stopAll) f(); throw e; };
   // superlite 서비스 웹 (ticket plugin-service-web) — TCP 웹과 별개, 인증 없음 (UDS 와 같은 신뢰 경계)
@@ -532,18 +546,6 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
     process.stdin.on('error', () => {});
   }
 
-  // ---- 수명
-  let resolveDone!: () => void;
-  const done = new Promise<void>((r) => (resolveDone = r));
-  let down = false;
-  const shutdown = () => {
-    if (down) return;
-    down = true;
-    for (const f of stopAll) f();
-    for (const s of relays) s.destroy();
-    control.close();
-    resolveDone();
-  };
   // core 교체 — 이 serve 가 core 보다 새 코드면 교체를 청한다. 새 serve 는 사용자가 [restart required] 를 눌러야 생기므로 core 도 그 뒤에 드러나지 않게 따라온다.
   // 소유자이거나 웹 모드 serve 자식일 때만 (다른 브라우저가 붙은 attach 는 청하지 않는다). 옛 core 가 모르는 메서드면 그만 (ticket slcode-core-serve-split 3단계)
   if (owner || opts.feed) void (async () => {

@@ -362,7 +362,7 @@ export type Broadcasts = {
   'session.queue': { id: string; items: QueueItem[] };
   /** 소유권을 빼앗긴 연결에만 — 새 소유자의 pid (protocol 3) */
   'core.owner': { pid: number | null };
-  /** 내려가는 core 가 연결을 끊기 직전에 모든 연결에 — 새 core 의 pid·version. 받은 쪽은 닫힘이 아니라 같은 소켓에 다시 붙기로 다룬다 (3단계) */
+  /** 내려가는 core 가 연결을 끊기 직전에 모든 연결에 — 새 core 의 pid·version. 받은 쪽은 닫힘이 아니라 같은 소켓에 다시 붙기로 다룬다 (3단계). 화면은 serve 중계가 새 core 에 다시 붙은 뒤에 받는다 */
   'core.replaced': { pid: number; version: string };
   /** 설정 파일이 바뀌었다 (어느 serve 가 썼든, 손으로 고쳤든) — 각 serve 가 파일을 감시해 그 입구로 들어온 자기 화면 연결에만 보낸다 */
   'settings.changed': Settings;

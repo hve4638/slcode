@@ -170,7 +170,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     if (hero.hidden) return;
     const cur = profSwitching ?? profiles?.current;
     hero.replaceChildren(
-      back ? h('button', { class: 'ghost hero-back', disabled: backing || profSwitching ? '' : null, onclick: () => void backToStart() }, backing ? '시작 화면으로 돌아가는 중…' : '← 시작 화면') : null,
+      ...(back ? [h('button', { class: 'ghost hero-back', disabled: backing || profSwitching ? '' : null, onclick: () => void backToStart() }, backing ? '시작 화면으로 돌아가는 중…' : '← 시작 화면')] : []),
       ...(profiles ? [h('div', { class: 'hero-h' }, '프로필'),
       h('div', { class: 'hero-seg' }, ...profiles.profiles.map((p) => h('button', { class: 'seg', 'aria-pressed': String(p.name === cur), disabled: profSwitching ? '' : null, title: p.summary, onclick: () => switchProfile(p.name) }, p.name))),
       h('div', { class: 'hero-sum' }, profSwitching ? `${profSwitching} 로 바꾸는 중…` : profiles.profiles.find((p) => p.name === cur)?.summary ?? ''),
@@ -1018,7 +1018,7 @@ export function mountAgentFront(root, transport, opts = {}) {
         ev.summary ? h('span', { class: 'sum' }, ev.summary) : null);
     })));
     side.append(sec('session', '세션', kv([
-      ['상태', STATE_LABEL[info?.state] ?? ''], ['id', current ? h('span', { class: 'idv' }, current, iconBtn('copy', '세션 id 복사', copyOf(current))) : null],['벤더 세션', info?.vendorSessionId ?? ready?.vendorSessionId], ['권한 모드', modeName(ready?.permissionMode ?? info?.permissionMode)],
+      ['상태', STATE_LABEL[info?.state] ?? ''], ['id', current ? h('span', { class: 'idv' }, current, iconBtn('copy', '세션 id 복사', copyOf(current))) : null],['벤더 세션', info?.vendorSessionId ?? ready?.vendorSessionId], ['권한 모드', modeName(info?.permissionMode ?? ready?.permissionMode)],
       ['연결', connected ? '연결됨' : '끊김'], ['raw', info?.raw ? '켬' : '끔'],
       // inspect 토글 — 켜고 끄면 벤더(claude·codex)를 같은 대화로 다시 띄운다 (idle 일 때만). 값은 session.changed 로 온다
       ...(info ? [['inspect', h('button', { class: 'ghost', title: `켜거나 끄면 ${info.vendor} 를 같은 대화로 다시 띄웁니다 (대기 중일 때만)`, disabled: info.state === 'idle' || info.state === 'starting' ? null : '',
@@ -1298,6 +1298,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     if (m.event === 'session.event' && m.params.id === current) render(m.params, true);
     else if (m.event === 'session.changed' && m.params.id === current) { info = m.params; setTitle(info.title); syncInspect(); renderMode(); renderSide(); paintVendor(); }
     else if (m.event === 'session.queue' && m.params.id === current) paintQueue(m.params.items);
+    else if (m.event === 'core.replaced') loadCommands(); // 옛 core 에서 받은 명령 목록을 새 core 의 것으로 — serve 가 다시 붙은 뒤에 알린다
     else if (m.event === 'session.closed' && m.params.id === current) paintQueue([]); // 큐는 메모리에만 있어 함께 사라진다. 나머지는 session.exit 이벤트가 이미 그렸다
     else if (m.event === 'settings.changed') setSettings(m.params);
   });

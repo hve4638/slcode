@@ -184,6 +184,10 @@ test('웹: 새 serve 가 core 교체를 청하면 진행 중인 턴이 끝난 �
   const newCore = await waitFor(async () => { const p = await corePid(b); return p !== oldCore && p; });
   restore(); restore = () => {};
   assert.equal(closed, false, '화면 연결은 끊기지 않는다');
+  // 화면은 새 core 에 다시 붙은 뒤 core.replaced 를 받아 옛 core 에서 받은 목록을 새로 받는다 (ticket slcode-update-command-menu-stale)
+  const replaced = await b.until((m) => m.event === 'core.replaced');
+  assert.equal(replaced.params.pid, newCore);
+  assert.ok(b.events.findIndex((m) => m.event === 'session.changed' && m.params.id === id) < b.events.indexOf(replaced), '다시 붙은(session.changed) 뒤에 온다');
   assert.ok(!fs.existsSync(`/proc/${oldCore}`) || fs.readFileSync(`/proc/${oldCore}/stat`, 'utf8').split(' ')[2] === 'Z', '옛 core 는 끝났다');
   // 소유자는 core.replaced 를 받은 뒤 새 core 에 다시 붙어 core.own 을 보낸다 — 새 core 가 보인 직후엔 아직일 수 있다
   const owner = await waitFor(async () => { const o = (await b.call('server.info')).result.owner; return o === e.child.pid && o; }, 5000).catch(() => null);

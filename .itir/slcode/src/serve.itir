@@ -19,7 +19,7 @@ export fn pluginMethod(dir, method, params) {
 }
 fn pluginCli(dir, args)
 export fn serveSession(opts) -> ServeHandle {
-  role: web/ 을 메모리에 고정(loadWeb) → core 띄우기(또는 attach) → 제어 연결(core.own) → (webSock 이면) 서비스 웹 http+wss → (web 이면) TCP http+wss 와 serve.register → (stdio 면) stdin 중계 → {url, sock, session, close, done}. 웹을 열지 못하면 소유자는 세션을 닫고 던진다
+  role: web/ 을 메모리에 고정(loadWeb) → core 띄우기(또는 attach) → 제어 연결(core.own) → (webSock 이면) 서비스 웹 http+wss → (web 이면) TCP http+wss 와 serve.register → (stdio 면) stdin 중계 → {url, sock, session, close, done}. 웹을 열지 못하면 소유자는 세션을 닫고 던진다 core 가 기동 중에 끝나도 serveSession 의 거절로 끝난다(수명 선언을 제어 연결 hook 앞에, ticket slcode-small-fixes-1025). core 교체 뒤 중계는 다시 붙은 화면에 core.replaced 를 알려 옛 core 에서 받은 목록을 새로 받게 한다 (ticket slcode-update-command-menu-stale).
 }
 export fn loadWeb(root) {
   role: web/ 아래 파일 전부를 읽어 상대 경로('/' 구분) → 내용 Map 으로 — serve 가 시작할 때 한 번 (ticket slcode-settings-set-unknown-method). 플러그인 Update 는 떠 있는 serve 를 둔 채 설치 폴더의 파일만 바꾸므로, 요청마다 디스크를 읽으면 옛 serve 가 새 웹을 내보내 옛 serve 가 모르는 요청(settings.set 등)이 core 까지 가 unknown method 가 된다. 고정하면 serve 는 자기 코드와 같은 버전의 웹만 보낸다 — 대신 web/ 을 고친 뒤에는 serve 를 다시 띄워야 화면에 보인다
