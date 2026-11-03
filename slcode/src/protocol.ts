@@ -95,6 +95,10 @@ export type HistorySummary = { turns: number; usage: Usage; costUsd: number | nu
 
 /** 요청 목록 한 줄 (ticket slcode-prompt-outline) — turn.start 의 seq·origin·앞 300자(메일 턴은 전부 — 웹이 머리표를 풀어 보낸 이·본문 첫 줄을 보인다)·첨부 이름 */
 export type OutlineItem = { seq: number; origin: string | null; text: string; files: string[] };
+/** 이 세션의 지난 입력 하나 (session.prompts) — 되돌린 턴을 뺀 turn.start 는 전문·시각·그 턴에서 도구로 고친 파일(edits), 에이전트 플러그인 명령은 친 글 그대로(command) */
+export type PromptTurn = OutlineItem & { at: number; edits: string[]; command?: true };
+/** 되돌리기 미리 보기 (session.rewindPreview) — 그 턴으로 되돌릴 수 있는 것. files 는 파일 체크포인트가 있을 때 SDK dry-run 결과, 없으면 null. error 는 대화도 못 되돌리는 사유 */
+export type RewindPreview = { conversation: boolean; files: { changed: string[]; insertions: number; deletions: number } | null; error?: string };
 
 /** 활동 기록 원자료 한 줄 (activity.ts, ticket slcode-activity-state) — 세션 폴더의 activity.jsonl. t 는 core 의 시계.
  *  agent 는 session.state 를 넷으로 접은 것(starting → idle, requires_action → asking), sent·answered 는 사람이 보낸 요청·처리한 질문(점),
@@ -276,6 +280,10 @@ export type Methods = {
   'session.reloadPlugins': { params: { id: string }; result: { deferred: boolean } };
   /** 턴 되돌리기 (claude 의 Esc-Esc). seq 는 버릴 첫 턴의 turn.start seq. conversation 은 벤더 세션을 그 앞 지점에서 다시 열고, files 는 벤더 체크포인트로 파일을 되돌린다. idle 일 때만 */
   'session.rewind': { params: { id: string; seq: number; conversation: boolean; files: boolean }; result: { ok: true; filesChanged: string[] | null } };
+  /** 웹 입력창 history·Esc 두 번 되돌리기 창의 목록 (ticket slcode-input-history-arrows, slcode-rewind-esc-picker) */
+  'session.prompts': { params: { id: string }; result: PromptTurn[] };
+  /** 되돌리기 창 확인 단계 — 실제로 바꾸지 않는다 */
+  'session.rewindPreview': { params: { id: string; seq: number }; result: RewindPreview };
   /** remember 는 벤더 제안 규칙을 세션 한정으로 기억 (영구 설정 파일에 쓰지 않는다). AskUserQuestion 은 updatedInput.answers */
   'session.approve': { params: { id: string; requestId: string; decision: ApprovalDecision; remember?: boolean; updatedInput?: Record<string, unknown>; message?: string }; result: { ok: boolean } };
   /** 대기 승인 cancel 뒤 벤더 프로세스 종료 — 프로세스도 내려간다 (Ctrl-C 와 같다). 로그는 남는다 */

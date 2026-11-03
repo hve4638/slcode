@@ -5,7 +5,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import readline from 'node:readline';
 import { randomUUID } from 'node:crypto';
-import type { ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, LimitWindow, McpStatus, TaskEvent } from './protocol.js';
+import type { ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, LimitWindow, McpStatus, RewindPreview, TaskEvent } from './protocol.js';
 import { AgentSession, effortMisfit, type ApproveOpts, type Command, type ContextUsage, type Limits, type ModelsResult } from './base.js';
 import type { EventLog } from './eventLog.js';
 import { SLCODE_PROMPT } from './prompt.js';
@@ -471,6 +471,7 @@ export class CodexSession extends AgentSession {
   async mcp(): Promise<McpStatus[]> { return []; }
   async reconnectMcp(): Promise<McpStatus[]> { throw new Error('mcp reconnect is not supported for codex sessions'); }
   async rewind(): Promise<string[] | null> { throw new Error('rewind is not supported for codex sessions'); }
+  async rewindPreview(): Promise<RewindPreview> { return { conversation: false, files: null, error: 'rewind is not supported for codex sessions' }; }
 
   /** 에이전트 플러그인 skill 다시 싣기 — extra root 를 바꾸면 Codex 가 다음 턴에 바뀐 skill 목록을 developer 메시지로 덧붙인다 (2026-10-28 요청 본문 실측).
    *  빈 목록이면 플러그인 skill 을 뗀다 */

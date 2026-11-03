@@ -4,7 +4,7 @@
 // 옛 평탄 구조 sessions/<id>/ 는 migrate 가 슬러그 아래로 옮긴다 (2026-09-27 이전 세션).
 import fs from 'node:fs';
 import path from 'node:path';
-import type { HistorySummary, LoggedEvent, OutlineItem, SessionInfo, Vendor } from './protocol.js';
+import type { HistorySummary, LoggedEvent, OutlineItem, PromptTurn, SessionInfo, Vendor } from './protocol.js';
 import { cwdSlug, sessionDir } from './paths.js';
 
 export type SessionMeta = {
@@ -42,10 +42,10 @@ export type SessionMeta = {
   fromStart?: boolean;
 };
 
-/** turn.rewound 가 버린 턴(그 seq 부터)을 뺀 이벤트 — 버린 턴은 벤더 쪽에도 없으므로 대화 되돌리기의 유지 지점·다시 import 의 기준에서 뺀다 */
+/** turn.rewound 가 버린 턴(그 seq 부터)을 뺀 이벤트 — 버린 턴은 벤더 쪽에도 없으므로 대화 되돌리기의 유지 지점·다시 import 의 기준에서 뺀다. 코드만 되돌린 표지(conversation false)는 대화를 버리지 않는다 */
 export function unrewound(events: readonly LoggedEvent[]): LoggedEvent[] {
   const out: LoggedEvent[] = [];
-  for (const e of events) { if (e.ev.kind === 'turn.rewound') { const cut = e.ev.seq; while (out.length && out[out.length - 1].seq >= cut) out.pop(); } else out.push(e); }
+  for (const e of events) { if (e.ev.kind === 'turn.rewound') { if (!e.ev.conversation) continue; const cut = e.ev.seq; while (out.length && out[out.length - 1].seq >= cut) out.pop(); } else out.push(e); }
   return out;
 }
 
@@ -53,7 +53,7 @@ export function unrewound(events: readonly LoggedEvent[]): LoggedEvent[] {
 export function visible(events: readonly LoggedEvent[]): LoggedEvent[] {
   let out: LoggedEvent[] = [];
   for (const e of events) {
-    if (e.ev.kind === 'turn.rewound') { const cut = e.ev.seq; out = out.filter((x) => x.seq < cut || x.ev.kind === 'tool.end' || x.ev.kind === 'approval.resolved'); }
+    if (e.ev.kind === 'turn.rewound' && e.ev.conversation) { const cut = e.ev.seq; out = out.filter((x) => x.seq < cut || x.ev.kind === 'tool.end' || x.ev.kind === 'approval.resolved'); }
     out.push(e);
   }
   return out;
@@ -90,6 +90,26 @@ export function historyPage(events: readonly LoggedEvent[], before: number, limi
 export function outline(events: readonly LoggedEvent[]): OutlineItem[] {
   return unrewound(events).flatMap(({ seq, ev }) => ev.kind === 'turn.start'
     ? [{ seq, origin: ev.origin, text: ev.origin === 'mail' ? ev.text : ev.text.slice(0, 300), files: ev.attachments?.map((a) => a.name) ?? [] }] : []);
+}
+
+/** 파일을 고치는 Claude 도구 — 되돌리기 창 목록의 '그 턴에서 고친 파일'. Bash 로 바꾼 파일은 벤더 체크포인트에도 없어 세지 않는다 */
+const EDIT_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+const editPath = (input: unknown): string | null => {
+  const i = input as { file_path?: unknown; notebook_path?: unknown } | null;
+  const p = i?.file_path ?? i?.notebook_path;
+  return typeof p === 'string' ? p : null;
+};
+
+/** 지난 입력 전문 (ticket slcode-input-history-arrows, slcode-rewind-esc-picker) — outline 과 달리 자르지 않고, 턴마다 고친 파일을 붙이고, 사람이 친 플러그인 명령도 넣는다 */
+export function promptTurns(events: readonly LoggedEvent[]): PromptTurn[] {
+  const out: PromptTurn[] = [];
+  let turn: PromptTurn | null = null;
+  for (const { seq, at, ev } of unrewound(events)) {
+    if (ev.kind === 'turn.start') out.push(turn = { seq, at, origin: ev.origin, text: ev.text, files: ev.attachments?.map((a) => a.name) ?? [], edits: [] });
+    else if (ev.kind === 'agent.command' && ev.phase !== 'attached') out.push({ seq, at, origin: null, text: `/${ev.name}${ev.args ? ` ${ev.args}` : ''}`, files: [], edits: [], command: true });
+    else if (ev.kind === 'tool.start' && turn && EDIT_TOOLS.has(ev.name)) { const p = editPath(ev.input); if (p && !turn.edits.includes(p)) turn.edits.push(p); }
+  }
+  return out;
 }
 
 /** 기록 전체의 합계 — 되돌린 턴도 센다. SDK 비용은 프로세스 누계라 --resume 뒤 0 부터 다시 시작한다: 줄어드는 경계에서 기준선에 합친다 (웹 tally 와 같다) */

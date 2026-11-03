@@ -7,6 +7,8 @@ import { renderMarkdown } from './markdown.js';
 import { DEFAULTS, applySettings, closeOnBackdrop, ctxLevel, settingsDialog } from './settings.js';
 import { inspectDialog } from './inspect.js';
 import { activityPanel } from './activity.js';
+import { escGate, inputHistory } from './inputkeys.js';
+import { rewindPicker } from './rewind.js';
 
 const STATE_LABEL = { starting: '시작 중', idle: '대기', running: '실행 중', requires_action: '응답 필요', exited: '종료', disconnected: '연결 끊김' };
 const h = (tag, attrs = {}, ...children) => {
@@ -296,7 +298,18 @@ export function mountAgentFront(root, transport, opts = {}) {
     if (stick) feed.scrollTop = feed.scrollHeight;
     queueTray.replaceChildren(...items.map((q) => h('div', { class: 'user' }, h('div', { class: 'bubble' }, q.text || `첨부 ${q.attachments}개`))));
   };
-  const composer = h('div', { class: 'composer' }, queueTray, h('div', { class: 'box' }, chips, input, h('div', { class: 'row' }, addBtn, modeBtn, modeMenu, h('span', { class: 'gap' }), modelBtn, modelMenu, stopBtn, sendBtn), slashMenu, filePick), stat);
+  // 입력 상자 위 테두리의 '기록 4/5' (Claude Code 실측과 같은 자리)
+  const inputHint = h('div', { class: 'input-hint', hidden: '' });
+  // 입력칸 글 바꾸기 — 브라우저 편집 명령으로 바꿔야 Ctrl+Z 로 돌아온다 (사용자 2026-11-03). value 대입은 되돌리기 이력을 지운다
+  const setInputText = (text) => {
+    input.focus({ preventScroll: true });
+    if (input.value === text) return;
+    input.select();
+    const ok = text ? document.execCommand('insertText', false, text) : document.execCommand('delete');
+    if (!ok || input.value !== text) { input.value = text; input.oninput(); }
+  };
+  const hist = inputHistory(input, setInputText, (pos, total) => { inputHint.textContent = pos === null ? '' : `기록 ${pos}/${total}`; inputHint.hidden = pos === null; });
+  const composer = h('div', { class: 'composer' }, queueTray, h('div', { class: 'box' }, inputHint, chips, input, h('div', { class: 'row' }, addBtn, modeBtn, modeMenu, h('span', { class: 'gap' }), modelBtn, modelMenu, stopBtn, sendBtn), slashMenu, filePick), stat);
   const side = h('aside', { class: 'side' });
   const dock = h('div', { class: 'dock' });
   // 실행 중 표시 — 피드 맨 끝(내 요청 바로 아래)에 한 줄: 맥동 점 · 지금 하는 일 · 경과. state 가 running 일 때만, 새 항목이 와도 늘 마지막 (사용자 2026-09-30)
@@ -600,11 +613,12 @@ export function mountAgentFront(root, transport, opts = {}) {
     try { return document.execCommand('copy'); } finally { ta.remove(); }
   }
   const copyOf = (text) => async (e) => { const b = e.currentTarget; const ok = await copyText(text, b.closest('dialog') ?? document.body); b.replaceChildren(ok ? icon('check') : '✗'); setTimeout(() => b.replaceChildren(icon('copy')), 1200); };
+  const runRewind = (seq, text, conversation, files) => rpc('session.rewind', { id: current, seq, conversation, files }).then(() => { if (conversation) { hist.reset(); input.value = text; input.oninput(); input.focus(); } });
   function rewindBtn(seq, text) {
     const row = acts(iconBtn('copy', '복사', copyOf(text)), iconBtn('rewind', '이 턴부터 되돌리기', () => ask()));
     function ask() {
       const orig = [...row.children]; // 취소는 원래 버튼을 되돌린다 — 새 줄의 버튼을 옮겨 오면 그 버튼은 떨어진 줄을 고쳐 먹통이 된다
-      const go = (conversation, files) => rpc('session.rewind', { id: current, seq, conversation, files }).then(() => { if (conversation) { input.value = text; input.oninput(); input.focus(); } }).catch((e) => push(h('div', { class: 'meta err' }, e.message)));
+      const go = (conversation, files) => runRewind(seq, text, conversation, files).catch((e) => push(h('div', { class: 'meta err' }, e.message)));
       row.replaceChildren(h('span', { class: 'q' }, '이 턴부터 되돌리기:'),
         h('button', { class: 'ghost', onclick: () => go(true, false) }, '답변만'), h('button', { class: 'ghost', onclick: () => go(false, true) }, '코드만'),
         h('button', { class: 'ghost', onclick: () => go(true, true) }, '둘 다'), h('button', { class: 'ghost', onclick: () => row.replaceChildren(...orig) }, '취소'));
@@ -661,6 +675,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     pill.className = `pill ${state}`; pill.textContent = STATE_LABEL[state] ?? state;
     busyNow = state === 'running' || state === 'requires_action';
     showBusy(state === 'running');
+    if (busyNow && picker.el.isConnected) showDock(); // 메시지 턴 등이 시작됐다 — session.rewind 는 idle 에서만 된다
     input.disabled = state === 'exited'; settingsUi.endable(state !== 'exited'); canSend();
     if (state !== 'exited' && exitNote) { exitNote.remove(); exitNote = null; }
     if (opts.onState) opts.onState(state);
@@ -677,6 +692,7 @@ export function mountAgentFront(root, transport, opts = {}) {
         if (!replaying) busySince = e.at || Date.now(); setBusy('작업 중');
         endText(); main.acts = null; // 이 턴 마지막 응답의 아이콘 줄 — turn.end 가 inspect 버튼을 붙인다
         // main.turnEl: 이 턴의 내 요청(메시지 카드) — 그 바로 다음 항목이 '답변 시작으로' 가 가는 곳 (실행 중 줄은 늘 맨 끝으로 옮겨지므로 사이에 끼지 않는다)
+        if (live && !ev.origin) hist.add(e.seq, ev.text);
         if (ev.origin === 'mail') { outlineAdd(e.seq, ev, main.turnEl = push(mailCard(ev.text, e.seq))); break; }
         outlineAdd(e.seq, ev, main.turnEl = push(h('div', { class: 'user' }, h('div', { class: 'bubble' }, ev.origin ? h('span', { class: 'origin' }, ev.origin) : null,
           ev.attachments?.length ? h('div', { class: 'chips' }, ...ev.attachments.map((a) => { const local = sentFiles.get(a.name); return h('span', { class: 'chip' }, local ? h('img', { src: local }) : null, a.name); })) : null,
@@ -781,7 +797,7 @@ export function mountAgentFront(root, transport, opts = {}) {
         hookRun(ev);
         break;
       }
-      case 'agent.command': endText(); commandRun(ev); break;
+      case 'agent.command': endText(); commandRun(ev); if (live && ev.phase !== 'attached') hist.add(e.seq, `/${ev.name}${ev.args ? ` ${ev.args}` : ''}`); break;
       case 'error': endText(); push(h('div', { class: 'meta err' }, ev.message)); break;
       case 'review': {
         endText();
@@ -793,11 +809,14 @@ export function mountAgentFront(root, transport, opts = {}) {
       case 'session.exit': endText(); if (live) exitNote = push(h('div', { class: 'meta' }, `세션 종료: ${ev.reason}`)); break;
       case 'turn.rewound': {
         endText();
-        for (const n of [...col.children, ...(replaying ? [] : older.children)]) if (Number(n.dataset.seq) >= ev.seq) n.remove();
-        if (!replaying) backlog = backlog.filter((b) => b.seq < ev.seq);
-        outlineCut(ev.seq, e.seq);
-        for (const [k, sc] of subs) if (!sc.col.isConnected) subs.delete(k);
-        for (const [k, t] of tasks) if (!t.card.isConnected) tasks.delete(k);
+        if (ev.conversation) { // 코드만 되돌리면 대화는 그대로다 — 벤더 쪽 대화도 남아 있다 (Claude Code 실측 2026-11-03)
+          for (const n of [...col.children, ...(replaying ? [] : older.children)]) if (Number(n.dataset.seq) >= ev.seq) n.remove();
+          if (!replaying) backlog = backlog.filter((b) => b.seq < ev.seq);
+          outlineCut(ev.seq, e.seq);
+          hist.cut(ev.seq, e.seq);
+          for (const [k, sc] of subs) if (!sc.col.isConnected) subs.delete(k);
+          for (const [k, t] of tasks) if (!t.card.isConnected) tasks.delete(k);
+        }
         // 답변 되돌리기는 화면에서 보이므로 안내가 없다. 파일 되돌리기만 결과를 남긴다 (사용자 2026-09-30)
         if (ev.files) push(h('div', { class: 'notice' }, `되돌림 · 파일${ev.filesChanged?.length ? ` ${ev.filesChanged.length}개` : ''}`));
         break;
@@ -1063,7 +1082,7 @@ export function mountAgentFront(root, transport, opts = {}) {
       if (k === 'session.exit') exited = true; else if (k !== 'session.state' && k !== 'error') exited = false;
       if (k === 'error' && exited) continue;
       // 되돌린 턴은 미리 뺀다. 끝 이벤트는 화면을 안 만들고 앞 카드를 갱신하므로 남긴다 (되살아난 승인 카드가 대기로 남았다)
-      if (k === 'turn.rewound') { const keep = evs.filter((x) => x.seq < e.ev.seq || x.ev.kind === 'tool.end' || x.ev.kind === 'approval.resolved'); evs.length = 0; evs.push(...keep); }
+      if (k === 'turn.rewound' && e.ev.conversation) { const keep = evs.filter((x) => x.seq < e.ev.seq || x.ev.kind === 'tool.end' || x.ev.kind === 'approval.resolved'); evs.length = 0; evs.push(...keep); }
       if ((k === 'text.delta' || k === 'thinking.delta') && last?.ev.kind === k && last.ev.parent === e.ev.parent) { evs[evs.length - 1] = { ...e, ev: { ...e.ev, text: last.ev.text + e.ev.text } }; continue; }
       evs.push(e);
     }
@@ -1227,7 +1246,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   navList.addEventListener('keydown', (e) => {
     const i = Number(e.target.dataset?.i); if (Number.isNaN(i)) return;
     const to = { ArrowUp: i - 1, ArrowDown: i + 1, Home: 0, End: outline.length - 1 }[e.key];
-    if (e.key === 'Escape') { input.focus(); return; }
+    if (e.key === 'Escape') { e.preventDefault(); input.focus(); return; }
     if (to === undefined) return;
     e.preventDefault(); const b = navList.children[Math.max(0, Math.min(outline.length - 1, to))]; b?.focus(); b && (navList.scrollTop = b.offsetTop - (navList.clientHeight - b.offsetHeight) / 2);
   });
@@ -1251,6 +1270,8 @@ export function mountAgentFront(root, transport, opts = {}) {
     hit.classList.remove('hit'); void hit.offsetWidth; hit.classList.add('hit');
   }
 
+  // 입력창 history 는 이 세션의 사람 입력만 (사용자 2026-11-03) — 메시지 턴은 빼고, 되돌린 턴은 서버가 뺀다. 옛 core 면 비어 있다
+  const loadInputHistory = () => rpc('session.prompts', { id: current }).then((list) => hist.seed(list.filter((p) => !p.origin && p.text).map((p) => ({ seq: p.seq, text: p.text }))), () => {});
   // ---- attach · 재접속
   async function attach(id) {
     current = id; renderSide();
@@ -1266,6 +1287,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     info = r.info; setTitle(info.title); syncInspect();
     if (r.draft && !input.value) { input.value = r.draft; input.oninput(); } // 다시 로드된 화면 — 쓰던 글을 되살린다 (치던 중이면 그대로)
     replayHistory(r.history, first ? r.summary : null);
+    loadInputHistory();
     paintQueue(r.queue ?? []);
     for (const p of r.pending) renderCard(p);
     setState(info.state);
@@ -1365,7 +1387,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     const t = resolveSlash(input.value.trim()); if ((!t && !pendingFiles.length) || !current) return;
     const attachments = pendingFiles.splice(0).map(({ dataUrl, ...a }) => { if (a.mediaType.startsWith('image/')) sentFiles.set(a.name, dataUrl); return a; });
     chips.innerHTML = '';
-    input.value = ''; input.style.height = ''; canSend(); argRes = null; argSeq++;
+    input.value = ''; input.style.height = ''; canSend(); argRes = null; argSeq++; hist.reset();
     rpc('session.send', { id: current, text: t, ...(attachments.length ? { attachments } : {}) }).catch((e) => push(h('div', { class: 'meta err' }, e.message)));
     saveDraft(true);
     toBottom();
@@ -1419,17 +1441,41 @@ export function mountAgentFront(root, transport, opts = {}) {
       if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && !e.isComposing && resolveSlash(input.value.trim()) === input.value.trim() && !commands.some((c) => c.name.toLowerCase() === input.value.trim().slice(1).toLowerCase()))) { e.preventDefault(); slashPick(items[slashSel]); return; }
       if (e.key === 'Escape') { e.preventDefault(); slashMenu.hidePopover(); return; }
     }
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (slashMenu.matches(':popover-open')) slashMenu.hidePopover(); send(); } else if (e.key === 'Escape' && !busy.hidden && current) { e.preventDefault(); rpc('session.interrupt', { id: current }); } };
+    if (hist.key(e)) { e.preventDefault(); argRes = null; argSeq++; if (slashMenu.matches(':popover-open')) slashMenu.hidePopover(); return; }
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (slashMenu.matches(':popover-open')) slashMenu.hidePopover(); send(); } else if (e.key === 'Escape' && !busy.hidden && current) { e.preventDefault(); esc.reset(); rpc('session.interrupt', { id: current }); } else if (e.key === 'Escape' && !e.isComposing) { e.preventDefault(); onEscape(); } };
   // 높이를 재려고 잠깐 기본 높이로 줄이면 그동안 피드가 늘어 scrollTop 이 그 높이의 바닥으로 깎인 채 남는다 — 재고 나서 자리를 되돌린다 (ticket slcode-scroll-follow-fixes)
-  input.oninput = () => { const top = feed.scrollTop; input.style.height = ''; input.style.height = Math.min(input.scrollHeight, 220) + 'px'; jump(follow ? feed.scrollHeight : top); canSend(); slashSel = 0; argQuery(); slashDraw(); saveDraft(); };
+  // 불러온 글로 `/` 메뉴를 열지 않는다 — 위·아래 키를 메뉴가 가져가 다음 기록으로 못 간다. 글을 고치면(nav 풀림) 다시 연다
+  input.oninput = () => { const top = feed.scrollTop; input.style.height = ''; input.style.height = Math.min(input.scrollHeight, 220) + 'px'; jump(follow ? feed.scrollHeight : top); canSend(); if (!hist.nav) { slashSel = 0; argQuery(); slashDraw(); } saveDraft(); };
+  input.addEventListener('mousedown', () => hist.unpin());
+  // Esc 두 번 (ticket slcode-rewind-esc-picker, 사용자 2026-11-03, Claude Code 2.1.316 실측) — 글이 있으면 비운다(지운 글은 기록에 남고 Ctrl+Z 로 돌아온다). 첫 번째 누름의 안내 문구는 두지 않는다 (사용자 2026-11-03).
+  // 빈 입력이면 되돌리기 창을 연다. 턴 중 Esc 는 위에서 중단만 하고 판정을 지운다 — 두 번 눌러도 창은 열리지 않는다 (session.rewind 는 idle 에서만 된다)
+  const esc = escGate();
+  const picker = rewindPicker(h, { rpc, getId: () => current, close: () => showDock(), run: runRewind,
+    head: (t) => promptHead(t).text + (t.origin !== 'mail' && /\S\s*\n\s*\S/.test(t.text) ? '…' : '') });
+  async function openRewind() {
+    try { if (!await picker.load()) return; } catch (e) { push(h('div', { class: 'meta err' }, e.message)); return; }
+    if (busyNow || composer.hidden || input.value) return; // 받는 사이 턴이 시작됐거나 승인 카드가 올라왔거나 글을 쳤다
+    dock.replaceChildren(picker.el); composer.hidden = true; picker.paint();
+  }
+  function onEscape() {
+    if (!current || busyNow) return;
+    const text = input.value;
+    if (!esc.press(performance.now(), text ? 'text' : 'empty')) return;
+    if (!text) { void openRewind(); return; }
+    hist.addCleared(lastSeq, text);
+    setInputText('');
+    hist.reset();
+  }
   // 어디서 쳐도 입력창으로 (ticket slcode-input-type-anywhere, 사용자 2026-11-02 — chatgpt.com 실측을 따른다). 포커스가 입력창 밖(대화·헤더·사이드바·버튼)이면
   // 글자 키와 붙여넣기는 포커스만 입력창으로 옮겨 브라우저 기본 동작이 그 자리에 넣게 한다 — focus() 는 직전 커서·선택을 그대로 둔다.
   // Space·Enter·화살표·Ctrl 조합(복사 등)은 넘기지 않는다. 다른 입력 요소·dialog·메뉴가 키를 받는 중이거나 승인 카드가 입력창 자리를 차지하면 그대로 둔다.
   // superlite 우선 단축키는 카드 문서의 전달 스크립트가 window capture 에서 먼저 받아 전파를 끊으므로 여기 오지 않는다
   const typingIn = (t) => t instanceof Element && t.closest('input, textarea, select, [contenteditable]:not([contenteditable=false]), dialog, [popover]');
   const canTake = () => !input.disabled && !composer.hidden && !el.querySelector('.menu:popover-open:not(.slash)');
+  document.addEventListener('keydown', (e) => { if (e.key !== 'Escape' && !['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) esc.reset(); }, true);
   document.addEventListener('keydown', (e) => {
     if (e.defaultPrevented || e.isComposing || typingIn(e.target) || !canTake()) return;
+    if (e.key === 'Escape') { onEscape(); return; }
     const mod = e.ctrlKey || e.metaKey || e.altKey;
     const char = e.key.length === 1 && e.key !== ' ' && (!mod || e.getModifierState('AltGraph'));
     const paste = ((e.ctrlKey || e.metaKey) && !e.altKey && e.code === 'KeyV') || (e.shiftKey && !mod && e.key === 'Insert');

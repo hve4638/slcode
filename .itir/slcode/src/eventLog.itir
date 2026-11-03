@@ -37,7 +37,7 @@ export class EventLog {
   }
 }
 export fn unrewound(events) -> LoggedEvent[] {
-  role: turn.rewound 가 버린 턴(그 seq 부터)을 뺀 이벤트 — 대화 되돌리기의 유지 지점과 다시 import 의 기준을 찾을 때
+  role: turn.rewound 가 버린 턴(그 seq 부터)을 뺀 이벤트 — 대화 되돌리기의 유지 지점과 다시 import 의 기준을 찾을 때. 코드만 되돌린 표지(conversation false)는 대화를 버리지 않는다
 }
 export fn visible(events) -> LoggedEvent[] {
   role: 화면에 남는 이벤트 — turn.rewound 가 버린 턴을 빼되 tool.end·approval.resolved 는 남긴다(앞 턴의 카드를 닫는다). 웹 replayHistory 의 규칙과 같다 (ticket slcode-history-paging)
@@ -47,6 +47,9 @@ export fn historyPage(events, before, limit) -> HistoryPage {
 }
 export fn outline(events) -> OutlineItem[] {
   role: 요청 목록 (ticket slcode-prompt-outline, 2026-10-23) — 되돌린 턴을 뺀 turn.start 마다 seq·origin·앞 300자·첨부 이름. 메일 턴은 웹이 머리표를 풀어 보낸 이·본문 첫 줄을 보이므로 자르지 않는다. 웹이 아직 받지 않은 옛 요청까지 왼쪽 목록에 처음부터 보인다
+}
+export fn promptTurns(events) -> PromptTurn[] {
+  role: 지난 입력 전문 (ticket slcode-input-history-arrows, slcode-rewind-esc-picker, 2026-11-03) — 되돌린 턴을 뺀 turn.start 는 전문·시각·그 턴에서 Write·Edit·MultiEdit·NotebookEdit 으로 고친 파일, 사람이 친 플러그인 명령(agent.command)도 넣는다. Bash 로 바꾼 파일은 벤더 체크포인트에도 없어 세지 않는다
 }
 export fn summarize(events) -> HistorySummary {
   role: 기록 전체(되돌린 턴 포함)의 turn.end 사용량·비용 누계(SDK 비용은 프로세스 누계라 줄어드는 경계에서 기준선에 합친다), 훅 횟수·마지막, 마지막 session.ready — 웹이 앞 페이지를 안 받고도 합계를 그린다

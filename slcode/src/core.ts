@@ -15,7 +15,7 @@ import { execFile } from 'node:child_process';
 import { ClaudeSession } from './session.js';
 import { CodexSession, codexRunnable } from './codex.js';
 import { PARAM_ENV, sessionEnvError, sessionParamsError, type AgentSession, type Command } from './base.js';
-import { EventLog, historyPage, outline, summarize, type SessionMeta } from './eventLog.js';
+import { EventLog, historyPage, outline, promptTurns, summarize, type SessionMeta } from './eventLog.js';
 import { isLoopback, reachable, sockAlive, spawnCore } from './live.js';
 import { BUILD, PKG, VERSION, replacingMark } from './client.js';
 import { corePaths, ensureDir, readOrCreateToken } from './paths.js';
@@ -482,6 +482,12 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     'session.rewind': async (_c, p) => {
       if (typeof p?.seq !== 'number') throw new CoreError(ERR.badRequest, 'seq required');
       try { return { ok: true, filesChanged: await mine(p.id).rewind(p.seq, !!p.conversation, !!p.files) }; }
+      catch (e) { if (e instanceof CoreError) throw e; throw new CoreError(ERR.badRequest, (e as Error).message); }
+    },
+    'session.prompts': (_c, p) => promptTurns(mine(p?.id).log.all),
+    'session.rewindPreview': async (_c, p) => {
+      if (typeof p?.seq !== 'number') throw new CoreError(ERR.badRequest, 'seq required');
+      try { return await mine(p.id).rewindPreview(p.seq); }
       catch (e) { if (e instanceof CoreError) throw e; throw new CoreError(ERR.badRequest, (e as Error).message); }
     },
     'session.approve': (_c, p) => {

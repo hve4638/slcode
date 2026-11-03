@@ -44,6 +44,9 @@ export class ClaudeSession {
   export fn rewind(seq, conversation, files) -> String[]? {
     role: idle 일 때만. files 면 SDK rewindFiles(그 턴의 userUuid), conversation 이면 생성기를 닫고(restarting 플래그로 exit 이벤트를 막는다) 앞 턴의 uuid 를 resumeSessionAt 으로 run 재기동(유지 지점은 그 턴보다 앞의 마지막 turn.end 또는 session.imported 표지의 uuid — 표지는 가져온 턴들 뒤에 서므로 대상보다 앞의 것만 본다. 없으면 새 벤더 세션, 표지의 uuid 가 없으면 가져온 대화를 지킬 수 없어 오류. 되돌림을 반영한 로그는 eventLog.unrewound). turn.rewound 이벤트
   }
+  export fn rewindPreview(seq) -> RewindPreview {
+    role: 되돌리기 창 확인 단계 — rewind 와 같은 턴·유지 지점을 보고 파일은 SDK rewindFiles dryRun 으로만 잰다. 체크포인트가 없으면 files null, 가져온 대화 앞이면 conversation false
+  }
   export fn queued() -> Int {
     role: 보냈지만 아직 turn.end 가 오지 않은 턴 수 — idle 경계에서도 다음 턴이 줄 서 있을 수 있다
   }

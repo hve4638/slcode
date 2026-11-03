@@ -65,6 +65,9 @@ export class CodexSession {
   export fn rewind(seq, conversation, files) {
     role: 미지원 — 오류
   }
+  export fn rewindPreview(seq) -> RewindPreview {
+    role: 미지원 — conversation false, files null, error
+  }
   export fn setSkillRoots(roots) {
     role: 에이전트 플러그인 skill 다시 싣기 — 기동을 기다린 뒤 skillRoots 를 바꾸고 skills/extraRoots/set(빈 목록이면 뗀다). 다음 턴부터 바뀐 목록이 간다
   }

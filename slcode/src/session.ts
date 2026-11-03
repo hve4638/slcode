@@ -3,7 +3,7 @@
 // 승인(canUseTool)은 Deferred 로 무기한 기다린다 — interrupt·close·프로세스 종료만 cancelled 로 푼다 (사용자 결정 2026-09-26).
 import { query, type Options, type Query, type SDKMessage, type SDKUserMessage, type PermissionResult, type PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
 import { randomUUID } from 'node:crypto';
-import type { AgentCommandEvent, AgentHookEvent, ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, Usage, LimitWindow, McpStatus } from './protocol.js';
+import type { AgentCommandEvent, AgentHookEvent, ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, RewindPreview, Usage, LimitWindow, McpStatus } from './protocol.js';
 import { EventLog, unrewound } from './eventLog.js';
 import { AgentSession, CLAUDE_EFFORTS, effortMisfit, type Command } from './base.js';
 import { SLCODE_PROMPT } from './prompt.js';
@@ -255,6 +255,22 @@ export class ClaudeSession extends AgentSession {
     }
     this.emit({ kind: 'turn.rewound', seq, conversation, files, filesChanged });
     return filesChanged;
+  }
+
+  /** 되돌리기 미리 보기 — rewind 와 같은 턴·유지 지점을 보고 파일은 SDK dry-run 으로만 잰다 */
+  async rewindPreview(seq: number): Promise<RewindPreview> {
+    const evs = unrewound(this.log.since(0));
+    const i = evs.findIndex((e) => e.seq === seq && e.ev.kind === 'turn.start');
+    if (i < 0) throw new Error(`no turn at seq ${seq}`);
+    const end = evs.slice(i).find((e) => e.ev.kind === 'turn.end')?.ev as Extract<CoreEvent, { kind: 'turn.end' }> | undefined;
+    const prev = evs.slice(0, i).reverse().find((e) => e.ev.kind === 'turn.end' || e.ev.kind === 'session.imported')?.ev as Extract<CoreEvent, { kind: 'turn.end' | 'session.imported' }> | undefined;
+    const lost = prev?.kind === 'session.imported' && !prev.uuid;
+    let files: RewindPreview['files'] = null;
+    if (end?.userUuid && this.q) {
+      const r = await this.q.rewindFiles(end.userUuid, { dryRun: true });
+      if (r.canRewind) files = { changed: r.filesChanged ?? [], insertions: r.insertions ?? 0, deletions: r.deletions ?? 0 };
+    }
+    return { conversation: !lost, files, ...(lost ? { error: 'cannot rewind before the imported conversation' } : {}) };
   }
 
   /** 벤더 프로세스를 같은 대화로 env 만 바꿔 다시 띄운다 — inspect 토글 (ticket slcode-inspect-proxy). rewind 의 재기동과 같은 길이고, 세션 한정 승인 규칙은 잃는다 */

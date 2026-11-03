@@ -34,6 +34,8 @@ type SessionState
 type Usage
 type HistorySummary
 type OutlineItem
+type PromptTurn
+type RewindPreview
 type ApprovalDecision
 type ResolvedDecision
 type ApprovalRequest

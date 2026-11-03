@@ -305,6 +305,32 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .dock:empty { display: none; }
 .acf .dock > .card { max-width: 780px; margin: 0 auto; }
 .acf .composer[hidden] { display: none; }
+/* 입력 상자 위 테두리의 안내 — 기록 4/5 */
+.acf .composer .input-hint { position: absolute; top: -8px; right: 14px; padding: 0 6px; font-size: 11px; line-height: 15px; color: var(--acf-muted); background: var(--acf-panel); border-radius: 6px; pointer-events: none; }
+.acf .composer .input-hint[hidden] { display: none; }
+/* 되돌리기 창 — 입력창 자리에 뜬다 (Esc 두 번) */
+.acf .dock > .rewind { max-width: 780px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; background: var(--acf-panel); border: 1px solid var(--acf-line); border-top: 2px solid var(--acf-accent); border-radius: 12px; outline: 0; }
+.acf .rewind .title { font-weight: 600; color: var(--acf-accent); }
+.acf .rewind .sub { color: var(--acf-fg); }
+.acf .rewind .more { font-size: 12px; line-height: 16px; min-height: 16px; color: var(--acf-muted); padding-left: 22px; }
+.acf .rewind .rows { position: relative; max-height: 38vh; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.acf .rewind .pt { display: flex; align-items: flex-start; gap: 6px; width: 100%; padding: 4px 6px; flex: none; text-align: left; background: transparent; border: 0; border-radius: 8px; color: inherit; font: inherit; cursor: pointer; }
+.acf .rewind .pt:hover { background: var(--acf-soft); }
+.acf .rewind .pt[aria-selected=true] { background: var(--acf-soft); }
+.acf .rewind .pt .mk { flex: none; width: 10px; font-weight: 600; color: var(--acf-accent); }
+.acf .rewind .pt .tx { min-width: 0; display: flex; flex-direction: column; }
+.acf .rewind .pt .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acf .rewind .pt .f { font-size: 12px; color: var(--acf-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acf .rewind .pt.now .t { font-style: italic; color: var(--acf-muted); }
+.acf .rewind blockquote { margin: 0; padding: 2px 0 2px 10px; border-left: 2px solid var(--acf-line); }
+.acf .rewind blockquote .q { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 22vh; overflow-y: auto; }
+.acf .rewind blockquote .at { font-size: 12px; color: var(--acf-muted); }
+.acf .rewind .effects { color: var(--acf-fg); }
+.acf .rewind .wait { color: var(--acf-muted); }
+.acf .rewind .err { color: var(--acf-err, #c33); }
+.acf .rewind .opts { display: flex; flex-direction: column; gap: 2px; }
+.acf .rewind .warn { font-size: 12px; color: var(--acf-warn); }
+.acf .rewind .keys { font-size: 12px; color: var(--acf-muted); }
 /* 피드의 호출 표식 — 대기 중엔 클릭하면 그 카드가 입력창 자리로 */
 .acf .mark { display: flex; gap: 8px; align-items: baseline; font-size: 13px; color: var(--acf-muted); border: 1px solid var(--acf-line); border-radius: 10px; padding: 7px 12px; }
 .acf .mark .kind { font-weight: 600; color: var(--acf-warn); } .acf .mark.ask .kind { color: var(--acf-accent); }
@@ -327,7 +353,7 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .composer .queue { max-width: 780px; max-height: 30vh; overflow-y: auto; margin: 0 auto 8px; display: flex; flex-direction: column; gap: 6px; }
 .acf .composer .queue[hidden] { display: none; }
 .acf .composer > .busy { max-width: 780px; margin: 0 auto 8px; }
-.acf .composer .box { max-width: 780px; margin: 0 auto; background: var(--acf-panel); border: 1px solid var(--acf-line); border-radius: 14px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+.acf .composer .box { position: relative; max-width: 780px; margin: 0 auto; background: var(--acf-panel); border: 1px solid var(--acf-line); border-radius: 14px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
 /* 아래 줄: 왼쪽 첨부·권한 모드, 오른쪽 모델·effort·보내기 (사용자 2026-10-13). 좁으면 모델 이름만 잘린다 — 권한 모드·effort 는 짧아서 그대로 */
 .acf .composer .row { display: flex; gap: 6px; align-items: center; min-width: 0; }
 .acf .composer .row .gap { flex: 1; }
