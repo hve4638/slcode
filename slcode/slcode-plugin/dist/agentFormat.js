@@ -52,6 +52,7 @@ export function parseManifest(text) {
             throw new Error(`${MANIFEST}: ${k} is both a part and an option`);
         parts[k] = { required: v.required === true, default: v.required === true || v.default !== false, ...(v.when !== undefined ? { when: parseWhen(k, v.when) } : {}) };
     }
+    checkWhenParts(parts);
     const env = {};
     for (const [k, v] of Object.entries((j.env ?? {}))) {
         if (typeof v !== 'string')
@@ -60,34 +61,75 @@ export function parseManifest(text) {
     }
     return { name: j.name, version: j.version ?? '0.0.0', options, parts, env };
 }
-/** part 의 when — {param: {NAME: true | "값" | ["값", …]}} 꼴이 아니면 던진다 (꼴을 모르면 part 를 켤지 알 수 없다) */
+/** part 의 when — part·param·env 중 하나 이상을 쓴 꼴이 아니면 던진다 (꼴을 모르면 part 를 켤지 알 수 없다). part 이름이 실제로 있는지는 checkWhenParts 가 본다 */
 function parseWhen(part, w) {
     const bad = (why) => new Error(`${MANIFEST}: part ${part} when ${why}`);
-    if (!isObj(w) || Object.keys(w).some((k) => k !== 'param') || !isObj(w.param) || !Object.keys(w.param).length)
-        throw bad('must be {"param": {NAME: true | "value" | ["value", ...]}}');
-    const param = {};
-    for (const [k, v] of Object.entries(w.param)) {
-        if (!PARAM_NAME.test(k))
-            throw bad(`param name ${k} must match ${PARAM_NAME}`);
-        if (v === true || typeof v === 'string')
-            param[k] = v;
-        else if (Array.isArray(v) && v.length && v.every((x) => typeof x === 'string'))
-            param[k] = [...v];
-        else
-            throw bad(`param ${k} must be true, a string or a non-empty list of strings`);
+    const shape = 'must be {"part": {NAME: true}, "param": {NAME: VALUE}, "env": {NAME: VALUE}} with at least one of them, VALUE is true | "value" | ["value", ...]';
+    if (!isObj(w) || !Object.keys(w).length || Object.keys(w).some((k) => k !== 'part' && k !== 'param' && k !== 'env'))
+        throw bad(shape);
+    for (const k of Object.keys(w))
+        if (!isObj(w[k]) || !Object.keys(w[k]).length)
+            throw bad(shape);
+    const out = {};
+    if (w.part) {
+        out.part = {};
+        for (const [k, v] of Object.entries(w.part)) {
+            if (v !== true)
+                throw bad(`part ${k} must be true`);
+            out.part[k] = true;
+        }
     }
-    return { param };
+    for (const kind of ['param', 'env']) {
+        if (!w[kind])
+            continue;
+        const values = {};
+        for (const [k, v] of Object.entries(w[kind])) {
+            if (!PARAM_NAME.test(k))
+                throw bad(`${kind} name ${k} must match ${PARAM_NAME}`);
+            if (v === true || typeof v === 'string')
+                values[k] = v;
+            else if (Array.isArray(v) && v.length && v.every((x) => typeof x === 'string'))
+                values[k] = [...v];
+            else
+                throw bad(`${kind} ${k} must be true, a string or a non-empty list of strings`);
+        }
+        out[kind] = values;
+    }
+    return out;
 }
-/** when 조건 — 이름마다 true 는 값이 있고 비어 있지 않음, 문자열은 같음, 목록은 그중 하나. 모두 참이어야 참 */
-export function whenHolds(w, params) {
-    return Object.entries(w.param).every(([k, want]) => {
-        const v = Object.hasOwn(params, k) ? params[k] : undefined;
-        return want === true ? !!v : typeof want === 'string' ? v === want : v !== undefined && want.includes(v);
-    });
+/** when 의 part 참조를 add 때 거절한다 — 없는 part 이름, 자기 참조, 순환. 순환이 없어야 resolveValues 가 대상 part 부터 판단할 수 있다 */
+function checkWhenParts(parts) {
+    const done = new Set();
+    const visit = (k, trail) => {
+        if (done.has(k))
+            return;
+        for (const t of Object.keys(parts[k].when?.part ?? {})) {
+            const bad = (why) => new Error(`${MANIFEST}: part ${k} when part ${t} ${why}`);
+            if (!Object.hasOwn(parts, t))
+                throw bad('is not a part of this plugin');
+            if (t === k)
+                throw bad('refers to itself');
+            if (trail.includes(t))
+                throw bad(`makes a cycle: ${[...trail.slice(trail.indexOf(t)), k, t].join(' -> ')}`);
+            visit(t, [...trail, k]);
+        }
+        done.add(k);
+    };
+    for (const k of Object.keys(parts))
+        visit(k, []);
+}
+const valuesHold = (want, have) => Object.entries(want).every(([k, w]) => {
+    const v = Object.hasOwn(have, k) ? have[k] : undefined;
+    return w === true ? !!v : typeof w === 'string' ? v === w : v !== undefined && w.includes(v);
+});
+/** when 조건 — part 는 partOn 이 참인가. param·env 는 이름마다 true 는 값이 있고 비어 있지 않음, 문자열은 같음, 목록은 그중 하나. 모두 참이어야 참 */
+export function whenHolds(w, params = {}, env = {}, partOn = () => false) {
+    return Object.keys(w.part ?? {}).every(partOn) && valuesHold(w.param ?? {}, params) && valuesHold(w.env ?? {}, env);
 }
 /** 조건 글 — 목록·export excluded·화면에 보인다 */
 export function whenText(w) {
-    return Object.entries(w.param).map(([k, v]) => `param ${k}${v === true ? '' : `=${typeof v === 'string' ? v : v.join('|')}`}`).join(' ');
+    const values = (kind, v = {}) => Object.entries(v).map(([k, x]) => `${kind} ${k}${x === true ? '' : `=${typeof x === 'string' ? x : x.join('|')}`}`);
+    return [...Object.keys(w.part ?? {}).map((k) => `part ${k}`), ...values('param', w.param), ...values('env', w.env)].join(' ');
 }
 export function readManifest(dir) {
     let text;
@@ -331,14 +373,22 @@ export function userValues(m, layers) {
     }
     return { parts, options };
 }
-/** 빌드에 쓰는 값 — userValues 다음, when 이 있는 켠 part 는 세션 인자 params 로 조건이 참일 때만 남긴다. 사용자가 끈 part 는 켜지 않고,
- *  필수 part 도 조건이 거짓이면 꺼진다(사용자 결정 2026-11-02). params 가 없으면(기본 빌드·export 판) 인자가 없는 것으로 본다.
- *  인자 값은 빌드 식별자에 들어가지 않는다 — 켜진 part 만 설정 문자열에 남는다 */
-export function resolveValues(m, layers, params = {}) {
+/** 빌드에 쓰는 값 — userValues 다음, when 이 있는 켠 part 는 세션 인자 params·env·다른 part 의 최종 상태로 조건이 참일 때만 남긴다. 사용자가 끈 part 는 켜지 않고,
+ *  필수 part 도 조건이 거짓이면 꺼진다(사용자 결정 2026-11-02). params·env 가 없으면(기본 빌드·export 판) 없는 것으로 본다.
+ *  값은 빌드 식별자에 들어가지 않는다 — 켜진 part 만 설정 문자열에 남는다. 순환은 parseManifest 가 거절했으므로 on 은 끝난다 */
+export function resolveValues(m, layers, params = {}, env = {}) {
     const r = userValues(m, layers);
-    for (const [k, p] of Object.entries(m.parts))
-        if (p.when && r.parts[k])
-            r.parts[k] = whenHolds(p.when, params);
+    const decided = new Set();
+    const on = (k) => {
+        if (!decided.has(k)) {
+            decided.add(k);
+            const w = m.parts[k].when;
+            if (w && r.parts[k])
+                r.parts[k] = whenHolds(w, params, env, on);
+        }
+        return r.parts[k];
+    };
+    Object.keys(m.parts).forEach(on);
     return r;
 }
 /** 정렬한 설정 문자열 — part.x=0|1, opt.y=<JSON> */

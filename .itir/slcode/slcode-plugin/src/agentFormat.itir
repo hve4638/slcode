@@ -13,7 +13,7 @@ type Manifest
 type Values
 type Resolved
 export fn parseManifest(text) -> Manifest {
-  role: 꼴 검사 — 이름은 [A-Za-z0-9][A-Za-z0-9._-]{0,63}(.. 없음, 폴더 이름이 된다). required part 는 늘 켜짐, default 를 적지 않은 part 는 켜짐. when 은 {param: {NAME: 값}} 꼴만 — 이름은 [A-Za-z_][A-Za-z0-9_]*, 값이 true·문자열·빈 것이 아닌 문자열 목록이 아니거나 param 이 비면 던진다. 옵션 default 가 없으면 꼴의 0 값
+  role: 꼴 검사 — 이름은 [A-Za-z0-9][A-Za-z0-9._-]{0,63}(.. 없음, 폴더 이름이 된다). required part 는 늘 켜짐, default 를 적지 않은 part 는 켜짐. when 은 part·param·env 중 하나 이상을 쓴 {part: {이름: true}, param: {NAME: 값}, env: {NAME: 값}} 꼴만 — NAME 은 [A-Za-z_][A-Za-z0-9_]*, 값이 true·문자열·빈 것이 아닌 문자열 목록이 아니거나 적은 칸이 비면 던진다. part 는 true 만 받는다(ticket slcode-agent-plugin-part-when-part, 사용자 확정 2026-11-03 — param 의 목록은 "그중 하나" 라서 목록을 받으면 같은 칸에서 뜻이 갈린다). 없는 part 이름·자기 참조·순환도 던진다. 옵션 default 가 없으면 꼴의 0 값
 }
 export fn readManifest(dir) -> Manifest
 export fn walk(dir, rel) -> String[] {
@@ -40,14 +40,14 @@ export fn compat(dir, m) {
 export fn userValues(m, layers) -> Resolved {
   role: manifest 기본값 위에 층(기본 설정 config.json < 프로필 < 세션)을 차례로 덮는다 — 뒤가 이긴다. 모르는 키·꼴이 틀린 값·필수 part 끄기는 건너뛴다(옛 판의 설정이 남아 있을 수 있다). part 조건 when 은 보지 않는다 — 사용자 설정 그대로(목록·관리 화면 스위치·export excluded)
 }
-export fn resolveValues(m, layers, params) -> Resolved {
-  role: 빌드에 쓰는 값 — userValues 다음 when 이 있는 켠 part 는 params(세션 인자)로 조건이 참일 때만 남긴다 — 사용자가 끈 part 는 켜지 않고, 필수 part 도 조건이 거짓이면 꺼진다(사용자 결정 2026-11-02). params 를 주지 않으면(기본 빌드·export 판) param 이 없는 것으로 본다. param 값은 빌드 식별자에 들어가지 않는다 — 켜진 part 만 설정 문자열에 남는다
+export fn resolveValues(m, layers, params, env) -> Resolved {
+  role: 빌드에 쓰는 값 — userValues 다음 when 이 있는 켠 part 는 params(세션 인자)·env·다른 part 의 최종 상태로 조건이 참일 때만 남긴다. 대상 part 를 먼저 판단하므로 사슬도 manifest 순서와 상관없다 — 사용자가 끈 part 는 켜지 않고, 필수 part 도 조건이 거짓이면 꺼진다(사용자 결정 2026-11-02). params·env 를 주지 않으면(기본 빌드·export 판) 없는 것으로 본다. param·env 값은 빌드 식별자에 들어가지 않는다 — 켜진 part 만 설정 문자열에 남는다
 }
-export fn whenHolds(when, params) -> Bool {
-  role: when 조건 하나 — 이름마다 true 는 값이 있고 비어 있지 않음, 문자열은 같음, 목록은 그중 하나. 모두 참이어야 참
+export fn whenHolds(when, params, env, partOn) -> Bool {
+  role: when 조건 하나 — part 는 partOn 이 참인가. param·env 는 이름마다 true 는 값이 있고 비어 있지 않음, 문자열은 같음, 목록은 그중 하나. 세 칸과 이름 모두 참이어야 참
 }
 export fn whenText(when) -> Text {
-  role: 화면·목록·export excluded 에 보이는 조건 글 — param ORCH_ROLE, param ORCH_ROLE=worker, param ORCH_ROLE=worker|lead 를 공백으로 잇는다
+  role: 화면·목록·export excluded 에 보이는 조건 글 — part main, param ORCH_ROLE, param ORCH_ROLE=worker, env FLAG=a|b 를 part·param·env 순서로 공백으로 잇는다
 }
 export fn valuesString(r) -> Text {
   role: 정렬한 설정 문자열 part.<이름>=0|1, opt.<이름>=<JSON>

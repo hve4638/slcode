@@ -112,6 +112,23 @@ export function pluginsPanel(call, { onChange } = {}) {
   const sw = (on, disabled, onchange, label) => el('input', { type: 'checkbox', role: 'switch', checked: on, disabled, 'aria-label': label, onchange });
   const line = (name, sub, control, cls) => el('div', { class: `ln${cls ? ` ${cls}` : ''}` }, el('span', { class: 'nm' }, name, sub ? el('span', { class: 'sub' }, sub) : null), control);
 
+  /** part 줄들 — 조건 when part 의 대상이 꺼지면(사슬 포함) 그 줄은 비활성으로 보인다 (사용자 2026-11-03, ticket slcode-agent-plugin-part-when-part). 스위치 값은 사용자 설정 그대로라
+   *  대상을 다시 켜면 돌아온다. 아직 적용하지 않은 바꿈까지 본다 — 다시 그리면 다음 스위치의 클릭이 사라지므로(applyBar) 줄의 모양만 바꾼다. param·env 는 세션마다 달라 여기서 보지 않는다 */
+  function partLines(r, s, off) {
+    const spec = new Map(r.parts.map((p) => [p.name, p]));
+    const switched = (p) => (s.pending.has(p.name) ? s.pending.get(p.name) === 'on' : p.on);
+    const alive = (p) => switched(p) && p.needs.every((t) => alive(spec.get(t)));
+    const lines = r.parts.map((p) => line(p.name, [p.required ? '필수' : null, p.when ? `조건 ${p.when}` : null].filter(Boolean).join(' · ') || null, // 조건은 세션마다 본다 — 스위치는 사용자 설정 (ticket slcode-agent-plugin-part-when)
+      sw(switched(p), off || p.required, (e) => stage(s, p.name, e.target.checked ? 'on' : 'off', p.on ? 'on' : 'off', e.target), p.name), s.pending.has(p.name) ? 'changed' : null));
+    s.paintParts = () => r.parts.forEach((p, i) => {
+      const blocked = !p.needs.every((t) => alive(spec.get(t)));
+      lines[i].classList.toggle('blocked', blocked);
+      lines[i].querySelector('input').disabled = off || p.required || blocked;
+    });
+    s.paintParts();
+    return lines;
+  }
+
   function plugin(r) {
     const s = of(r.name);
     const off = !!s.busy;
@@ -121,8 +138,7 @@ export function pluginsPanel(call, { onChange } = {}) {
         el('span', { class: `grade ${r.grade}` }, r.grade),
         s.busy ? el('span', { class: 'busy' }, `${s.busy}…`) : null),
       lost.length ? el('div', { class: 'lost' }, ...lost.map((h) => fold(s, `lost.${h}`, `${HARNESS[h]} 에서 빠지는 것 ${r.lost[h].length}`, el('ul', {}, ...r.lost[h].map((x) => el('li', {}, x)))))) : null,
-      r.parts.length ? el('div', { class: 'grp' }, el('h4', {}, 'part'), ...r.parts.map((p) => line(p.name, [p.required ? '필수' : null, p.when ? `조건 ${p.when}` : null].filter(Boolean).join(' · ') || null, // 조건은 세션마다 본다 — 스위치는 사용자 설정 (ticket slcode-agent-plugin-part-when)
-        sw(s.pending.has(p.name) ? s.pending.get(p.name) === 'on' : p.on, off || p.required, (e) => stage(s, p.name, e.target.checked ? 'on' : 'off', p.on ? 'on' : 'off', e.target), p.name), s.pending.has(p.name) ? 'changed' : null))) : null,
+      r.parts.length ? el('div', { class: 'grp' }, el('h4', {}, 'part'), ...partLines(r, s, off)) : null,
       r.options.length ? el('div', { class: 'grp' }, el('h4', {}, '옵션'), ...r.options.map((o) => option(r, o, off))) : null,
       hasScripts(r) ? el('div', { class: 'grp' }, el('h4', {}, 'js/ts 훅·명령'),
         s.check == null ? el('p', { class: 'note' }, '확인하는 중…') : s.check.length ? el('ul', { class: 'warns' }, ...s.check.map((x) => el('li', {}, x.trim()))) : el('p', { class: 'note' }, '경고 없음')) : null,
@@ -145,6 +161,7 @@ export function pluginsPanel(call, { onChange } = {}) {
   function stage(s, key, v, saved, ctl) {
     if (v === saved) s.pending.delete(key); else s.pending.set(key, v);
     ctl.closest('.ln')?.classList.toggle('changed', s.pending.has(key));
+    s.paintParts?.();
     bar?.paint();
   }
 

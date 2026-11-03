@@ -10,9 +10,13 @@ export type OptionSpec = {
     default: boolean | string | number;
     label?: string;
 };
-/** part 를 켜는 조건 (ticket slcode-agent-plugin-part-when) — 세션 인자(slcode new --param) 이름마다 true(있고 비어 있지 않음)·"값"(같음)·["값", …](그중 하나). 모두 참이어야 참 */
+type WhenValues = Record<string, true | string | string[]>;
+/** part 를 켜는 조건 (ticket slcode-agent-plugin-part-when, -part-when-part) — part 는 같은 플러그인 part 가 최종적으로 켜졌는가(true 만), param(slcode new --param)·env(세션 에이전트가 받는 env)는
+ *  이름마다 true(있고 비어 있지 않음)·"값"(같음)·["값", …](그중 하나). 칸과 이름 모두 참이어야 참 */
 export type When = {
-    param: Record<string, true | string | string[]>;
+    part?: Record<string, true>;
+    param?: WhenValues;
+    env?: WhenValues;
 };
 export type PartSpec = {
     required: boolean;
@@ -39,8 +43,8 @@ export type Resolved = {
 export declare const PARAM_NAME: RegExp;
 /** manifest 를 읽는다 — 이름·part 구성을 알 수 없으면 던진다 (slcode plugin add 가 거부하는 유일한 경우) */
 export declare function parseManifest(text: string): Manifest;
-/** when 조건 — 이름마다 true 는 값이 있고 비어 있지 않음, 문자열은 같음, 목록은 그중 하나. 모두 참이어야 참 */
-export declare function whenHolds(w: When, params: Record<string, string>): boolean;
+/** when 조건 — part 는 partOn 이 참인가. param·env 는 이름마다 true 는 값이 있고 비어 있지 않음, 문자열은 같음, 목록은 그중 하나. 모두 참이어야 참 */
+export declare function whenHolds(w: When, params?: Record<string, string>, env?: Record<string, string | undefined>, partOn?: (part: string) => boolean): boolean;
 /** 조건 글 — 목록·export excluded·화면에 보인다 */
 export declare function whenText(w: When): string;
 export declare function readManifest(dir: string): Manifest;
@@ -83,10 +87,10 @@ export declare function compat(dir: string, m: Manifest): {
 /** 기본값(manifest) 위에 층을 차례로 덮는다 — 뒤의 것이 이긴다. 모르는 키·꼴이 틀린 값은 건너뛴다(옛 판의 설정이 남아 있을 수 있다). 필수 part 는 늘 켠다.
  *  part 조건 when 은 보지 않는다 — 사용자 설정 그대로(목록·관리 화면의 스위치) */
 export declare function userValues(m: Manifest, layers: (Values | null | undefined)[]): Resolved;
-/** 빌드에 쓰는 값 — userValues 다음, when 이 있는 켠 part 는 세션 인자 params 로 조건이 참일 때만 남긴다. 사용자가 끈 part 는 켜지 않고,
- *  필수 part 도 조건이 거짓이면 꺼진다(사용자 결정 2026-11-02). params 가 없으면(기본 빌드·export 판) 인자가 없는 것으로 본다.
- *  인자 값은 빌드 식별자에 들어가지 않는다 — 켜진 part 만 설정 문자열에 남는다 */
-export declare function resolveValues(m: Manifest, layers: (Values | null | undefined)[], params?: Record<string, string>): Resolved;
+/** 빌드에 쓰는 값 — userValues 다음, when 이 있는 켠 part 는 세션 인자 params·env·다른 part 의 최종 상태로 조건이 참일 때만 남긴다. 사용자가 끈 part 는 켜지 않고,
+ *  필수 part 도 조건이 거짓이면 꺼진다(사용자 결정 2026-11-02). params·env 가 없으면(기본 빌드·export 판) 없는 것으로 본다.
+ *  값은 빌드 식별자에 들어가지 않는다 — 켜진 part 만 설정 문자열에 남는다. 순환은 parseManifest 가 거절했으므로 on 은 끝난다 */
+export declare function resolveValues(m: Manifest, layers: (Values | null | undefined)[], params?: Record<string, string>, env?: Record<string, string | undefined>): Resolved;
 /** 정렬한 설정 문자열 — part.x=0|1, opt.y=<JSON> */
 export declare function valuesString(r: Resolved): string;
 /** 빌드 식별자 — 설정 문자열·원본 해시·하네스·빌드기 판의 해시 */
@@ -97,3 +101,4 @@ export declare function parseAssignment(m: Manifest, s: string): {
     key: string;
     value: boolean | string | number;
 };
+export {};

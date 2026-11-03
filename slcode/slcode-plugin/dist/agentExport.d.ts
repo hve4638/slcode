@@ -24,7 +24,7 @@ export type ExportResult = {
 };
 export declare const exportLink: (ap: AgentPaths, h: ExportHarness, name: string) => string;
 /** 그 하네스의 export 판 — build/<식별자>/export/<하네스>/{<이름>/, report.json}. 있으면 다시 쓰고, 없으면 옆에 만든 뒤 rename */
-/** 켜 둔 조건 part — 세션 인자가 없어 기본 빌드에서 이미 빠졌다 (ticket slcode-agent-plugin-part-when, 사용자 결정 2026-11-02).
+/** 켜 뒀지만 조건 때문에 기본 빌드에서 빠진 part — 사유는 세션 값(param·env)이 없어서, 또는 대상 part 가 꺼져서 (ticket slcode-agent-plugin-part-when, -part-when-part).
  *  조건으로 꺼진 빌드와 사용자가 끈 빌드는 식별자가 같아 export 판의 report.json 을 함께 쓴다 — 그래서 저장하지 않고 읽을 때마다 붙인다 */
 export declare function withPartConditions(report: ExportReport, m: Manifest, e: PluginEntry): ExportReport;
 export declare function exportBuild(ap: AgentPaths, name: string, e: PluginEntry, h: ExportHarness, env: NodeJS.ProcessEnv): {

@@ -281,7 +281,7 @@ export function listPlugins(stateDir) {
         }
         return {
             name, version: e.version, grade: e.grade, lost: e.lost, source: e.source, installedAt: e.installedAt,
-            parts: m ? Object.entries(m.parts).map(([k, p]) => ({ name: k, on: r.parts[k], required: p.required, default: p.default, when: p.when ? whenText(p.when) : null })) : [],
+            parts: m ? Object.entries(m.parts).map(([k, p]) => ({ name: k, on: r.parts[k], required: p.required, default: p.default, when: p.when ? whenText(p.when) : null, needs: Object.keys(p.when?.part ?? {}) })) : [],
             options: m ? Object.entries(m.options).map(([k, o]) => ({ name: k, type: o.type, value: r.options[k], default: o.default, label: o.label ?? null })) : [],
             reports, exports: e.exports ?? [], exported,
         };
@@ -324,7 +324,7 @@ export function claudeDataDir(name, env) {
 function plan(ap, name, e, link, layers, env, harness = 'claude', params = {}) {
     const inst = path.join(ap.installed, name);
     const m = readManifest(inst);
-    const b = ensureBuild(ap.build, inst, m, resolveValues(m, [e.values, ...layers], params), e.hash, harness);
+    const b = ensureBuild(ap.build, inst, m, resolveValues(m, [e.values, ...layers], params, env), e.hash, harness);
     const read = (f) => { try {
         return fs.readFileSync(path.join(b.dir, f), 'utf8');
     }
@@ -355,7 +355,7 @@ function relink(link, target) {
 }
 /** 세션을 띄울 때 — 설치한 플러그인마다 그 하네스의 빌드를 만들고(있으면 다시 쓰고) 세션 폴더에 링크를 건다. 싣지 못한 것은 notes 에.
  *  Codex 는 링크로 빌드를 정리에서 지킬 뿐, 넘기는 경로는 빌드 폴더 그대로다 (빌드 안의 경로 변수를 이미 그 경로로 바꿨다).
- *  프로필이 있으면 그 프로필이 싣는 플러그인만, 설정 값은 기본 설정 < 프로필 < 세션 (ticket slcode-session-profile). params 는 세션 인자 — 켠 part 의 조건 when 이 본다 */
+ *  프로필이 있으면 그 프로필이 싣는 플러그인만, 설정 값은 기본 설정 < 프로필 < 세션 (ticket slcode-session-profile). params 는 세션 인자 — 켠 part 의 조건 when 이 본다. env 도 그대로 조건이 보고, manifest env 는 보지 않는다(part 가 자기 조건을 스스로 켤 수 있다, ticket slcode-agent-plugin-part-when-part) */
 export function loadSessionPlugins(sessionDir, env, session = {}, stateDir, harness = 'claude', profile, params = {}) {
     const ap = agentPaths(stateDir);
     const links = path.join(sessionDir, SESSION_LINKS);
@@ -454,7 +454,7 @@ export function reloadSessionPlugins(sessionDir, loaded, env, session = {}, stat
     return { loaded: next, later, removed, roots };
 }
 /** 지금 설정으로 빌드하면 나올 식별자 — 세션이 실은 것과 다르면 다시 실을 것이 있다. 빌드하지 않는다 */
-export function currentBuilds(session = {}, stateDir, harness = 'claude', profile, params = {}) {
+export function currentBuilds(session = {}, stateDir, harness = 'claude', profile, params = {}, env = {}) {
     const ap = agentPaths(stateDir);
     const out = {};
     for (const [name, e] of Object.entries(readConfig(ap).plugins)) {
@@ -462,7 +462,7 @@ export function currentBuilds(session = {}, stateDir, harness = 'claude', profil
             continue;
         try {
             const m = readManifest(path.join(ap.installed, name));
-            out[name] = buildId(valuesString(resolveValues(m, [e.values, profile && profileValues(profile, name), session[name]], params)), e.hash, harness);
+            out[name] = buildId(valuesString(resolveValues(m, [e.values, profile && profileValues(profile, name), session[name]], params, env)), e.hash, harness);
         }
         catch {
             out[name] = null;

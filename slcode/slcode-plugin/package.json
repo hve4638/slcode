@@ -1,6 +1,6 @@
 {
   "name": "slcode-plugin",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "slcode 에이전트 플러그인 — 형식·add/set/remove·export·훅 실행. 의존성 없는 순수 JS, 쓰는 쪽(slcode·superlite-for-agents)이 dist 를 넣어 간다",
   "type": "module",
   "bin": { "slcode-plugin": "dist/cli.js" },

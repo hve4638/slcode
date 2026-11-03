@@ -867,6 +867,7 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .ppanel .ln .nm { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .ppanel .ln .sub { font-size: 12px; color: var(--acf-muted); }
 .ppanel .ln.changed .nm::after { content: "•"; color: var(--acf-accent); }
+.ppanel .ln.blocked .nm { opacity: .5; }
 .ppanel .apply { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin: 8px -18px -16px; padding: 10px 18px; border-top: 1px solid var(--acf-line); background: var(--acf-panel); }
 .ppanel .apply[hidden] { display: none; }
 .ppanel .apply .sub { margin-right: auto; font-size: 12px; color: var(--acf-muted); }

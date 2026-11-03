@@ -93,13 +93,14 @@ export type PluginRow = {
     lost: Record<Harness, string[]>;
     source: string;
     installedAt: number;
-    /** on 은 사용자 설정(기본 설정 기준) — when 은 조건 글(whenText)이고 세션마다 따로 본다. 기본 빌드·export 판은 인자가 없어 조건 part 를 뺀다 */
+    /** on 은 사용자 설정(기본 설정 기준) — when 은 조건 글(whenText)이고 세션마다 따로 본다. 기본 빌드·export 판은 param·env 가 없는 것으로 판단한다. needs 는 조건 when part 의 대상 — 관리 화면이 대상이 꺼진 part 를 비활성으로 보인다 */
     parts: {
         name: string;
         on: boolean;
         required: boolean;
         default: boolean;
         when: string | null;
+        needs: string[];
     }[];
     options: {
         name: string;
@@ -169,7 +170,7 @@ export type SessionParams = Record<string, string>;
 export declare function claudeDataDir(name: string, env: NodeJS.ProcessEnv): string;
 /** 세션을 띄울 때 — 설치한 플러그인마다 그 하네스의 빌드를 만들고(있으면 다시 쓰고) 세션 폴더에 링크를 건다. 싣지 못한 것은 notes 에.
  *  Codex 는 링크로 빌드를 정리에서 지킬 뿐, 넘기는 경로는 빌드 폴더 그대로다 (빌드 안의 경로 변수를 이미 그 경로로 바꿨다).
- *  프로필이 있으면 그 프로필이 싣는 플러그인만, 설정 값은 기본 설정 < 프로필 < 세션 (ticket slcode-session-profile). params 는 세션 인자 — 켠 part 의 조건 when 이 본다 */
+ *  프로필이 있으면 그 프로필이 싣는 플러그인만, 설정 값은 기본 설정 < 프로필 < 세션 (ticket slcode-session-profile). params 는 세션 인자 — 켠 part 의 조건 when 이 본다. env 도 그대로 조건이 보고, manifest env 는 보지 않는다(part 가 자기 조건을 스스로 켤 수 있다, ticket slcode-agent-plugin-part-when-part) */
 export declare function loadSessionPlugins(sessionDir: string, env: NodeJS.ProcessEnv, session?: SessionValues, stateDir?: string, harness?: SessionHarness, profile?: PluginLayer, params?: SessionParams): SessionPlugins;
 /** 다시 싣기 — 실은 플러그인의 링크를 지금 설정의 빌드로 바꾼다. 지운 플러그인은 링크를 뗀다. SDK reloadPlugins()·Codex skills/extraRoots/set 은 부른 쪽이 한다.
  *  later 는 이 세션에 반영되지 않아 새 세션부터인 것 (지시문·env·session.json·Codex 의 MCP·bin 이 바뀐 플러그인, 세션 뒤에 설치한 플러그인).
@@ -185,7 +186,7 @@ export declare function reloadSessionPlugins(sessionDir: string, loaded: Loaded[
     roots: string[];
 };
 /** 지금 설정으로 빌드하면 나올 식별자 — 세션이 실은 것과 다르면 다시 실을 것이 있다. 빌드하지 않는다 */
-export declare function currentBuilds(session?: SessionValues, stateDir?: string, harness?: SessionHarness, profile?: PluginLayer, params?: SessionParams): Record<string, string | null>;
+export declare function currentBuilds(session?: SessionValues, stateDir?: string, harness?: SessionHarness, profile?: PluginLayer, params?: SessionParams, env?: NodeJS.ProcessEnv): Record<string, string | null>;
 /** 세션이 닫힐 때 — 링크를 떼어 그 빌드를 정리 대상으로 */
 export declare function unlinkSessionPlugins(sessionDir: string): void;
 /** 아무도 가리키지 않는 오래된 빌드를 지운다 — config 의 마지막 빌드, 세션 폴더의 링크, export/ 아래 링크가 가리키는 것은 남긴다.

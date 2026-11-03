@@ -93,3 +93,51 @@ test('codex: --param 은 meta.params 에 남아 SLCODE_PARAM_<이름> 으로 들
   await assert.rejects(serveSession({ dir, cwd: work, resume: ids.worker, web: false, params: { ORCH_ROLE: 'lead' } }), /params are only for a new session/);
   await assert.rejects(serveSession({ dir, cwd: work, vendor: 'codex', web: false, params: { 'A-B': 'x' } }), /bad param name/);
 });
+
+test('codex: part 조건 — 셸 env 와 --env(meta.env) 가 걸리고 manifest env 는 걸리지 않는다. part·param·env AND 와 사슬을 실제 세션에서 확인, resume 은 meta.env 를 유지하고 셸 값은 그때 값을 본다 (ticket slcode-agent-plugin-part-when-part)', async () => {
+  const saved = { ...process.env };
+  process.env.SLCODE_GRACE_SECS = '1';
+  process.env.SLCODE_CODEX_BIN = `${process.execPath} ${FAKE}`;
+  delete process.env.SHELL_FLAG; delete process.env.NEW_FLAG; delete process.env.FROM_MANIFEST;
+  const dir = tmp('slcode-sp-'), work = tmp('slcode-work-'), src = tmp('slcode-src-');
+  const parts = {
+    main: { required: true },
+    byShell: { when: { env: { SHELL_FLAG: '1' } } },
+    byNew: { when: { env: { NEW_FLAG: '1' } } },
+    byManifest: { when: { env: { FROM_MANIFEST: true } } },
+    all: { when: { part: { main: true }, param: { ROLE: true }, env: { NEW_FLAG: true } } },
+    chained: { when: { part: { all: true } } },
+  };
+  fs.writeFileSync(path.join(src, 'slcode-plugin.json'), JSON.stringify({ name: 'pw', env: { FROM_MANIFEST: '1' }, parts }));
+  for (const p of Object.keys(parts)) { fs.mkdirSync(path.join(src, p, 'instructions'), { recursive: true }); fs.writeFileSync(path.join(src, p, 'instructions', `${p}.md`), `${p} rule`); }
+  await addPlugin(src, dir);
+  const look = async (h: { sock: string; session: { id: string } }) => {
+    const c = await connectSession(h.sock);
+    try {
+      await c.request('session.attach', { id: h.session.id });
+      const p = (await c.request('session.plugins', { id: h.session.id }) as any).plugins[0];
+      assert.equal(p.current, p.build, 'currentBuilds 도 같은 env — 다시 실을 것이 없다');
+      return (p.values as string).split(',').filter((x) => x.endsWith('=1')).map((x) => x.slice(5, -2));
+    } finally { c.close(); }
+  };
+  const open = async (o: { env?: Record<string, string>; params?: Record<string, string> } = {}) => {
+    const h = await serveSession({ dir, cwd: work, vendor: 'codex', web: false, ...o });
+    try { return { id: h.session.id, on: await look(h) }; } finally { await h.close('test'); }
+  };
+  try {
+    assert.deepEqual((await open()).on, ['main'], 'manifest env 는 조건에 걸리지 않는다');
+    process.env.SHELL_FLAG = '1';
+    assert.deepEqual((await open()).on, ['byShell', 'main'], '셸 env 가 걸린다');
+    delete process.env.SHELL_FLAG;
+    assert.deepEqual((await open({ env: { NEW_FLAG: '1' } })).on, ['byNew', 'main'], '--env 가 걸린다. param 이 없으면 AND 가 거짓');
+    assert.deepEqual((await open({ params: { ROLE: 'w' } })).on, ['main'], 'env 가 없으면 AND 가 거짓');
+    const full = await open({ env: { NEW_FLAG: '1' }, params: { ROLE: 'w' } });
+    assert.deepEqual(full.on, ['all', 'byNew', 'chained', 'main'], 'part·param·env 모두 참이면 켜지고 사슬로 이어진다');
+    process.env.SHELL_FLAG = '1';
+    const h = await serveSession({ dir, cwd: work, resume: full.id, web: false });
+    try { assert.deepEqual(await look(h), ['all', 'byNew', 'byShell', 'chained', 'main'], 'resume: meta.env 는 그대로, 셸 값은 그때 값'); } finally { await h.close('test'); }
+  } finally {
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+    Object.assign(process.env, saved);
+  }
+});

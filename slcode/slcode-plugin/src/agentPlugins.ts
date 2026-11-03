@@ -249,8 +249,8 @@ export async function setPlugin(name: string, assignments: string[], stateDir?: 
 
 export type PluginRow = {
   name: string; version: string; grade: 'full' | 'partial'; lost: Record<Harness, string[]>; source: string; installedAt: number;
-  /** on 은 사용자 설정(기본 설정 기준) — when 은 조건 글(whenText)이고 세션마다 따로 본다. 기본 빌드·export 판은 인자가 없어 조건 part 를 뺀다 */
-  parts: { name: string; on: boolean; required: boolean; default: boolean; when: string | null }[];
+  /** on 은 사용자 설정(기본 설정 기준) — when 은 조건 글(whenText)이고 세션마다 따로 본다. 기본 빌드·export 판은 param·env 가 없는 것으로 판단한다. needs 는 조건 when part 의 대상 — 관리 화면이 대상이 꺼진 part 를 비활성으로 보인다 */
+  parts: { name: string; on: boolean; required: boolean; default: boolean; when: string | null; needs: string[] }[];
   options: { name: string; type: string; value: unknown; default: unknown; label: string | null }[];
   /** 하네스별 마지막 빌드의 report.json — 빌드가 없으면 null */
   reports: Partial<Record<Harness, Report | null>>;
@@ -273,7 +273,7 @@ export function listPlugins(stateDir?: string): PluginRow[] {
     for (const h of e.exports ?? []) { try { const x = JSON.parse(fs.readFileSync(path.join(ap.build, e.builds[h]!, 'export', h, BUILD_FILES.report), 'utf8')); exported[h] = m ? withPartConditions(x, m, e) : x; } catch { exported[h] = null; } }
     return {
       name, version: e.version, grade: e.grade, lost: e.lost, source: e.source, installedAt: e.installedAt,
-      parts: m ? Object.entries(m.parts).map(([k, p]) => ({ name: k, on: r.parts[k], required: p.required, default: p.default, when: p.when ? whenText(p.when) : null })) : [],
+      parts: m ? Object.entries(m.parts).map(([k, p]) => ({ name: k, on: r.parts[k], required: p.required, default: p.default, when: p.when ? whenText(p.when) : null, needs: Object.keys(p.when?.part ?? {}) })) : [],
       options: m ? Object.entries(m.options).map(([k, o]) => ({ name: k, type: o.type, value: r.options[k], default: o.default, label: o.label ?? null })) : [],
       reports, exports: e.exports ?? [], exported,
     };
@@ -337,7 +337,7 @@ type Plan = Loaded & { target: string };
 function plan(ap: AgentPaths, name: string, e: PluginEntry, link: string, layers: (Values | undefined)[], env: NodeJS.ProcessEnv, harness: SessionHarness = 'claude', params: SessionParams = {}): Plan {
   const inst = path.join(ap.installed, name);
   const m = readManifest(inst);
-  const b = ensureBuild(ap.build, inst, m, resolveValues(m, [e.values, ...layers], params), e.hash, harness);
+  const b = ensureBuild(ap.build, inst, m, resolveValues(m, [e.values, ...layers], params, env), e.hash, harness);
   const read = (f: string) => { try { return fs.readFileSync(path.join(b.dir, f), 'utf8'); } catch { return null; } };
   const base = { name, version: m.version, build: b.id, values: b.report.values, env: m.env };
   if (harness === 'codex') {
@@ -363,7 +363,7 @@ function relink(link: string, target: string) {
 
 /** 세션을 띄울 때 — 설치한 플러그인마다 그 하네스의 빌드를 만들고(있으면 다시 쓰고) 세션 폴더에 링크를 건다. 싣지 못한 것은 notes 에.
  *  Codex 는 링크로 빌드를 정리에서 지킬 뿐, 넘기는 경로는 빌드 폴더 그대로다 (빌드 안의 경로 변수를 이미 그 경로로 바꿨다).
- *  프로필이 있으면 그 프로필이 싣는 플러그인만, 설정 값은 기본 설정 < 프로필 < 세션 (ticket slcode-session-profile). params 는 세션 인자 — 켠 part 의 조건 when 이 본다 */
+ *  프로필이 있으면 그 프로필이 싣는 플러그인만, 설정 값은 기본 설정 < 프로필 < 세션 (ticket slcode-session-profile). params 는 세션 인자 — 켠 part 의 조건 when 이 본다. env 도 그대로 조건이 보고, manifest env 는 보지 않는다(part 가 자기 조건을 스스로 켤 수 있다, ticket slcode-agent-plugin-part-when-part) */
 export function loadSessionPlugins(sessionDir: string, env: NodeJS.ProcessEnv, session: SessionValues = {}, stateDir?: string, harness: SessionHarness = 'claude', profile?: PluginLayer, params: SessionParams = {}): SessionPlugins {
   const ap = agentPaths(stateDir);
   const links = path.join(sessionDir, SESSION_LINKS);
@@ -434,14 +434,14 @@ export function reloadSessionPlugins(sessionDir: string, loaded: Loaded[], env: 
 }
 
 /** 지금 설정으로 빌드하면 나올 식별자 — 세션이 실은 것과 다르면 다시 실을 것이 있다. 빌드하지 않는다 */
-export function currentBuilds(session: SessionValues = {}, stateDir?: string, harness: SessionHarness = 'claude', profile?: PluginLayer, params: SessionParams = {}): Record<string, string | null> {
+export function currentBuilds(session: SessionValues = {}, stateDir?: string, harness: SessionHarness = 'claude', profile?: PluginLayer, params: SessionParams = {}, env: NodeJS.ProcessEnv = {}): Record<string, string | null> {
   const ap = agentPaths(stateDir);
   const out: Record<string, string | null> = {};
   for (const [name, e] of Object.entries(readConfig(ap).plugins)) {
     if (profile && !loadsPlugin(profile, name)) continue;
     try {
       const m = readManifest(path.join(ap.installed, name));
-      out[name] = buildId(valuesString(resolveValues(m, [e.values, profile && profileValues(profile, name), session[name]], params)), e.hash, harness);
+      out[name] = buildId(valuesString(resolveValues(m, [e.values, profile && profileValues(profile, name), session[name]], params, env)), e.hash, harness);
     } catch { out[name] = null; }
   }
   return out;

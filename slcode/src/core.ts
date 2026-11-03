@@ -469,7 +469,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     },
     'session.plugins': (_c, p) => {
       mine(p?.id);
-      const cur = currentBuilds(logFile.meta.agentPlugins ?? {}, P.dir, harness, profileNow(), params);
+      const cur = currentBuilds(logFile.meta.agentPlugins ?? {}, P.dir, harness, profileNow(), params, env);
       return { profile: prof.name, plugins: agentLoaded.map((l) => ({ name: l.name, version: l.version, build: l.build, values: l.values, current: cur[l.name] ?? null })), added: Object.keys(cur).filter((n) => !agentLoaded.some((l) => l.name === n)), pending: reloadWanted };
     },
     'session.reloadPlugins': async (_c, p) => {
