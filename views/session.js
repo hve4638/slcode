@@ -46,6 +46,7 @@ export function mount(el, ctx) {
     title: null, state: null, conn: null, unsub: null, attached: false, hello: false, lost: false, closing: false,
     web: null, url: null, frame: null, shown: null, port: null, fwd: new Map(), portSeq: 0,
     nextId: 1, pending: new Map(), waits: new Map(), starting: null, note: null, error: null,
+    fatal: null, early: 0, // 이 시도에서 slcode 가 낸 {fatal}, 살아 있는 것을 보지 못한 채 연달아 끝난 횟수
   };
   const owner = ctx.card ?? c.key; // 서비스 owner — 코어가 카드 제거 때 이 값으로 owned 서비스를 끝낸다
   el.style.position = 'relative'; el.style.height = '100%'; el.style.overflow = 'hidden';
@@ -80,6 +81,7 @@ export function mount(el, ctx) {
   }
   function onMessage(m) {
     if (!m || typeof m !== 'object') return;
+    if (typeof m.fatal === 'string') { c.fatal = m.fatal; return; } // hello 전에 오류로 끝난다 — stderr 는 카드에 오지 않아 slcode 가 stdout 으로도 낸다
     if ('url' in m && 'sock' in m) { // hello
       c.hello = true; c.id = m.id ?? c.id;
       known(); applyTitle(); if (c.shown !== shownKey()) render();
@@ -225,6 +227,7 @@ export function mount(el, ctx) {
     if (c.conn || c.starting) return c.starting;
     c.starting = (async () => {
       let dropped = false; // 이 시도에서 연 연결이 끊겼다
+      let alive = false; // 이 시도에서 서비스가 응답하는 것을 봤다
       try {
         if (!c.unsub) c.unsub = ctx.services.onMessage(SVC, onMessage, { owner });
         c.error = null;
@@ -233,22 +236,27 @@ export function mount(el, ctx) {
         let command;
         try { command = await host('command', { id: c.id, spawn: c.spawn, takeover: c.takeover }); } finally { clearTimeout(slow); }
         c.note = null;
-        c.hello = false;
-        const conn = await ctx.services.open(SVC, { owner, command });
+        c.hello = false; c.fatal = null;
+        // 곧바로 끝난 프로세스(실행 파일 없음 등)는 붙기 전에 사라져 open 이 거절한다 — superlite 의 문구("실행 중이 아니다")보다 실제 사유를
+        const conn = await ctx.services.open(SVC, { owner, command }).catch(async (e) => { throw new Error(await exitReason(String(e?.message ?? e))); });
         c.conn = conn; c.lost = false; c.takeover = false; // 다시 띄울 때는 보통 resume — 그 사이 소유권이 다른 카드로 갔을 수 있다
-        conn.onClose(() => {
+        conn.onClose((reason) => {
           c.conn = null; c.attached = false; c.url = null; c.lost = true; dropped = true; badge();
           portStatus(false); // 카드 모드 화면은 그대로 두고 끊겼다고만 — 다시 붙으면 같은 포트로 이어진다
           // 기다리던 응답(server.info·session.attach)은 이 연결로 오지 않는다 — 풀지 않으면 ensure 가 끝나지 않아 다시 붙지 못했다
           for (const p of c.pending.values()) p.reject(new Error('연결이 끊겼습니다'));
           c.pending.clear();
-          setTimeout(resume, 1000);
+          // 서비스가 응답하기 전에 끝났다 — 다시 띄워도 같은 오류로 끝나 카드가 "띄우는 중" 에 머물렀다. {fatal} 이 있으면 바로, 없으면 한 번 더 띄워 보고 사유를 보인다.
+          // 한 번은 봐주는 것은 끝나 가던 서비스에 붙은 경우가 있어서다. reason 이 null 이면 이 카드가 스스로 끊은 것이다
+          if (reason !== null && !alive && !c.hello && (c.fatal || ++c.early > 1)) void exitReason('slcode 프로세스가 세션을 시작하기 전에 끝났습니다').then((why) => { c.web = null; c.url = null; startFailed(why); });
+          else setTimeout(resume, 1000);
         });
         if (!c.hello) { // 떠 있던 서비스에 붙었다 — hello 는 지나갔다. 세션 id 는 server.info 로
           const info = await request('server.info', {});
           c.id = info.session; known();
           handedOver(); // 다른 브라우저가 먼저 새 카드의 서비스를 띄웠다 — 소유권은 이미 넘어왔다
         }
+        alive = true; c.early = 0;
         // 카드 모드 화면 파일 — 이 serve 가 고정한 것. 옛 serve(web.files 없음)는 /svc 주소로
         const web = await request('web.files', {}).catch((e) => { if (dropped) throw e; return null; });
         if (web) c.web = web; else { c.web = null; c.url = await conn.webUrl(); }
@@ -258,12 +266,22 @@ export function mount(el, ctx) {
         if (!c.attached) await attach(); // 연결마다 한 번 — 이벤트 구독은 새 연결에 걸어야 한다
       } catch (e) {
         if (dropped) return; // 붙는 도중 연결이 끊겼다 — onClose 의 resume 이 다시 붙는다
-        c.state = 'exited'; c.note = null; c.error = String(e?.message ?? e); badge(); render();
-        if (c.spawn) void host('failed', c.key, c.error).catch(() => {});
-        void ctx.notify('error', `slcode: ${c.error}`);
+        startFailed(c.fatal ?? String(e?.message ?? e));
       } finally { c.starting = null; }
     })();
     return c.starting;
+  }
+  /** 기동 실패 — 사유와 [다시 시도] 를 보인다. 다시 붙지 않는다(state exited) */
+  function startFailed(reason) {
+    c.state = 'exited'; c.note = null; c.error = reason; badge(); render();
+    if (c.spawn) void host('failed', c.key, c.error).catch(() => {});
+    void ctx.notify('error', `slcode: ${c.error}`);
+  }
+  /** 서비스가 응답 전에 끝난 사유 — slcode 가 낸 {fatal}. 없으면(실행조차 못 했거나 옛 slcode) 같은 slcode 를 --version 으로 돌려 본 stderr */
+  async function exitReason(otherwise) {
+    if (c.fatal) return c.fatal;
+    const r = await host('checkUpdate', {}).catch(() => null);
+    return r?.status === 'failed' ? r.reason : otherwise;
   }
   /** 끊긴 카드 다시 붙기 — 이 화면이 떠 있는 동안(배경 세션이어도 카드 세션의 연결로 붙는다) */
   function resume() { if (c.lost && !c.conn && c.state !== 'exited' && !c.closing && !c.moved) void ensure(); }

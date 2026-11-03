@@ -175,7 +175,7 @@ export function activate(api) {
   }
   const dirOpt = async () => { const dir = await setting('dir', ''); return dir ? ` --dir ${shq(dir)}` : ''; };
 
-  /** 카드 서비스의 명령 — id 면 resume, 아니면 slcode.new 동사가 준 폴더·옵션으로 new (없으면 서비스 cwd = 워크스페이스 root).
+  /** 카드 서비스의 명령 — id 면 resume, 아니면 준 폴더·옵션으로 new (폴더가 없으면 slcode 가 사용법 오류로 끝나 카드가 그 오류를 보인다).
    *  첫 프롬프트는 맨 끝 `--` 뒤에. --no-web: TCP 웹을 열지 않는다. --takeover: 핸드오프의 새 카드 — 떠 있는 세션의 소유권을 옛 카드의 serve 에서 가져온다 */
   async function command({ id = null, spawn = null, takeover = false } = {}) {
     const [bin, dir] = await Promise.all([resolveBin(), dirOpt()]);

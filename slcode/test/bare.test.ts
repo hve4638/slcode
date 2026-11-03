@@ -204,3 +204,31 @@ test('superlite 안의 살아 있는 세션: resume 은 slcode.resume 로 그 �
   live.kill('SIGINT'); await exited;
   await sleep(1500);
 });
+
+// ---- 카드 서비스의 기동 오류 (ticket slcode-sidebar-new-stuck) — stderr 는 카드에 닿지 않아 hello 전 오류를 stdout 프레임 {fatal} 로도 낸다
+test('--stdio 가 hello 전에 오류로 끝나면 stdout 에 {fatal}, stderr 는 그대로. --stdio 가 아니면 stdout 은 비어 있다', async () => {
+  const dir = tmp('slcode-fatal-');
+  const usage = await run(dir, ['new', '--stdio', '--no-web']);
+  assert.equal(usage.code, 2);
+  assert.match(JSON.parse(usage.stdout).fatal, /^new needs a folder/);
+  assert.match(usage.stderr, /new needs a folder/);
+  const missing = await run(dir, ['resume', 'nope', '--stdio', '--no-web']);
+  assert.equal(missing.code, 1);
+  assert.match(JSON.parse(missing.stdout).fatal, /no session nope/);
+  const plain = await run(dir, ['new']);
+  assert.equal(plain.code, 2);
+  assert.equal(plain.stdout, '');
+});
+
+test('--stdio 가 hello 를 낸 뒤 끝나면 {fatal} 은 없다', async () => {
+  const dir = tmp('slcode-fatal-'), cwd = tmp('slcode-fatal-work-');
+  const child = spawn(process.execPath, ['--import', TSX, CLI, 'new', cwd, '--stdio', '--no-web'], { env: baseEnv(dir), stdio: ['pipe', 'pipe', 'ignore'] });
+  const exit = new Promise((r) => child.on('exit', r));
+  let out = '';
+  child.stdout!.setEncoding('utf8'); child.stdout!.on('data', (d: string) => { out += d; });
+  const t0 = Date.now(); while (!out.includes('\n') && child.exitCode === null && Date.now() - t0 < 15000) await sleep(50);
+  assert.ok(JSON.parse(out.split('\n')[0]).sock, 'hello');
+  child.kill('SIGINT');
+  await exit;
+  assert.ok(!out.includes('"fatal"'), out);
+});

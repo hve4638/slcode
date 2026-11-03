@@ -1,5 +1,5 @@
 // slcode 세션 목록 사이드바 (새 방식 화면, ticket slcode-plugin-v2) — 목록은 renderer 가 세어 rows 로 보내 준다(배지와 같은 값).
-// 누르면 그 세션의 카드를, + 는 새 카드를 renderer 가 연다. 행 우클릭 "Force close" 는 `slcode close --force` (사용자 2026-10-11)
+// 누르면 그 세션의 카드를, 머리의 + 는 시작 화면 카드를, 폴더 줄의 + 는 그 폴더의 새 세션 카드를 renderer 가 연다. 행 우클릭 "Force close" 는 `slcode close --force` (사용자 2026-10-11)
 // 모양 (ticket slcode-sidebar-orca, 사용자 결정 2026-10-27~28 — /tmp 시안으로 정하고 GPT·critic 디자인 검토를 반영):
 //   cwd 폴더별 묶음(키는 경로 전체, 이름은 폴더 이름 — 연결된 워크트리면 본 저장소 이름, 같은 이름의 다른 폴더면 부모 폴더 이름을 흐리게) →
 //   세션 한 줄(상태 점 | 제목·브랜치 | 벤더 기호·지금 상태가 된 뒤 시간). 상태 점은 superlite 터미널 점과 같은 뜻 — 깜빡이는 파랑 도는 중,

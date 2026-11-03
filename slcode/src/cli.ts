@@ -56,7 +56,7 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
                                  --model·--effort·--profile·--env·--param·첫 프롬프트는 새 세션에만 — resume·import·꺼진 세션을 찾은 continue 에 주면 오류
                                  --no-inspect: 설정 창의 '새 세션 inspect' 가 켜져 있어도 끈 채로 시작한다 (resume 이면 켜져 있던 것을 끈다).
                                  inspect 는 벤더(Claude·Codex)의 API 요청·응답 원본을 세션 폴더 inspect/ 에 남긴다 — 떠 있는 세션은 웹 사이드바에서 켜고 끈다
-                                 --stdio: stdin/stdout 을 프레임 연결로 (첫 줄 {"url","id","sock"}; superlite 서비스용). resume·continue 도 받는다
+                                 --stdio: stdin/stdout 을 프레임 연결로 (첫 줄 {"url","id","sock"}, 그 전에 오류로 끝나면 {"fatal"}; superlite 서비스용). resume·continue 도 받는다
                                  resume <s> --stdio --takeover: 살아 있는 세션의 소유권을 빼앗아 붙는다 (카드 핸드오프)
   resume [<s>]                   저장된 세션을 다시 띄운다. <s> 가 없으면 현재 폴더의 꺼진 세션 목록 (superlite 안이면 카드에서 고른다)
   continue [folder]              그 폴더에서 가장 최근에 꺼진 세션을 resume (없으면 새 세션)
@@ -114,8 +114,11 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
   discard <s>                    시작 화면에서 연 빈 세션(첫 메시지 전)을 닫고 지운다 — 카드의 '시작 화면으로' (플러그인이 쓴다, new --from-start 로 연 세션)
 공통: --dir D (SLCODE_DIR 대체), --help, --version [--json] (--json 이면 {"version","build"} — build 는 dist/cli.js 의 mtime)`;
 
+/** 카드 서비스(--stdio)의 stderr 는 tmux pane 으로만 가 카드에 닿지 않는다 — hello 전에 오류로 끝나면 마지막 오류를 stdout 프레임 {"fatal"} 로도 낸다 (ticket slcode-sidebar-new-stuck) */
+let lastError = '', helloSent = false;
+if (process.argv.includes('--stdio')) process.on('exit', (code) => { if (code && !helloSent && lastError) fs.writeSync(1, `${JSON.stringify({ fatal: lastError })}\n`); });
 function usage(msg?: string): never {
-  if (msg) console.error(`[slcode] ${msg}\n(slcode --help)`); else console.error(HELP);
+  if (msg) { lastError = msg; console.error(`[slcode] ${msg}\n(slcode --help)`); } else console.error(HELP);
   process.exit(2);
 }
 let parsed: ReturnType<typeof parseArgs>;
@@ -162,7 +165,7 @@ const [cmd, ...rest] = bare ? ['start'] : positionals;
 if (!cmd || flags.help) { console.log(HELP); process.exit(0); }
 const print = (o: unknown) => console.log(JSON.stringify(o, null, 2));
 
-const err = (msg: string) => console.error(`[slcode] ${msg}`);
+const err = (msg: string) => { if (!msg.startsWith('warning:')) lastError = msg; console.error(`[slcode] ${msg}`); };
 const P = corePaths(flags.dir);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const num = (v: string | undefined, name: string) => { if (v === undefined) return undefined; const n = Number(v); if (!Number.isInteger(n) || n < 0) usage(`--${name} must be a non-negative integer`); return n; };
@@ -307,7 +310,7 @@ async function serve(opts: { cwd: string; resume?: string }) {
       webSock: flags.stdio ? process.env.SUPERLITE_SERVICE_WEB || undefined : undefined,
     });
     // --stdio 면 첫 줄이 hello(JSON) — 그 뒤 stdout 은 프레임만. 아니면 사람이 읽는 URL(또는 소켓 경로) 한 줄
-    if (flags.stdio) console.log(JSON.stringify({ url: h.url ? reachable(h.url) : null, id: h.session.id, sock: h.sock }));
+    if (flags.stdio) { helloSent = true; console.log(JSON.stringify({ url: h.url ? reachable(h.url) : null, id: h.session.id, sock: h.sock })); }
     else if (h.url) console.log(reachable(h.url)); else console.log(h.sock);
     err(`session ${h.session.id} in ${opts.cwd} — Ctrl-C closes the session (later: slcode resume ${h.session.id})`);
     const bye = () => { err(`session ${h.session.id} closed. To continue: slcode resume ${h.session.id}`); process.exit(0); };
@@ -455,6 +458,7 @@ async function attachStdio(log: EventLog) {
     dir: flags.dir, cwd: log.meta.cwd, web: false, stdio: true, attach: { id: log.meta.id, sock: log.sockPath, url, takeover: flags.takeover }, log: err,
     webSock: process.env.SUPERLITE_SERVICE_WEB || undefined,
   });
+  helloSent = true;
   console.log(JSON.stringify({ url, id: log.meta.id, sock: log.sockPath }));
   // 빼앗은 소유자면 serve() 처럼 시그널에 세션을 닫는다 — 없으면 superlite 가 카드를 멈출 때 core 가 owner gone 유예 뒤에야 닫았다
   if (flags.takeover) {
@@ -727,6 +731,7 @@ try {
     default: usage(`unknown verb: ${cmd}`);
   }
 } catch (e) {
-  console.error(`error: ${(e as Error).message}`);
+  lastError = (e as Error).message;
+  console.error(`error: ${lastError}`);
   process.exitCode = 1;
 }

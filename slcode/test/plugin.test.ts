@@ -309,6 +309,165 @@ test('renderer cards.open: tmux 요청자면 views.open 한 번(opener·end), �
   assert.deepEqual(opens[2][2], { as: 'card', key: 'sF', title: 'SLCode', preserve: true, opener: '$3', end: true, focus: true });
 });
 
+// ---- 폴더를 고르지 않은 새 세션 (ticket slcode-sidebar-new-stuck) — 사이드바 머리 + 와 팔레트는 워크스페이스 폴더의 시작 화면 카드를 연다
+function rendererWith(proc: { code: number | null; stdout: string; stderr: string }, os = 'linux') {
+  const opens: any[][] = [], notes: string[] = [], ran: string[] = [], commands: Record<string, () => void> = {};
+  let onMsg: (m: unknown, from: unknown) => void = () => {};
+  const noop = () => {};
+  const api = {
+    main: { call: async () => [] }, notify: (_: string, m: string) => { notes.push(m); }, storage: { get: async () => ({}) }, expose: noop,
+    sidebar: { register: noop, setBadge: noop }, events: { on: noop }, commands: { register: (c: { id: string; run: () => void }) => { commands[c.id] = c.run; } },
+    platform: async () => ({ os, arch: 'x86_64' }), proc: { run: async (cmd: string) => { ran.push(cmd); return { ...proc, truncated: false }; } },
+    views: { open: async (...a: unknown[]) => { opens.push(a); }, post: noop, onMessage: (cb: typeof onMsg) => { onMsg = cb; }, active: () => null },
+  };
+  (rendererMod.default ?? rendererMod).activate(api);
+  return { opens, notes, ran, commands, click: (m: unknown) => onMsg(m, { tabId: null, viewId: 'sessions', slot: 'sidebar' }) };
+}
+const tick = () => new Promise((r) => setTimeout(r, 10));
+
+test('renderer: 사이드바 머리 + 는 워크스페이스 폴더의 시작 화면 카드를 연다 (프로필 출력이 앞에 있어도 마지막 줄)', async () => {
+  const r = rendererWith({ code: 0, stdout: 'hello from profile\n/w s\n', stderr: '' });
+  r.click({ type: 'open' });
+  await tick();
+  assert.deepEqual(r.ran, ['pwd']);
+  assert.equal(r.opens.length, 1);
+  assert.equal(r.opens[0][1].start, '/w s');
+  assert.equal(r.opens[0][1].spawn, undefined);
+  assert.equal(r.opens[0][2].title, 'Start');
+});
+
+test('renderer: 팔레트 새 세션도 시작 화면, Windows 는 cd 로 묻는다', async () => {
+  const r = rendererWith({ code: 0, stdout: 'C:\\w\r\n', stderr: '' }, 'windows');
+  r.commands.new();
+  await tick();
+  assert.deepEqual(r.ran, ['cd']);
+  assert.equal(r.opens[0][1].start, 'C:\\w');
+});
+
+test('renderer: 폴더 줄의 + 는 그대로 그 폴더의 새 세션, 폴더를 알지 못하면 카드를 열지 않고 알린다', async () => {
+  const ok = rendererWith({ code: 0, stdout: '/w\n', stderr: '' });
+  ok.click({ type: 'open', spawn: { cwd: '/f' } });
+  await tick();
+  assert.deepEqual(ok.ran, []);
+  assert.deepEqual(ok.opens[0][1].spawn, { cwd: '/f' });
+  const bad = rendererWith({ code: 1, stdout: '', stderr: 'no shell' });
+  bad.click({ type: 'open' });
+  await tick();
+  assert.equal(bad.opens.length, 0);
+  assert.deepEqual(bad.notes, ['slcode: no shell']);
+});
+
+// ---- 카드 기동 실패 (ticket slcode-sidebar-new-stuck) — 서비스가 응답 전에 끝나면 다시 띄우기를 멈추고 사유를 보인다. 화면은 작은 DOM 흉내로 돌린다
+function fakeEl(tag = 'div'): any {
+  const el: any = { tag, style: {}, children: [], textContent: '', onclick: null, addEventListener() {}, remove() {}, setAttribute() {} };
+  el.append = (...k: any[]) => { el.children.push(...k); };
+  el.appendChild = (k: any) => { el.children.push(k); return k; };
+  Object.defineProperty(el, 'innerHTML', { set() { el.children = []; }, get: () => '' });
+  return el;
+}
+const textOf = (el: any): string => [el.textContent, ...el.children.map(textOf)].join(' ');
+async function mountCard(state: unknown, hostImpl: (method: string, ...a: unknown[]) => unknown = async () => 'cmd') {
+  const opens: any[] = [], notes: string[] = [], failed: unknown[][] = [];
+  let onMsg: (m: unknown) => void = () => {};
+  const g = globalThis as any;
+  const saved = { document: g.document, window: g.window };
+  g.document = { createElement: fakeEl };
+  g.window = { addEventListener() {}, removeEventListener() {} };
+  const el = fakeEl();
+  const ctx = {
+    state, card: 'card-1', tabId: 't1', storage: { get: async () => ({}), set: async () => {} },
+    post: async () => {}, onMessage: () => () => {}, setBadge: async () => {}, setTitle: async () => {}, setState: async () => {},
+    notify: async (_: string, m: string) => { notes.push(m); },
+    main: { call: async (_: string, method: string, ...a: unknown[]) => { if (method === 'failed') failed.push(a); return hostImpl(method, ...a); } },
+    services: {
+      onMessage: (_: string, cb: typeof onMsg) => { onMsg = cb; return () => {}; },
+      send: async () => {},
+      open: async () => { const conn: any = { close: async () => {}, closers: [] as ((e: string | null) => void)[], onClose(cb: (e: string | null) => void) { conn.closers.push(cb); } }; opens.push(conn); return conn; },
+    },
+  };
+  (cardMod.default ?? cardMod).mount(el, ctx);
+  await tick();
+  return { el, opens, notes, failed, msg: (m: unknown) => onMsg(m), exit: async (e: string | null = '서비스 종료') => { for (const cb of opens.at(-1).closers) cb(e); await tick(); }, restore: async () => { (cardMod.default ?? cardMod).unmount(); await tick(); g.document = saved.document; g.window = saved.window; } };
+}
+
+test('카드: {fatal} 을 내고 끝나면 다시 띄우지 않고 그 오류와 다시 시도를 보인다, slcode.new 동사에도 실패로 알린다', async () => {
+  const c = await mountCard({ key: 'k', id: null, spawn: { cwd: '/gone' } });
+  try {
+    assert.equal(c.opens.length, 1);
+    c.msg({ fatal: 'not a folder: /gone' });
+    await c.exit();
+    await new Promise((r) => setTimeout(r, 1100));
+    assert.equal(c.opens.length, 1, '다시 띄우지 않는다');
+    assert.match(textOf(c.el), /not a folder: \/gone/);
+    assert.match(textOf(c.el), /다시 시도/);
+    assert.doesNotMatch(textOf(c.el), /띄우는 중/);
+    assert.deepEqual(c.failed, [['k', 'not a folder: /gone']]);
+    assert.deepEqual(c.notes, ['slcode: not a folder: /gone']);
+  } finally { await c.restore(); }
+});
+
+test('카드: {fatal} 없이 끝나면 한 번 더 띄워 보고, 또 끝나면 --version 의 stderr 를 보인다', async () => {
+  const c = await mountCard({ key: 'k', id: null, spawn: { cwd: '/w' } }, async (m) => (m === 'checkUpdate' ? { status: 'failed', reason: 'sh: slcode: not found' } : 'cmd'));
+  try {
+    await c.exit();
+    assert.doesNotMatch(textOf(c.el), /not found/);
+    await new Promise((r) => setTimeout(r, 1100));
+    assert.equal(c.opens.length, 2, '한 번 더 띄운다');
+    await c.exit();
+    await new Promise((r) => setTimeout(r, 1100));
+    assert.equal(c.opens.length, 2, '그 뒤로는 띄우지 않는다');
+    assert.match(textOf(c.el), /sh: slcode: not found/);
+  } finally { await c.restore(); }
+});
+
+test('카드: --version 이 돌면 일반 문구, 스스로 끊은 연결(reason null)은 실패로 치지 않는다', async () => {
+  const c = await mountCard({ key: 'k', id: null, spawn: { cwd: '/w' } }, async (m) => (m === 'checkUpdate' ? { status: 'latest' } : 'cmd'));
+  try {
+    await c.exit(null);
+    assert.equal(c.notes.length, 0);
+    await new Promise((r) => setTimeout(r, 1100));
+    await c.exit();
+    await new Promise((r) => setTimeout(r, 1100));
+    await c.exit();
+    await tick();
+    assert.match(textOf(c.el), /세션을 시작하기 전에 끝났습니다/);
+  } finally { await c.restore(); }
+});
+
+test('카드: 붙기 전에 사라져 open 이 거절하면 실제 사유를, --version 이 돌면 거절 문구를 보인다', async () => {
+  const g = globalThis as any;
+  const saved = { document: g.document, window: g.window };
+  g.document = { createElement: fakeEl };
+  g.window = { addEventListener() {}, removeEventListener() {} };
+  for (const [check, want] of [[{ status: 'failed', reason: 'sh: slcode: not found' }, /sh: slcode: not found/], [{ status: 'latest' }, /실행 중이 아니다/]] as const) {
+    const el = fakeEl();
+    (cardMod.default ?? cardMod).mount(el, {
+      state: { key: 'k', id: 'sess-1' }, card: 'c', tabId: 't', storage: { get: async () => ({}), set: async () => {} },
+      post: async () => {}, onMessage: () => () => {}, setBadge: async () => {}, setTitle: async () => {}, setState: async () => {}, notify: async () => {},
+      main: { call: async (_: string, m: string) => (m === 'checkUpdate' ? check : 'cmd') },
+      services: { onMessage: () => () => {}, send: async () => {}, open: async () => { throw new Error('실행 중이 아니다: slcode/session'); } },
+    });
+    await tick();
+    assert.match(textOf(el), want);
+    (cardMod.default ?? cardMod).unmount();
+    await tick();
+  }
+  g.document = saved.document; g.window = saved.window;
+});
+
+test('카드: hello 를 본 서비스가 끝나면 지금처럼 다시 붙는다', async () => {
+  const c = await mountCard({ key: 'k', id: 'sess-1' });
+  try {
+    c.msg({ url: null, id: 'sess-1', sock: '/s' });
+    await tick();
+    await c.exit();
+    await new Promise((r) => setTimeout(r, 1100));
+    assert.equal(c.opens.length, 2, '다시 띄운다');
+    assert.equal(c.notes.length, 0);
+    assert.doesNotMatch(textOf(c.el), /준비하지 못했습니다/);
+  } finally { await c.restore(); }
+});
+
 // ---- 승인 요청은 카드 배지로만 (사용자 2026-10-24) — main 은 승인 알림을 받지도 띄우지도 않는다
 test('main host: approval 이 없다', async () => {
   await withMain({ 'plugin.json': PLUGIN_JSON }, {}, async ({ exposed }) => { assert.equal(exposed.host.approval, undefined); });

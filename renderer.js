@@ -2,7 +2,7 @@
 // 팔레트 명령, 액티비티바 "slcode" 사이드바와 살아 있는 세션 수 배지, 카드 열기·닫기 요청(main 의 셸 동사·다른 플러그인의 close 가 cards 인터페이스로 부른다).
 // 카드 화면·사이드바와는 메모리를 함께 쓰지 않는다 — 화면이 post 로 보낸 {type} 을 받고 views.post 로 돌려준다:
 //   카드 → tab(이 창의 탭 id 를 알림)·count(목록 다시 세기)·moveOut(핸드오프 — 옛 카드를 옮겨진 카드로)
-//   사이드바 → refresh·open(id 또는 spawn {cwd})·forceClose·goTo(다른 superlite 세션 탭의 카드로 {id, root})
+//   사이드바 → refresh·open(id 또는 spawn {cwd}, 둘 다 없으면 시작 화면)·forceClose·goTo(다른 superlite 세션 탭의 카드로 {id, root})
 //   카드로 → revive(닫힌 세션의 카드를 다시 띄움)·close(세션 종료)·closing·closed·moveOut·seen(사이드바가 눌러 앞에 보였다), 사이드바로 → rows
 
 const VIEW = 'session';
@@ -32,6 +32,16 @@ export function activate(api) {
     const at = { as: 'card', key, title: title ?? (pick ? PICK_NAME : start ? START_NAME : DEFAULT_NAME), preserve: true };
     await api.views.open(VIEW, state, tmux ? { ...at, opener: tmux, end: true, ...(focus ? { focus: true } : {}) } : at);
     if (id) void api.views.post({ type: 'revive', key }); // 닫힌 세션의 카드가 남아 있다 — 활성화만 하면 "세션이 닫혔습니다" 그대로라 다시 띄운다
+  }
+
+  /** 폴더를 고르지 않은 새 세션(사이드바 머리 +, 팔레트) — slcode new 는 폴더를 꼭 받으므로 지금 superlite 세션의 워크스페이스 폴더로 시작 화면 카드를 연다.
+   *  slcode.start 동사와 같은 카드지만 main 동사는 창의 verbs.run 으로 닿지 않고, renderer API 에 root 가 없어 그 세션의 셸에 묻는다(proc 의 기본 cwd 가 root).
+   *  마지막 줄만 — 로그인 셸의 프로필이 stdout 에 무언가 찍을 수 있다 */
+  async function openStart() {
+    const r = await api.proc.run((await api.platform()).os === 'windows' ? 'cd' : 'pwd');
+    const root = r.stdout.trim().split(/\r?\n/).pop();
+    if (r.code !== 0 || !root) throw new Error(r.stderr.trim() || `exit ${r.code}`);
+    await open({ start: root });
   }
 
   // main 이 부른다 — scope own 이라 이 플러그인의 main 만
@@ -113,7 +123,7 @@ export function activate(api) {
         seenOnMount.delete(m.key);
         return;
       case 'count': case 'refresh': void count(); return;
-      case 'open': void (m.id ? openFromSidebar(m.id) : open(m.spawn?.cwd ? { spawn: { cwd: m.spawn.cwd } } : {})).catch(fail); return;
+      case 'open': void (m.id ? openFromSidebar(m.id) : m.spawn?.cwd ? open({ spawn: { cwd: m.spawn.cwd } }) : openStart()).catch(fail); return;
       case 'forceClose': void forceClose(m.id); return;
       case 'goTo': void goTo(m.id, m.root).catch(fail); return;
       case 'moveOut': void api.views.post({ type: 'moveOut', key: m.from }); return;
@@ -123,7 +133,7 @@ export function activate(api) {
   api.events.on({ kind: 'card.removed', pred: (ev) => ev.pluginId === 'slcode' }, () => { for (const ms of [1000, 4000]) setTimeout(count, ms); });
 
   // ---- 팔레트
-  api.commands.register({ id: 'new', title: 'slcode: New session (card)', run: () => void open().catch(fail) });
+  api.commands.register({ id: 'new', title: 'slcode: New session (card)', run: () => void openStart().catch(fail) });
   api.commands.register({
     id: 'close', title: 'slcode: Close session (active card)', run: async () => {
       const a = await api.views.active();
