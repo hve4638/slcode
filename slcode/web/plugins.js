@@ -118,7 +118,7 @@ export function pluginsPanel(call, { onChange } = {}) {
     const spec = new Map(r.parts.map((p) => [p.name, p]));
     const switched = (p) => (s.pending.has(p.name) ? s.pending.get(p.name) === 'on' : p.on);
     const alive = (p) => switched(p) && p.needs.every((t) => alive(spec.get(t)));
-    const lines = r.parts.map((p) => line(p.name, [p.required ? '필수' : null, p.when ? `조건 ${p.when}` : null].filter(Boolean).join(' · ') || null, // 조건은 세션마다 본다 — 스위치는 사용자 설정 (ticket slcode-agent-plugin-part-when)
+    const lines = r.parts.map((p) => line(p.name, [p.required ? '필수' : null, p.addon ? `애드온 ${p.addon}` : null, p.when ? `조건 ${p.when}` : null].filter(Boolean).join(' · ') || null, // 조건은 세션마다 본다 — 스위치는 사용자 설정 (ticket slcode-agent-plugin-part-when)
       sw(switched(p), off || p.required, (e) => stage(s, p.name, e.target.checked ? 'on' : 'off', p.on ? 'on' : 'off', e.target), p.name), s.pending.has(p.name) ? 'changed' : null));
     s.paintParts = () => r.parts.forEach((p, i) => {
       const blocked = !p.needs.every((t) => alive(spec.get(t)));
@@ -139,6 +139,8 @@ export function pluginsPanel(call, { onChange } = {}) {
         s.busy ? el('span', { class: 'busy' }, `${s.busy}…`) : null),
       lost.length ? el('div', { class: 'lost' }, ...lost.map((h) => fold(s, `lost.${h}`, `${HARNESS[h]} 에서 빠지는 것 ${r.lost[h].length}`, el('ul', {}, ...r.lost[h].map((x) => el('li', {}, x)))))) : null,
       r.parts.length ? el('div', { class: 'grp' }, el('h4', {}, 'part'), ...partLines(r, s, off)) : null,
+      // 애드온 (ticket slcode-plugin-addon) — 켜고 끄는 단위가 아니라 스위치가 없다. part 는 위 목록에 함께 있다. 빠진 것은 사유를 보인다
+      r.addons.length ? el('div', { class: 'grp' }, el('h4', {}, '애드온'), ...r.addons.map((a) => line(a.name, a.on ? a.version : `${a.version} · 빠짐: ${a.why}`, null, a.on ? null : 'blocked'))) : null,
       r.options.length ? el('div', { class: 'grp' }, el('h4', {}, '옵션'), ...r.options.map((o) => option(r, o, off))) : null,
       hasScripts(r) ? el('div', { class: 'grp' }, el('h4', {}, 'js/ts 훅·명령'),
         s.check == null ? el('p', { class: 'note' }, '확인하는 중…') : s.check.length ? el('ul', { class: 'warns' }, ...s.check.map((x) => el('li', {}, x.trim()))) : el('p', { class: 'note' }, '경고 없음')) : null,

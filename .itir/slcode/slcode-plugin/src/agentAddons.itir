@@ -1,0 +1,20 @@
+import { commandFiles, readManifest, skillNames, versionHolds, Manifest, Values } from './agentFormat'
+import { AgentConfig, AgentPaths, PluginEntry } from './agentPlugins'
+
+role: 에이전트 플러그인 애드온 (ticket slcode-plugin-addon, 사용자 결정 2026-11-03) — 베이스 플러그인에 합쳐 빌드해 베이스의 part 를 조건으로 쓰고 베이스의 이름을 그대로 쓴다. 상태는 config.json 의 addons 칸과 agent-plugins/addons/<이름>/. plugins 칸에 넣지 않으므로 옛 사본은 애드온을 보지 못하고 베이스만 싣는다(칸은 지우지 않는다, 0.3.0·0.4.0 실측) — 그래서 STATE_FORMAT 을 올리지 않는다. 합치기는 저장하지 않고 쓸 때마다 만든다 — 옛 사본이 베이스를 바꿔도 다음 세션이 지금 상태로 판단한다. 애드온이 없으면 베이스 그대로라 빌드 식별자가 애드온 전과 같아 BUILDER 도 올리지 않는다. 값은 애드온 칸에 둔다 — 제거하면 함께 사라지고, 잠시 빠져도, 옛 사본이 베이스 값을 정리해도 남는다
+
+type AddonEntry
+type Addons
+type AddonState
+type Assembled
+export fn addonDir(ap, name) -> Path
+export fn readAddons(ap) -> Addons
+export fn rootOf(name, c, addons) -> String? {
+  role: 애드온 사슬의 맨 아래 플러그인 이름 — 사슬이 끊겼거나 순환이면 null
+}
+export fn dependentsOf(name, addons) -> String[] {
+  role: 그 이름에 직접·간접으로 의존하는 애드온 (설치 순서)
+}
+export fn assemble(ap, name, e, addons, dirOf) -> Assembled {
+  role: 베이스와 이어진 애드온을 합친다 — 이름·판은 베이스의 것, part·옵션은 베이스 다음 실린 애드온 순서(애드온의 애드온은 그 베이스 뒤), 해시는 베이스와 실린 애드온의 해시. 판 조건이 맞지 않거나, 베이스 애드온이 빠졌거나, part·옵션·skill·명령 이름이 겹치거나, when.part 가 자기와 베이스 쪽 사슬 밖을 보면 그 애드온을 빼고 why 에 적는다. add 는 새 애드온이 빠지면 거절하고, 베이스 갱신은 뺀 채 사유를 목록·세션 알림에 보인다
+}

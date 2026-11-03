@@ -6,6 +6,8 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { COMMAND_NAME } from './hookApi.js';
 export const MANIFEST = 'slcode-plugin.json';
+/** 애드온의 manifest (ticket slcode-plugin-addon) — 파일 이름이 다르므로 옛 사본은 add 를 "no slcode-plugin.json" 으로 거절한다. slcode-plugin.json 에 addon 칸만 더하면 옛 사본이 독립 플러그인으로 설치한다(0.3.0·0.4.0 실측) */
+export const ADDON_MANIFEST = 'slcode-addon.json';
 /** 빌드기 판 — 빌드 결과가 달라지는 변경이면 올린다. 빌드 식별자에 들어가 옛 빌드를 다시 쓰지 않게 한다 */
 export const BUILDER = 6; // 2: slcode 형식 hooks.json·js/ts 훅 묶기 (slcode-agent-plugin-hooks). 3: command 의 ${slcode.vars.harness}, Codex 빌드의 codex-mcp.json·codex-hooks.json (slcode-agent-plugin-export). 4: slcode/api 묶기·하네스별 등록 목록, export 판의 js/ts 훅 (slcode-agent-plugin-script-portable). 5: export 훅 명령은 상태 폴더의 고정 런처 (slcode-plugin-split). 6: commands/ 는 플러그인 폴더에서 빼고 commands.json·묶은 명령 (slcode-agent-plugin-command)
 /** 호환 등급을 매기는 하네스 — gpt 는 GPT 하네스(장기적으로 Codex 자리, 아직 slcode 가 띄우지 않는다) */
@@ -52,14 +54,58 @@ export function parseManifest(text) {
             throw new Error(`${MANIFEST}: ${k} is both a part and an option`);
         parts[k] = { required: v.required === true, default: v.required === true || v.default !== false, ...(v.when !== undefined ? { when: parseWhen(k, v.when) } : {}) };
     }
-    checkWhenParts(parts);
+    const addon = j.addon === undefined ? undefined : parseAddon(j.addon);
+    checkWhenParts(parts, !!addon);
     const env = {};
     for (const [k, v] of Object.entries((j.env ?? {}))) {
         if (typeof v !== 'string')
             throw new Error(`${MANIFEST}: env ${k} must be a string`);
         env[k] = v;
     }
-    return { name: j.name, version: j.version ?? '0.0.0', options, parts, env };
+    return { name: j.name, version: j.version ?? '0.0.0', options, parts, env, ...(addon ? { addon } : {}) };
+}
+function parseAddon(a) {
+    if (!isObj(a) || typeof a.base !== 'string' || !NAME.test(a.base) || typeof a.version !== 'string')
+        throw new Error(`${MANIFEST}: addon must be {"base": NAME, "version": RANGE}`);
+    if (!parseRange(a.version))
+        throw new Error(`${MANIFEST}: addon version ${a.version} must be space-separated 1.2.3, ^1.2.3, ~1.2.3, >=1.2.3, >1.2.3, <=1.2.3, <1.2.3, or *`);
+    return { base: a.base, version: a.version };
+}
+const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
+const semver = (v) => { const x = SEMVER.exec(v); return x ? [Number(x[1]), Number(x[2]), Number(x[3]), x[4] ?? ''] : null; };
+function compareSemver(a, b) {
+    for (let i = 0; i < 3; i++)
+        if (a[i] !== b[i])
+            return a[i] - b[i];
+    return a[3] === b[3] ? 0 : !a[3] ? 1 : !b[3] ? -1 : a[3] < b[3] ? -1 : 1;
+}
+/** 조건을 판단 함수로 — 문법이 틀리면 null. ^ 는 왼쪽 첫 0 이 아닌 자리까지, ~ 는 minor 까지 고정 */
+function parseRange(range) {
+    const words = range.trim().split(/\s+/);
+    const checks = [];
+    for (const w of words) {
+        if (w === '*')
+            continue;
+        const x = /^(\^|~|>=|>|<=|<|=)?(.+)$/.exec(w);
+        const v = x && semver(x[2]);
+        if (!x || !v)
+            return null;
+        const [ma, mi, pa] = v;
+        const upper = x[1] === '^' ? (ma ? [ma + 1, 0, 0, ''] : mi ? [0, mi + 1, 0, ''] : [0, 0, pa + 1, '']) : x[1] === '~' ? [ma, mi + 1, 0, ''] : null;
+        const op = x[1] ?? '=';
+        checks.push((c) => {
+            const d = compareSemver(c, v);
+            if (upper)
+                return d >= 0 && compareSemver(c, upper) < 0;
+            return op === '=' ? d === 0 : op === '>=' ? d >= 0 : op === '>' ? d > 0 : op === '<=' ? d <= 0 : d < 0;
+        });
+    }
+    return (c) => checks.every((f) => f(c));
+}
+/** 판이 조건에 맞는가 — 판이나 조건을 읽지 못하면 맞지 않는 것으로 본다 */
+export function versionHolds(version, range) {
+    const v = semver(version), r = parseRange(range);
+    return !!v && !!r && r(v);
 }
 /** part 의 when — part·param·env 중 하나 이상을 쓴 꼴이 아니면 던진다 (꼴을 모르면 part 를 켤지 알 수 없다). part 이름이 실제로 있는지는 checkWhenParts 가 본다 */
 function parseWhen(part, w) {
@@ -97,16 +143,20 @@ function parseWhen(part, w) {
     }
     return out;
 }
-/** when 의 part 참조를 add 때 거절한다 — 없는 part 이름, 자기 참조, 순환. 순환이 없어야 resolveValues 가 대상 part 부터 판단할 수 있다 */
-function checkWhenParts(parts) {
+/** when 의 part 참조를 add 때 거절한다 — 없는 part 이름, 자기 참조, 순환. 순환이 없어야 resolveValues 가 대상 part 부터 판단할 수 있다.
+ *  애드온은 베이스 쪽 part 를 볼 수 있어 자기 밖 이름을 여기서 거절하지 않는다 — agentAddons.assemble 이 합칠 때 본다 */
+function checkWhenParts(parts, addon = false) {
     const done = new Set();
     const visit = (k, trail) => {
         if (done.has(k))
             return;
         for (const t of Object.keys(parts[k].when?.part ?? {})) {
             const bad = (why) => new Error(`${MANIFEST}: part ${k} when part ${t} ${why}`);
-            if (!Object.hasOwn(parts, t))
+            if (!Object.hasOwn(parts, t)) {
+                if (addon)
+                    continue;
                 throw bad('is not a part of this plugin');
+            }
             if (t === k)
                 throw bad('refers to itself');
             if (trail.includes(t))
@@ -132,14 +182,33 @@ export function whenText(w) {
     return [...Object.keys(w.part ?? {}).map((k) => `part ${k}`), ...values('param', w.param), ...values('env', w.env)].join(' ');
 }
 export function readManifest(dir) {
-    let text;
-    try {
-        text = fs.readFileSync(path.join(dir, MANIFEST), 'utf8');
+    const read = (f) => { try {
+        return fs.readFileSync(path.join(dir, f), 'utf8');
     }
     catch {
-        throw new Error(`no ${MANIFEST} in ${dir}`);
+        return null;
+    } };
+    const plugin = read(MANIFEST), addon = read(ADDON_MANIFEST);
+    if (plugin !== null && addon !== null)
+        throw new Error(`both ${MANIFEST} and ${ADDON_MANIFEST} in ${dir} — keep one`);
+    if (plugin !== null) {
+        const m = parseManifest(plugin);
+        if (m.addon)
+            throw new Error(`${MANIFEST}: an addon goes in ${ADDON_MANIFEST}, older slcode-plugin copies would install it as a plugin`);
+        return m;
     }
-    return parseManifest(text);
+    if (addon === null)
+        throw new Error(`no ${MANIFEST} in ${dir}`);
+    let m;
+    try {
+        m = parseManifest(addon);
+    }
+    catch (e) {
+        throw new Error(e.message.replaceAll(MANIFEST, ADDON_MANIFEST));
+    }
+    if (!m.addon)
+        throw new Error(`${ADDON_MANIFEST}: addon must be {"base": NAME, "version": RANGE}`);
+    return m;
 }
 /** 폴더 안 일반 파일의 상대 경로(/ 구분, 정렬). 링크는 따라간다. .git 은 뺀다 */
 export function walk(dir, rel = '') {
@@ -166,7 +235,7 @@ export function walk(dir, rel = '') {
 }
 /** 원본에서 설치·빌드에 쓰는 파일 — manifest 와 part 폴더들. 그 밖은 복사하지 않는다 */
 export function sourceFiles(dir, m) {
-    return [MANIFEST, ...Object.keys(m.parts).flatMap((p) => walk(dir, p))];
+    return [m.addon ? ADDON_MANIFEST : MANIFEST, ...Object.keys(m.parts).flatMap((p) => walk(dir, p))];
 }
 /** 원본 내용 해시 — 경로·실행 비트·내용 */
 export function sourceHash(dir, m) {
@@ -293,8 +362,10 @@ export function commandFiles(dir, part) {
     }
     return { commands: out, errors };
 }
+/** part 가 있는 폴더 — 합친 manifest 는 part 마다 다르다 */
+export const partRoot = (dir, m, part) => m.roots?.[part] ?? dir;
 /** 같은 플러그인 skill 이름 — 폴더 이름과 frontmatter name (Claude 는 name 이 있으면 그것을 쓴다) */
-function skillNames(dir, part) {
+export function skillNames(dir, part) {
     const out = [];
     for (const r of walk(path.join(dir, part), 'skills')) {
         const s = /^skills\/([^/]+)\/SKILL\.md$/.exec(r);
@@ -329,11 +400,11 @@ export function commandErrors(dir, m) {
     const seen = new Map();
     const skills = new Map();
     for (const part of Object.keys(m.parts))
-        for (const s of skillNames(dir, part))
+        for (const s of skillNames(partRoot(dir, m, part), part))
             if (!skills.has(s))
                 skills.set(s, part);
     for (const part of Object.keys(m.parts)) {
-        const c = commandFiles(dir, part);
+        const c = commandFiles(partRoot(dir, m, part), part);
         errors.push(...c.errors);
         for (const { name } of c.commands) {
             if (seen.has(name))
@@ -352,7 +423,7 @@ export function commandErrors(dir, m) {
 export function compat(dir, m) {
     const lost = { claude: [], gpt: [], codex: [] };
     for (const part of Object.keys(m.parts)) {
-        const l = partLost(dir, part);
+        const l = partLost(partRoot(dir, m, part), part);
         for (const h of HARNESSES)
             lost[h].push(...l[h]);
     }

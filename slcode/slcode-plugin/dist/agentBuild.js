@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { buildId, commandFiles, COMMANDS_DIR, frontmatter, mcpTransport, partLost, valuesString, walk } from './agentFormat.js';
+import { buildId, commandFiles, COMMANDS_DIR, frontmatter, mcpTransport, partLost, partRoot, valuesString, walk } from './agentFormat.js';
 import { buildPartCommands, buildPartHooks, CODEX_EVENTS, partCommandHooks } from './agentHooks.js';
 /** 빌드 폴더 안의 이름들 — build/<식별자>/ 아래. codexArgs 는 Codex 빌드의 app-server 인자(-c mcp_servers…).
  *  codexMcp·codexHooks 는 Codex export 가 플러그인의 .mcp.json·hooks/hooks.json 으로 쓴다 — slcode 의 Codex 세션은 쓰지 않는다 */
@@ -35,10 +35,11 @@ export function buildClaude(src, m, r, id, out, tools = '') {
         if (!r.parts[part])
             continue;
         report.parts.push(part);
-        report.lost.push(...partLost(src, part).claude);
-        const pdir = path.join(src, part);
+        const root = partRoot(src, m, part);
+        report.lost.push(...partLost(root, part).claude);
+        const pdir = path.join(root, part);
         const all = walk(pdir).filter((f) => !f.startsWith(`${COMMANDS_DIR}/`)); // 명령은 slcode 전용 — 플러그인 폴더에 넣지 않는다
-        const cmds = buildPartCommands(pdir, part, commandFiles(src, part).commands, out, commands, tools);
+        const cmds = buildPartCommands(pdir, part, commandFiles(root, part).commands, out, commands, tools);
         if (cmds.missing)
             report.toolMissing = cmds.missing;
         report.commands.failed.push(...cmds.failed);
@@ -176,8 +177,9 @@ export function buildCodex(src, m, r, id, out, root, data) {
         if (!r.parts[part])
             continue;
         report.parts.push(part);
-        report.lost.push(...partLost(src, part).codex);
-        const pdir = path.join(src, part);
+        const proot = partRoot(src, m, part);
+        report.lost.push(...partLost(proot, part).codex);
+        const pdir = path.join(proot, part);
         for (const rel of walk(pdir)) {
             if (rel.startsWith(`${COMMANDS_DIR}/`))
                 continue; // 명령은 slcode 의 Claude 세션 전용 — partLost 가 적었다

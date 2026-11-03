@@ -9,13 +9,23 @@ type OptionType
 type OptionSpec
 type When
 type PartSpec
+export val ADDON_MANIFEST
+type AddonSpec
 type Manifest
 type Values
 type Resolved
 export fn parseManifest(text) -> Manifest {
   role: 꼴 검사 — 이름은 [A-Za-z0-9][A-Za-z0-9._-]{0,63}(.. 없음, 폴더 이름이 된다). required part 는 늘 켜짐, default 를 적지 않은 part 는 켜짐. when 은 part·param·env 중 하나 이상을 쓴 {part: {이름: true}, param: {NAME: 값}, env: {NAME: 값}} 꼴만 — NAME 은 [A-Za-z_][A-Za-z0-9_]*, 값이 true·문자열·빈 것이 아닌 문자열 목록이 아니거나 적은 칸이 비면 던진다. part 는 true 만 받는다(ticket slcode-agent-plugin-part-when-part, 사용자 확정 2026-11-03 — param 의 목록은 "그중 하나" 라서 목록을 받으면 같은 칸에서 뜻이 갈린다). 없는 part 이름·자기 참조·순환도 던진다. 옵션 default 가 없으면 꼴의 0 값
 }
-export fn readManifest(dir) -> Manifest
+export fn readManifest(dir) -> Manifest {
+  role: slcode-plugin.json 또는 slcode-addon.json (ticket slcode-plugin-addon). 애드온은 파일 이름으로 나눈다 — slcode-plugin.json 에 addon 칸만 더하면 옛 사본이 독립 플러그인으로 설치하고(0.3.0·0.4.0 실측), 파일이 다르면 옛 사본의 add 가 항상 거절한다. slcode-plugin.json 의 addon 칸, 두 파일 함께, addon 칸 없는 slcode-addon.json 은 던진다
+}
+export fn versionHolds(version, range) -> Bool {
+  role: 애드온의 판 조건 — 1.2.3, ^, ~, >=, >, <=, <, *, 공백은 AND. 의존성이 없는 패키지라 쓰는 범위만 직접 구현한다. 프리릴리스는 같은 x.y.z 의 정식 판보다 낮은 것으로만 본다. 판이나 조건을 읽지 못하면 거짓
+}
+export fn partRoot(dir, m, part) -> Path {
+  role: part 가 있는 폴더 — 합친 manifest 는 m.roots 로 part 마다 다르고, 아니면 dir
+}
 export fn walk(dir, rel) -> String[] {
   role: 일반 파일의 상대 경로(/ 구분, 정렬), 링크는 따라가고 .git 은 뺀다
 }

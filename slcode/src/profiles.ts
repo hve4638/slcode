@@ -7,8 +7,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseAssignment, readManifest } from 'slcode-plugin/agentFormat';
-import { agentPaths, locked, readConfig, writeConfig, type AgentConfig, type PluginLayer } from 'slcode-plugin/agentPlugins';
+import { parseAssignment } from 'slcode-plugin/agentFormat';
+import { agentPaths, locked, pluginManifest, readConfig, writeConfig, type AgentConfig, type PluginLayer } from 'slcode-plugin/agentPlugins';
 
 /** Claude 가 읽을 것 — 끄면 그 출처의 CLAUDE.md·skill·플러그인·MCP·훅·권한이 함께 빠진다 (SDK settingSources). Md 는 CLAUDE.md 만 따로 끈다 */
 export type ClaudeLoadSpec = { user: boolean; project: boolean; userMd: boolean; projectMd: boolean; builtinSkills: boolean };
@@ -101,10 +101,11 @@ function assign(p: Profile, assignments: string[], c: AgentConfig, ap: ReturnTyp
     if (key.startsWith('claude.') && CLAUDE_KEYS[key.slice(7)]) { p.claude[CLAUDE_KEYS[key.slice(7)]] = onOff(key, raw); continue; }
     const dot = key.indexOf('.');
     const plugin = dot < 0 ? key : key.slice(0, dot);
+    if (c.addons?.[plugin]) throw new Error(`${plugin} is an addon of ${c.addons[plugin].base} and loads with it: use ${c.addons[plugin].base}.<part>=on|off`);
     if (!c.plugins[plugin]) throw new Error(`no agent plugin ${plugin} (slcode plugin list; claude keys: ${Object.keys(CLAUDE_KEYS).map((k) => `claude.${k}`).join(', ')})`);
     const v = (p.plugins[plugin] ??= {});
     if (dot < 0) { v.on = onOff(key, raw); continue; }
-    const r = parseAssignment(readManifest(path.join(ap.installed, plugin)), `${key.slice(dot + 1)}=${raw}`);
+    const r = parseAssignment(pluginManifest(ap, c, plugin), `${key.slice(dot + 1)}=${raw}`);
     ((v[r.kind] ??= {}) as Record<string, unknown>)[r.key] = r.value;
   }
   return p;

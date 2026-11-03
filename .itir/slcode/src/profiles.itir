@@ -1,5 +1,5 @@
-import { parseAssignment, readManifest } from '../slcode-plugin/src/agentFormat'
-import { agentPaths, locked, readConfig, writeConfig, AgentConfig, PluginLayer } from '../slcode-plugin/src/agentPlugins'
+import { parseAssignment } from '../slcode-plugin/src/agentFormat'
+import { agentPaths, locked, pluginManifest, readConfig, writeConfig, AgentConfig, PluginLayer } from '../slcode-plugin/src/agentPlugins'
 
 role: 세션 시작 프로필 (ticket slcode-session-profile, 사용자 결정 2026-10-28 — ws docs/ticket/slcode-session-profile/TICKET.md). 새 세션을 띄울 때 고른다(`slcode new --profile <이름>`·slcode.new 동사 --profile, 생략하면 default). 세션 meta.profile 에는 이름만 남기고(default 는 남기지 않는다) 띄울 때마다(resume·core 교체 포함) 그 프로필의 지금 값을 읽는다 — 프로필을 고치면 그 프로필로 띄우는 다음 기동부터, 지운 프로필이면 default 로 띄우고 알린다. 프로필이 정하는 것: 실을 slcode 에이전트 플러그인(플러그인별 on, 정하지 않은 것은 rest)과 그 part·옵션 값(설정 값 층 기본 설정 < 프로필 < 세션), Claude 가 사용자(~/.claude)·프로젝트 설정을 읽을지·CLAUDE.md 만 따로 뺄지·Claude 내장 skill 을 숨길지. 기본 제공 default(전부)·bare(플러그인·설정·내장 skill 없음)는 config.json 에 없고 고칠 수 없다. 사용자 프로필은 config.json 의 profiles(agentPlugins 의 잠금·쓰기를 쓴다). Codex 는 실을 플러그인과 그 값만 따르고 claude.* 에 해당하는 것은 없다 — 사용자 설정을 막을 옵션이 없고(-c mcp_servers={} 로도 사용자 MCP 가 남는다, 0.159 실측), pi 계열로 가기 전의 중간 단계라 우회책(가짜 CODEX_HOME + auth.json·sessions 링크 + CODEX_SQLITE_HOME — 동작은 실측으로 확인)을 두지 않는다 (사용자 2026-10-28).
 

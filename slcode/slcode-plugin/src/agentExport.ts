@@ -10,7 +10,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readManifest, resolveValues, userValues, whenText, type Manifest } from './agentFormat.js';
+import { resolveValues, userValues, whenText, type Manifest, type Values } from './agentFormat.js';
+import { assemble } from './agentAddons.js';
 import { BUILD_FILES, buildCodex, type Report } from './agentBuild.js';
 import { codexGaps, exportHookEntries, readScripts, type ScriptEntry } from './agentHooks.js';
 import { ensureLauncher } from './launcher.js';
@@ -26,7 +27,7 @@ const INSTRUCTIONS = 'hooks/slcode-instructions.json';
 const instructionsHook = (h: ExportHarness) => ({ type: 'command', command: `cat "\${CLAUDE_PLUGIN_ROOT}/${INSTRUCTIONS}"`, timeout: 5, ...(h === 'codex' ? { additionalContextLimit: 0 } : {}) });
 
 /** export 판의 report.json — excluded 는 이 하네스 단독 실행에서 빠지거나 다르게 도는 것 */
-export type ExportReport = { harness: ExportHarness; name: string; version: string; build: string; values: string; excluded: string[] };
+export type ExportReport = { harness: ExportHarness; name: string; version: string; build: string; values: string; excluded: string[]; source?: string };
 export type ExportResult = { name: string; harness: ExportHarness; removed: boolean; build: string | null; link: string | null; excluded: string[]; notes: string[] };
 
 export const exportLink = (ap: AgentPaths, h: ExportHarness, name: string) => path.join(ap.export, h, name);
@@ -54,8 +55,8 @@ function claudeExportData(name: string, env: NodeJS.ProcessEnv) {
 /** 그 하네스의 export 판 — build/<식별자>/export/<하네스>/{<이름>/, report.json}. 있으면 다시 쓰고, 없으면 옆에 만든 뒤 rename */
 /** 켜 뒀지만 조건 때문에 기본 빌드에서 빠진 part — 사유는 세션 값(param·env)이 없어서, 또는 대상 part 가 꺼져서 (ticket slcode-agent-plugin-part-when, -part-when-part).
  *  조건으로 꺼진 빌드와 사용자가 끈 빌드는 식별자가 같아 export 판의 report.json 을 함께 쓴다 — 그래서 저장하지 않고 읽을 때마다 붙인다 */
-export function withPartConditions(report: ExportReport, m: Manifest, e: PluginEntry): ExportReport {
-  const on = userValues(m, [e.values]).parts, final = resolveValues(m, [e.values]).parts;
+export function withPartConditions(report: ExportReport, m: Manifest, values: Values): ExportReport {
+  const on = userValues(m, [values]).parts, final = resolveValues(m, [values]).parts;
   const lines = Object.entries(m.parts).filter(([k, p]) => p.when && on[k] && !final[k]).map(([k, p]) => {
     const session = [p.when!.param && 'params', p.when!.env && 'env'].filter(Boolean).join(' and ');
     const why = [...(session ? [`slcode session ${session} only`] : []), ...Object.keys(p.when!.part ?? {}).filter((t) => !final[t]).map((t) => `part ${t} is off`)];
@@ -70,11 +71,15 @@ export function exportBuild(ap: AgentPaths, name: string, e: PluginEntry, h: Exp
   const bdir = path.join(ap.build, id);
   const out = path.join(bdir, 'export', h);
   const have = readJson(path.join(out, BUILD_FILES.report));
-  if (have?.harness === h) return { id, plugin: path.join(out, name), report: withPartConditions(have, readManifest(path.join(ap.installed, name)), e) };
+  const s = assemble(ap, name, e); // 애드온까지 합친 것 — 세션 빌드와 같다
+  // 애드온이 실린 판은 합친 해시가 맞을 때만 다시 쓴다 — 옛 사본의 export 는 같은 식별자 아래에 베이스만으로 Codex 판을 만든다(0.3.0·0.4.0 실측)
+  const merged = s.addons.some((a) => a.on);
+  if (have?.harness === h && (!merged || have.source === s.hash)) return { id, plugin: path.join(out, name), report: withPartConditions(have, s.m, s.values) };
+  if (have) fs.rmSync(out, { recursive: true, force: true });
   const base: Report = readJson(path.join(bdir, BUILD_FILES.report));
   if (!base) throw new Error(`build ${id} of ${name} is missing`);
   const inst = path.join(ap.installed, name);
-  const m = readManifest(inst);
+  const m = s.m;
   const tmp = path.join(bdir, 'export', `.tmp-${randomUUID().slice(0, 8)}`);
   const plugin = path.join(tmp, name);
   const excluded = [...base.lost, ...base.dropped];
@@ -91,7 +96,7 @@ export function exportBuild(ap: AgentPaths, name: string, e: PluginEntry, h: Exp
       addScriptHooks(ap, bdir, plugin, h, hooks);
     } else {
       // 경로 변수를 export 링크·data/<이름> 으로 바꿔 다시 빌드한다 — 세션 빌드의 것은 빌드 폴더를 가리킨다
-      buildCodex(inst, m, resolveValues(m, [e.values]), id, tmp, exportLink(ap, h, name), path.join(ap.data, name));
+      buildCodex(inst, m, resolveValues(m, [s.values]), id, tmp, exportLink(ap, h, name), path.join(ap.data, name));
       fs.mkdirSync(path.join(ap.data, name), { recursive: true, mode: 0o700 });
       fs.renameSync(path.join(tmp, 'codex'), plugin);
       instructions = fs.readFileSync(path.join(tmp, BUILD_FILES.instructions), 'utf8');
@@ -115,10 +120,10 @@ export function exportBuild(ap: AgentPaths, name: string, e: PluginEntry, h: Exp
       hooks = { ...hooks, SessionStart: [{ hooks: [instructionsHook(h)] }, ...(hooks.SessionStart ?? [])] };
     }
     if (Object.keys(hooks).length) { fs.mkdirSync(path.join(plugin, 'hooks'), { recursive: true }); fs.writeFileSync(path.join(plugin, 'hooks/hooks.json'), JSON.stringify({ hooks }, null, 2)); }
-    const report: ExportReport = { harness: h, name, version: m.version, build: id, values: base.values, excluded };
+    const report: ExportReport = { harness: h, name, version: m.version, build: id, values: base.values, excluded, ...(merged ? { source: s.hash } : {}) };
     fs.writeFileSync(path.join(tmp, BUILD_FILES.report), JSON.stringify(report, null, 2));
     try { fs.renameSync(tmp, out); } catch { fs.rmSync(tmp, { recursive: true, force: true }); } // 동시에 둘이 만들면 먼저 놓인 것
-    return { id, plugin: path.join(out, name), report: withPartConditions(readJson(path.join(out, BUILD_FILES.report)) ?? report, m, e) };
+    return { id, plugin: path.join(out, name), report: withPartConditions(readJson(path.join(out, BUILD_FILES.report)) ?? report, m, s.values) };
   } catch (err) { fs.rmSync(tmp, { recursive: true, force: true }); throw err; }
 }
 

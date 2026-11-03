@@ -1,12 +1,14 @@
-import { type Harness, type Values } from './agentFormat.js';
+import { type Harness, type Manifest, type Values } from './agentFormat.js';
 import { type Report } from './agentBuild.js';
 import { type ExportHarness, type ExportReport, type ExportResult } from './agentExport.js';
+import { type Addons, type AddonState } from './agentAddons.js';
 export declare const AGENT_DIR = "agent-plugins";
 /** 세션 폴더 안의 링크 폴더 — agent-plugins/<이름> → build/<식별자>/claude/<이름> (Codex 는 build/<식별자>/codex, 다시 실은 skill 의 빌드는 <이름>@skills) */
 export declare const SESSION_LINKS = "agent-plugins";
 export type AgentPaths = {
     dir: string;
     installed: string;
+    addons: string;
     config: string;
     lock: string;
     build: string;
@@ -36,6 +38,7 @@ export type PluginEntry = {
 export type AgentConfig = {
     format?: number;
     plugins: Record<string, PluginEntry>;
+    addons?: Addons;
     profiles?: Record<string, unknown>;
 };
 /** 세션을 띄울 때 고른 층 — 실을 플러그인과 그 값. slcode 의 시작 프로필이 이 꼴을 품는다 (ticket slcode-session-profile) */
@@ -57,6 +60,7 @@ export declare function writeConfig(ap: AgentPaths, c: AgentConfig): void;
 export declare function locked<T>(ap: AgentPaths, fn: () => T): Promise<T>;
 /** 세션을 띄우는 하네스 — slcode 는 Claude·Codex 를 띄운다 */
 export type SessionHarness = 'claude' | 'codex';
+/** base 는 애드온을 add 했을 때 합쳐진 플러그인 이름 — build·grade·lost 는 그 플러그인의 것. leftOut 은 판이 맞지 않거나 이름이 겹쳐 빌드에서 뺀 애드온과 사유 */
 export type AddResult = {
     name: string;
     version: string;
@@ -64,17 +68,21 @@ export type AddResult = {
     grade: 'full' | 'partial';
     lost: Record<Harness, string[]>;
     build: string | null;
+    base?: string;
+    leftOut?: string[];
     exports?: ExportResult[];
 };
 /** export 한 플러그인이 있으면 훅 명령의 고정 런처를 이 사본 기준으로 맞춘다 (launcher.ts) — CLI 명령과 세션 시작 때. 사본의 node 가 바뀌어도 다음 실행에 고쳐진다 */
 export declare function refreshLauncher(ap: AgentPaths, c?: AgentConfig): void;
-/** 원본을 installed/<이름>/ 에 복사한다. 내용 해시가 같으면 아무것도 하지 않는다. 새 판이면 기본 설정(맞는 값만 남긴다)으로 다시 빌드한다.
- *  manifest 가 없거나 깨졌으면 던진다 — 설치를 거부하는 유일한 경우 */
+/** 원본을 installed/<이름>/ 에 복사한다(애드온은 addons/<이름>/). 내용 해시가 같으면 아무것도 하지 않는다. 새 판이면 기본 설정(맞는 값만 남긴다)으로 다시 빌드한다.
+ *  manifest 가 없거나 깨졌으면 던진다. 베이스를 새 판으로 바꾸면 조건이 맞지 않는 애드온만 빌드에서 빠지고 leftOut 에 사유가 남는다 */
 export declare function addPlugin(src: string, stateDir?: string, env?: NodeJS.ProcessEnv): Promise<AddResult>;
-/** 원본·설정 항목·export 를 지운다. 없으면 성공 (removed false). export 를 먼저 해제한다 — 링크가 사라진 빌드를 가리키면 하네스가 오류를 낸다 */
-export declare function removePlugin(name: string, stateDir?: string, env?: NodeJS.ProcessEnv): Promise<{
+/** 원본·설정 항목·export 를 지운다. 없으면 성공 (removed false). export 를 먼저 해제한다 — 링크가 사라진 빌드를 가리키면 하네스가 오류를 낸다.
+ *  이름이 애드온이면 그 애드온만 지우고 베이스를 다시 빌드한다. 의존하는 애드온이 있으면 cascade 없이는 던지고, cascade 면 함께 지운다 */
+export declare function removePlugin(name: string, stateDir?: string, env?: NodeJS.ProcessEnv, cascade?: boolean): Promise<{
     name: string;
     removed: boolean;
+    addons?: string[];
     exports?: ExportResult[];
 }>;
 /** export 하거나(--to) 해제한다(--remove). 설정 값은 플러그인 기본 설정 — 프로필 고르기는 미정. 하네스 CLI(claude·codex)를 env 의 PATH 에서 부른다 */
@@ -101,6 +109,7 @@ export type PluginRow = {
         default: boolean;
         when: string | null;
         needs: string[];
+        addon: string | null;
     }[];
     options: {
         name: string;
@@ -111,6 +120,8 @@ export type PluginRow = {
     }[];
     /** 하네스별 마지막 빌드의 report.json — 빌드가 없으면 null */
     reports: Partial<Record<Harness, Report | null>>;
+    /** 이 플러그인에 이어진 애드온 — on 이 거짓이면 빌드에서 뺀 것이고 why 가 사유. 판은 row.version(베이스)과 따로 적는다 */
+    addons: AddonState[];
     /** export 한 하네스 */
     exports: ExportHarness[];
     /** export 한 하네스별 export 판의 report.json — 아직 만들지 않았거나 읽지 못하면 null */
@@ -118,6 +129,14 @@ export type PluginRow = {
 };
 /** 설치 목록 — 기본 설정 기준의 part·옵션 값과 마지막 빌드 보고 */
 export declare function listPlugins(stateDir?: string): PluginRow[];
+/** 베이스가 없어 어디에도 실리지 않는 애드온 — 옛 사본이 베이스를 지웠을 때 남는다. 베이스를 다시 add 하면 돌아온다 */
+export declare function orphanAddons(stateDir?: string): {
+    name: string;
+    version: string;
+    base: string;
+}[];
+/** 합친 manifest — slcode 프로필이 애드온의 part·옵션 값을 받을 때 쓴다 */
+export declare function pluginManifest(ap: AgentPaths, c: AgentConfig, name: string): Manifest;
 /** 빌드한 js/ts 훅의 보고 줄 — 빼거나 고칠 것과 하네스별 tsc 검사 경고 (ticket slcode-agent-plugin-script-portable). build 는 Claude 빌드(스크립트는 거기서 묶는다).
  *  CLI 의 add·set 이 stderr 에, 웹 관리 화면이 플러그인 칸에 보인다. 경고일 뿐 빌드는 그대로 */
 export declare function scriptWarnings(name: string, build: string, stateDir?: string): Promise<string[]>;
@@ -184,6 +203,7 @@ export declare function reloadSessionPlugins(sessionDir: string, loaded: Loaded[
     later: Later[];
     removed: string[];
     roots: string[];
+    notes: string[];
 };
 /** 지금 설정으로 빌드하면 나올 식별자 — 세션이 실은 것과 다르면 다시 실을 것이 있다. 빌드하지 않는다 */
 export declare function currentBuilds(session?: SessionValues, stateDir?: string, harness?: SessionHarness, profile?: PluginLayer, params?: SessionParams, env?: NodeJS.ProcessEnv): Record<string, string | null>;

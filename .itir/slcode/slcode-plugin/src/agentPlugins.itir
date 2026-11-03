@@ -5,6 +5,7 @@ import { defaultStateDir } from './paths'
 import { ensureLauncher, PLUGIN_VERSION } from './launcher'
 import { exportTo, refreshExport, unexport, withPartConditions, EXPORT_HARNESSES, ExportHarness, ExportReport, ExportResult } from './agentExport'
 import { checkScripts } from './scriptCheck'
+import { addonDir, assemble, dependentsOf, rootOf, AddonEntry, Addons, AddonState, Assembled } from './agentAddons'
 
 role: 에이전트 플러그인의 상태 폴더와 명령 (ticket slcode-agent-plugin, 설계 ws docs/report/slcode-agent-plugin-survey.md) — <상태 폴더>/agent-plugins/(상태 폴더는 부른 쪽이 주고, 없으면 paths.defaultStateDir — slcode 와 같은 폴더, ticket slcode-plugin-split) {installed/<이름>(원본 복사본), config.json(설치 목록·플러그인 기본 설정·하네스별 마지막 빌드 — slcode 내부 파일, 임시 파일 + rename, 쓰는 명령은 config.lock), build/<식별자>, export(agentExport — 하네스별 마켓플레이스와 링크), data/<이름>(GPT 하네스·Codex 의 플러그인 데이터 — Codex 세션을 띄울 때 만든다, Claude 는 Claude 가 정하는 폴더)}. 설치는 원하는 상태를 적는 것이라 같은 원본을 몇 번 add 해도 결과가 같다 (superlite 플러그인이 데몬을 시작할 때마다 불러도 된다). 하네스 CLI 는 export(agentExport) 만 부른다 — export·remove·리빌드(add·set) 때. 설정 값은 manifest 기본값 < 플러그인 기본 설정(set) < 프로필(profiles.ts — 세션을 띄울 때 고른 프로필이 싣는 플러그인만, 그 프로필 층 값. load·reload·currentBuilds 의 profile 인자, 없으면 설치한 전부를 프로필 층 없이) < 세션(meta.agentPlugins). config.json 의 profiles 는 profiles.ts 가 쓴다 — locked·writeConfig 를 함께 쓴다. 세션에 싣기(Claude): 세션 폴더의 agent-plugins/<이름> 링크(Windows junction)가 그 세션이 쓰는 빌드의 플러그인 폴더를 가리키고 SDK 에는 링크 경로를 넘긴다 — 다시 싣기는 링크를 새 빌드로 바꾸고 SDK reloadPlugins() 를 부르는 것(링크를 바꾸고 reloadPlugins 하면 새 내용이 실린다, 2026-10-27 실측). 세션에 싣기(Codex, ticket slcode-agent-plugin-codex): 같은 agent-plugins/<이름> 링크가 Codex 빌드의 플러그인 폴더(build/<식별자>/codex)를 가리키지만 정리에서 지키는 용도일 뿐이고, 넘기는 경로는 빌드 폴더 그대로다(빌드 안의 경로 변수를 그 경로로 바꿨다). skill 폴더는 extra root, bin/ 은 프로세스 PATH 앞, MCP 는 app-server 인자, 지시문은 developerInstructions, manifest env 는 프로세스 env — 다시 싣기는 skill 만(설계): 기동 때의 빌드는 <이름> 링크로 남기고(MCP·bin 이 아직 쓴다) 새 빌드는 <이름>@skills 링크로 지킨다(@ 는 플러그인 이름에 올 수 없다). 정리(gcBuilds)는 config 의 마지막 빌드·세션 링크·export/ 아래 링크가 가리키지 않고 10분 넘은 빌드를 지운다 — 막 빌드하고 링크를 걸기 전의 틈을 남긴다. 상수 — STATE_FORMAT: 상태 폴더 형식 판 1 (ticket slcode-plugin-split, 사용자 2026-10-31 "메이저 안에서 최대한 호환, 메이저 뒤에도 하위호환 최대 유지") — 한 머신의 여러 slcode-plugin 사본(slcode 의 zip, superlite-for-agents 가 넣어 간 것)이 같은 상태 폴더를 쓴다. 형식은 칸 더하기로만 바꾸고 옛 사본이 읽지 못하게 바꿀 때만 올린다. writeConfig 는 이 판보다 높은 config.json 에 쓰지 않고 던진다(읽기는 한다). add 는 옛 항목의 모르는 칸을 남긴다
 
@@ -39,10 +40,10 @@ export fn readConfig(ap) -> AgentConfig {
   role: 없거나 깨졌으면 빈 목록. plugins 의 키 순서가 설치 순서 — 지시문을 이 순서로 잇는다
 }
 export fn addPlugin(src, stateDir) -> AddResult {
-  role: manifest 를 읽고(없거나 깨지면 던진다 — 설치 거부) 내용 해시가 같고 설치본이 있으면 아무것도 하지 않는다(changed false). 아니면 sourceFiles 를 installed/<이름> 에 통째로 바꿔 넣고, 호환 등급을 매기고, 옛 판의 기본 설정 중 이 판에 맞는 값만 남겨 기본 설정으로 세션 하네스(Claude·Codex)마다 빌드해 builds 에 적는다(결과의 build 는 Claude 빌드). export 한 하네스가 있으면 export 를 새 빌드로(refreshExport — 실패는 결과 exports 의 notes), export 목록은 새 판에도 이어진다
+  role: 애드온(manifest 의 addon)은 addons/<이름> 과 config 의 addons 칸에 넣고 베이스를 다시 빌드한다 — 베이스가 없거나 판 조건이 맞지 않거나 이름이 겹치면 던진다. 베이스를 갱신해 맞지 않게 된 애드온은 빌드에서만 빠지고 leftOut 에 사유가 남는다. manifest 를 읽고(없거나 깨지면 던진다 — 설치 거부) 내용 해시가 같고 설치본이 있으면 아무것도 하지 않는다(changed false). 아니면 sourceFiles 를 installed/<이름> 에 통째로 바꿔 넣고, 호환 등급을 매기고, 옛 판의 기본 설정 중 이 판에 맞는 값만 남겨 기본 설정으로 세션 하네스(Claude·Codex)마다 빌드해 builds 에 적는다(결과의 build 는 Claude 빌드). export 한 하네스가 있으면 export 를 새 빌드로(refreshExport — 실패는 결과 exports 의 notes), export 목록은 새 판에도 이어진다
 }
-export fn removePlugin(name, stateDir) {
-  role: 설치본·설정 항목·export 를 지우고(export 를 먼저 해제 — 링크가 사라진 빌드를 가리키면 하네스가 오류를 낸다), 링크가 가리키지 않는 그 플러그인의 빌드도 바로 지운다. 없으면 removed false 로 성공
+export fn removePlugin(name, stateDir, env, cascade) {
+  role: 의존하는 애드온이 있으면 cascade 없이는 던지고 cascade 면 함께 지운다. 애드온 이름이면 그것만 지우고 베이스를 다시 빌드한다. 지운 애드온의 part·옵션 값은 프로필에서도 지운다(기본 설정 값은 애드온 칸에 있어 함께 사라진다). 설치본·설정 항목·export 를 지우고(export 를 먼저 해제 — 링크가 사라진 빌드를 가리키면 하네스가 오류를 낸다), 링크가 가리키지 않는 그 플러그인의 빌드도 바로 지운다. 없으면 removed false 로 성공
 }
 export fn exportPlugin(name, harnesses, remove, stateDir, env) -> ExportResult[] {
   role: slcode plugin export — 대상은 claude·codex(그 밖은 거부). remove 면 export 한 하네스만 해제(unexport), 아니면 exportTo 하고 성공한 하네스만 config 의 exports 에 적는다(실패면 던진다). 설정 값은 플러그인 기본 설정
@@ -52,6 +53,12 @@ export fn setPlugin(name, assignments, stateDir) {
 }
 export fn listPlugins(stateDir) -> PluginRow[] {
   role: 설치 순서로 — 판, 호환 등급과 하네스별 빠지는 것, part(필수·켬·조건 when 의 글·조건 when part 의 대상 needs — 켬은 사용자 설정이고 조건은 세션마다 따로 본다. needs 는 관리 화면이 대상이 꺼진 part 를 비활성으로 보이는 데 쓴다)·옵션 값(기본 설정 기준), 하네스별 마지막 빌드의 report.json, export 한 하네스와 그 export 판의 report.json(exported — 빠지거나 다르게 도는 것, ticket slcode-agent-plugin-ui)
+}
+export fn orphanAddons(stateDir) {
+  role: 베이스가 없어 실리지 않는 애드온 — 옛 사본이 베이스를 지웠을 때 남는다. 베이스를 다시 add 하면 돌아온다
+}
+export fn pluginManifest(ap, c, name) -> Manifest {
+  role: 애드온까지 합친 manifest — slcode 프로필이 값을 검사할 때 쓴다
 }
 export fn scriptWarnings(name, build, stateDir) -> String[] {
   role: Claude 빌드의 js/ts 훅 보고 줄 — 묶지 못한 것(failed)·고칠 것(warning)과 하네스별 tsc 검사 경고(checkScripts). CLI add·set 이 stderr 에, 시작 화면의 관리 화면(plugins.check)이 플러그인 칸에 보인다 (ticket slcode-agent-plugin-ui 에서 cli 의 scriptReport 를 옮김). 경고일 뿐 빌드는 그대로

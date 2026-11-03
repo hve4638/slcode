@@ -1,4 +1,4 @@
-import { addPlugin, agentPaths, exportPlugin, listPlugins, refreshLauncher, removePlugin, scriptWarnings, setPlugin } from './agentPlugins'
+import { addPlugin, agentPaths, exportPlugin, listPlugins, orphanAddons, refreshLauncher, removePlugin, scriptWarnings, setPlugin } from './agentPlugins'
 import { defaultStateDir } from './paths'
 import { PLUGIN_VERSION } from './launcher'
 

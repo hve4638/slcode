@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { buildId, commandFiles, COMMANDS_DIR, frontmatter, mcpTransport, partLost, valuesString, walk, type Harness, type Manifest, type Resolved } from './agentFormat.js';
+import { buildId, commandFiles, COMMANDS_DIR, frontmatter, mcpTransport, partLost, partRoot, valuesString, walk, type Harness, type Manifest, type Resolved } from './agentFormat.js';
 import { buildPartCommands, buildPartHooks, CODEX_EVENTS, partCommandHooks, type CommandEntry, type ScriptEntry } from './agentHooks.js';
 
 export type Report = {
@@ -52,10 +52,11 @@ export function buildClaude(src: string, m: Manifest, r: Resolved, id: string, o
   for (const part of Object.keys(m.parts)) {
     if (!r.parts[part]) continue;
     report.parts.push(part);
-    report.lost.push(...partLost(src, part).claude);
-    const pdir = path.join(src, part);
+    const root = partRoot(src, m, part);
+    report.lost.push(...partLost(root, part).claude);
+    const pdir = path.join(root, part);
     const all = walk(pdir).filter((f) => !f.startsWith(`${COMMANDS_DIR}/`)); // 명령은 slcode 전용 — 플러그인 폴더에 넣지 않는다
-    const cmds = buildPartCommands(pdir, part, commandFiles(src, part).commands, out, commands, tools);
+    const cmds = buildPartCommands(pdir, part, commandFiles(root, part).commands, out, commands, tools);
     if (cmds.missing) report.toolMissing = cmds.missing;
     report.commands!.failed.push(...cmds.failed);
     report.commands!.warnings.push(...cmds.warnings);
@@ -157,8 +158,9 @@ export function buildCodex(src: string, m: Manifest, r: Resolved, id: string, ou
   for (const part of Object.keys(m.parts)) {
     if (!r.parts[part]) continue;
     report.parts.push(part);
-    report.lost.push(...partLost(src, part).codex);
-    const pdir = path.join(src, part);
+    const proot = partRoot(src, m, part);
+    report.lost.push(...partLost(proot, part).codex);
+    const pdir = path.join(proot, part);
     for (const rel of walk(pdir)) {
       if (rel.startsWith(`${COMMANDS_DIR}/`)) continue; // 명령은 slcode 의 Claude 세션 전용 — partLost 가 적었다
       if (rel === 'hooks/hooks.json') { // slcode 의 Codex 세션은 싣지 않는다(partLost 가 적었다) — export 만 쓴다

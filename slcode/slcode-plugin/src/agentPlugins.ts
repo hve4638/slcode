@@ -7,13 +7,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { buildId, commandErrors, commandFiles, compat, HARNESSES, MANIFEST, parseAssignment, readManifest, resolveValues, sourceFiles, sourceHash, valuesString, userValues, walk, whenText, type Harness, type Manifest, type Values } from './agentFormat.js';
+import { buildId, commandErrors, commandFiles, compat, HARNESSES, MANIFEST, parseAssignment, partRoot, readManifest, resolveValues, sourceFiles, sourceHash, valuesString, userValues, walk, whenText, type Harness, type Manifest, type Values } from './agentFormat.js';
 import { BUILD_FILES, ensureBuild, type Report } from './agentBuild.js';
 import { buildPartCommands } from './agentHooks.js';
 import { acquireLock, releaseLock } from './lock.js';
 import { defaultStateDir } from './paths.js';
 import { exportTo, refreshExport, unexport, withPartConditions, EXPORT_HARNESSES, type ExportHarness, type ExportReport, type ExportResult } from './agentExport.js';
 import { checkScripts } from './scriptCheck.js';
+import { addonDir, assemble, dependentsOf, rootOf, type AddonEntry, type Addons, type AddonState, type Assembled } from './agentAddons.js';
 import { ensureLauncher, PLUGIN_VERSION } from './launcher.js';
 
 export const AGENT_DIR = 'agent-plugins';
@@ -22,10 +23,10 @@ export const SESSION_LINKS = 'agent-plugins';
 /** 아무도 가리키지 않아도 이만큼은 남긴다 — 세션이 막 빌드하고 아직 링크를 걸지 않은 틈 */
 const GC_GRACE_MS = 10 * 60_000;
 
-export type AgentPaths = { dir: string; installed: string; config: string; lock: string; build: string; export: string; data: string; sessionsDir: string };
+export type AgentPaths = { dir: string; installed: string; addons: string; config: string; lock: string; build: string; export: string; data: string; sessionsDir: string };
 export function agentPaths(stateDir = defaultStateDir()): AgentPaths {
   const dir = path.join(stateDir, AGENT_DIR);
-  return { dir, installed: path.join(dir, 'installed'), config: path.join(dir, 'config.json'), lock: path.join(dir, 'config.lock'), build: path.join(dir, 'build'), export: path.join(dir, 'export'), data: path.join(dir, 'data'), sessionsDir: path.join(stateDir, 'sessions') };
+  return { dir, installed: path.join(dir, 'installed'), addons: path.join(dir, 'addons'), config: path.join(dir, 'config.json'), lock: path.join(dir, 'config.lock'), build: path.join(dir, 'build'), export: path.join(dir, 'export'), data: path.join(dir, 'data'), sessionsDir: path.join(stateDir, 'sessions') };
 }
 
 export type PluginEntry = {
@@ -46,7 +47,7 @@ export type PluginEntry = {
   exports?: ExportHarness[];
 };
 /** plugins 의 키 순서가 설치 순서 — 지시문을 이 순서로 잇는다. profiles 는 slcode 의 사용자 프로필(slcode profiles.ts) — 여기서는 그대로 둔다 */
-export type AgentConfig = { format?: number; plugins: Record<string, PluginEntry>; profiles?: Record<string, unknown> };
+export type AgentConfig = { format?: number; plugins: Record<string, PluginEntry>; addons?: Addons; profiles?: Record<string, unknown> };
 
 /** 세션을 띄울 때 고른 층 — 실을 플러그인과 그 값. slcode 의 시작 프로필이 이 꼴을 품는다 (ticket slcode-session-profile) */
 export type PluginLayer = { plugins: Record<string, Values & { on?: boolean }>; rest: boolean };
@@ -106,15 +107,19 @@ export type SessionHarness = 'claude' | 'codex';
 const SESSION_HARNESSES: SessionHarness[] = ['claude', 'codex'];
 
 /** 기본 설정으로 하네스마다 빌드해 e.builds 에 적는다 — 결과는 Claude 빌드 */
-function defaultBuild(ap: AgentPaths, name: string, e: PluginEntry) {
+function defaultBuild(ap: AgentPaths, name: string, e: PluginEntry, addons: Addons = {}) {
   const inst = path.join(ap.installed, name);
-  const m = readManifest(inst);
-  const r = resolveValues(m, [e.values]);
-  for (const h of SESSION_HARNESSES) e.builds[h] = ensureBuild(ap.build, inst, m, r, e.hash, h, true).id;
-  return ensureBuild(ap.build, inst, m, r, e.hash, 'claude');
+  const s = assemble(ap, name, e, addons);
+  const { grade, lost } = compat(inst, s.m); // 애드온의 part 까지 — 빌드와 같은 범위
+  Object.assign(e, { grade, lost });
+  const r = resolveValues(s.m, [s.values]);
+  for (const h of SESSION_HARNESSES) e.builds[h] = ensureBuild(ap.build, inst, s.m, r, s.hash, h, true).id;
+  return ensureBuild(ap.build, inst, s.m, r, s.hash, 'claude');
 }
+const leftOutNotes = (name: string, s: Assembled) => s.addons.filter((a) => !a.on).map((a) => `${name}: addon ${a.name} left out: ${a.why}`);
 
-export type AddResult = { name: string; version: string; changed: boolean; grade: 'full' | 'partial'; lost: Record<Harness, string[]>; build: string | null; exports?: ExportResult[] };
+/** base 는 애드온을 add 했을 때 합쳐진 플러그인 이름 — build·grade·lost 는 그 플러그인의 것. leftOut 은 판이 맞지 않거나 이름이 겹쳐 빌드에서 뺀 애드온과 사유 */
+export type AddResult = { name: string; version: string; changed: boolean; grade: 'full' | 'partial'; lost: Record<Harness, string[]>; build: string | null; base?: string; leftOut?: string[]; exports?: ExportResult[] };
 
 /** 리빌드 뒤 export 를 새 빌드로 — 실패는 결과의 notes 로 (리빌드를 막지 않는다) */
 function refreshExports(ap: AgentPaths, name: string, e: PluginEntry, env: NodeJS.ProcessEnv): ExportResult[] | undefined {
@@ -133,13 +138,14 @@ const toolMissing = (ap: AgentPaths, e: PluginEntry) => { try { return !!JSON.pa
 
 /** 명령 검사 (ticket slcode-agent-plugin-command) — 이름(commandErrors)과 COMMAND 파일의 꼴(묶어 한 번 싣는다)을 모든 part 에서 본다. 틀리면 던진다(플러그인 적용 실패, 사용자 결정 2026-11-02).
  *  esbuild 를 받지 못하면 꼴 검사는 건너뛴다 — 빌드가 그 명령을 빼고 다음 add 때 다시 받아 본다 */
-function checkCommands(src: string, m: Manifest, tools: string) {
+function checkCommands(src: string, m: Manifest, tools: string) { // 합친 manifest 면 part 마다 폴더가 다르다
   const errors = commandErrors(src, m);
   if (!errors.length) {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-cmd-check-'));
     try {
       for (const part of Object.keys(m.parts)) {
-        const r = buildPartCommands(path.join(src, part), part, commandFiles(src, part).commands, tmp, [], tools);
+        const root = partRoot(src, m, part);
+        const r = buildPartCommands(path.join(root, part), part, commandFiles(root, part).commands, tmp, [], tools);
         if (!r.missing) errors.push(...r.failed);
       }
     } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
@@ -147,8 +153,20 @@ function checkCommands(src: string, m: Manifest, tools: string) {
   if (errors.length) throw new Error(`${m.name}: agent plugin commands are invalid —\n  ${errors.join('\n  ')}`);
 }
 
-/** 원본을 installed/<이름>/ 에 복사한다. 내용 해시가 같으면 아무것도 하지 않는다. 새 판이면 기본 설정(맞는 값만 남긴다)으로 다시 빌드한다.
- *  manifest 가 없거나 깨졌으면 던진다 — 설치를 거부하는 유일한 경우 */
+/** 원본 파일을 폴더로 복사한다 — sourceFiles 만 */
+function installTo(target: string, abs: string, m: Manifest) {
+  replaceDir(target, (tmp) => {
+    for (const rel of sourceFiles(abs, m)) {
+      const to = path.join(tmp, rel);
+      fs.mkdirSync(path.dirname(to), { recursive: true });
+      fs.copyFileSync(path.join(abs, rel), to);
+      fs.chmodSync(to, fs.statSync(path.join(abs, rel)).mode & 0o777);
+    }
+  });
+}
+
+/** 원본을 installed/<이름>/ 에 복사한다(애드온은 addons/<이름>/). 내용 해시가 같으면 아무것도 하지 않는다. 새 판이면 기본 설정(맞는 값만 남긴다)으로 다시 빌드한다.
+ *  manifest 가 없거나 깨졌으면 던진다. 베이스를 새 판으로 바꾸면 조건이 맞지 않는 애드온만 빌드에서 빠지고 leftOut 에 사유가 남는다 */
 export async function addPlugin(src: string, stateDir?: string, env: NodeJS.ProcessEnv = process.env): Promise<AddResult> {
   const abs = path.resolve(src);
   const m = readManifest(abs);
@@ -156,43 +174,95 @@ export async function addPlugin(src: string, stateDir?: string, env: NodeJS.Proc
   const ap = agentPaths(stateDir);
   const r = await locked(ap, () => {
     const c = readConfig(ap);
+    if (m.addon) return addAddon(ap, c, abs, m, hash, env);
+    if (c.addons?.[m.name]) throw new Error(`${m.name} is installed as an addon of ${c.addons[m.name].base} (slcode plugin remove ${m.name} first)`);
     const prev = c.plugins[m.name];
     const inst = path.join(ap.installed, m.name);
     if (prev && prev.hash === hash && fs.existsSync(path.join(inst, MANIFEST)) && !toolMissing(ap, prev)) return { name: m.name, version: prev.version, changed: false, grade: prev.grade, lost: prev.lost, build: prev.builds.claude ?? null };
     checkCommands(abs, m, path.join(ap.dir, 'tools'));
     fs.mkdirSync(ap.installed, { recursive: true });
-    replaceDir(inst, (tmp) => {
-      for (const rel of sourceFiles(abs, m)) {
-        const to = path.join(tmp, rel);
-        fs.mkdirSync(path.dirname(to), { recursive: true });
-        fs.copyFileSync(path.join(abs, rel), to);
-        fs.chmodSync(to, fs.statSync(path.join(abs, rel)).mode & 0o777);
-      }
-    });
+    installTo(inst, abs, m);
     const { grade, lost } = compat(inst, m);
     const e: PluginEntry = { ...prev, version: m.version, hash, source: abs, installedAt: Date.now(), grade, lost, values: prune(prev?.values, m), builds: {}, ...(prev?.exports?.length ? { exports: prev.exports } : {}) };
-    defaultBuild(ap, m.name, e);
+    defaultBuild(ap, m.name, e, c.addons);
     c.plugins[m.name] = e;
     writeConfig(ap, c);
     const exports = refreshExports(ap, m.name, e, env);
-    return { name: m.name, version: m.version, changed: true, grade, lost, build: e.builds.claude ?? null, ...(exports ? { exports } : {}) };
+    const leftOut = leftOutNotes(m.name, assemble(ap, m.name, e, c.addons));
+    return { name: m.name, version: m.version, changed: true, grade: e.grade, lost: e.lost, build: e.builds.claude ?? null, ...(leftOut.length ? { leftOut } : {}), ...(exports ? { exports } : {}) };
   });
   gcBuilds(stateDir);
   return r;
 }
 
-/** 원본·설정 항목·export 를 지운다. 없으면 성공 (removed false). export 를 먼저 해제한다 — 링크가 사라진 빌드를 가리키면 하네스가 오류를 낸다 */
-export async function removePlugin(name: string, stateDir?: string, env: NodeJS.ProcessEnv = process.env): Promise<{ name: string; removed: boolean; exports?: ExportResult[] }> {
+/** 애드온 add — 베이스가 없거나, 판 조건이 맞지 않거나, 이름이 겹치면 던진다. 합쳐질 플러그인을 다시 빌드한다 */
+function addAddon(ap: AgentPaths, c: AgentConfig, abs: string, m: Manifest, hash: string, env: NodeJS.ProcessEnv): AddResult {
+  const spec = m.addon!;
+  const addons = c.addons ?? {};
+  if (c.plugins[m.name]) throw new Error(`${m.name} is installed as a plugin (slcode plugin remove ${m.name} first)`);
+  const prev = addons[m.name];
+  const entry: AddonEntry = { version: m.version, hash, source: abs, installedAt: Date.now(), base: spec.base, range: spec.version, values: prune(prev?.values, m) };
+  // 새 것을 맨 뒤에 두고 미리 합친다 — 이미 있는 애드온과 겹치면 새 것이 빠져 거절된다
+  const { [m.name]: _old, ...others } = addons;
+  const trial: Addons = { ...others, [m.name]: entry };
+  const root = rootOf(m.name, c, trial);
+  if (!root) throw new Error(`${m.name} needs base ${spec.base}, which is not installed (or the addons make a cycle)`);
+  const e = c.plugins[root];
+  if (prev && prev.hash === hash && prev.base === spec.base && fs.existsSync(addonDir(ap, m.name)) && !toolMissing(ap, e)) return { name: m.name, version: prev.version, changed: false, grade: e.grade, lost: e.lost, build: e.builds.claude ?? null, base: root };
+  const seen = assemble(ap, root, e, trial, (n) => (n === m.name ? abs : addonDir(ap, n)));
+  const me = seen.addons.find((a) => a.name === m.name)!;
+  if (!me.on) throw new Error(`cannot add ${m.name}: ${me.why}`);
+  checkCommands(abs, seen.m, path.join(ap.dir, 'tools'));
+  fs.mkdirSync(ap.addons, { recursive: true });
+  installTo(addonDir(ap, m.name), abs, m);
+  c.addons = { ...addons, [m.name]: entry }; // 갱신이면 설치 순서를 그대로 둔다
+  defaultBuild(ap, root, e, c.addons);
+  writeConfig(ap, c);
+  const exports = refreshExports(ap, root, e, env);
+  const leftOut = leftOutNotes(root, assemble(ap, root, e, c.addons));
+  return { name: m.name, version: m.version, changed: true, grade: e.grade, lost: e.lost, build: e.builds.claude ?? null, base: root, ...(leftOut.length ? { leftOut } : {}), ...(exports ? { exports } : {}) };
+}
+
+/** 프로필에 남은 그 플러그인의 part·옵션 값을 지운다 — 애드온을 제거할 때. 다시 설치하면 옛 값이 되살아나지 않게 */
+function forgetInProfiles(c: AgentConfig, plugin: string, keys: string[]) {
+  for (const p of Object.values((c.profiles ?? {}) as Record<string, PluginLayer>)) {
+    const v = p.plugins?.[plugin];
+    if (v) for (const k of keys) { if (v.parts) delete v.parts[k]; if (v.options) delete v.options[k]; }
+  }
+}
+
+/** 원본·설정 항목·export 를 지운다. 없으면 성공 (removed false). export 를 먼저 해제한다 — 링크가 사라진 빌드를 가리키면 하네스가 오류를 낸다.
+ *  이름이 애드온이면 그 애드온만 지우고 베이스를 다시 빌드한다. 의존하는 애드온이 있으면 cascade 없이는 던지고, cascade 면 함께 지운다 */
+export async function removePlugin(name: string, stateDir?: string, env: NodeJS.ProcessEnv = process.env, cascade = false): Promise<{ name: string; removed: boolean; addons?: string[]; exports?: ExportResult[] }> {
   const ap = agentPaths(stateDir);
   const r = await locked(ap, () => {
     const c = readConfig(ap);
+    const addons = c.addons ?? {};
+    const deps = dependentsOf(name, addons);
+    if (deps.length && !cascade) throw new Error(`${deps.join(', ')} depend on ${name}: remove them first or use --cascade`);
+    const isAddon = Object.hasOwn(addons, name);
+    const gone = isAddon ? [name, ...deps] : deps;
+    const root = rootOf(name, c, addons);
+    for (const n of gone) {
+      try { const m = readManifest(addonDir(ap, n)); if (root) forgetInProfiles(c, root, [...Object.keys(m.parts), ...Object.keys(m.options)]); } catch {}
+      delete addons[n];
+    }
+    if (isAddon) {
+      c.addons = addons;
+      if (root) defaultBuild(ap, root, c.plugins[root], addons);
+      writeConfig(ap, c);
+      for (const n of gone) fs.rmSync(addonDir(ap, n), { recursive: true, force: true });
+      const exports = root ? refreshExports(ap, root, c.plugins[root], env) : undefined;
+      return { name, removed: true, ...(deps.length ? { addons: deps } : {}), ...(exports ? { exports } : {}) };
+    }
     const inst = path.join(ap.installed, name);
     const had = !!c.plugins[name] || fs.existsSync(inst);
     const hs = c.plugins[name]?.exports ?? [];
-    if (c.plugins[name]) { delete c.plugins[name]; writeConfig(ap, c); }
+    if (c.plugins[name] || deps.length) { delete c.plugins[name]; writeConfig(ap, c); }
     const exports = hs.map((h) => unexport(ap, name, h, exportedNames(c, h), env));
     fs.rmSync(inst, { recursive: true, force: true });
-    return { name, removed: had, ...(exports.length ? { exports } : {}) };
+    for (const n of gone) fs.rmSync(addonDir(ap, n), { recursive: true, force: true });
+    return { name, removed: had, ...(deps.length ? { addons: deps } : {}), ...(exports.length ? { exports } : {}) };
   });
   gcBuilds(stateDir, GC_GRACE_MS, name); // 지운 플러그인의 빌드는 유예 없이 — 새 세션이 더는 그것을 빌드하지 않는다
   return r;
@@ -205,8 +275,7 @@ export async function exportPlugin(name: string, harnesses: string[], remove: bo
   const ap = agentPaths(stateDir);
   const r = await locked(ap, () => {
     const c = readConfig(ap);
-    const e = c.plugins[name];
-    if (!e) throw new Error(`no agent plugin ${name} (slcode plugin list)`);
+    const e = pluginEntry(c, name, 'export');
     const out: ExportResult[] = [];
     const save = (list: ExportHarness[]) => { if (list.length) e.exports = list; else delete e.exports; writeConfig(ap, c); };
     for (const h of hs) {
@@ -227,18 +296,31 @@ export async function exportPlugin(name: string, harnesses: string[], remove: bo
   return r;
 }
 
+/** 플러그인 항목 — 애드온 이름이면 베이스 이름으로 하라고 알린다. 애드온은 켜고 끄는 단위가 아니다 */
+function pluginEntry(c: AgentConfig, name: string, verb: string): PluginEntry {
+  const e = c.plugins[name];
+  if (e) return e;
+  const root = c.addons?.[name] ? rootOf(name, c, c.addons) : null;
+  throw new Error(root ? `${name} is an addon of ${root}: slcode plugin ${verb} ${root} ...` : `no agent plugin ${name} (slcode plugin list)`);
+}
+
 /** 플러그인 기본 설정에서 part 를 켜고 끄거나 옵션 값을 바꾼다 — `<part>=on|off`, `<옵션>=<값>` 여럿. 하나라도 틀리면 아무것도 바꾸지 않는다 */
 export async function setPlugin(name: string, assignments: string[], stateDir?: string, env: NodeJS.ProcessEnv = process.env): Promise<{ name: string; values: string; build: string; exports?: ExportResult[] }> {
   const ap = agentPaths(stateDir);
   const r = await locked(ap, () => {
     const c = readConfig(ap);
-    const e = c.plugins[name];
-    if (!e) throw new Error(`no agent plugin ${name} (slcode plugin list)`);
-    const m = readManifest(path.join(ap.installed, name));
-    const values: Values = { parts: { ...e.values.parts }, options: { ...e.values.options } };
-    for (const a of assignments) { const { kind, key, value } = parseAssignment(m, a); (values[kind] as Record<string, unknown>)[key] = value; }
-    e.values = prune(values, m);
-    const b = defaultBuild(ap, name, e);
+    const e = pluginEntry(c, name, 'set');
+    const s = assemble(ap, name, e, c.addons);
+    const owner = (key: string) => (s.owners[key] ? c.addons![s.owners[key]] : e); // 값은 그 part·옵션을 가진 쪽에 둔다 (AddonEntry.values)
+    const next = new Map<PluginEntry | AddonEntry, Values>();
+    for (const a of assignments) {
+      const { kind, key, value } = parseAssignment(s.m, a);
+      const o = owner(key);
+      if (!next.has(o)) next.set(o, { parts: { ...o.values.parts }, options: { ...o.values.options } });
+      (next.get(o)![kind] as Record<string, unknown>)[key] = value;
+    }
+    for (const [o, v] of next) o.values = prune(v, s.m);
+    const b = defaultBuild(ap, name, e, c.addons);
     writeConfig(ap, c);
     const exports = refreshExports(ap, name, e, env);
     return { name, values: b.report.values, build: b.id, ...(exports ? { exports } : {}) };
@@ -250,10 +332,12 @@ export async function setPlugin(name: string, assignments: string[], stateDir?: 
 export type PluginRow = {
   name: string; version: string; grade: 'full' | 'partial'; lost: Record<Harness, string[]>; source: string; installedAt: number;
   /** on 은 사용자 설정(기본 설정 기준) — when 은 조건 글(whenText)이고 세션마다 따로 본다. 기본 빌드·export 판은 param·env 가 없는 것으로 판단한다. needs 는 조건 when part 의 대상 — 관리 화면이 대상이 꺼진 part 를 비활성으로 보인다 */
-  parts: { name: string; on: boolean; required: boolean; default: boolean; when: string | null; needs: string[] }[];
+  parts: { name: string; on: boolean; required: boolean; default: boolean; when: string | null; needs: string[]; addon: string | null }[];
   options: { name: string; type: string; value: unknown; default: unknown; label: string | null }[];
   /** 하네스별 마지막 빌드의 report.json — 빌드가 없으면 null */
   reports: Partial<Record<Harness, Report | null>>;
+  /** 이 플러그인에 이어진 애드온 — on 이 거짓이면 빌드에서 뺀 것이고 why 가 사유. 판은 row.version(베이스)과 따로 적는다 */
+  addons: AddonState[];
   /** export 한 하네스 */
   exports: ExportHarness[];
   /** export 한 하네스별 export 판의 report.json — 아직 만들지 않았거나 읽지 못하면 null */
@@ -263,21 +347,34 @@ export type PluginRow = {
 /** 설치 목록 — 기본 설정 기준의 part·옵션 값과 마지막 빌드 보고 */
 export function listPlugins(stateDir?: string): PluginRow[] {
   const ap = agentPaths(stateDir);
-  return Object.entries(readConfig(ap).plugins).map(([name, e]) => {
-    let m: Manifest | null = null;
-    try { m = readManifest(path.join(ap.installed, name)); } catch {}
-    const r = m ? userValues(m, [e.values]) : { parts: {}, options: {} };
+  const config = readConfig(ap);
+  return Object.entries(config.plugins).map(([name, e]) => {
+    let s: Assembled | null = null;
+    try { s = assemble(ap, name, e, config.addons); } catch {}
+    const m = s?.m ?? null;
+    const r = s ? userValues(s.m, [s.values]) : { parts: {}, options: {} };
     const reports: PluginRow['reports'] = {};
     for (const h of HARNESSES) if (e.builds[h]) { try { reports[h] = JSON.parse(fs.readFileSync(path.join(ap.build, e.builds[h]!, BUILD_FILES.report), 'utf8')); } catch { reports[h] = null; } }
     const exported: PluginRow['exported'] = {};
-    for (const h of e.exports ?? []) { try { const x = JSON.parse(fs.readFileSync(path.join(ap.build, e.builds[h]!, 'export', h, BUILD_FILES.report), 'utf8')); exported[h] = m ? withPartConditions(x, m, e) : x; } catch { exported[h] = null; } }
+    for (const h of e.exports ?? []) { try { const x = JSON.parse(fs.readFileSync(path.join(ap.build, e.builds[h]!, 'export', h, BUILD_FILES.report), 'utf8')); exported[h] = s ? withPartConditions(x, s.m, s.values) : x; } catch { exported[h] = null; } }
     return {
       name, version: e.version, grade: e.grade, lost: e.lost, source: e.source, installedAt: e.installedAt,
-      parts: m ? Object.entries(m.parts).map(([k, p]) => ({ name: k, on: r.parts[k], required: p.required, default: p.default, when: p.when ? whenText(p.when) : null, needs: Object.keys(p.when?.part ?? {}) })) : [],
+      parts: m ? Object.entries(m.parts).map(([k, p]) => ({ name: k, on: r.parts[k], required: p.required, default: p.default, when: p.when ? whenText(p.when) : null, needs: Object.keys(p.when?.part ?? {}), addon: s?.owners[k] ?? null })) : [],
       options: m ? Object.entries(m.options).map(([k, o]) => ({ name: k, type: o.type, value: r.options[k], default: o.default, label: o.label ?? null })) : [],
-      reports, exports: e.exports ?? [], exported,
+      reports, addons: s?.addons ?? [], exports: e.exports ?? [], exported,
     };
   });
+}
+
+/** 베이스가 없어 어디에도 실리지 않는 애드온 — 옛 사본이 베이스를 지웠을 때 남는다. 베이스를 다시 add 하면 돌아온다 */
+export function orphanAddons(stateDir?: string): { name: string; version: string; base: string }[] {
+  const c = readConfig(agentPaths(stateDir));
+  return Object.entries(c.addons ?? {}).filter(([n]) => !rootOf(n, c, c.addons!)).map(([name, a]) => ({ name, version: a.version, base: a.base }));
+}
+
+/** 합친 manifest — slcode 프로필이 애드온의 part·옵션 값을 받을 때 쓴다 */
+export function pluginManifest(ap: AgentPaths, c: AgentConfig, name: string): Manifest {
+  return assemble(ap, name, c.plugins[name], c.addons).m;
 }
 
 /** 빌드한 js/ts 훅의 보고 줄 — 빼거나 고칠 것과 하네스별 tsc 검사 경고 (ticket slcode-agent-plugin-script-portable). build 는 Claude 빌드(스크립트는 거기서 묶는다).
@@ -290,9 +387,12 @@ export async function scriptWarnings(name: string, build: string, stateDir?: str
   if (!(sc.built.length + sc.failed.length + cm.built.length + cm.failed.length)) return [];
   const lines = [...sc.failed, ...cm.failed].map((x) => `  failed: ${x}`).concat([...sc.warnings, ...cm.warnings].map((x) => `  warning: ${x}`));
   const inst = path.join(ap.installed, name);
-  const c = await checkScripts(sc.built.map((s) => path.join(inst, s)), ['claude', 'codex'], stateDir ?? defaultStateDir(), inst);
+  const config = readConfig(ap);
+  const m = config.plugins[name] ? assemble(ap, name, config.plugins[name], config.addons).m : null;
+  const file = (s: string) => path.join(m ? partRoot(inst, m, s.split('/')[0]) : inst, s); // "<part>/<경로>" — 애드온 part 는 애드온 폴더에 있다
+  const c = await checkScripts(sc.built.map(file), ['claude', 'codex'], stateDir ?? defaultStateDir(), inst);
   // 명령은 slcode 의 Claude 세션에서만 돈다 — claude 표로만 본다
-  const k = await checkScripts(cm.built.map((s) => path.join(inst, s)), ['claude'], stateDir ?? defaultStateDir(), inst);
+  const k = await checkScripts(cm.built.map(file), ['claude'], stateDir ?? defaultStateDir(), inst);
   const skipped = c.skipped ?? k.skipped;
   if (skipped) lines.push(`  type check skipped: ${skipped}`);
   for (const r of [c, k]) for (const [h, ws] of Object.entries(r.warnings)) lines.push(...ws.map((w) => `  ${h === 'codex' ? 'codex export' : h}: ${w}`));
@@ -331,13 +431,15 @@ export function claudeDataDir(name: string, env: NodeJS.ProcessEnv): string {
   return path.join(config, 'plugins', 'data', `${name}-inline`.replace(/[^A-Za-z0-9_-]/g, '-'));
 }
 
-type Plan = Loaded & { target: string };
+type Plan = Loaded & { target: string; leftOut: string[] };
 /** 플러그인 하나의 지금 빌드 — 기본 설정 < 프로필 < 세션 값. Claude 는 지시문의 경로 변수를 세션 링크 경로로 바꾼다 (Claude 는 지시문을 치환하지 않는다).
  *  Codex 빌드는 이미 바꿨다 — 데이터 폴더만 만든다 */
 function plan(ap: AgentPaths, name: string, e: PluginEntry, link: string, layers: (Values | undefined)[], env: NodeJS.ProcessEnv, harness: SessionHarness = 'claude', params: SessionParams = {}): Plan {
   const inst = path.join(ap.installed, name);
-  const m = readManifest(inst);
-  const b = ensureBuild(ap.build, inst, m, resolveValues(m, [e.values, ...layers], params, env), e.hash, harness);
+  const s = assemble(ap, name, e);
+  const m = s.m;
+  const b = ensureBuild(ap.build, inst, m, resolveValues(m, [s.values, ...layers], params, env), s.hash, harness);
+  const leftOut = leftOutNotes(name, s);
   const read = (f: string) => { try { return fs.readFileSync(path.join(b.dir, f), 'utf8'); } catch { return null; } };
   const base = { name, version: m.version, build: b.id, values: b.report.values, env: m.env };
   if (harness === 'codex') {
@@ -347,11 +449,11 @@ function plan(ap: AgentPaths, name: string, e: PluginEntry, link: string, layers
     const bin = has('bin');
     const h = createHash('sha256');
     if (bin) for (const r of walk(bin)) h.update(`${r}\0`).update(fs.readFileSync(path.join(bin, r))).update('\0');
-    return { ...base, instructions: read(BUILD_FILES.instructions) ?? '', settings: null, target: root, codex: { root, skills: has('skills'), bin, binSum: h.digest('hex'), args: JSON.parse(read(BUILD_FILES.codexArgs) ?? '[]') } };
+    return { ...base, instructions: read(BUILD_FILES.instructions) ?? '', settings: null, target: root, leftOut, codex: { root, skills: has('skills'), bin, binSum: h.digest('hex'), args: JSON.parse(read(BUILD_FILES.codexArgs) ?? '[]') } };
   }
   const instructions = (read(BUILD_FILES.instructions) ?? '').replaceAll('${CLAUDE_PLUGIN_ROOT}', link).replaceAll('${CLAUDE_PLUGIN_DATA}', claudeDataDir(name, env));
-  const s = read(BUILD_FILES.settings);
-  return { ...base, instructions, settings: s ? JSON.parse(s) : null, target: path.join(b.dir, 'claude', name) };
+  const st = read(BUILD_FILES.settings);
+  return { ...base, instructions, settings: st ? JSON.parse(st) : null, target: path.join(b.dir, 'claude', name), leftOut };
 }
 
 /** 링크를 새 대상으로 — 옆에 만든 뒤 rename 으로 바꾼다 (Windows 는 junction) */
@@ -378,7 +480,8 @@ export function loadSessionPlugins(sessionDir: string, env: NodeJS.ProcessEnv, s
   for (const [name, e] of entries) {
     const link = path.join(links, name);
     try {
-      const { target, ...p } = plan(ap, name, e, link, [profile && profileValues(profile, name), session[name]], env, harness, params);
+      const { target, leftOut, ...p } = plan(ap, name, e, link, [profile && profileValues(profile, name), session[name]], env, harness, params);
+      out.notes.push(...leftOut);
       relink(link, target);
       if (p.codex) {
         if (p.codex.skills) out.codex.roots.push(p.codex.skills);
@@ -399,18 +502,19 @@ export function loadSessionPlugins(sessionDir: string, env: NodeJS.ProcessEnv, s
  *  later 는 이 세션에 반영되지 않아 새 세션부터인 것 (지시문·env·session.json·Codex 의 MCP·bin 이 바뀐 플러그인, 세션 뒤에 설치한 플러그인).
  *  Codex 는 skill 만 다시 싣는다 — 기동 때의 빌드는 <이름> 링크로 남기고(MCP·bin 이 아직 그것을 쓴다) 새 빌드는 <이름>@skills 링크로 지킨다. roots 는 새 extra root 들 */
 export type Later = { name: string; what: ('instructions' | 'env' | 'session.json' | 'mcp' | 'bin' | 'installed')[] };
-export function reloadSessionPlugins(sessionDir: string, loaded: Loaded[], env: NodeJS.ProcessEnv, session: SessionValues = {}, stateDir?: string, harness: SessionHarness = 'claude', profile?: PluginLayer, params: SessionParams = {}): { loaded: Loaded[]; later: Later[]; removed: string[]; roots: string[] } {
+export function reloadSessionPlugins(sessionDir: string, loaded: Loaded[], env: NodeJS.ProcessEnv, session: SessionValues = {}, stateDir?: string, harness: SessionHarness = 'claude', profile?: PluginLayer, params: SessionParams = {}): { loaded: Loaded[]; later: Later[]; removed: string[]; roots: string[]; notes: string[] } {
   const ap = agentPaths(stateDir);
   const plugins = readConfig(ap).plugins;
   const links = path.join(sessionDir, SESSION_LINKS);
-  const later: Later[] = [], removed: string[] = [], next: Loaded[] = [], roots: string[] = [];
+  const later: Later[] = [], removed: string[] = [], next: Loaded[] = [], roots: string[] = [], notes: string[] = [];
   // Codex 빌드의 값엔 빌드 폴더 경로가 박혀 있다 — 견줄 때는 다시 변수로
   const norm = (t: string, l: Loaded) => (l.codex ? t.replaceAll(l.codex.root, '${CLAUDE_PLUGIN_ROOT}') : t);
   for (const old of loaded) {
     const link = path.join(links, old.name);
     const e = plugins[old.name];
     if (!e || (profile && !loadsPlugin(profile, old.name))) { fs.rmSync(link, { force: true }); fs.rmSync(`${link}@skills`, { force: true }); removed.push(old.name); continue; }
-    const { target, ...p } = plan(ap, old.name, e, link, [profile && profileValues(profile, old.name), session[old.name]], env, harness, params);
+    const { target, leftOut, ...p } = plan(ap, old.name, e, link, [profile && profileValues(profile, old.name), session[old.name]], env, harness, params);
+    notes.push(...leftOut);
     if (p.codex) {
       let start = '';
       try { start = fs.readlinkSync(link); } catch {}
@@ -430,7 +534,7 @@ export function reloadSessionPlugins(sessionDir: string, loaded: Loaded[], env: 
     next.push({ ...p, instructions: old.instructions, env: old.env, settings: old.settings, ...(old.codex ? { codex: { ...old.codex, skills: p.codex?.skills ?? null } } : {}) });
   }
   for (const name of Object.keys(plugins)) if (!loaded.some((l) => l.name === name) && (!profile || loadsPlugin(profile, name))) later.push({ name, what: ['installed'] });
-  return { loaded: next, later, removed, roots };
+  return { loaded: next, later, removed, roots, notes };
 }
 
 /** 지금 설정으로 빌드하면 나올 식별자 — 세션이 실은 것과 다르면 다시 실을 것이 있다. 빌드하지 않는다 */
@@ -440,8 +544,8 @@ export function currentBuilds(session: SessionValues = {}, stateDir?: string, ha
   for (const [name, e] of Object.entries(readConfig(ap).plugins)) {
     if (profile && !loadsPlugin(profile, name)) continue;
     try {
-      const m = readManifest(path.join(ap.installed, name));
-      out[name] = buildId(valuesString(resolveValues(m, [e.values, profile && profileValues(profile, name), session[name]], params, env)), e.hash, harness);
+      const s = assemble(ap, name, e);
+      out[name] = buildId(valuesString(resolveValues(s.m, [s.values, profile && profileValues(profile, name), session[name]], params, env)), s.hash, harness);
     } catch { out[name] = null; }
   }
   return out;

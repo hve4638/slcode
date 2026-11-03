@@ -3,7 +3,7 @@
 slcode 에이전트 플러그인(`slcode-plugin.json` 형식)을 설치하고, 터미널의 claude·codex 에 export 하고, export 한 훅을 돌린다. 의존성 없는 순수 JS 이고 node 20 이상에서 돈다.
 
 ```
-node dist/cli.js add <폴더> | remove <이름> | set <이름> <part>=on|off <옵션>=<값> … | list [--json]
+node dist/cli.js add <폴더> | remove <이름> [--cascade] | set <이름> <part>=on|off <옵션>=<값> … | list [--json]
 node dist/cli.js export <이름> --to claude --to codex [--remove] [--json]
 node dist/cli.js --version
 ```
@@ -32,6 +32,24 @@ slcode.command({
   run: (cmd) => { cmd.state.role = cmd.args; cmd.context(`당신의 역할은 ${cmd.args} 입니다`); cmd.message(`역할: ${cmd.args}`, { icon: 'flag' }); },
 });
 ```
+
+원본 폴더에 `slcode-plugin.json` 대신 `slcode-addon.json` 을 두면 애드온이다. 애드온은 베이스 플러그인에 합쳐 빌드되어, 스킬·명령·MCP 이름이 베이스 이름 아래에 들어간다(`/superlite:…`). 나머지 칸과 part 폴더의 꼴은 플러그인과 같다.
+
+```json
+{ "name": "orchestration", "version": "0.5.0", "addon": { "base": "superlite", "version": "^0.4.0" },
+  "parts": { "orch": { "when": { "part": { "main": true }, "param": { "ORCH_ROLE": true } } } } }
+```
+
+- `addon.base` 는 플러그인이나 다른 애드온의 이름이다. 애드온의 애드온도 맨 아래 베이스 이름으로 들어간다.
+- `addon.version` 은 베이스 판의 조건이다. `1.2.3`, `^1.2.3`, `~1.2.3`, `>=`·`>`·`<=`·`<`, `*` 를 쓰고, 공백으로 이으면 모두 맞아야 한다.
+- 베이스가 없거나 판 조건이 맞지 않거나, part·옵션·skill·명령 이름이 베이스나 다른 애드온과 겹치면 add 가 거부한다. 다른 파일 경로와 MCP 서버 이름이 겹치면 part 끼리처럼 뒤의 것이 이기고 빌드 보고의 `overridden` 에 남는다.
+- `when.part` 는 자기 part 와 베이스 쪽 사슬의 part 를 본다. 베이스에서 애드온 쪽, 형제 애드온 쪽은 볼 수 없다.
+- 애드온은 켜고 끄는 단위가 아니다. 베이스를 실으면 함께 실리고, part 와 옵션은 `plugin set <베이스> <part>=off` 와 프로필의 `<베이스>.<part>` 로 바꾼다.
+- 베이스를 갱신해 판 조건이 맞지 않거나 이름이 겹치게 되면 베이스는 갱신하고 그 애드온과 거기 의존하는 애드온만 빠진다. 사유는 `plugin list` 와 세션 알림에 보이고, 맞는 판이 되면 돌아온다.
+- `remove <애드온>` 은 애드온만 지우고 베이스를 다시 빌드한다. 의존하는 애드온이 있으면 거부하고 `--cascade` 로 함께 지운다. 베이스도 같다. 제거하면 기본 설정과 프로필에 있던 그 애드온의 값이 함께 지워진다. 세션 meta 의 값은 남지만 쓰이지 않는다.
+- 빌드 결과의 이름과 판은 베이스의 것이다. 애드온의 판은 `plugin list` 의 `addons` 줄에 보인다.
+
+0.5.0 이전 사본은 `slcode-addon.json` 폴더의 add 를 거부하고, 상태 폴더의 애드온을 보지 못해 베이스만 싣는다. 옛 사본이 베이스를 지우면 애드온은 고아로 남아 목록에만 보이고, 베이스를 다시 add 하면 돌아온다. 옛 사본이 베이스를 `add`(내용이 바뀐 경우)·`set` 하면 export 링크가 베이스만의 빌드로 바뀌고, 0.5.0 이상의 `add`·`set` 때 다시 합쳐진다.
 
 esbuild(js/ts 훅을 묶을 때)와 typescript(훅 타입 검사)는 처음 필요할 때 npm 레지스트리에서 받는다. 판과 무결성은 고정이다. 받지 못하면 js/ts 훅만 빠지고 경고가 남으며, 다음 add·set 때 다시 받아 본다.
 

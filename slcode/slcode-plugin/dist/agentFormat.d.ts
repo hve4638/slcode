@@ -1,4 +1,6 @@
 export declare const MANIFEST = "slcode-plugin.json";
+/** 애드온의 manifest (ticket slcode-plugin-addon) — 파일 이름이 다르므로 옛 사본은 add 를 "no slcode-plugin.json" 으로 거절한다. slcode-plugin.json 에 addon 칸만 더하면 옛 사본이 독립 플러그인으로 설치한다(0.3.0·0.4.0 실측) */
+export declare const ADDON_MANIFEST = "slcode-addon.json";
 /** 빌드기 판 — 빌드 결과가 달라지는 변경이면 올린다. 빌드 식별자에 들어가 옛 빌드를 다시 쓰지 않게 한다 */
 export declare const BUILDER = 6;
 /** 호환 등급을 매기는 하네스 — gpt 는 GPT 하네스(장기적으로 Codex 자리, 아직 slcode 가 띄우지 않는다) */
@@ -23,12 +25,20 @@ export type PartSpec = {
     default: boolean;
     when?: When;
 };
+/** 애드온 선언 — base 는 플러그인이나 다른 애드온의 이름, version 은 그 판의 조건(versionHolds) */
+export type AddonSpec = {
+    base: string;
+    version: string;
+};
+/** roots 는 합친 manifest(agentAddons.assemble)에서 part 가 있는 폴더 — 없으면 빌드에 넘긴 폴더 하나다 */
 export type Manifest = {
     name: string;
     version: string;
     options: Record<string, OptionSpec>;
     parts: Record<string, PartSpec>;
     env: Record<string, string>;
+    addon?: AddonSpec;
+    roots?: Record<string, string>;
 };
 /** 한 층의 설정 값 — 기본 설정(config.json)·프로필·세션이 같은 꼴이다. 없는 키는 아래 층의 값 */
 export type Values = {
@@ -43,6 +53,8 @@ export type Resolved = {
 export declare const PARAM_NAME: RegExp;
 /** manifest 를 읽는다 — 이름·part 구성을 알 수 없으면 던진다 (slcode plugin add 가 거부하는 유일한 경우) */
 export declare function parseManifest(text: string): Manifest;
+/** 판이 조건에 맞는가 — 판이나 조건을 읽지 못하면 맞지 않는 것으로 본다 */
+export declare function versionHolds(version: string, range: string): boolean;
 /** when 조건 — part 는 partOn 이 참인가. param·env 는 이름마다 true 는 값이 있고 비어 있지 않음, 문자열은 같음, 목록은 그중 하나. 모두 참이어야 참 */
 export declare function whenHolds(w: When, params?: Record<string, string>, env?: Record<string, string | undefined>, partOn?: (part: string) => boolean): boolean;
 /** 조건 글 — 목록·export excluded·화면에 보인다 */
@@ -73,6 +85,10 @@ export declare function commandFiles(dir: string, part: string): {
     }[];
     errors: string[];
 };
+/** part 가 있는 폴더 — 합친 manifest 는 part 마다 다르다 */
+export declare const partRoot: (dir: string, m: Manifest, part: string) => string;
+/** 같은 플러그인 skill 이름 — 폴더 이름과 frontmatter name (Claude 는 name 이 있으면 그것을 쓴다) */
+export declare function skillNames(dir: string, part: string): string[];
 /** 명령의 정적 검사 — 모든 part(켜지 않은 것도)를 본다. 이름 규칙·COMMAND 파일 둘·part 끼리 같은 이름·같은 플러그인 skill 과 같은 이름.
  *  하나라도 있으면 add 가 거부한다(플러그인 적용 실패, 사용자 결정 2026-11-02) */
 /** Claude 내장 명령의 이름·별칭 — add 때 미리 거른다(사용자 결정 2026-11-02). Claude Agent SDK 0.3.282 의 supportedCommands 중 builtin 인 것(API 키 계정, 2026-11-02 실측).

@@ -562,6 +562,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     reloadWanted = false;
     try {
       const r = reloadSessionPlugins(logFile.dir, agentLoaded, env, logFile.meta.agentPlugins ?? {}, P.dir, harness, profileNow(), params);
+      for (const n of r.notes) session.notice(`에이전트 플러그인을 싣지 못했습니다 — ${n}`);
       if (session instanceof CodexSession) {
         await session.setSkillRoots(r.roots);
         agentLoaded = r.loaded;

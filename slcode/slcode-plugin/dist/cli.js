@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { addPlugin, agentPaths, exportPlugin, listPlugins, refreshLauncher, removePlugin, scriptWarnings, setPlugin } from './agentPlugins.js';
+import { addPlugin, agentPaths, exportPlugin, listPlugins, orphanAddons, refreshLauncher, removePlugin, scriptWarnings, setPlugin } from './agentPlugins.js';
 import { defaultStateDir } from './paths.js';
 import { PLUGIN_VERSION } from './launcher.js';
 const print = (o) => console.log(JSON.stringify(o, null, 2));
@@ -27,13 +27,13 @@ export async function pluginCommand(sub, args, flags, dir, usage, tag = 'slcode-
         const r = await addPlugin(args[0], dir);
         print(r);
         if (r.build)
-            await scriptReport(r.name, r.build);
+            await scriptReport(r.base ?? r.name, r.build);
         return;
     }
     if (sub === 'remove') {
         if (args.length !== 1)
-            usage('plugin remove <name>');
-        print(await removePlugin(args[0], dir));
+            usage('plugin remove <name> [--cascade]');
+        print(await removePlugin(args[0], dir, process.env, !!flags.cascade));
         return;
     }
     if (sub === 'set') {
@@ -73,7 +73,8 @@ export async function pluginCommand(sub, args, flags, dir, usage, tag = 'slcode-
         print(rows);
         return;
     }
-    if (!rows.length) {
+    const orphans = orphanAddons(dir);
+    if (!rows.length && !orphans.length) {
         console.log('(no agent plugins)');
         return;
     }
@@ -85,7 +86,8 @@ export async function pluginCommand(sub, args, flags, dir, usage, tag = 'slcode-
         };
         console.log([
             `${r.name} ${r.version}  ${r.grade}`,
-            `  parts    ${r.parts.map((x) => `${x.name}${x.required ? '(required)' : ''} ${x.on ? 'on' : 'off'}${x.when ? ` (when ${x.when})` : ''}`).join(' · ') || '-'}`,
+            `  parts    ${r.parts.map((x) => `${x.name}${x.required ? '(required)' : ''} ${x.on ? 'on' : 'off'}${x.addon ? ` (addon ${x.addon})` : ''}${x.when ? ` (when ${x.when})` : ''}`).join(' · ') || '-'}`,
+            ...(r.addons.length ? [`  addons   ${r.addons.map((a) => `${a.name} ${a.version}${a.on ? '' : ` (left out: ${a.why})`}`).join(' · ')}`] : []),
             ...(r.options.length ? [`  options  ${r.options.map((o) => `${o.name}=${JSON.stringify(o.value)}${o.label ? ` (${o.label})` : ''}`).join(' · ')}`] : []),
             ...lost.map(([h, l]) => `  lost in ${h}: ${l.join('; ')}`),
             build('claude'),
@@ -93,10 +95,12 @@ export async function pluginCommand(sub, args, flags, dir, usage, tag = 'slcode-
             `  export   ${r.exports.join(' · ') || '-'}`,
         ].join('\n'));
     }
+    for (const a of orphans)
+        console.log(`${a.name} ${a.version}  addon of ${a.base}, which is not installed (not loaded)`);
 }
 const HELP = `slcode-plugin ${PLUGIN_VERSION} — slcode 에이전트 플러그인을 설치하고 터미널의 claude·codex 에 export 한다
-  add <folder>                   slcode-plugin.json 이 있는 원본 폴더를 설치한다. 같은 내용이면 아무것도 하지 않는다
-  remove <name>                  설치와 설정, export 를 지운다 (없어도 성공)
+  add <folder>                   slcode-plugin.json(애드온은 slcode-addon.json)이 있는 원본 폴더를 설치한다. 같은 내용이면 아무것도 하지 않는다
+  remove <name> [--cascade]      설치와 설정, export 를 지운다 (없어도 성공). 의존하는 애드온이 있으면 --cascade 로 함께 지운다
   set <name> <part>=on|off <option>=<value> ...
                                  플러그인 기본 설정을 바꾼다 (필수 part 는 끌 수 없다)
   list [--json]                  설치한 플러그인, 호환 등급(full|partial)과 빠지는 것, part·옵션 값, 마지막 빌드 보고, export
@@ -117,6 +121,8 @@ export async function main(argv) {
             flags.dir = argv[++i];
         else if (a === '--remove')
             flags.remove = true;
+        else if (a === '--cascade')
+            flags.cascade = true;
         else if (a === '--json')
             flags.json = true;
         else if (a === '--help' || a === '-h')

@@ -87,8 +87,9 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
 * ask <to> <text> [--timeout S]  묻고 답장을 기다린다
 * reply <id> <text>              받은 메시지에 답장
 에이전트 플러그인 (Claude·Codex 세션에 싣는다. 바꾼 설정은 새 세션부터, 떠 있는 세션은 사이드바의 다시 싣기로 — Codex 는 skill 만)
-  plugin add <folder>            slcode-plugin.json 이 있는 원본 폴더를 설치한다. 같은 내용이면 아무것도 하지 않는다
-  plugin remove <name>           설치와 설정, export 를 지운다 (없어도 성공)
+  plugin add <folder>            slcode-plugin.json(애드온은 slcode-addon.json)이 있는 원본 폴더를 설치한다. 같은 내용이면 아무것도 하지 않는다
+  plugin remove <name> [--cascade]
+                                 설치와 설정, export 를 지운다 (없어도 성공). 의존하는 애드온이 있으면 --cascade 로 함께 지운다
   plugin set <name> <part>=on|off <option>=<value> ...
                                  플러그인 기본 설정을 바꾼다 (필수 part 는 끌 수 없다)
   plugin list [--json]           설치한 플러그인, 호환 등급(full|partial)과 빠지는 것, part·옵션 값, 마지막 빌드 보고, export
@@ -129,7 +130,7 @@ try {
       port: { type: 'string' }, host: { type: 'string' }, stdio: { type: 'boolean' }, vendor: { type: 'string' }, mode: { type: 'string' }, title: { type: 'string' }, model: { type: 'string' }, effort: { type: 'string' }, profile: { type: 'string' }, env: { type: 'string', multiple: true }, param: { type: 'string', multiple: true, short: 'P' },
       since: { type: 'string' }, tail: { type: 'string' }, turn: { type: 'string' }, raw: { type: 'boolean' }, 'no-inspect': { type: 'boolean' }, all: { type: 'boolean' }, force: { type: 'boolean' }, json: { type: 'boolean' },
       remember: { type: 'boolean' }, from: { type: 'string' }, re: { type: 'string' }, timeout: { type: 'string' }, answer: { type: 'string' },
-      'no-web': { type: 'boolean' }, web: { type: 'boolean' }, takeover: { type: 'boolean' }, 'from-start': { type: 'boolean' }, version: { type: 'boolean' }, dir: { type: 'string' }, help: { type: 'boolean', short: 'h' }, to: { type: 'string', multiple: true }, remove: { type: 'boolean' },
+      'no-web': { type: 'boolean' }, web: { type: 'boolean' }, takeover: { type: 'boolean' }, 'from-start': { type: 'boolean' }, version: { type: 'boolean' }, dir: { type: 'string' }, help: { type: 'boolean', short: 'h' }, to: { type: 'string', multiple: true }, remove: { type: 'boolean' }, cascade: { type: 'boolean' },
     },
   });
 } catch (e) { usage((e as Error).message); }
