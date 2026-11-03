@@ -404,6 +404,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   // 끄는 것은 위로 갈 때만 — 바닥으로 부드럽게 내려가는 도중의 위치(큰 도구 카드가 붙은 직후 등)로 끄면 버튼이 깜빡이고 그 사이 온 답변을 '새 메시지' 로 센다 (2026-10-23 실측)
   let lastTop = 0;
   feed.onscroll = () => {
+    if (!feed.clientHeight) return; // 숨은 카드(display:none) — 높이가 모두 0 이라 바닥으로 읽혀 올려 둔 자리의 따라가기가 켜진다
     if (feed.scrollHeight - feed.scrollTop - feed.clientHeight < 80) follow = true; else if (feed.scrollTop < lastTop) follow = false;
     lastTop = feed.scrollTop; paintJump();
   };
@@ -1194,7 +1195,10 @@ export function mountAgentFront(root, transport, opts = {}) {
     const w = Math.min(280, g - 32);
     nav.style.width = `${w}px`; nav.style.left = `${g - 24 - w}px`; nav.style.setProperty('--h', `${feed.clientHeight - 48}px`);
   }
-  new ResizeObserver(() => outlineLayout()).observe(feed);
+  // 따라가는 중이면 바닥을 다시 맞춘다 (ticket slcode-scroll-follow-fixes) — 입력창·큐가 늘어 피드가 줄 때, 숨었던 카드가 다시 보일 때. 숨은 동안(display:none)은 레이아웃이 없어 바닥으로 내리기가 먹지 않아 그 사이 출력만큼 위에 남는다
+  new ResizeObserver(() => { outlineLayout(); if (follow) jump(feed.scrollHeight); }).observe(feed);
+  // 실제 카드(별도 프로세스 iframe)는 숨을 때 크기 변화가 전달되지 않아 돌아와도 ResizeObserver 가 오지 않는다 — 보일 때 오는 IntersectionObserver 로 맞춘다 (2026-11-03 실측)
+  new IntersectionObserver((es) => { if (follow && es.at(-1).isIntersecting) jump(feed.scrollHeight); }).observe(feed);
   // 지금 항목이 목록 가운데 오게 — 포인터가 목록 위에 있으면 옮기지 않는다(고르려는 항목이 손 밑에서 도망가지 않게). scrollIntoView 는 카드 iframe 의 바깥까지 굴린다
   function centerCur(force = false) {
     const b = navList.children[outlineCur];
@@ -1416,7 +1420,8 @@ export function mountAgentFront(root, transport, opts = {}) {
       if (e.key === 'Escape') { e.preventDefault(); slashMenu.hidePopover(); return; }
     }
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (slashMenu.matches(':popover-open')) slashMenu.hidePopover(); send(); } else if (e.key === 'Escape' && !busy.hidden && current) { e.preventDefault(); rpc('session.interrupt', { id: current }); } };
-  input.oninput = () => { input.style.height = ''; input.style.height = Math.min(input.scrollHeight, 220) + 'px'; canSend(); slashSel = 0; argQuery(); slashDraw(); saveDraft(); };
+  // 높이를 재려고 잠깐 기본 높이로 줄이면 그동안 피드가 늘어 scrollTop 이 그 높이의 바닥으로 깎인 채 남는다 — 재고 나서 자리를 되돌린다 (ticket slcode-scroll-follow-fixes)
+  input.oninput = () => { const top = feed.scrollTop; input.style.height = ''; input.style.height = Math.min(input.scrollHeight, 220) + 'px'; jump(follow ? feed.scrollHeight : top); canSend(); slashSel = 0; argQuery(); slashDraw(); saveDraft(); };
   // 어디서 쳐도 입력창으로 (ticket slcode-input-type-anywhere, 사용자 2026-11-02 — chatgpt.com 실측을 따른다). 포커스가 입력창 밖(대화·헤더·사이드바·버튼)이면
   // 글자 키와 붙여넣기는 포커스만 입력창으로 옮겨 브라우저 기본 동작이 그 자리에 넣게 한다 — focus() 는 직전 커서·선택을 그대로 둔다.
   // Space·Enter·화살표·Ctrl 조합(복사 등)은 넘기지 않는다. 다른 입력 요소·dialog·메뉴가 키를 받는 중이거나 승인 카드가 입력창 자리를 차지하면 그대로 둔다.
