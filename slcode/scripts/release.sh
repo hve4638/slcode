@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# slcode 바이너리 zip 빌드 (ticket slcode-binary-release). Linux 한 머신에서 두 플랫폼을 만든다.
+# slcode 바이너리 zip 빌드 (ticket slcode-binary-release). Linux 한 머신에서 세 플랫폼을 만든다.
 #
-#   scripts/release.sh                 linux-x64·win-x64 zip 을 release/ 에 만든다
+#   scripts/release.sh                 linux-x64·linux-arm64·win-x64 zip 을 release/ 에 만든다
 #   scripts/release.sh win-x64         한 플랫폼만
 #   scripts/release.sh --upload        release/ 의 zip 을 GitHub release v<버전> 에 올린다 (gh 로그인·origin 필요)
 #
@@ -18,15 +18,15 @@ VER=$(node -p "require('$ROOT/package.json').version")
 
 if [ "${1:-}" = "--upload" ]; then
   tag=v$VER
-  zips=("$OUT/slcode-$VER-linux-x64.zip" "$OUT/slcode-$VER-win-x64.zip")
+  zips=("$OUT/slcode-$VER-linux-x64.zip" "$OUT/slcode-$VER-linux-arm64.zip" "$OUT/slcode-$VER-win-x64.zip")
   for z in "${zips[@]}"; do [ -f "$z" ] || { echo "없음: $z — 먼저 scripts/release.sh" >&2; exit 1; }; done
   # 태그는 지금 HEAD 에 건다. 이미 있으면 자산만 덮어쓴다
-  gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --target "$(git -C "$ROOT" rev-parse HEAD)" --title "slcode $tag" --notes "slcode $tag 바이너리 (linux-x64, win-x64)"
+  gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --target "$(git -C "$ROOT" rev-parse HEAD)" --title "slcode $tag" --notes "slcode $tag 바이너리 (linux-x64, linux-arm64, win-x64)"
   gh release upload "$tag" "${zips[@]}" --clobber
   exit 0
 fi
 
-platforms=("$@"); [ ${#platforms[@]} -gt 0 ] || platforms=(linux-x64 win-x64)
+platforms=("$@"); [ ${#platforms[@]} -gt 0 ] || platforms=(linux-x64 linux-arm64 win-x64)
 
 mkdir -p "$OUT/cache"
 (cd "$ROOT" && pnpm install --frozen-lockfile && pnpm build)
@@ -43,9 +43,10 @@ fetch_node() { # $1 = 배포 파일 이름
 
 for plat in "${platforms[@]}"; do
   case $plat in
-    linux-x64) os=linux; libc=glibc; nodepkg=node-v$NODE_VERSION-linux-x64 ;;
-    win-x64) os=win32; libc=; nodepkg=node-v$NODE_VERSION-win-x64 ;;
-    *) echo "모르는 플랫폼: $plat (linux-x64 | win-x64)" >&2; exit 1 ;;
+    linux-x64) os=linux; cpu=x64; libc=glibc; nodepkg=node-v$NODE_VERSION-linux-x64 ;;
+    linux-arm64) os=linux; cpu=arm64; libc=glibc; nodepkg=node-v$NODE_VERSION-linux-arm64 ;;
+    win-x64) os=win32; cpu=x64; libc=; nodepkg=node-v$NODE_VERSION-win-x64 ;;
+    *) echo "모르는 플랫폼: $plat (linux-x64 | linux-arm64 | win-x64)" >&2; exit 1 ;;
   esac
   echo "== $plat"
   (cd "$OUT" && rm -rf "stage-$plat")
@@ -58,7 +59,7 @@ for plat in "${platforms[@]}"; do
   cat > "$st/pnpm-workspace.yaml" <<EOF
 supportedArchitectures:
   os: [$os]
-  cpu: [x64]
+  cpu: [$cpu]
   libc: [$libc]
 EOF
   (cd "$st" && pnpm install --prod --frozen-lockfile --config.node-linker=hoisted --ignore-scripts)

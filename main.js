@@ -103,8 +103,9 @@ export function installState(manifestText, cond, platform) {
 /** api.platform() 의 {os, arch}(Rust 표기) → zip 의 플랫폼 이름. 그 밖은 throw */
 export function platformOf({ os, arch } = {}) {
   if (os === 'linux' && arch === 'x86_64') return 'linux-x64';
+  if (os === 'linux' && arch === 'aarch64') return 'linux-arm64';
   if (os === 'windows' && arch === 'x86_64') return 'win-x64';
-  throw new Error(`지원하지 않는 플랫폼입니다: ${os ?? '?'}/${arch ?? '?'} (linux-x64·win-x64 만)`);
+  throw new Error(`지원하지 않는 플랫폼입니다: ${os ?? '?'}/${arch ?? '?'} (linux-x64·linux-arm64·win-x64 만)`);
 }
 
 /** 사이드바 둘째 줄·묶음 머리용 git 정보 (ticket slcode-sidebar-orca) — gitScript 출력 → cwd → {branch, repo, worktree}. git 이 아닌 폴더는 빠진다.
@@ -156,6 +157,8 @@ export function activate(api) {
         if (installState(manifest == null ? null : JSON.stringify(manifest), cond, plat) !== 'installed') {
           throw new Error(`받은 zip 의 manifest.json 이 맞지 않습니다 (기대 ${pick.version} ${plat}, 받음 ${JSON.stringify(manifest)})`);
         }
+        // plugin.json bin 은 플랫폼마다 다른 경로를 적지 못해 bin/linux-x64/bin/slcode 고정이다 — 터미널의 `slcode` 가 arm64 에서도 그 자리로 와서 찾도록 (ticket slcode-linux-arm64-release)
+        if (plat === 'linux-arm64') await api.proc.run(`ln -sfn linux-arm64 ${shq(`${await api.folder.deploy(sub)}/../linux-x64`)}`);
       })();
       installing.set(plat, p);
       p.then(() => installing.delete(plat), () => installing.delete(plat));

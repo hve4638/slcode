@@ -57,6 +57,14 @@ test('pickRelease: 조건 안의 최신, 그 플랫폼 자산', () => {
   assert.match(pickRelease(rs, '^1.0.0', 'linux-x64').error, /맞는 slcode release 가 없습니다/);
 });
 
+test('pickRelease: arm64·x64 가 각자의 자산을 고르고, arm64 자산이 없는 옛 release 는 건너뛴다', () => {
+  const rs = [rel('v0.5.6', ['linux-x64', 'win-x64']), rel('v0.5.7', ['linux-x64', 'linux-arm64', 'win-x64'])];
+  assert.deepEqual(pickRelease(rs, '^0.5.6', 'linux-arm64'), { version: '0.5.7', url: 'https://dl/v0.5.7/linux-arm64.zip' });
+  assert.deepEqual(pickRelease(rs, '^0.5.6', 'linux-x64'), { version: '0.5.7', url: 'https://dl/v0.5.7/linux-x64.zip' });
+  assert.match(pickRelease(rs.slice(0, 1), '^0.5.6', 'linux-arm64').error, /slcode-0\.5\.6-linux-arm64\.zip 가 없습니다/);
+  assert.equal(pickRelease(rs.slice(0, 1), '^0.5.6', 'linux-x64').version, '0.5.6');
+});
+
 test('pickRelease: draft·v 없는 태그·이상한 응답은 건너뛴다', () => {
   const rs = [rel('v0.1.9', ['linux-x64'], { draft: true }), rel('0.1.8', ['linux-x64']), { tag_name: 'v0.1.1' }, rel('v0.1.1', ['linux-x64'])];
   assert.equal(pickRelease(rs, '^0.1.0', 'linux-x64').version, '0.1.1');
@@ -76,15 +84,16 @@ test('installState: manifest 원문 → 없음·조건 밖·설치됨', () => {
 test('platformOf: api.platform 의 Rust 표기 → zip 플랫폼', () => {
   assert.equal(platformOf({ os: 'linux', arch: 'x86_64' }), 'linux-x64');
   assert.equal(platformOf({ os: 'windows', arch: 'x86_64' }), 'win-x64');
-  assert.throws(() => platformOf({ os: 'linux', arch: 'aarch64' }), /지원하지 않는 플랫폼입니다: linux\/aarch64/);
+  assert.equal(platformOf({ os: 'linux', arch: 'aarch64' }), 'linux-arm64');
+  assert.throws(() => platformOf({ os: 'windows', arch: 'aarch64' }), /지원하지 않는 플랫폼입니다: windows\/aarch64/);
   assert.throws(() => platformOf({ os: 'macos', arch: 'aarch64' }), /지원하지 않는 플랫폼/);
 });
 
 
 // ---- 새 방식 main — 가짜 MainApi(folder·platform·proc·window)·fetch(GitHub). 카드 화면이 부르는 host 인터페이스와 셸 동사를 직접 부른다
 type Call = string;
-const releases = [rel('v0.1.0', ['linux-x64', 'win-x64']), rel('v0.1.2', ['linux-x64', 'win-x64'])];
-function fakeApi(files: Record<string, string>, opts: { settings?: Record<string, string>; fetched?: unknown; tmuxWin?: boolean; run?: (cmd: string) => { code: number; stdout: string; stderr: string } | undefined; windows?: Record<string, unknown> } = {}) {
+const releases = [rel('v0.1.0', ['linux-x64', 'win-x64']), rel('v0.1.2', ['linux-x64', 'linux-arm64', 'win-x64'])];
+function fakeApi(files: Record<string, string>, opts: { settings?: Record<string, string>; fetched?: unknown; arch?: string; tmuxWin?: boolean; run?: (cmd: string) => { code: number; stdout: string; stderr: string } | undefined; windows?: Record<string, unknown> } = {}) {
   const calls: Call[] = [];
   const exposed: Record<string, any> = {}; const verbs: Record<string, any> = {};
   const win = (id: string) => ({ id, call: async (iface: string, method: string, arg: unknown) => { calls.push(`call ${id} ${iface}.${method} ${JSON.stringify(arg)}`); return opts.windows?.[id]; } });
@@ -99,7 +108,7 @@ function fakeApi(files: Record<string, string>, opts: { settings?: Record<string
       main: async (u?: { tmux?: string }) => { calls.push(`window ${u?.tmux ?? '-'}`); return u?.tmux && !opts.tmuxWin ? null : win(u?.tmux ? `w${u.tmux}` : 'wmain'); },
       all: async () => Object.keys(opts.windows ?? {}).map(win),
     },
-    platform: async () => { calls.push('platform'); return { os: 'linux', arch: 'x86_64' }; },
+    platform: async () => { calls.push('platform'); return { os: 'linux', arch: opts.arch ?? 'x86_64' }; },
     folder: {
       path: '/host/plugins/slcode',
       read: async (rel: string) => files[rel] ?? null,
@@ -140,6 +149,17 @@ test('main: manifest 가 없으면 조건 안 최신 release 를 받아 deploy �
   assert.ok(calls.includes('fetch https://dl/v0.1.2/linux-x64.zip -> bin/linux-x64'));
   assert.ok(calls.includes('deploy bin/linux-x64'));
   assert.ok(calls.includes(LIST));
+});
+
+test('main: aarch64 는 linux-arm64 zip 을 받고 터미널 명령 자리(bin/linux-x64)에 링크를 둔다, x64 는 링크를 만들지 않는다', async () => {
+  const LN = "proc ln -sfn linux-arm64 '/remote/cache/slcode/abc123/../linux-x64'";
+  const arm = await listed({ 'plugin.json': PLUGIN_JSON }, { arch: 'aarch64', fetched: { version: '0.1.2', platform: 'linux-arm64', node: '24.21.0' } });
+  assert.ok(arm.includes('fetch https://dl/v0.1.2/linux-arm64.zip -> bin/linux-arm64'));
+  assert.ok(arm.includes('deploy bin/linux-arm64'));
+  assert.ok(arm.includes(LN));
+  assert.ok(arm.includes(LIST));
+  const x64 = await listed({ 'plugin.json': PLUGIN_JSON });
+  assert.ok(!x64.some((c) => c.includes('ln -sfn')));
 });
 
 test('main: 조건 안 manifest 면 조회·받기 없이 deploy, 조건 밖·다른 플랫폼이면 다시 받는다', async () => {

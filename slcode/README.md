@@ -38,17 +38,17 @@ new·resume·continue 는 superlite 터미널 안이면 그 터미널의 deck �
 
 ## 바이너리 배포
 
-플러그인(repo 루트의 `plugin.json`·`main.js`)이 처음 켜질 때 받는 zip 이다. GitHub release `v<버전>` 에 `slcode-<버전>-linux-x64.zip`, `slcode-<버전>-win-x64.zip` 두 자산을 올린다. 플러그인은 이 이름 규칙과 zip 안의 `bin/` 진입만 안다.
+플러그인(repo 루트의 `plugin.json`·`main.js`)이 처음 켜질 때 받는 zip 이다. GitHub release `v<버전>` 에 `slcode-<버전>-linux-x64.zip`, `slcode-<버전>-linux-arm64.zip`, `slcode-<버전>-win-x64.zip` 세 자산을 올린다. 플러그인은 이 이름 규칙과 zip 안의 `bin/` 진입만 안다.
 
 ```
-scripts/release.sh            # release/ 에 두 zip (Linux 한 머신에서 두 플랫폼)
+scripts/release.sh            # release/ 에 세 zip (Linux 한 머신에서 세 플랫폼)
 scripts/release.sh win-x64    # 한 플랫폼만
 scripts/release.sh --upload   # gh release create v<버전> (없으면, 태그는 HEAD) + gh release upload --clobber
 ```
 
-올리는 일은 GitHub Actions(`.github/workflows/release.yml`)가 한다. `plugin.json`·`package.json` 의 version 을 올린 커밋을 main 에 push 하고, 그 커밋에 태그 `v<버전>` 을 달아 push 하면 workflow 가 돈다. 태그와 두 version 이 다르거나 `binary.version` 조건이 그 버전을 만족하지 않으면 멈춘다. 맞으면 빌드·테스트, `scripts/release.sh`, Linux zip 연기 검사를 거쳐 두 zip 과 `SHA256SUMS.txt` 를 release `slcode v<버전>` 으로 공개한다. 그 태그에 release 가 이미 있으면 자산만 덮어쓴다. 진행은 repo 의 Actions 탭에서 본다.
+올리는 일은 GitHub Actions(`.github/workflows/release.yml`)가 한다. `plugin.json`·`package.json` 의 version 을 올린 커밋을 main 에 push 하고, 그 커밋에 태그 `v<버전>` 을 달아 push 하면 workflow 가 돈다. 태그와 두 version 이 다르거나 `binary.version` 조건이 그 버전을 만족하지 않으면 멈춘다. 맞으면 빌드·테스트, `scripts/release.sh` 를 거친 뒤 `scripts/smoke.sh` 로 linux-x64 zip 을 x64 러너에서, linux-arm64 zip 을 arm 러너(ubuntu-24.04-arm)에서 연기 검사한다. 둘 다 통과해야 세 zip 과 `SHA256SUMS.txt` 를 release `slcode v<버전>` 으로 공개하고, 하나라도 실패하면 release 가 생기지 않는다. 그 태그에 release 가 이미 있으면 자산만 덮어쓴다. 진행은 repo 의 Actions 탭에서 본다.
 
-workflow 가 실패하면 로컬에서 `scripts/release.sh` 로 만든 zip 을 웹으로 올린다. Releases 의 "Draft a new release" 에서 태그 `v<버전>` 을 고르고, 두 zip 을 이름 그대로 첨부해 Publish 한다. draft·pre-release 로 두거나 태그의 `v` 를 빼면 플러그인이 찾지 못한다. 올린 뒤 `curl -s https://api.github.com/repos/hve4638/slcode/releases` 로 태그와 자산 이름을 대조한다.
+workflow 가 실패하면 로컬에서 `scripts/release.sh` 로 만든 zip 을 웹으로 올린다. Releases 의 "Draft a new release" 에서 태그 `v<버전>` 을 고르고, 세 zip 을 이름 그대로 첨부해 Publish 한다. draft·pre-release 로 두거나 태그의 `v` 를 빼면 플러그인이 찾지 못한다. 올린 뒤 `curl -s https://api.github.com/repos/hve4638/slcode/releases` 로 태그와 자산 이름을 대조한다.
 
 플러그인은 받은 zip 을 플러그인 폴더의 `bin/<platform>/` 에 풀고, 그 안의 `manifest.json` 으로 설치 여부를 판단한다 (plugin.json `binary.version` 조건과 platform 대조). 원격 세션에서는 superlite 가 그 폴더를 원격에 올린 사본의 `bin/slcode` 를 쓴다.
 
