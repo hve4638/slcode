@@ -5,7 +5,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { buildId, commandFiles, COMMANDS_DIR, frontmatter, mcpTransport, partLost, partRoot, valuesString, walk, type Harness, type Manifest, type Resolved } from './agentFormat.js';
+import { buildId, commandFiles, COMMANDS_DIR, frontmatter, mcpTransport, parseAliases, partLost, partRoot, valuesString, walk, type Harness, type Manifest, type Resolved } from './agentFormat.js';
+import { COMMAND_NAME } from './hookApi.js';
 import { buildPartCommands, buildPartHooks, CODEX_EVENTS, partCommandHooks, type CommandEntry, type ScriptEntry } from './agentHooks.js';
 
 export type Report = {
@@ -125,6 +126,15 @@ export function buildClaude(src: string, m: Manifest, r: Resolved, id: string, o
     fs.copyFileSync(abs, to);
     fs.chmodSync(to, fs.statSync(abs).mode & 0o777); // bin/ 의 실행 비트
   }
+  for (const rel of files.keys()) {
+    const s = SKILL_MD.exec(rel);
+    if (!s) continue;
+    const text = fs.readFileSync(path.join(plugin, rel), 'utf8');
+    for (const alias of aliasesToBuild(text, s[1], (a) => fs.existsSync(path.join(plugin, 'skills', a)), report)) {
+      fs.cpSync(path.join(plugin, 'skills', s[1]), path.join(plugin, 'skills', alias), { recursive: true });
+      fs.writeFileSync(path.join(plugin, 'skills', alias, 'SKILL.md'), aliasSkillText(text, alias, s[1]));
+    }
+  }
   if (Object.keys(hooks).length) { fs.mkdirSync(path.join(plugin, 'hooks'), { recursive: true }); fs.writeFileSync(path.join(plugin, 'hooks/hooks.json'), JSON.stringify({ hooks }, null, 2)); }
   if (Object.keys(mcp).length) fs.writeFileSync(path.join(plugin, '.mcp.json'), JSON.stringify({ mcpServers: Object.fromEntries(Object.entries(mcp).map(([k, v]) => [k, v.def])) }, null, 2));
   fs.writeFileSync(path.join(plugin, '.claude-plugin/plugin.json'), JSON.stringify({ ...manifestJson, name: m.name, version: m.version }, null, 2));
@@ -155,6 +165,7 @@ export function buildCodex(src: string, m: Manifest, r: Resolved, id: string, ou
   const mcp: Record<string, { def: unknown; part: string }> = {};
   const hooks: Record<string, unknown[]> = {}, hooksExcluded: string[] = [];
   const instr: string[] = [];
+  const skillTexts = new Map<string, string>(); // 뒤 part 가 덮으면 뒤의 것
   for (const part of Object.keys(m.parts)) {
     if (!r.parts[part]) continue;
     report.parts.push(part);
@@ -191,9 +202,11 @@ export function buildCodex(src: string, m: Manifest, r: Resolved, id: string, ou
         }
         continue;
       }
-      const skill = /^skills\/([^/]+)\/SKILL\.md$/.exec(rel);
+      const skill = SKILL_MD.exec(rel);
       if (skill) {
-        const s = codexSkill(sub(fs.readFileSync(abs, 'utf8')), skill[1]);
+        const text = sub(fs.readFileSync(abs, 'utf8'));
+        skillTexts.set(skill[1], text);
+        const s = codexSkill(text, skill[1]);
         put(rel, part, Buffer.from(s.md));
         if (s.yaml) put(`skills/${skill[1]}/agents/openai.yaml`, part, Buffer.from(s.yaml));
         continue;
@@ -201,6 +214,13 @@ export function buildCodex(src: string, m: Manifest, r: Resolved, id: string, ou
       const body = fs.readFileSync(abs);
       put(rel, part, body.includes(0) ? body : Buffer.from(sub(body.toString('utf8'))), fs.statSync(abs).mode & 0o777); // NUL 이 있으면 바이너리로 보고 그대로
     }
+  }
+  for (const [folder, text] of skillTexts) for (const alias of aliasesToBuild(text, folder, (a) => [...files.keys()].some((f) => f.startsWith(`skills/${a}/`)), report)) {
+    for (const [rel, f] of [...files]) if (rel.startsWith(`skills/${folder}/`)) files.set(`skills/${alias}/${rel.slice(`skills/${folder}/`.length)}`, f);
+    const s = codexSkill(aliasSkillText(text, alias, folder), alias);
+    const part = files.get(`skills/${alias}/SKILL.md`)!.part;
+    files.set(`skills/${alias}/SKILL.md`, { part, body: Buffer.from(s.md), mode: 0o644 });
+    files.set(`skills/${alias}/agents/openai.yaml`, { part, body: Buffer.from(s.yaml!), mode: 0o644 }); // 원본의 agents/openai.yaml 을 덮어 항상 숨긴다
   }
   for (const [rel, { body, mode }] of files) {
     const to = path.join(out, 'codex', rel);
@@ -226,6 +246,36 @@ export function buildCodex(src: string, m: Manifest, r: Resolved, id: string, ou
   fs.writeFileSync(path.join(out, BUILD_FILES.instructions), instr.join('\n\n'));
   fs.writeFileSync(path.join(out, BUILD_FILES.report), JSON.stringify(report, null, 2));
   return report;
+}
+
+const SKILL_MD = /^skills\/([^/]+)\/SKILL\.md$/;
+
+/** 이 skill 에서 만들 별칭 — 이름이 규칙 밖이거나 그 경로가 이미 있으면(add 검사를 거치지 않은 옛 사본의 원본) 빼고 report.dropped 에 남긴다. 빌드 에러는 없다 */
+function aliasesToBuild(text: string, folder: string, taken: (alias: string) => boolean, report: Report): string[] {
+  return parseAliases(text).filter((a) => {
+    const why = !COMMAND_NAME.test(a) ? 'bad name' : taken(a) ? 'name is taken' : null;
+    if (why) report.dropped.push(`skills/${folder}: alias ${a} (${why})`);
+    return !why;
+  });
+}
+
+/** 별칭 폴더의 SKILL.md (ticket slcode-plugin-skill-alias) — name 은 별칭, description 앞에 [원본], 항상 모델에게서 숨기고 aliases 는 뺀다. 그 밖의 머리 칸과 본문은 원본 그대로 */
+export function aliasSkillText(text: string, alias: string, source: string): string {
+  const { fields, body } = frontmatter(text);
+  const head = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)![1].split(/\r?\n/);
+  const replaced = new Set(['name', 'description', 'disable-model-invocation', 'aliases']);
+  const kept: string[] = [];
+  let skipping = false;
+  for (const l of head) {
+    const key = /^([A-Za-z0-9_-]+):/.exec(l)?.[1];
+    if (key) skipping = replaced.has(key);
+    else if (skipping && /^\s*$|^\s|^- /.test(l)) continue; // 지운 칸의 이어지는 줄·블록 목록
+    else skipping = false;
+    if (!skipping) kept.push(l);
+  }
+  const first = body.split(/\r?\n/).map((l) => l.replace(/^#+\s*/, '').trim()).find(Boolean);
+  const description = `[${fields.name || source}] ${fields.description || first || ''}`.trim();
+  return `---\nname: ${alias}\ndescription: ${JSON.stringify(description)}\ndisable-model-invocation: true\n${kept.length ? `${kept.join('\n')}\n` : ''}---\n${body}`;
 }
 
 /** Claude skill → Codex skill. Codex 는 frontmatter 가 없으면 싣지 않으므로 name·description 만으로 다시 쓴다(그 밖의 필드는 Codex 가 무시한다 — partLost 가 적었다).

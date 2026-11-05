@@ -52,6 +52,8 @@ export declare function buildClaude(src: string, m: Manifest, r: Resolved, id: s
  *  ${CLAUDE_PLUGIN_DATA} 는 data 로 바꾼다 — root 는 그 플러그인 폴더가 놓일 경로다(세션 빌드는 rename 뒤의 빌드 폴더/codex, export 는 export 링크).
  *  Codex export 용으로 codex-mcp.json(이름을 바꾼 서버)과 codex-hooks.json(command 훅 중 Codex 가 받는 이벤트, ${slcode.vars.harness} 는 codex)도 쓴다 */
 export declare function buildCodex(src: string, m: Manifest, r: Resolved, id: string, out: string, root: string, data: string): Report;
+/** 별칭 폴더의 SKILL.md (ticket slcode-plugin-skill-alias) — name 은 별칭, description 앞에 [원본], 항상 모델에게서 숨기고 aliases 는 뺀다. 그 밖의 머리 칸과 본문은 원본 그대로 */
+export declare function aliasSkillText(text: string, alias: string, source: string): string;
 /** Claude skill → Codex skill. Codex 는 frontmatter 가 없으면 싣지 않으므로 name·description 만으로 다시 쓴다(그 밖의 필드는 Codex 가 무시한다 — partLost 가 적었다).
  *  description 이 없으면 본문 첫 줄, when_to_use 는 그 뒤에 잇는다. disable-model-invocation 은 agents/openai.yaml 의 allow_implicit_invocation: false 로 */
 export declare function codexSkill(text: string, folder: string): {

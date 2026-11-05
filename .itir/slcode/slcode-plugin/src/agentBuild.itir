@@ -14,6 +14,9 @@ fn ifFalse(m, r, cond) -> Text? {
 export fn buildCodex(src, m, r, id, out, root, data) -> Report {
   role: Codex 빌드 — out/codex/(플러그인 폴더: skills/·bin/·그 밖의 part 파일), instructions.md, codex-args.json, report.json. 켠 part 를 parts 순서로, 겹친 경로는 뒤의 것. hooks/hooks.json·raw/ 는 slcode 의 Codex 세션에 싣지 않는다(partLost 가 report.lost 에 적는다) — export 용으로 command 훅 중 Codex 가 받는 이벤트(CODEX_EVENTS)만 ${slcode.vars.harness}=codex·경로 변수를 바꿔 codex-hooks.json 에(못 싣는 항목은 그 excluded 에) — SessionEnd·Interrupt 의 timeout 은 3초를 넘지 않게(Codex 가 줄이면서 매번 경고를 낸다, 0.165 실측), MCP 는 이름을 바꾼 서버 정의를 codex-mcp.json 에도. Codex 는 경로 변수를 모르므로 모든 텍스트 파일(NUL 이 없는 것)·지시문·MCP 정의에서 ${CLAUDE_PLUGIN_ROOT} 는 root(그 플러그인 폴더가 놓일 경로 — 세션 빌드는 rename 뒤의 빌드 폴더/codex: 빌드는 세션 사이에 나눠 쓰므로 세션 링크 경로를 박을 수 없다. Codex export 는 export 링크), ${CLAUDE_PLUGIN_DATA} 는 data(상태 폴더 data/<이름> — Claude 와 따로 둔다, 설계) 로 바꾼다. skill 은 codexSkill 로. .mcp.json 은 서버 이름별로 합쳐(뒤가 이긴다) stdio 는 command·args·env·cwd, http 는 url·http_headers 로 바꿔 `-c mcp_servers.plugin_<플러그인>_<서버>=<TOML 인라인 표>` 인자로(이름의 [A-Za-z0-9_-] 밖은 _) — 다른 연결 방식은 빼고 partLost 가 적는다. Claude 의 ${VAR} env 치환은 하지 않는다
 }
+export fn aliasSkillText(text, alias, source) {
+  role: 별칭 폴더의 SKILL.md (ticket slcode-plugin-skill-alias, 사용자 결정 2026-11-05) — 원본 머리에서 name 을 별칭으로, description 앞에 [원본], disable-model-invocation: true 로 바꾸고 aliases 를 뺀다. 별칭은 사람이 치는 줄임말이라 항상 모델에게서 숨긴다. 별칭은 빌드 결과에만 있는 원본 폴더 사본이라 원본과 어긋나지 않는다. buildClaude·buildCodex 가 이름이 규칙 밖이거나 경로가 이미 있으면(검사하지 않는 옛 사본이 add 한 원본) 만들지 않고 report.dropped 에 남긴다
+}
 export fn codexSkill(text, folder) {
   role: Claude skill → Codex skill. Codex 는 frontmatter 가 없으면 싣지 않는다(missing YAML frontmatter, 2026-10-28 실측) — name(없으면 폴더 이름)·description(없으면 본문의 첫 줄, # 을 벗긴다; when_to_use 는 공백으로 뒤에) 두 필드만의 frontmatter 로 다시 쓴다(값은 JSON 문자열 = YAML 큰따옴표). 그 밖의 필드는 버린다 — Codex 는 무시한다(실측). disable-model-invocation: true 면 agents/openai.yaml 의 policy.allow_implicit_invocation: false(모델에 가는 skill 목록에서 빠진다, 실측)
 }

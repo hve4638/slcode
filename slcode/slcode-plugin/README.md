@@ -33,6 +33,10 @@ slcode.command({
 });
 ```
 
+skill 의 `SKILL.md` 머리에 `aliases: [b]` 를 적으면 빌드 결과에 `skills/b/` 가 원본 폴더의 사본으로 생겨 slcode 의 Claude 세션과 export 한 Claude 에서 `/b` 로 부를 수 있다. 원본을 고치고 다시 add 하면 별칭에도 반영되고, 원본의 part 를 끄면 별칭도 빠진다. 별칭은 항상 모델에게서 숨기고, 설명 앞에 `[원본]` 을 붙인다. 이름은 소문자·숫자·`-` 이고, skill 자신이나 같은 플러그인의 skill·명령·다른 별칭, Claude 내장 명령과 같으면 add 가 거부한다. Codex 는 skill 을 `$b` 로 부른다. slcode 의 Codex 세션에서 `/b` 는 동작하지 않는다. 0.6.0 이전 사본은 `aliases` 를 모른다. add 는 받지만 별칭을 만들지 않아 원본만 실리고, 목록에 `skills/<이름>: aliases` 가 잃는 것으로 보인다. 옛 사본이 `add`(내용이 바뀐 경우)·`set` 하면 export 링크가 별칭 없는 빌드로 바뀌고, 0.6.0 이상의 `set` 이나 내용이 바뀐 `add` 때 돌아온다. 내용이 같은 `add` 는 아무것도 하지 않는다.
+
+명령의 별칭은 형식이 따로 없다. `commands/rl/COMMAND.ts` 에 `import '../roleas/COMMAND.ts';` 한 줄만 쓰면 `/rl` 이 같은 명령으로 돌고 상태도 같다. 메뉴 설명은 원본과 같고, 보관 컨텍스트는 이름별이라 `/roleas A` 뒤의 `/rl B` 는 앞의 것을 바꾸지 않고 둘 다 다음 턴에 붙는다.
+
 원본 폴더에 `slcode-plugin.json` 대신 `slcode-addon.json` 을 두면 애드온이다. 애드온은 베이스 플러그인에 합쳐 빌드되어, 스킬·명령·MCP 이름이 베이스 이름 아래에 들어간다(`/superlite:…`). 나머지 칸과 part 폴더의 꼴은 플러그인과 같다.
 
 ```json

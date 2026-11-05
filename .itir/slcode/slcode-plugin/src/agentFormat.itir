@@ -73,8 +73,17 @@ export val CLAUDE_BUILTIN_COMMANDS
 export fn commandFiles(dir, part) {
   role: 명령 (ticket slcode-agent-plugin-command) — part 의 commands/<이름>/COMMAND.ts|js. COMMAND 파일이 없는 commands/ 아래 폴더(공용 코드)는 명령이 아니다. 이름이 hookApi.COMMAND_NAME 밖이거나 .ts·.js 가 함께 있으면 errors
 }
+export fn parseAliases(text) -> Text[] {
+  role: SKILL.md 머리의 aliases 를 읽는다 — [b, ut]·b·블록 목록. frontmatter() 는 목록을 잇기만 하므로 머리 줄을 따로 읽는다. 이름 규칙은 aliasErrors 와 빌드가 본다
+}
+export fn skillAliases(dir, part) {
+  role: part 하나의 skill 별칭 (ticket slcode-plugin-skill-alias, 사용자 결정 2026-11-05) — 원본 SKILL.md frontmatter 의 aliases([b, ut]·b·블록 목록)를 skills/·raw/claude/skills/ 에서 읽는다. 선언이 원본에 있으므로 part 를 끄면 함께 빠지고 별칭의 연쇄는 skill 이름과의 겹침으로 거부된다. 명령 별칭은 두지 않는다 — 얇은 COMMAND.ts 의 import 한 줄로 된다(실측)
+}
 fn skillNames(dir, part) {
-  role: 같은 플러그인의 skill 이름 — skills/<폴더>(와 frontmatter name), raw/claude/skills/<폴더>. 소문자
+  role: 같은 플러그인의 부를 수 있는 이름 — skills/<폴더>(와 frontmatter name), raw/claude/skills/<폴더>, 그 별칭. 소문자
+}
+export fn aliasErrors(dir, m) -> Text[] {
+  role: 별칭의 정적 검사 — 모든 part(켜지 않은 것도): 이름 규칙(COMMAND_NAME), 자기 자신, 같은 플러그인 skill 이름, 다른 skill 의 별칭, CLAUDE_BUILTIN_COMMANDS 와 같은 이름(사용자 결정 2026-11-05 — /init 은 내장 명령이 실행되어 짧은 이름으로 부를 수 없다). 같은 폴더의 skill 을 뒤 part 가 덮는 경우의 같은 별칭은 겹침이 아니다. 명령과의 겹침은 commandErrors 가 skillNames 로 본다. 하나라도 있으면 add 가 거부한다
 }
 export fn commandErrors(dir, m) -> Text[] {
   role: 명령의 정적 검사 — 모든 part(켜지 않은 것도): commandFiles 의 errors, part 끼리 같은 명령, 같은 플러그인 skill 과 같은 이름, CLAUDE_BUILTIN_COMMANDS(Claude 내장 명령 이름·별칭의 정적 목록 — SDK 0.3.282 supportedCommands builtin 실측, 사용자 결정 2026-11-02)와 같은 이름. 하나라도 있으면 add 가 거부한다(사용자 결정 2026-11-02 — 플러그인 적용 실패). partLost 는 명령을 gpt·codex 가 잃는 것으로 적는다(slcode 의 Claude 세션 전용). BUILDER 6: 빌드가 commands/ 를 플러그인 폴더에서 빼고 commands.json 을 쓴다

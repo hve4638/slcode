@@ -10,7 +10,7 @@ export const MANIFEST = 'slcode-plugin.json';
 /** 애드온의 manifest (ticket slcode-plugin-addon) — 파일 이름이 다르므로 옛 사본은 add 를 "no slcode-plugin.json" 으로 거절한다. slcode-plugin.json 에 addon 칸만 더하면 옛 사본이 독립 플러그인으로 설치한다(0.3.0·0.4.0 실측) */
 export const ADDON_MANIFEST = 'slcode-addon.json';
 /** 빌드기 판 — 빌드 결과가 달라지는 변경이면 올린다. 빌드 식별자에 들어가 옛 빌드를 다시 쓰지 않게 한다 */
-export const BUILDER = 6; // 2: slcode 형식 hooks.json·js/ts 훅 묶기 (slcode-agent-plugin-hooks). 3: command 의 ${slcode.vars.harness}, Codex 빌드의 codex-mcp.json·codex-hooks.json (slcode-agent-plugin-export). 4: slcode/api 묶기·하네스별 등록 목록, export 판의 js/ts 훅 (slcode-agent-plugin-script-portable). 5: export 훅 명령은 상태 폴더의 고정 런처 (slcode-plugin-split). 6: commands/ 는 플러그인 폴더에서 빼고 commands.json·묶은 명령 (slcode-agent-plugin-command)
+export const BUILDER = 7; // 2: slcode 형식 hooks.json·js/ts 훅 묶기 (slcode-agent-plugin-hooks). 3: command 의 ${slcode.vars.harness}, Codex 빌드의 codex-mcp.json·codex-hooks.json (slcode-agent-plugin-export). 4: slcode/api 묶기·하네스별 등록 목록, export 판의 js/ts 훅 (slcode-agent-plugin-script-portable). 5: export 훅 명령은 상태 폴더의 고정 런처 (slcode-plugin-split). 6: commands/ 는 플러그인 폴더에서 빼고 commands.json·묶은 명령 (slcode-agent-plugin-command). 7: skill 별칭 폴더 (slcode-plugin-skill-alias)
 /** 호환 등급을 매기는 하네스 — gpt 는 GPT 하네스(장기적으로 Codex 자리, 아직 slcode 가 띄우지 않는다) */
 export const HARNESSES = ['claude', 'gpt', 'codex'] as const;
 export type Harness = (typeof HARNESSES)[number];
@@ -234,7 +234,7 @@ export function frontmatter(text: string): { fields: Record<string, string>; bod
 }
 
 /** 모든 하네스가 받는(빌드가 맞춰 주는) skill 필드 — 그 밖은 Claude 전용 */
-const SKILL_COMMON = new Set(['name', 'description', 'when_to_use', 'disable-model-invocation']);
+const SKILL_COMMON = new Set(['name', 'description', 'when_to_use', 'disable-model-invocation', 'aliases']);
 /** GPT 하네스가 받는 훅 이벤트 (설계 "GPT 하네스가 갖춰야 할 것" 2) */
 const GPT_EVENTS = new Set(['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop', 'PreCompact', 'PostCompact', 'SessionEnd']);
 const exists = (p: string) => fs.existsSync(p);
@@ -306,8 +306,35 @@ export function commandFiles(dir: string, part: string): { commands: { name: str
 /** part 가 있는 폴더 — 합친 manifest 는 part 마다 다르다 */
 export const partRoot = (dir: string, m: Manifest, part: string) => m.roots?.[part] ?? dir;
 
-/** 같은 플러그인 skill 이름 — 폴더 이름과 frontmatter name (Claude 는 name 이 있으면 그것을 쓴다) */
-export function skillNames(dir: string, part: string): string[] {
+/** SKILL.md frontmatter 의 aliases — `[b, ut]`, `b`, 블록 목록. frontmatter() 는 목록을 잇기만 하므로 머리 줄을 따로 읽는다. 이름 규칙은 aliasErrors 와 빌드가 본다 */
+export function parseAliases(text: string): string[] {
+  const head = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text)?.[1].split(/\r?\n/) ?? [];
+  const i = head.findIndex((l) => /^aliases:/.test(l));
+  if (i < 0) return [];
+  const unquote = (v: string) => v.trim().replace(/^(['"])(.*)\1$/, '$2');
+  const v = head[i].slice('aliases:'.length).trim();
+  if (v) return (/^\[.*\]$/.test(v) ? v.slice(1, -1).split(',') : [v]).map(unquote).filter(Boolean);
+  const out: string[] = [];
+  for (let j = i + 1; j < head.length; j++) {
+    const item = /^\s*-\s+(.*)$/.exec(head[j]);
+    if (!item) break;
+    out.push(unquote(item[1]));
+  }
+  return out.filter(Boolean);
+}
+
+/** part 하나의 skill 별칭 — skill 은 원본 폴더 이름, raw/claude/skills/ 도 본다 */
+export function skillAliases(dir: string, part: string): { alias: string; skill: string }[] {
+  const out: { alias: string; skill: string }[] = [];
+  for (const base of ['skills', 'raw/claude/skills']) for (const r of walk(path.join(dir, part), base)) {
+    const s = /^([^/]+)\/SKILL\.md$/.exec(r.slice(base.length + 1));
+    if (s) for (const alias of parseAliases(fs.readFileSync(path.join(dir, part, r), 'utf8'))) out.push({ alias, skill: s[1] });
+  }
+  return out;
+}
+
+/** skill 의 실제 이름 — 폴더 이름과 frontmatter name (Claude 는 name 이 있으면 그것을 쓴다) */
+function realSkillNames(dir: string, part: string): string[] {
   const out: string[] = [];
   for (const r of walk(path.join(dir, part), 'skills')) {
     const s = /^skills\/([^/]+)\/SKILL\.md$/.exec(r);
@@ -318,6 +345,31 @@ export function skillNames(dir: string, part: string): string[] {
   }
   for (const r of walk(path.join(dir, part), 'raw/claude/skills')) { const s = /^raw\/claude\/skills\/([^/]+)\/SKILL\.md$/.exec(r); if (s) out.push(s[1].toLowerCase()); }
   return out;
+}
+
+/** 같은 플러그인에서 부를 수 있는 skill 이름 — 실제 이름과 별칭 */
+export function skillNames(dir: string, part: string): string[] {
+  return [...realSkillNames(dir, part), ...skillAliases(dir, part).map((a) => a.alias.toLowerCase())];
+}
+
+/** 별칭의 정적 검사 — 모든 part(켜지 않은 것도)를 본다. 하나라도 있으면 add 가 거부한다. 같은 폴더의 skill 을 뒤 part 가 덮으며 같은 별칭을 적는 것은 겹침이 아니다. 명령과의 겹침은 commandErrors 가 본다 */
+export function aliasErrors(dir: string, m: Manifest): string[] {
+  const errors: string[] = [];
+  const parts = Object.keys(m.parts);
+  const real = new Map<string, string>();
+  for (const part of parts) for (const s of realSkillNames(partRoot(dir, m, part), part)) if (!real.has(s)) real.set(s, part);
+  const seen = new Map<string, string>();
+  for (const part of parts) for (const { alias, skill } of skillAliases(partRoot(dir, m, part), part)) {
+    const where = `${part}/skills/${skill}: alias ${alias}`;
+    if (!COMMAND_NAME.test(alias)) { errors.push(`${where} must match ${COMMAND_NAME} (lowercase letters, digits, -)`); continue; }
+    if (alias === skill.toLowerCase()) errors.push(`${where} refers to the skill itself`);
+    else if (real.has(alias)) errors.push(`${where} has the same name as skill ${alias} (part ${real.get(alias)}) of this plugin`);
+    if (CLAUDE_BUILTIN_COMMANDS.has(alias)) errors.push(`${where} has the same name as the Claude built-in command /${alias}`);
+    const other = seen.get(alias);
+    if (other && other !== skill) errors.push(`${where} is also an alias of skill ${other}`);
+    else seen.set(alias, skill);
+  }
+  return errors;
 }
 
 /** 명령의 정적 검사 — 모든 part(켜지 않은 것도)를 본다. 이름 규칙·COMMAND 파일 둘·part 끼리 같은 이름·같은 플러그인 skill 과 같은 이름.

@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { buildId, commandErrors, commandFiles, compat, HARNESSES, MANIFEST, parseAssignment, partRoot, readManifest, resolveValues, sourceFiles, sourceHash, valuesString, userValues, walk, whenText, type Harness, type Manifest, type Values } from './agentFormat.js';
+import { aliasErrors, buildId, commandErrors, commandFiles, compat, HARNESSES, MANIFEST, parseAssignment, partRoot, readManifest, resolveValues, sourceFiles, sourceHash, valuesString, userValues, walk, whenText, type Harness, type Manifest, type Values } from './agentFormat.js';
 import { BUILD_FILES, ensureBuild, type Report } from './agentBuild.js';
 import { buildPartCommands } from './agentHooks.js';
 import { acquireLock, releaseLock } from './lock.js';
@@ -136,10 +136,10 @@ export function refreshLauncher(ap: AgentPaths, c = readConfig(ap)) {
 /** 마지막 Claude 빌드가 esbuild 를 받지 못해 js/ts 훅을 뺀 것인가 — 같은 원본을 다시 add 하면 받아 본다 */
 const toolMissing = (ap: AgentPaths, e: PluginEntry) => { try { return !!JSON.parse(fs.readFileSync(path.join(ap.build, e.builds.claude ?? '-', BUILD_FILES.report), 'utf8')).toolMissing; } catch { return false; } };
 
-/** 명령 검사 (ticket slcode-agent-plugin-command) — 이름(commandErrors)과 COMMAND 파일의 꼴(묶어 한 번 싣는다)을 모든 part 에서 본다. 틀리면 던진다(플러그인 적용 실패, 사용자 결정 2026-11-02).
+/** 명령 검사 (ticket slcode-agent-plugin-command) — skill 별칭(aliasErrors), 이름(commandErrors)과 COMMAND 파일의 꼴(묶어 한 번 싣는다)을 모든 part 에서 본다. 틀리면 던진다(플러그인 적용 실패, 사용자 결정 2026-11-02).
  *  esbuild 를 받지 못하면 꼴 검사는 건너뛴다 — 빌드가 그 명령을 빼고 다음 add 때 다시 받아 본다 */
 function checkCommands(src: string, m: Manifest, tools: string) { // 합친 manifest 면 part 마다 폴더가 다르다
-  const errors = commandErrors(src, m);
+  const errors = [...aliasErrors(src, m), ...commandErrors(src, m)];
   if (!errors.length) {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-cmd-check-'));
     try {
@@ -150,7 +150,7 @@ function checkCommands(src: string, m: Manifest, tools: string) { // 합친 mani
       }
     } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
   }
-  if (errors.length) throw new Error(`${m.name}: agent plugin commands are invalid —\n  ${errors.join('\n  ')}`);
+  if (errors.length) throw new Error(`${m.name}: agent plugin commands or skill aliases are invalid —\n  ${errors.join('\n  ')}`);
 }
 
 /** 원본 파일을 폴더로 복사한다 — sourceFiles 만 */
