@@ -1,4 +1,4 @@
-// 카드 모드 화면 (ticket slcode-card-svc-token-dead) — superlite 플러그인이 stdio 로 화면 파일(web.files)·로컬 파일(file.get)을 받아 주소 없는 iframe 에 넣는다.
+// 카드 모드 화면 (ticket slcode-card-svc-token-dead) — superlite 플러그인이 stdio 로 화면 파일(web.files)·로컬 파일(file.get)을 받아 카드에 그린다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileGet, loadWeb, webFiles } from '../src/serve.ts';
+import { startPageHtml } from '../src/startPage.ts';
 import { VERSION } from '../src/client.ts';
 
 const CLI = path.resolve(import.meta.dirname, '..', 'src', 'cli.ts');
@@ -21,6 +22,20 @@ test('web.files: card.html 에 테마·버전·입구를 넣고, 모듈·css 는
   assert.equal(w.files['index.html'], undefined, 'html 은 card.html 하나');
   // card.html 이 바꿔 잇는 꼴 — 모든 상대 import 는 from './x.js'
   for (const [name, body] of Object.entries(w.files)) for (const m of body.matchAll(/^import .* from '([^']+)'/gm)) assert.match(m[1], /^\.\/[\w.-]+\.js$/, `${name}: ${m[1]}`);
+});
+
+test('web.files: 1단 카드의 입구 card.js 를 주고, 옛 플러그인의 card.html 도 같은 입구를 쓴다 (ticket slcode-card-iframe-flatten)', () => {
+  const w = webFiles(loadWeb(), tmp('slcode-card-'), 'superlite');
+  assert.match(w.files['card.js'], /export function mountCard/);
+  assert.match(w.html, /mod\('card\.js'\)/);
+});
+
+test('start-page: 플러그인이 1단으로 그려도 되는지 알아보는 표시(slcodeCardHost)가 html 에 있다 (ticket slcode-card-iframe-flatten)', () => {
+  assert.match(startPageHtml(tmp('slcode-card-'), 'superlite', '/w', true), /slcodeCardHost/);
+});
+
+test('카드 플러그인 문서는 CSP script-src blob: 를 건다 — 주입 스크립트가 ctx 에 닿지 않게 (사용자 2026-11-06)', () => {
+  assert.match(fs.readFileSync(path.resolve(import.meta.dirname, '..', '..', 'views', 'session.js'), 'utf8'), /csp\.content = 'script-src blob:'/);
 });
 
 test('file.get: 절대 경로만, 줄 번호 꼬리는 없으면 떼고, 본문은 base64', () => {

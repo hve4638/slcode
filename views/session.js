@@ -3,8 +3,8 @@
 // (1) 기동 — card 단위 owned 서비스로 slcode 를 띄운다 (owner 는 ctx.card: 카드를 제거하면 세션도 끝난다, 사용자 2026-10-11). 명령은
 // main 이 짓는다(받은 바이너리가 그 머신에 있다). 카드를 두고 세션만 끄는 길은 slcode 웹의 "세션 종료"·사이드바 "Force close"·팔레트
 // "slcode: Close session"·터미널 `slcode close`. (2) 화면 — slcode 가 stdout 첫 줄로 보내는 hello {id,sock} 로 세션을 알고, serve 가
-// stdio 로 준 화면 파일(web.files)의 card.html 을 이 iframe 안의 주소 없는 sandbox iframe 에 넣는다. 화면은 여기서 건넨 MessagePort 로만
-// 말하고 이 카드가 stdio 로 중계한다 (ticket slcode-card-svc-token-dead). web.files 가 없는 옛 serve 는 /svc 주소(conn.webUrl)로.
+// stdio 로 준 화면 파일(web.files)을 이 문서에 직접 그린다 (ticket slcode-card-iframe-flatten). 화면은 여기서 건넨 MessagePort 로만
+// serve 와 말하고 이 카드가 stdio 로 중계한다 (ticket slcode-card-svc-token-dead). card.js 가 없는 옛 serve 는 전처럼 안쪽 iframe 에, web.files 가 없으면 /svc 주소(conn.webUrl)로.
 // (3) 상태 — 같은 stdio 통로로 session.attach 를 걸어 배지에 반영한다. 선구독 services.onMessage 를 기동 전에 걸어 첫 줄을
 // 놓치지 않는다. ctx 의 services 는 카드 세션에 묶여 배경 세션이어도 자기 데몬과 주고받는다.
 // 승인 요청은 배지로만 — 알림은 띄우지 않는다 (사용자 2026-10-24, 그 카드에만 보이고 결정한 뒤에도 남았다).
@@ -16,7 +16,7 @@ const SVC = 'session';
 const DEFAULT_NAME = 'SLCode'; // 이름 없는 세션의 카드 제목 (slcode 웹의 기본 이름과 같다)
 const PICK_NAME = 'Resume'; // 고르기 전 resume 카드의 제목
 const START_NAME = 'Start'; // 시작 화면 카드의 제목
-const FAR = Number.MAX_SAFE_INTEGER; // attach since — 이력은 안쪽 화면이 그린다, 여기선 pending 만
+const FAR = Number.MAX_SAFE_INTEGER; // attach since — 이력은 화면이 그린다, 여기선 pending 만
 // 이 화면의 표 — 카드 서비스의 stdio 는 같은 폴더를 연 모든 superlite 창에 방송된다. 요청 id 앞에 붙여 다른 창의 응답을 가려낸다
 const WIN = Math.random().toString(36).slice(2, 8);
 const newKey = () => 's' + Math.random().toString(36).slice(2, 8);
@@ -48,6 +48,7 @@ export function mount(el, ctx) {
     nextId: 1, pending: new Map(), waits: new Map(), starting: null, note: null, error: null,
     fatal: null, early: 0, // 이 시도에서 slcode 가 낸 {fatal}, 살아 있는 것을 보지 못한 채 연달아 끝난 횟수
   };
+  const flat = { on: false }; // 이 문서에 화면을 그렸다 (enterFlat)
   const owner = ctx.card ?? c.key; // 서비스 owner — 코어가 카드 제거 때 이 값으로 owned 서비스를 끝낸다
   el.style.position = 'relative'; el.style.height = '100%'; el.style.overflow = 'hidden';
   void ctx.post({ type: 'tab', key: c.key });
@@ -112,20 +113,24 @@ export function mount(el, ctx) {
     void ctx.setBadge(c.moved ? null : n ? (n > 1 ? `!${n}` : '!') : c.state === 'running' ? '…' : c.state === 'exited' ? 'off' : null);
   }
   function applyTitle() { void ctx.setTitle(c.title || (c.pick && !c.id ? PICK_NAME : c.start ? START_NAME : DEFAULT_NAME)); } // 카드 제목 = 세션 이름, 없으면 SLCode
-  /** 안쪽 iframe 이 무엇을 띄우는가 — 카드 모드 화면(web.files, 주소 없음)이면 'port', 아니면 /svc 주소 */
+  /** 무엇을 띄우는가 — 카드 모드 화면(web.files, 주소 없음)이면 'port', 아니면 /svc 주소 */
   const shownKey = () => (c.web ? 'port' : c.url);
   function render() {
     c.shown = shownKey();
+    // 이 문서에 그린 화면은 지울 수 없다 (mountAgentFront 에 unmount 가 없다). 새 화면 파일을 그릴 때는 문서를 다시 읽는다 — superlite 가 새 문서에 mount 를 다시 부른다.
+    // 안내 문구로 바뀔 때(세션 닫힘·옮겨짐)는 떼어 두기만 한다. 다시 읽으면 닫힌 세션을 되살린다
+    if (flat.on && c.web) { location.reload(); return; }
     el.innerHTML = '';
     c.io?.disconnect(); c.frame = null;
     const wrap = document.createElement('div');
     wrap.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;background:var(--vscode-editor-background,#1e1e1e);color:var(--vscode-foreground,#ccc)';
     if (c.pick && !c.id) renderPicker(wrap);
     else if (c.start) renderStart(wrap);
+    else if (c.web?.files?.['card.js']) renderFlat(wrap);
     else if (c.web || c.url) {
       const f = document.createElement('iframe');
       f.title = 'slcode';
-      // 카드 모드 화면 — serve 가 준 card.html 을 sandbox(출처 없음)로. 화면은 slcode.ready 로 포트를 청하고 그 포트로만 말한다.
+      // 옛 serve 의 카드 모드 화면 — serve 가 준 card.html 을 sandbox(출처 없음)로. 화면은 slcode.ready 로 포트를 청하고 그 포트로만 말한다.
       // 모델 출력을 그리는 화면이라 allow-same-origin 은 주지 않는다. 이 카드 화면도 sandbox="allow-scripts" 라 안쪽은 그 제한을 물려받는다 —
       // 팝업·다운로드·모달 허용은 지금은 듣지 않는다 (링크·로컬 파일 다운로드는 동사로)
       if (c.web) { f.sandbox = 'allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals'; f.srcdoc = c.web.html; } else f.src = c.url;
@@ -179,31 +184,92 @@ export function mount(el, ctx) {
     }, (e) => { list.textContent = `Failed to list sessions: ${e?.message ?? e}`; });
   }
 
-  /** 시작 화면 — slcode 의 start-page html(web/start.js, 웹과 같은 화면)을 주소 없는 iframe 에. 화면의 list·add 는 HOST 가 main 에 넘기고,
-   *  go 면 이 카드가 그 자리에서 새 세션(그 폴더·프로필)이나 꺼진 세션을 띄운다. 옛 slcode(start-page 없음)면 사유를 보인다 */
+  // ---- 이 문서에 직접 그리기 (ticket slcode-card-iframe-flatten, 사용자 2026-11-06). 안쪽 iframe 을 두면 포커스가 이 문서를 건너뛰어 superlite 가 카드를 활성으로 보지 못했다
+  /** 모델 출력을 그리기 전에 한 번. CSP: 화면 코드는 blob 모듈이라 그대로 돌고, 소독이 뚫려 들어온 onerror·javascript:·인라인 스크립트·eval 은 실행되지 않는다.
+   *  화면과 ctx 가 같은 문서라 주입 스크립트가 돌면 proc.run 까지 닿기 때문이다. 키: 우선 키는 부트가 capture 로 먼저 가져간다. 나머지가 window 까지 가면 부트가
+   *  앱으로 넘겨 입력창의 Ctrl+W 가 카드를 닫는다 — 안쪽 iframe 때처럼 document 에서 멈춘다 */
+  function enterFlat(wrap, html) {
+    flat.on = true;
+    wrap.style.background = 'light-dark(#f7f7f8,#18181b)'; wrap.style.colorScheme = 'light dark'; // 그려지기 전 번쩍이지 않게 slcode 웹과 같은 색
+    const csp = document.createElement('meta');
+    csp.httpEquiv = 'Content-Security-Policy'; csp.content = 'script-src blob:';
+    document.head.append(csp);
+    document.addEventListener('keydown', (e) => e.stopPropagation());
+    const parsed = new DOMParser().parseFromString(html, 'text/html');
+    for (const a of parsed.documentElement.attributes) document.documentElement.setAttribute(a.name, a.value); // 테마·버전·입구
+    return parsed;
+  }
+  const addCss = (text) => { const st = document.createElement('style'); st.textContent = text; document.head.append(st); };
+  const blobUrl = (text) => URL.createObjectURL(new Blob([text], { type: 'text/javascript' }));
+  /** 화면과 플러그인의 메시지 — 같은 문서라 함수로 받고, 답은 같은 창의 message 로 준다 */
+  const flatHost = (d) => dispatch(d, (o) => window.postMessage(o, '*'));
+
+  /** 세션 화면 — 받은 모듈의 상대 경로 import 를 blob 주소로 바꿔 잇는다 (주소 없는 문서라 상대 경로가 풀리지 않는다) */
+  async function renderFlat(wrap) {
+    enterFlat(wrap, c.web.html);
+    const files = c.web.files, urls = {};
+    addCss(files['style.css'] ?? '');
+    const mod = (name) => (urls[name] ??= blobUrl(files[name].replace(/from '\.\/([\w.-]+\.js)'/g, (_, d) => `from '${mod(d)}'`)));
+    try {
+      const { mountCard } = await import(mod('card.js'));
+      const ui = (await ctx.storage.get('ui').catch(() => null)) ?? {};
+      const root = document.createElement('div');
+      root.style.cssText = 'flex:1;min-height:0';
+      wrap.appendChild(root);
+      mountCard(root, openPort(), ui, { host: flatHost, reload: () => location.reload() }); // serve 가 바뀌었다 — 새 문서가 새 화면 파일을 받는다
+      if (c.conn) c.port.postMessage({ status: { connected: true } });
+      // 카드가 보이게 되면 입력창으로 — 숨은 뒤에 도는 예약은 건너뛴다
+      const focusIn = () => requestAnimationFrame(() => { if (root.getClientRects().length) window.postMessage({ type: 'slcode.focus' }, '*'); });
+      c.io = new IntersectionObserver((es) => { if (es[0].isIntersecting) focusIn(); });
+      c.io.observe(root);
+    } catch (e) { c.web = null; startFailed(`화면을 그리지 못했습니다: ${e?.message ?? e}`); } // c.web 을 남기면 render 가 문서를 다시 읽어 되풀이한다
+  }
+
+  /** 시작 화면 — slcode 의 start-page html(web/start.js, 웹과 같은 화면)을 이 문서에 그린다. 화면의 list·add 는 HOST 가 main 에 넘기고,
+   *  go 면 이 카드가 그 자리에서 새 세션(그 폴더·프로필)이나 꺼진 세션을 띄운다. 옛 slcode(start-page 없음)면 사유를 보인다. slcodeCardHost 를 모르는 옛 slcode 의 html 은 전처럼 안쪽 iframe 에 */
   function renderStart(wrap) {
-    const f = document.createElement('iframe');
-    f.title = 'slcode';
-    f.sandbox = 'allow-scripts';
-    f.style.cssText = 'flex:1;border:0;width:100%;height:100%;color-scheme:light dark;background:light-dark(#f7f7f8,#18181b)';
-    c.frame = f;
-    wrap.appendChild(f);
-    host('startPage', c.start).then((html) => { if (c.frame === f) f.srcdoc = html; }, (e) => {
-      if (c.frame !== f) return;
-      f.remove(); c.frame = null;
+    host('startPage', c.start).then(async (html) => {
+      if (!wrap.isConnected) return;
+      if (!html.includes('slcodeCardHost')) { startInFrame(wrap, html); return; }
+      const parsed = enterFlat(wrap, html);
+      wrap.style.overflow = 'auto'; // 화면 문서의 body 는 스크롤하지 않는다
+      for (const st of parsed.querySelectorAll('style')) addCss(st.textContent);
+      const root = document.createElement('div');
+      root.id = 'start';
+      wrap.appendChild(root);
+      globalThis.slcodeCardHost = flatHost;
+      for (const sc of parsed.querySelectorAll('script')) await import(blobUrl(sc.textContent)); // 인라인 스크립트는 CSP 로 막히므로 blob 으로, 문서 순서대로
+    }).catch((e) => {
+      if (!wrap.isConnected) return;
       const p = document.createElement('div');
       p.style.cssText = 'margin:auto;font:13px system-ui;opacity:.8;max-width:80%;text-align:center;white-space:pre-wrap';
       p.textContent = `시작 화면을 열지 못했습니다: ${e?.message ?? e}`;
       wrap.appendChild(p);
     });
   }
-  /** 시작 화면에서 골랐다 — {new} 면 그 폴더의 새 세션(시작 화면에서 연 표시 — 첫 메시지 전엔 돌아갈 수 있다), {resume} 이면 그 세션 */
-  function begin(what) {
+  function startInFrame(wrap, html) {
+    const f = document.createElement('iframe');
+    f.title = 'slcode';
+    f.sandbox = 'allow-scripts';
+    f.style.cssText = 'flex:1;border:0;width:100%;height:100%;color-scheme:light dark;background:light-dark(#f7f7f8,#18181b)';
+    c.frame = f;
+    f.srcdoc = html;
+    wrap.appendChild(f);
+  }
+  /** 시작 화면에서 골랐다 — {new} 면 그 폴더의 새 세션(시작 화면에서 연 표시 — 첫 메시지 전엔 돌아갈 수 있다), {resume} 이면 그 세션.
+   *  시작 화면을 이 문서에 그렸으면 state 를 먼저 저장하고 문서를 다시 읽어 새 문서에서 세션을 띄운다 */
+  async function begin(what) {
     if (!c.start) return;
     const cwd = c.start;
     c.start = null;
-    if (typeof what.resume === 'string') { c.id = what.resume; known(); }
-    else { c.spawn = { cwd, fromStart: true }; void ctx.setState({ key: c.key, id: null, spawn: c.spawn }); } // 다시 로드되어도 시작 화면으로 돌아가지 않게
+    if (typeof what.resume === 'string') {
+      if (flat.on) { await ctx.setState({ key: c.key, id: what.resume }); location.reload(); return; }
+      c.id = what.resume; known();
+    } else {
+      c.spawn = { cwd, fromStart: true };
+      const saved = ctx.setState({ key: c.key, id: null, spawn: c.spawn }); // 다시 로드되어도 시작 화면으로 돌아가지 않게
+      if (flat.on) { await saved; location.reload(); return; }
+    }
     applyTitle(); render(); void ensure();
   }
   /** 대화 화면의 '시작 화면으로' — 이 빈 세션을 지우고(slcode 가 시작 화면에서 연 첫 메시지 전 세션만 받아들인다) 이 카드에 그 폴더의 시작 화면을 다시 그린다.
@@ -216,7 +282,8 @@ export function mount(el, ctx) {
     catch (e) { c.start = null; throw e; }
     c.id = null; c.savedId = null; c.spawn = null; c.web = null; c.url = null; c.title = null; c.state = null; c.waits.clear();
     detach();
-    void ctx.setState({ key: c.key, id: null, start: c.start });
+    const saved = ctx.setState({ key: c.key, id: null, start: c.start });
+    if (flat.on) { await saved; location.reload(); return {}; }
     applyTitle(); render(); badge();
     return {};
   }
@@ -303,11 +370,9 @@ export function mount(el, ctx) {
     c.pending.clear();
   }
 
-  // ---- 카드 모드 화면의 포트 (ticket slcode-card-svc-token-dead) — 안쪽 화면 ↔ 이 카드 ↔ 서비스 stdio. 화면이 (다시) 로드될 때마다 새 포트를 준다.
+  // ---- 카드 모드 화면의 포트 (ticket slcode-card-svc-token-dead) — 화면 ↔ 이 카드 ↔ 서비스 stdio. 화면이 (다시) 로드될 때마다 새 포트를 만들고 화면 쪽 끝을 돌려준다.
   // 화면 요청의 id 는 이 화면의 표를 붙여 stdio 로 보내고, 응답은 원래 id 로 돌려준다
-  async function openPort(f) {
-    const ui = (await ctx.storage.get('ui').catch(() => null)) ?? {};
-    if (c.frame !== f) return; // 그 사이 다시 그렸다
+  function openPort() {
     c.port?.close();
     const ch = new MessageChannel();
     c.port = ch.port1; c.fwd = new Map(); c.portSeq++;
@@ -321,8 +386,15 @@ export function mount(el, ctx) {
       c.fwd.set(id, m.id);
       ctx.services.send(SVC, { id, method: m.method, params: m.params }, { owner }).catch((err) => { c.fwd.delete(id); ch.port1.postMessage({ id: m.id, error: { code: 'closed', message: String(err?.message ?? err) } }); });
     };
-    f.contentWindow.postMessage({ type: 'slcode.port', files: c.web.files, ui }, '*', [ch.port2]);
-    if (c.conn && c.web) ch.port1.postMessage({ status: { connected: true } });
+    return ch.port2;
+  }
+  /** 옛 serve 의 안쪽 iframe 이 포트를 청했다 */
+  async function portToFrame(f) {
+    const ui = (await ctx.storage.get('ui').catch(() => null)) ?? {};
+    if (c.frame !== f) return; // 그 사이 다시 그렸다
+    const port = openPort();
+    f.contentWindow.postMessage({ type: 'slcode.port', files: c.web.files, ui }, '*', [port]);
+    if (c.conn && c.web) c.port.postMessage({ status: { connected: true } });
   }
   /** 화면 상태 한 칸 — storage 'ui' 를 다시 읽어 고친다 (같은 머신의 다른 카드가 다른 칸을 바꿨을 수 있다) */
   async function uiSet(k, v) {
@@ -335,14 +407,14 @@ export function mount(el, ctx) {
     if (!connected) { for (const id of c.fwd.values()) c.port.postMessage({ id, error: { code: 'closed', message: 'connection closed' } }); c.fwd.clear(); }
     c.port.postMessage({ status: { connected } });
   }
-  /** 화면이 다시 붙은 serve 가 자기를 낸 serve 와 다르다고 알렸다 — 연결마다 받아 둔 새 화면 파일(c.web)로 iframe 을 다시 만든다 */
+  /** 옛 serve 의 iframe 화면이 다시 붙은 serve 가 자기를 낸 serve 와 다르다고 알렸다 — 연결마다 받아 둔 새 화면 파일(c.web)로 iframe 을 다시 만든다 */
   function reloadWeb() {
     if (!c.web) return;
     c.port?.close(); c.port = null;
     render();
   }
 
-  // ---- serve 교체 (ticket slcode-core-serve-split 2단계, 사용자 확정 2026-10-14·2026-10-19) — 안쪽 화면의 [업데이트]·[restart required] 가 postMessage 로 부른다.
+  // ---- serve 교체 (ticket slcode-core-serve-split 2단계, 사용자 확정 2026-10-14·2026-10-19) — 화면의 [업데이트]·[restart required] 가 부른다.
   // serve 의 stdio 를 거치지 않는 것은 그 카드를 띄운 모든 브라우저가 stdio 메시지를 받아 핸드오프가 여러 번 일어나기 때문이다
   /** [restart required] — 이 카드 바로 다음에 새 카드를 열어(사용자가 보고 있으면 그쪽으로 넘어간다) 새 serve 가 --takeover 로 같은 세션을 이어받게 한다.
    *  새 카드가 붙으면 renderer 를 거쳐 이 카드를 moveOut 으로 정리한다. 새 카드가 뜨지 못하면 새 카드에 사유가 보이고 이 카드는 그대로다 (사용자 2026-10-19) */
@@ -391,32 +463,35 @@ export function mount(el, ctx) {
     }
   });
 
-  // 안쪽 화면이 보낸 것 — 포트 청하기·다시 그리기·serve 교체·링크 열기. 링크(slcode.open)는 superlite 의 open 동사(웹 주소는 URL 탭, 파일은 에디터),
+  // 화면이 보낸 것 — serve 교체·링크 열기, 옛 iframe 화면이면 포트 청하기·다시 그리기. 링크(slcode.open)는 superlite 의 open 동사(웹 주소는 URL 탭, 파일은 에디터),
   // slcode.download 는 download 동사(로컬 파일을 Download 뷰 대기열에 — 사용자가 확인하면 이 PC 로) (ticket slcode-append-system-prompt)
   const VERB = { 'slcode.open': 'open', 'slcode.download': 'download' };
   const HOST = {
     'slcode.update': (d) => host('checkUpdate', { version: d.version, build: d.build }), 'slcode.restart': handoff,
     // 시작 화면 (renderStart)
     'slcode.start.list': () => host('startList', c.start),
-    'slcode.start.go': (d) => { begin(typeof d.resume === 'string' ? { resume: d.resume } : { new: true }); return {}; },
+    'slcode.start.go': (d) => { void begin(typeof d.resume === 'string' ? { resume: d.resume } : { new: true }); return {}; },
     // 에이전트 플러그인 관리 — slcode 의 입구는 시작 화면뿐이라 카드도 중계한다 (ticket slcode-agent-plugin-export-action)
     ...Object.fromEntries(['list', 'check', 'set', 'export'].map((m) => [`slcode.start.plugins.${m}`, ({ type, id, ...params }) => host('startCall', `plugins.${m}`, params)])),
     'slcode.back': backToStart,
   };
-  const onFrame = (e) => {
-    if (!c.frame || e.source !== c.frame.contentWindow) return;
-    const d = e.data;
-    if (d?.type === 'slcode.ready' && c.web) { void openPort(c.frame); return; }
-    if (d?.type === 'slcode.reload') { reloadWeb(); return; }
+  function dispatch(d, reply) {
     const fn = HOST[d?.type];
     if (fn) {
-      const answer = (o) => e.source.postMessage({ re: d.id, ...o }, '*');
+      const answer = (o) => reply({ re: d.id, ...o });
       (async () => fn(d))().then((result) => answer({ result }), (err) => answer({ error: String(err?.message ?? err) }));
       return;
     }
     const verb = VERB[d?.type];
     if (!verb || typeof d.target !== 'string') return;
     ctx.verbs.run(verb, [d.target]).catch((err) => ctx.notify('error', `slcode: ${err?.message ?? err}`));
+  }
+  const onFrame = (e) => { // 옛 serve·옛 slcode 의 안쪽 iframe
+    if (!c.frame || e.source !== c.frame.contentWindow) return;
+    const d = e.data;
+    if (d?.type === 'slcode.ready' && c.web) { void portToFrame(c.frame); return; }
+    if (d?.type === 'slcode.reload') { reloadWeb(); return; }
+    dispatch(d, (o) => e.source.postMessage(o, '*'));
   };
   window.addEventListener('message', onFrame);
   cleanup = () => { window.removeEventListener('message', onFrame); unshared?.(); c.io?.disconnect(); detach(); };

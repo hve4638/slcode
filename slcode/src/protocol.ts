@@ -340,7 +340,7 @@ export type ServeMethods = {
   'inspect.usage': { params: Record<string, never>; result: InspectUsage };
   /** inspect 캐시 정리 — old: 오래된 캐시 제거, compact: 압축(하루 지난 raw), all: 모든 캐시 제거. 떠 있는 세션은 뺀다. 결과는 정리 뒤의 미리보기 */
   'inspect.clean': { params: { what: 'old' | 'compact' | 'all' }; result: InspectUsage };
-  /** 카드 모드 화면 파일 (ticket slcode-card-svc-token-dead) — superlite 플러그인이 받아 주소 없는 sandbox iframe 에 넣는다. html 은 card.html
+  /** 카드 모드 화면 파일 (ticket slcode-card-svc-token-dead) — superlite 플러그인이 받아 카드 문서에 그린다(card.js, 옛 플러그인은 card.html 을 sandbox iframe 에). html 은 card.html
    *  (index.html 처럼 data-theme·version·build·kind 를 넣은), files 는 web/ 의 .js·.css 전부 (상대 경로 → 내용) */
   'web.files': { params: Record<string, never>; result: { html: string; files: Record<string, string> } };
   /** 카드 모드의 로컬 파일 — 웹의 file?path= 와 같은 범위(절대 경로, 줄 번호 꼬리는 없으면 뗀다). 본문은 base64, 32MB 까지 */

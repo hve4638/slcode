@@ -126,7 +126,7 @@ export function withPageAttrs(html: string, dir: string, kind: SettingsKind): st
   return html.replace('<html lang="ko">', `<html lang="ko"${attr}>`);
 }
 
-/** 카드 모드 화면 파일 (ticket slcode-card-svc-token-dead) — superlite 플러그인이 stdio 로 받아 주소 없는 iframe(srcdoc)에 넣는다.
+/** 카드 모드 화면 파일 (ticket slcode-card-svc-token-dead) — superlite 플러그인이 stdio 로 받아 카드 문서에 그린다 (card.js, 옛 플러그인은 card.html 을 주소 없는 iframe 에).
  *  html 은 card.html(테마·버전을 넣은), files 는 그 밖의 글 파일 전부 (모듈·css) */
 export function webFiles(web: Map<string, Buffer>, dir: string, kind: SettingsKind): { html: string; files: Record<string, string> } {
   const files: Record<string, string> = {};

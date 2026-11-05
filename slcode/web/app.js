@@ -68,12 +68,15 @@ export function mountAgentFront(root, transport, opts = {}) {
   const viaHost = page.kind === 'superlite';
   let hostSeq = 0;
   const hostWait = new Map();
-  window.addEventListener('message', (e) => { const w = e.source === window.parent && hostWait.get(e.data?.re); if (w) { hostWait.delete(e.data.re); w(e.data); } });
+  // 카드 화면이 플러그인에 보내는 길. 1단 카드는 같은 문서의 플러그인 함수(opts.host)이고 답은 같은 창의 message 로 온다. 옛 플러그인의 iframe 카드는 parent 와 주고받는다 (ticket slcode-card-iframe-flatten)
+  const hostPost = opts.host ?? ((m) => window.parent.postMessage(m, '*'));
+  const hostSource = opts.host ? window : window.parent;
+  window.addEventListener('message', (e) => { const w = e.source === hostSource && hostWait.get(e.data?.re); if (w) { hostWait.delete(e.data.re); w(e.data); } });
   const askHost = (type, ms, extra = {}) => new Promise((resolve, reject) => {
     const id = ++hostSeq;
     const t = setTimeout(() => { hostWait.delete(id); reject(new Error('플러그인이 답하지 않습니다')); }, ms);
     hostWait.set(id, (d) => { clearTimeout(t); d.error ? reject(new Error(d.error)) : resolve(d.result); });
-    window.parent.postMessage({ ...extra, type, id, version: page.version, build: page.build }, '*');
+    hostPost({ ...extra, type, id, version: page.version, build: page.build });
   });
   let update = null; // 찾은 새 버전 — 있으면 버튼이 restart required
   const updBtn = h('button', { class: 'upd', onclick: () => void (update ? restart() : checkUpdate()) }, '업데이트');
@@ -1398,12 +1401,12 @@ export function mountAgentFront(root, transport, opts = {}) {
   // 답변 속 링크·이미지(data-open, ticket slcode-append-system-prompt). superlite 카드면 링크는 superlite 가 연다 — 웹 주소는 URL 탭, 파일은 에디터
   // (main.js 의 open 동사). 브라우저로 연 웹은 그대로 새 탭. 이미지는 어디서든 보기 화면으로 (ChatGPT 꼴, 사용자 2026-10-17)
   const inCard = window.parent !== window;
-  const openLink = (a) => { if (inCard) window.parent.postMessage({ type: 'slcode.open', target: a.dataset.open }, '*'); else window.open(a.href, '_blank', 'noopener'); };
+  const openLink = (a) => { if (inCard) hostPost({ type: 'slcode.open', target: a.dataset.open }); else window.open(a.href, '_blank', 'noopener'); };
   // 다운로드 — 카드의 로컬 파일은 superlite download 동사(Download 뷰 대기열, 앱 웹뷰에선 브라우저 다운로드가 안 될 수 있다). 그 밖은 브라우저 다운로드:
   // 로컬 파일은 같은 출처라 바로, 웹 이미지는 받아서 — 그 사이트가 막으면(CORS) 링크처럼 연다
   async function download(a) {
     const target = a.dataset.open, local = !/^https?:/.test(target);
-    if (local && inCard) { window.parent.postMessage({ type: 'slcode.download', target }, '*'); return; }
+    if (local && inCard) { hostPost({ type: 'slcode.download', target }); return; }
     let url = a.href, blob = null;
     if (!local) {
       try { const r = await fetch(url); if (r.ok) url = blob = URL.createObjectURL(await r.blob()); } catch {}

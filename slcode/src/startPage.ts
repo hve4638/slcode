@@ -2,7 +2,7 @@
 // 아래 왼쪽은 지금 폴더의 세션, 오른쪽은 모든 폴더의 세션(마지막 활동 순, 꺼진 세션 위주 — 떠 있는 세션은 열려 있다고만). 프로필은 세션에 들어가 대화 화면
 // 가운데에서 고르고, 프로필 설정은 나중에 이 화면의 설정에 둔다(사용자). 대시보드도 나중에 여기서 들어간다.
 // 웹은 진입 프로세스(entry.ts)가 세션을 띄우기 전에 이 핸들러로 그 포트에서 서빙하고, 고르면 새 세션을 또는 그 세션을 이어서 띄운다.
-// 카드는 superlite 플러그인이 `slcode start-page` 의 html(css·모듈을 넣은 것)을 주소 없는 iframe 에 넣고, 목록은 플러그인이 `start-page --json` 으로 받는다.
+// 카드는 superlite 플러그인이 `slcode start-page` 의 html(css·모듈을 넣은 것)을 카드 문서에 그리고, 목록은 플러그인이 `start-page --json` 으로 받는다.
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -32,7 +32,7 @@ export async function startList(dir: string, cwd: string): Promise<StartList> {
 }
 
 const attr = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-/** start.html 에 테마·입구(data-start: web|card)·폴더를 넣는다. inline 이면 style.css·plugins.js·start.js 를 넣어 주소 없이 돈다 (카드 iframe srcdoc).
+/** start.html 에 테마·입구(data-start: web|card)·폴더를 넣는다. inline 이면 style.css·plugins.js·start.js 를 넣어 주소 없이 돈다 (카드 문서, 옛 플러그인은 iframe srcdoc).
  *  plugins.js 는 import 가 닿지 않아 export 를 떼고 globalThis.slcodePlugins 로 건넨다 — start.js 의 openPlugins 가 그것을 먼저 본다 */
 export function startPageHtml(dir: string, kind: SettingsKind, cwd: string | null, inline: boolean): string {
   const read = (f: string) => fs.readFileSync(path.join(WEB_DIR, f), 'utf8');

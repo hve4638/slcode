@@ -2,7 +2,7 @@
 //
 // 세 갈래 (사용자 확정 2026-10-21): main(이 파일) — 바이너리 받기·설치, `slcode list`·`close --force` 같은 명령, 셸 동사
 // slcode.new·slcode.resume, 다른 플러그인용 open·close·mail(activate 반환값). renderer.js — 창마다: 팔레트 명령, 액티비티바 사이드바·배지, 카드 열기(이 main 이
-// 부른다). views/session.js — 카드마다: 서비스 기동·연결·배지·다시 붙기, slcode 화면 iframe 중계. views/sessions.js — 세션 목록 사이드바.
+// 부른다). views/session.js — 카드마다: 서비스 기동·연결·배지·다시 붙기, slcode 화면 그리기·중계. views/sessions.js — 세션 목록 사이드바.
 // 카드 화면이 서비스를 띄우는 명령은 여기서 짓는다 (command) — 받은 바이너리의 경로가 이 머신의 것이라서다.
 // slcode.new: 이 main 이 key 를 정해 요청자 터미널의 메인 창 renderer 에 카드를 열게 하고, 카드 화면이 hello 로 세션 id 를 알면 started 로
 // 알려 동사가 끝난다 (결정 문서 plugin-architecture.md "slcode 이행용 빈 곳").
@@ -211,7 +211,7 @@ export function activate(api) {
   const cards = async () => (await api.services.list()).filter((s) => s.service === 'session' && s.owner).map((s) => ({ owner: s.owner, root: s.root }));
   /** id 없는 resume 카드의 목록 — 그 폴더의 꺼진 세션을 꺼진 순서(최근 먼저)로, 꺼진 시각은 closedTime 에 */
   const closed = async (cwd) => closedRows(await list(true), cwd).map((s) => ({ ...s, closedTime: closedTime(s) }));
-  // ---- 시작 화면 (ticket slcode-session-profile, 사용자 2026-10-30) — 동사 없는 `slcode`(slcode.start 동사)의 카드가 slcode 의 start-page html 을 iframe 에
+  // ---- 시작 화면 (ticket slcode-session-profile, 사용자 2026-10-30) — 동사 없는 `slcode`(slcode.start 동사)의 카드가 slcode 의 start-page html 을 카드 문서에
   // 넣고, 목록은 여기서 CLI 로. 새 세션·이어서 하기는 카드가 그 자리에서 띄우고, 첫 메시지 전에 돌아가면 그 빈 세션을 discard 로 지운다
   const cli = async (args) => {
     const [bin, dir] = await Promise.all([resolveBin(), dirOpt()]);
