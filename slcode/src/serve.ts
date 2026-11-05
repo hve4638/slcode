@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { BUILD, connectSession, connectSock, diskBuild, PKG, VERSION, type RpcClient } from './client.js';
 import { corePaths, readOrCreateToken } from './paths.js';
-import { closedSessions, isLoopback, spawnCore } from './live.js';
+import { closedSessions, familySessions, isLoopback, spawnCore } from './live.js';
 import { readSettings, watchSettings, writeSettings } from './settings.js';
 import { CoreError, ERR, FILES, type SessionInfo, type SettingsKind, type SettingsPatch, type UpdateCheck } from './protocol.js';
 import { inspectBlocked } from './inspect.js';
@@ -36,7 +36,7 @@ const TYPES: Record<string, string> = {
 /** 화면 연결(웹·stdio)에서는 부를 수 없는 제어 메서드 — 소유권·웹 주소 등록(토큰이 붙은 url 을 돌려준다)·core 교체는 serve 의 제어 연결만 */
 const CONTROL_ONLY = new Set(['core.own', 'serve.register', 'core.retire']);
 /** serve 가 답하는 메서드 (ServeMethods) — core 로 넘기지 않는다 */
-const SERVE_METHODS = new Set(['settings.get', 'settings.set', 'serve.info', 'update.run', 'serve.restart', 'start.back', 'inspect.usage', 'inspect.clean', 'web.files', 'file.get']);
+const SERVE_METHODS = new Set(['settings.get', 'settings.set', 'serve.info', 'serve.sessions', 'update.run', 'serve.restart', 'start.back', 'inspect.usage', 'inspect.clean', 'web.files', 'file.get']);
 /** 프레임의 요청·응답 id — 앞머리만 본다 (첨부가 실린 큰 프레임을 해석하지 않게). 화면·core 는 id 를 맨 앞에 쓴다 ({id, method, params}·{id, result}). 아니면 null */
 const idOf = (line: string): string | null => /^\{"id":(-?\d+|"(?:[^"\\]|\\.)*")[,}]/.exec(line)?.[1] ?? null;
 /** 인증 전 줄 세워 둘 수 있는 요청 수 — 인증 안 된 원격 클라이언트가 serve 메모리를 키우지 못하게 */
@@ -111,7 +111,8 @@ export function loadWeb(root = WEB_DIR): Map<string, Buffer> {
  *  [업데이트] 를 serve 와 플러그인 중 누구에게 물을지 화면이 안다 (ticket slcode-core-serve-split 2단계) */
 export function staticHandler(req: http.IncomingMessage, res: http.ServerResponse, web: Map<string, Buffer>, dir?: string, kind: SettingsKind = 'web'): void {
   const file = path.posix.normalize(decodeURIComponent((req.url ?? '/').split('?')[0]).replace(/^\/+/, '') || 'index.html').replace(/\/+$/, '');
-  const name = web.has(file) ? file : `${file}/index.html`;
+  // 세션 주소 /s/<id> 도 같은 화면 — 어느 세션인지는 화면이 주소에서 읽어 /ws?id= 로 묻는다. 여기서는 id 를 보지 않는다 (ticket slcode-web-session-url)
+  const name = /^s\/[^/]+$/.test(file) ? 'index.html' : web.has(file) ? file : `${file}/index.html`;
   const body = web.get(name);
   if (!body) { res.writeHead(404); res.end('not found'); return; }
   res.writeHead(200, { 'content-type': TYPES[path.extname(name)] ?? 'application/octet-stream', 'cache-control': 'no-cache' });
@@ -330,6 +331,10 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
         case 'update.run':
           if (kind !== 'web') throw new CoreError(ERR.badRequest, 'update.run is for the web entry — a card asks the plugin');
           return checkUpdate();
+        case 'serve.sessions': {
+          const family = await familySessions(P.sessionsDir, sid, kind === 'superlite');
+          return { main: family[0]?.id ?? sid, sessions: family.map(({ sock: _sock, ...s }) => s) };
+        }
         case 'web.files': return webFiles(web, P.dir, kind);
         case 'file.get': return fileGet((m.params as { path?: unknown } | undefined)?.path);
         case 'serve.restart':
@@ -356,7 +361,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
   // ---- 중계: 화면 연결 하나 ↔ 세션 소켓 연결 하나
   /** gate 면 core.auth 가 통과할 때까지 다른 요청을 막고 core 의 프레임을 넘기지 않는다. 그 사이 온 요청은 줄 세워 두었다가(HELD_MAX 까지) 통과하면 보낸다.
    *  제어 메서드(CONTROL_ONLY)는 화면 연결에서 늘 거절한다. kind 는 이 연결이 들어온 입구 — 화면 설정의 묶음 */
-  function relay(send: (line: string) => void, end: () => void, gate: boolean, kind: SettingsKind, fix?: (line: string) => string) {
+  function relay(send: (line: string) => void, end: () => void, gate: boolean, kind: SettingsKind, fix?: (line: string) => string, to = sock) {
     let s!: net.Socket;
     let authed = !gate, authId: unknown, held: string[] = [], buf = '';
     if (authed) screens[kind].add(send);
@@ -432,7 +437,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
     async function reopen() {
       const stop = () => { screens[kind].delete(send); end(); };
       let next: net.Socket;
-      try { next = await connectSock(sock); } catch { stop(); return; }
+      try { next = await connectSock(to); } catch { stop(); return; }
       if (gone || down) { next.destroy(); return; }
       open(next);
       if (authLine) { const m = JSON.parse(authLine); if (!ok(await call('core.auth', m.params))) { s.end(); stop(); return; } }
@@ -450,7 +455,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
       asked.clear(); paused = null;
       for (const l of again) toCore(l);
     }
-    open(net.createConnection(sock));
+    open(net.createConnection(to));
     const refuse = (line: string, code: string, message: string) => { try { const m = JSON.parse(line); if (m?.id !== undefined) send(JSON.stringify({ id: m.id, error: { code, message } })); } catch {} };
     const deny = (line: string) => refuse(line, ERR.unauthorized, 'core.auth first');
     /** 제어 메서드인가 — 메서드 이름이 들어 있을 때만 해석한다 (첨부가 실린 큰 프레임을 매번 읽지 않게) */
@@ -472,15 +477,27 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
   }
 
   // ---- http + ws
+  /** 화면이 고른 세션의 소켓 (ticket slcode-web-session-url) — 메인 세션의 자손이고 켜져 있을 때만. 아니면 메인 세션 소켓에 붙이고, 화면이 serve.sessions 를 보고 안내한다 */
+  const socketFor = async (id: string | null): Promise<string> => {
+    if (!id || id === sid) return sock;
+    try { return (await familySessions(P.sessionsDir, sid)).find((s) => s.id === id && s.live)?.sock ?? sock; } catch { return sock; }
+  };
   /** allow 가 있으면(루프백 TCP 웹) 업그레이드 전에 거른다 — 거절은 403 */
   const wsOn = (server: http.Server, gate: boolean, kind: SettingsKind, allow?: (req: http.IncomingMessage) => boolean) => {
     const w = new WebSocketServer({ server, path: '/ws', ...(allow ? { verifyClient: ({ req }: { req: http.IncomingMessage }, cb: (ok: boolean, code?: number) => void) => cb(allow(req), 403) } : {}) });
     w.on('error', () => {});
-    w.on('connection', (ws: WebSocket) => {
-      const r = relay((l) => { if (ws.readyState === ws.OPEN) ws.send(l); }, () => ws.close(), gate, kind);
-      ws.on('message', (d) => r.write(d.toString()));
-      ws.on('close', () => r.close());
+    w.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
+      // 어느 소켓에 붙을지 정하는 동안 온 프레임은 모아 둔다
+      let r: ReturnType<typeof relay> | null = null;
+      const early: string[] = [];
+      ws.on('message', (d) => { if (r) r.write(d.toString()); else early.push(d.toString()); });
+      ws.on('close', () => r?.close());
       ws.on('error', () => {});
+      void socketFor(new URL(req.url ?? '/', 'http://x').searchParams.get('id')).then((to) => {
+        if (ws.readyState !== ws.OPEN) return;
+        r = relay((l) => { if (ws.readyState === ws.OPEN) ws.send(l); }, () => ws.close(), gate, kind, undefined, to);
+        for (const l of early.splice(0)) r.write(l);
+      });
     });
     return w;
   };

@@ -329,6 +329,27 @@ test('renderer cards.open: tmux 요청자면 views.open 한 번(opener·end), �
   assert.deepEqual(opens[2][2], { as: 'card', key: 'sF', title: 'SLCode', preserve: true, opener: '$3', end: true, focus: true });
 });
 
+test('renderer goto: 카드의 관련 세션 링크 — 있는 카드는 그 key 로, 없으면 누른 카드 옆에. 다른 superlite 세션 탭까지 옮기도록 reveal (ticket slcode-web-session-url)', async () => {
+  const opens: any[][] = [];
+  let onMsg: (m: unknown, from: unknown) => void = () => {};
+  const noop = () => {};
+  const api = {
+    main: { call: async () => [] }, notify: noop, storage: { get: async () => ({ kid: 'sKid' }) }, expose: noop,
+    sidebar: { register: noop, setBadge: noop }, events: { on: noop }, commands: { register: noop },
+    views: { open: async (...a: unknown[]) => { opens.push(a); }, post: noop, onMessage: (cb: typeof onMsg) => { onMsg = cb; }, active: async () => null },
+  };
+  (rendererMod.default ?? rendererMod).activate(api);
+  onMsg({ type: 'goto', id: 'kid' }, { tabId: 'tab:1' });
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(opens[0][2].key, 'sKid');
+  assert.equal(opens[0][2].reveal, true);
+  assert.equal(opens[0][2].opener, 'tab:1');
+  onMsg({ type: 'goto', id: 'new' }, { tabId: 'tab:1' });
+  await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual(opens[1][1], { key: opens[1][2].key, id: 'new', seen: true });
+  assert.equal(opens[1][2].focus, true);
+});
+
 // ---- 폴더를 고르지 않은 새 세션 (ticket slcode-sidebar-new-stuck) — 사이드바 머리 + 와 팔레트는 워크스페이스 폴더의 시작 화면 카드를 연다
 function rendererWith(proc: { code: number | null; stdout: string; stderr: string }, os = 'linux') {
   const opens: any[][] = [], notes: string[] = [], ran: string[] = [], commands: Record<string, () => void> = {};

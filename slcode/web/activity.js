@@ -79,6 +79,7 @@ function watchSignals({ root, feed, input, emit, groupMs = 2000, typeMs = 1000, 
   function strong(g, what) { if (g.strong) return; g.strong = true; emit('strong', what); }
 
   document.addEventListener('keydown', (e) => {
+    if (root.closest('[inert]')) return; // 같은 문서의 다른 세션 화면을 보는 중이다 (ticket slcode-web-session-url)
     const g = hit('key');
     if (e.key === 'Escape') strong(g, 'esc');
     else if ((e.ctrlKey || e.metaKey) && e.key === 'c') strong(g, 'copy');
@@ -97,7 +98,7 @@ function watchSignals({ root, feed, input, emit, groupMs = 2000, typeMs = 1000, 
   let handAt = 0;
   const hand = () => { handAt = Date.now(); };
   for (const ev of ['wheel', 'touchmove', 'pointerdown']) feed.addEventListener(ev, hand, { passive: true });
-  document.addEventListener('keydown', hand, true);
+  document.addEventListener('keydown', () => { if (!root.closest('[inert]')) hand(); }, true);
   const nearStart = () => {
     // 응답의 시작 = 내 요청 말풍선 바로 다음 항목. 그 머리가 화면 위쪽 1/4 안에 들어왔는가
     const top = feed.getBoundingClientRect().top, hgt = feed.clientHeight;

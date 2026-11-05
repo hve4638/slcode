@@ -15,7 +15,7 @@ import { execFile } from 'node:child_process';
 import { ClaudeSession } from './session.js';
 import { CodexSession, codexRunnable } from './codex.js';
 import { PARAM_ENV, sessionEnvError, sessionParamsError, type AgentSession, type Command } from './base.js';
-import { EventLog, historyPage, outline, promptTurns, summarize, type SessionMeta } from './eventLog.js';
+import { EventLog, historyPage, outline, promptTurns, summarize, type SessionMeta, type SessionParent } from './eventLog.js';
 import { isLoopback, reachable, sockAlive, spawnCore } from './live.js';
 import { BUILD, PKG, VERSION, replacingMark } from './client.js';
 import { corePaths, ensureDir, readOrCreateToken, sessionDir } from './paths.js';
@@ -74,6 +74,8 @@ const DRAFT_FILE = 'draft';
 export type CoreOptions = {
   dir?: string;
   cwd: string;
+  /** 새 세션의 부모 (SessionMeta.parent) */
+  parent?: SessionParent;
   /** 이어받을 세션 id (저장 세션). 없으면 새 세션 */
   resume?: string;
   title?: string;
@@ -141,6 +143,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       ...(opts.profile && opts.profile !== DEFAULT_PROFILE ? { profile: opts.profile } : {}), ...(opts.fromStart ? { fromStart: true } : {}),
       ...(opts.env && Object.keys(opts.env).length ? { env: opts.env } : {}),
       ...(opts.params && Object.keys(opts.params).length ? { params: opts.params } : {}),
+      ...(opts.parent ? { parent: opts.parent } : {}),
     };
     // 새 세션의 권한 모드는 생략하면 auto (사용자 2026-10-24) — 이미 있는 세션의 null(벤더 기본 = 승인 요청)은 건드리지 않는다
     logFile = EventLog.create(P.sessionsDir, meta);

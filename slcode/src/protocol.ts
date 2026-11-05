@@ -329,6 +329,8 @@ export type ServeMethods = {
    *  화면은 연결할 때마다 묻고 자기 페이지의 data-version·data-build 와 다르면 다시 로드한다 (serve 가 바뀌었다).
    *  inspectBlocked 는 inspect 의 내부 플래그가 듣지 않는다고 기록된 SDK 버전 (없으면 null) — 설정 창이 새 세션 inspect 를 막고 사유를 보인다 */
   'serve.info': { params: Record<string, never>; result: { version: string; build: number; pid: number; update: UpdateCheck | null; inspectBlocked?: string | null } };
+  /** 이 화면에서 갈 수 있는 세션 (ticket slcode-web-session-url). 웹은 그 serve 의 메인 세션과 자손, 카드는 그 세션이 속한 가족 전체. main 은 그 맨 앞 */
+  'serve.sessions': { params: Record<string, never>; result: { main: string; sessions: { id: string; title: string | null; parent: { id: string; kind: 'child' | 'fork' } | null; live: boolean }[] } };
   /** [업데이트] — 웹(TCP) 입구만. 설치 폴더의 package.json version·dist/cli.js mtime 을 이 serve 가 뜰 때의 것과 견준다.
    *  카드는 serve 가 아니라 플러그인이 확인한다 (원격 deploy 경로는 내용 해시라 serve 가 자기 폴더를 봐서는 모른다) */
   'update.run': { params: Record<string, never>; result: UpdateCheck };

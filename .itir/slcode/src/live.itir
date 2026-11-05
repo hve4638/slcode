@@ -18,6 +18,9 @@ export fn closedTime(meta) -> Int {
 export fn closedSessions(sessionsDir, cwd) -> SessionMeta[] {
   role: 그 cwd 슬러그 폴더의 저장 세션 중 meta.cwd 가 그 cwd 와 같고(슬러그가 같은 다른 폴더 제외) 소켓이 살아 있지 않은 것을 closedTime 내림차순으로 — continue 대상과 id 없는 resume 목록
 }
+export fn familySessions(sessionsDir, id, up) -> FamilySession[] {
+  role: 세션과 그 자손 (ticket slcode-web-session-url) — meta.parent 를 훑어 부모 다음에 자식 순서로, 각각 살아 있는지(sockAlive)와 소켓 경로를 붙인다. 없는 세션은 빈 목록, 지워진 부모는 없는 것으로, 고리에서 멈춘다. up 이면 부모를 따라 맨 위부터 (superlite 카드)
+}
 export fn undiscardable(sessionsDir, id) -> String {
   role: 시작 화면으로 돌아가며 버릴 수 있는 세션인가 (ticket slcode-session-profile, 사용자 2026-10-30) — meta.fromStart(시작 화면에서 연 새 세션)이고 turn.start 가 없으면 null, 아니면 사유
 }
@@ -28,3 +31,4 @@ export fn spawnCore(opts, pkg) {
   role: <pkg>/dist/coreMain.js(기본 이 설치 PKG)를 detached 로 띄우고 stderr 는 $SLCODE_DIR/core.log 에 잇는다. stdout 첫 줄(준비 {id, sock, session} 또는 {error, code})을 기다린 뒤 파이프를 놓고 unref — core 가 띄운 쪽과 따로 산다. 첫 줄 없이 끝나면(close — stdout 을 다 읽은 뒤) core.log 를 가리키는 오류. serve 가 세션을 열 때, 내리는 core 가 새 core 를 띄울 때(pkg 는 core.retire 를 보낸 serve 의 설치 폴더) 같이 쓴다 — 이 모듈이 SDK 를 싣지 않아 core 도 serve 도 부를 수 있다
 }
 type CoreHello
+type FamilySession

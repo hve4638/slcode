@@ -7,6 +7,8 @@ import path from 'node:path';
 import type { HistorySummary, LoggedEvent, OutlineItem, PromptTurn, SessionInfo, Vendor } from './protocol.js';
 import { cwdSlug, sessionDir, sessionRoots } from './paths.js';
 
+export type SessionParent = { id: string; kind: 'child' | 'fork' };
+
 export type SessionMeta = {
   id: string;
   vendor: Vendor;
@@ -40,6 +42,8 @@ export type SessionMeta = {
   params?: Record<string, string>;
   /** 시작 화면에서 연 새 세션 — 첫 메시지 전엔 시작 화면으로 돌아갈 수 있다 (protocol SessionInfo.fromStart) */
   fromStart?: boolean;
+  /** 이 세션을 낳은 세션 (ticket slcode-web-session-url) — child 는 자체 서브에이전트, fork 는 복제. 메인 세션에는 없다. 자식 쪽만 적고 자식 목록은 meta 를 훑어 구한다. 지워져 찾을 수 없는 부모는 없는 것으로 다룬다 */
+  parent?: SessionParent;
 };
 
 /** turn.rewound 가 버린 턴(그 seq 부터)을 뺀 이벤트 — 버린 턴은 벤더 쪽에도 없으므로 대화 되돌리기의 유지 지점·다시 import 의 기준에서 뺀다. 코드만 되돌린 표지(conversation false)는 대화를 버리지 않는다 */

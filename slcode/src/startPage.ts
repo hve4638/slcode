@@ -60,6 +60,7 @@ export function startServer(dir: string, cwd: string): { server: http.Server; ch
     if (!loopbackAllowed(req)) { send(403, 'text/plain', 'forbidden'); return; }
     const url = (req.url ?? '/').split('?')[0];
     if (req.method === 'GET') {
+      if (url.startsWith('/s/')) { res.writeHead(302, { location: '/', connection: 'close' }); res.end(); return; } // 세션 주소를 연 탭이 시작 화면으로 돌아왔다 (ticket slcode-web-session-url)
       if (url === '/' || url === '/index.html') { send(200, 'text/html; charset=utf-8', startPageHtml(dir, 'web', cwd, false)); return; }
       const f = url.slice(1);
       if (f === 'style.css' || f === 'start.js' || f === 'plugins.js') { send(200, f.endsWith('.css') ? 'text/css' : 'text/javascript', fs.readFileSync(path.join(WEB_DIR, f), 'utf8')); return; }

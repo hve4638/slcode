@@ -54,4 +54,5 @@ export fn promptTurns(events) -> PromptTurn[] {
 export fn summarize(events) -> HistorySummary {
   role: 기록 전체(되돌린 턴 포함)의 turn.end 사용량·비용 누계(SDK 비용은 프로세스 누계라 줄어드는 경계에서 기준선에 합친다), 훅 횟수·마지막, 마지막 session.ready — 웹이 앞 페이지를 안 받고도 합계를 그린다
 }
+type SessionParent
 type SessionMeta

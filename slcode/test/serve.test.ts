@@ -11,6 +11,8 @@ import { sendMail } from '../src/mail.ts';
 import { corePaths, cwdSlug } from '../src/paths.ts';
 import { EventLog } from '../src/eventLog.ts';
 import { pidAlive } from '../src/lock.ts';
+import { familySessions, spawnCore } from '../src/live.ts';
+import { startServer } from '../src/startPage.ts';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 function isolated() { process.env.SLCODE_GRACE_SECS = '1'; return fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-serve-')); }
@@ -18,7 +20,7 @@ async function waitGone(pid: number, ms = 8000) { const t0 = Date.now(); while (
 
 /** WS 세션 하나로 요청을 차례로 보내고 응답 배열을 받는다 */
 function wsCalls(url: string, calls: { method: string; params?: unknown }[]): Promise<any[]> {
-  const u = new URL(url); u.protocol = 'ws:'; u.pathname = '/ws'; u.search = '';
+  const u = new URL(url); u.protocol = 'ws:'; u.pathname = '/ws';
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(u.toString()); const out: any[] = []; let i = 0;
     const next = () => ws.send(JSON.stringify({ id: i + 1, ...calls[i] }));
@@ -336,7 +338,7 @@ test('superlite 서비스 웹 소켓(webSock): 인증 없이 정적 파일·WS, 
   const html = await new Promise<string>((resolve, reject) => {
     http.get({ socketPath: webSock, path: '/' }, (res) => { let b = ''; res.on('data', (d) => (b += d)); res.on('end', () => resolve(b)); }).on('error', reject);
   });
-  assert.match(html, /new URL\('ws', location\.href\)/, '페이지는 상대 ws 주소 — /svc/<토큰>/ 접두사 아래에서도');
+  assert.match(html, /new URL\('ws', document\.baseURI\)/, '페이지는 상대 ws 주소 — /svc/<토큰>/ 접두사와 세션 주소 /s/<id> 아래에서도');
   const { WebSocket: WS } = await import('ws');
   const r = await new Promise<any>((resolve, reject) => {
     const ws = new WS(`ws+unix://${webSock}:/ws`);
@@ -506,4 +508,82 @@ test('core 가 기동 중에 끊겨도 serveSession 의 거절로 끝난다 — 
   await assert.rejects(serveSession({ dir, cwd: '', web: false, attach: { id: 'x', sock, url: null, takeover: true } }), /connection closed/);
   await sleep(50);
   assert.deepEqual(unhandled, []);
+});
+
+// ---- 세션 주소 /s/<id> (ticket slcode-web-session-url)
+test('세션 주소: /s/<id> 는 id 를 보지 않고 같은 화면, 그 아래 경로는 404', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-web-'));
+  fs.writeFileSync(path.join(root, 'index.html'), 'page');
+  const web = loadWeb(root);
+  const http = await import('node:http');
+  const srv = http.createServer((q, r) => staticHandler(q, r, web));
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${(srv.address() as net.AddressInfo).port}`;
+  const get = async (p: string) => { const r = await fetch(base + p); return [r.status, await r.text()]; };
+  assert.deepEqual(await get('/s/abc123'), [200, 'page']);
+  assert.deepEqual(await get('/s/abc123?token=t'), [200, 'page']);
+  assert.equal((await get('/s/abc123/x'))[0], 404);
+  assert.equal((await get('/s'))[0], 404);
+  srv.close();
+});
+
+test('세션 주소: 시작 화면 서버는 옛 세션 주소를 / 로 돌린다', async () => {
+  const dir = isolated();
+  const { server } = startServer(dir, '/w');
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const port = (server.address() as net.AddressInfo).port;
+  const r = await fetch(`http://127.0.0.1:${port}/s/old`, { redirect: 'manual' });
+  assert.equal(r.status, 302);
+  assert.equal(r.headers.get('location'), '/');
+  server.close();
+});
+
+test('가족: 부모 다음에 자식, 메인 위의 부모는 빼고, 지워진 부모와 고리에 걸리지 않는다. up 이면 맨 위부터', async () => {
+  const dir = isolated();
+  const { sessionsDir } = corePaths(dir);
+  const add = (id: string, createdAt: number, parent?: { id: string; kind: 'child' | 'fork' }) => EventLog.create(sessionsDir, { id, vendor: 'claude', cwd: '/w', title: null, vendorSessionId: null, createdAt, permissionMode: null, raw: false, ...(parent ? { parent } : {}) });
+  add('a', 1); add('a1', 2, { id: 'a', kind: 'child' }); add('a2', 3, { id: 'a', kind: 'fork' }); add('a1a', 4, { id: 'a1', kind: 'child' }); add('c', 5);
+  add('lost', 6, { id: 'gone', kind: 'child' }); add('x', 7, { id: 'y', kind: 'child' }); add('y', 8, { id: 'x', kind: 'child' });
+  const ids = async (id: string, up?: boolean) => (await familySessions(sessionsDir, id, up)).map((s) => s.id);
+  assert.deepEqual(await ids('a'), ['a', 'a1', 'a1a', 'a2']);
+  assert.deepEqual(await ids('a1'), ['a1', 'a1a'], '자손을 메인으로 띄운 웹은 부모와 형제를 열지 않는다');
+  assert.deepEqual(await ids('a1', true), ['a', 'a1', 'a1a', 'a2'], '카드는 가족 전체');
+  assert.deepEqual(await ids('lost', true), ['lost'], '지워진 부모는 없는 것으로');
+  assert.deepEqual(await ids('c'), ['c']);
+  assert.deepEqual(await ids('none'), []);
+  assert.deepEqual((await ids('x')).sort(), ['x', 'y'], '고리에서 멈춘다');
+  assert.ok((await familySessions(sessionsDir, 'a')).every((s) => !s.live));
+});
+
+test('세션 주소: /ws?id= 는 켜진 자손에만 붙고, 관계 없는 세션·없는 id·꺼진 자손은 메인 소켓에 붙어 그 세션을 열지 않는다', async () => {
+  const dir = isolated();
+  process.env.SLCODE_GRACE_SECS = '30';
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
+  const h = await serveSession({ dir, cwd: work, title: 'main' });
+  const main = h.session.id;
+  const child = await spawnCore({ dir, cwd: work, title: 'child', parent: { id: main, kind: 'child' } });
+  const off = await spawnCore({ dir, cwd: work, title: 'off', parent: { id: main, kind: 'fork' } });
+  const other = await spawnCore({ dir, cwd: work, title: 'other' });
+  const owners = await Promise.all([child, off, other].map(async (s) => { const c = await connectSession(s.sock); await c.request('core.own', { pid: process.pid, follows: true }); return c; }));
+  const closed = owners[1].done;
+  await owners[1].request('session.close', { id: off.id }).catch(() => {});
+  await closed;
+  const calls = (id?: string) => {
+    const u = new URL(h.url!); u.protocol = 'ws:'; u.pathname = '/ws'; if (id) u.searchParams.set('id', id);
+    return wsCalls(u.toString(), [{ method: 'core.auth', params: { token: '' } }, { method: 'server.info' }, { method: 'serve.sessions' }, { method: 'session.attach', params: { id: id ?? main, limit: 1 } }]);
+  };
+  assert.equal((await calls())[1].result.session, main);
+  const r = await calls(child.id);
+  assert.equal(r[1].result.session, child.id, '켜진 자손의 core 에 붙는다');
+  assert.equal(r[3].result.info.title, 'child');
+  assert.deepEqual(r[2].result.sessions.map((s: { id: string; live: boolean }) => [s.id, s.live]), [[main, true], [child.id, true], [off.id, false]]);
+  assert.equal(r[2].result.main, main);
+  assert.ok(!('sock' in r[2].result.sessions[0]), '소켓 경로는 화면에 주지 않는다');
+  for (const id of [other.id, off.id, 'zzzz']) {
+    const x = await calls(id);
+    assert.equal(x[1].result.session, main, `${id}: 메인 소켓`);
+    assert.ok(x[3].error, `${id}: 그 세션은 열리지 않는다`);
+  }
+  for (const [c, s] of [[owners[0], child], [owners[2], other]] as const) { const gone = c.done; c.request('session.close', { id: s.id }).catch(() => {}); await gone; }
+  await h.close('test');
 });

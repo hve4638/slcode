@@ -5,7 +5,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { EventLog, type SessionMeta } from './eventLog.js';
+import { EventLog, type SessionMeta, type SessionParent } from './eventLog.js';
 import { connectSession, PKG } from './client.js';
 import { corePaths, ensureDir } from './paths.js';
 import { CoreError, ERR, type SessionInfo } from './protocol.js';
@@ -36,6 +36,25 @@ export async function closedSessions(sessionsDir: string, cwd: string): Promise<
   const out: SessionMeta[] = [];
   for (const m of EventLog.list(sessionsDir, cwd)) if (m.cwd === cwd && !(await sockAlive(new EventLog(sessionsDir, m).sockPath))) out.push(m);
   return out.sort((a, b) => closedTime(b) - closedTime(a));
+}
+
+export type FamilySession = { id: string; title: string | null; parent: SessionParent | null; live: boolean; sock: string };
+/** 세션과 그 자손 — 부모 다음에 자식이 오는 순서(형제는 만든 순서), 맨 앞이 그 세션. 없는 세션이면 빈 목록 (ticket slcode-web-session-url).
+ *  up 이면 부모를 따라 맨 위까지 올라간 세션부터 (superlite 카드 — 주소가 없어 잘못 들어갈 일이 없고, 자식 카드에서 부모로 돌아가야 한다) */
+export async function familySessions(sessionsDir: string, id: string, up = false): Promise<FamilySession[]> {
+  const metas = EventLog.list(sessionsDir);
+  const byId = new Map(metas.map((m) => [m.id, m]));
+  let root = byId.get(id);
+  if (up) for (const seen = new Set<string>(); root?.parent && byId.has(root.parent.id) && !seen.has(root.id); root = byId.get(root.parent.id)) seen.add(root.id);
+  const kids = new Map<string, SessionMeta[]>();
+  for (const m of metas) if (m.parent) kids.set(m.parent.id, [...(kids.get(m.parent.id) ?? []), m]);
+  const tree: SessionMeta[] = [], seen = new Set<string>();
+  const walk = (m: SessionMeta) => { if (seen.has(m.id)) return; seen.add(m.id); tree.push(m); for (const k of kids.get(m.id) ?? []) walk(k); };
+  if (root) walk(root);
+  return Promise.all(tree.map(async (m) => {
+    const sock = new EventLog(sessionsDir, m).sockPath;
+    return { id: m.id, title: m.title ?? null, parent: m.parent ?? null, live: await sockAlive(sock), sock };
+  }));
 }
 
 /** 시작 화면으로 돌아가며 버릴 수 있는 세션인가 — 시작 화면에서 연 새 세션이고 첫 메시지 전. 아니면 사유 (ticket slcode-session-profile) */

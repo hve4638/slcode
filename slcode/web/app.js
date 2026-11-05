@@ -1,6 +1,6 @@
 // 에이전트 프런트 — 한 프런트 두 모드. 이 파일은 core 프로토콜(protocol.ts)만 알고 superlite 유무를 모른다.
 // 웹 모드(index.html, WsTransport)와 superlite 카드 모드(후속 agent-plugin-card)가 같은 mountAgentFront 를 쓴다.
-// 화면 하나 = 세션 하나 (사용자 결정 2026-09-25/26): 세션 id 는 opts.sessionId, 없으면 서버에 server.info 로 묻는다 (slcode 서버 하나 = 세션 하나).
+// 화면 하나 = 세션 하나 (사용자 결정 2026-09-25/26): 세션 id 는 opts.sessionId(웹 주소 /s/<id>), 없으면 서버에 server.info 로 묻는다. 서버 하나는 메인 세션과 그 자손을 다룬다 (ticket slcode-web-session-url).
 // 세션 목록·새 세션은 이 화면에 없다 — 새 세션은 새 `slcode` 명령(또는 superlite 의 새 카드).
 // transport = { request(method, params), onEvent(fn), onStatus(fn) } (rpc.js 표면).
 import { renderMarkdown } from './markdown.js';
@@ -35,6 +35,8 @@ function toolArg(name, input) {
 export function mountAgentFront(root, transport, opts = {}) {
   root.innerHTML = '';
   const el = h('div', { class: 'acf' });
+  // 웹은 한 문서에 세션 화면을 여러 개 두고 안 보는 화면을 inert 로 숨긴다 (index.html, ticket slcode-web-session-url). document 에 건 처리는 숨은 화면이면 넘긴다
+  const behind = () => !!root.closest('[inert]');
   // 헤더 왼쪽은 세션 이름 — 없으면 SLCode, 더블클릭·옆 연필로 고친다(session.rename). superlite 카드 제목도 이 이름을 따른다.
   // id 는 오른쪽 '세션' 칸(올리면 복사 버튼, 사용자 2026-10-09), 경로는 작성창 위 폴더의 복사 버튼 (사용자 2026-10-07, 자리는 2026-10-13)
   const DEFAULT_NAME = 'SLCode';
@@ -136,8 +138,9 @@ export function mountAgentFront(root, transport, opts = {}) {
   // 버전 숫자가 없는 항목(Default, Opus (1M context))은 아래로. 벤더가 늘어도(Codex 등) 한 목록에 섞인다 (사용자 2026-09-27)
   // 메뉴 맨 위는 벤더 토글, 목록 아래는 effort 슬라이더 — 작성창의 effort 버튼은 없앴고 알약이 'Opus 5.5 · high' 로 effort 를 함께 보인다 (ticket slcode-vendor-model-picker, 사용자 2026-10-23)
   const modelLbl = h('span', {}, '');
-  const modelBtn = h('button', { class: 'ghost pill-btn model', popovertarget: 'acf-models', style: 'display:none' }, modelLbl);
-  const modelMenu = h('div', { class: 'menu', id: 'acf-models', popover: '' });
+  const modelBtn = h('button', { class: 'ghost pill-btn model', style: 'display:none' }, modelLbl);
+  const modelMenu = h('div', { class: 'menu acf-models', popover: '' });
+  modelBtn.popoverTargetElement = modelMenu; // id 로 잇지 않는다 — 웹은 한 문서에 세션 화면이 여러 개다 (ticket slcode-web-session-url)
   let modelName = '', effortNow = null;
   const paintModel = () => { modelLbl.textContent = effortNow ? `${modelName} · ${effortNow}` : modelName; };
   // 벤더 토글 — 첫 메시지 전에만 바꾼다(session.setVendor: 같은 세션 id 로 core 를 새 벤더로 다시 띄운다). 그 뒤엔 지금 벤더만 칠한 채 흐리게 둔다
@@ -208,8 +211,9 @@ export function mountAgentFront(root, transport, opts = {}) {
   const MODES = [['default', '승인 요청', 'hand'], ['auto', '자동 승인', 'shieldCheck'], ['bypassPermissions', '전체 액세스', 'shieldAlert']];
   const modeLbl = h('span', {}, '');
   const modeIco = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); modeIco.setAttribute('viewBox', '0 0 24 24');
-  const modeBtn = h('button', { class: 'ghost pill-btn mode', popovertarget: 'acf-mode' }, modeLbl);
-  const modeMenu = h('div', { class: 'menu', id: 'acf-mode', popover: '' });
+  const modeBtn = h('button', { class: 'ghost pill-btn mode' }, modeLbl);
+  const modeMenu = h('div', { class: 'menu acf-mode', popover: '' });
+  modeBtn.popoverTargetElement = modeMenu;
   // 모드별 색(auto 노랑·bypass 빨강, 2026-10-09)은 뺐다 (사용자 2026-10-13). 메뉴는 승인 요청·자동 승인·전체 액세스 셋, 설명 없이 모드별 아이콘만 — 알약도 같은 아이콘 (사용자 2026-10-24) — 이름만 화면용이고 값은 그대로,
   // 옛 acceptEdits·plan 세션은 core 가 resume 때 auto 로 고쳐 쓴다 (ticket slcode-permission-modes-three)
   const modeName = (v) => MODES.find(([m]) => m === v)?.[1] ?? v;
@@ -228,7 +232,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   let commands = [], slashSel = 0;
   let argRes = null, argSeq = 0, argTimer = null;
   const COMPLETE_LATE_MS = 100;
-  const slashMenu = h('div', { class: 'menu slash', id: 'acf-slash', popover: 'manual' });
+  const slashMenu = h('div', { class: 'menu slash', popover: 'manual' });
   // 플러그인 접두(core:)는 생략해도 된다: 짧은 이름으로도 맞추고, 짧은 이름이 정확히 같은 것을 앞에 둔다 (사용자 2026-09-30)
   const shortOf = (name) => name.slice(name.indexOf(':') + 1);
   function slashItems() {
@@ -346,10 +350,15 @@ export function mountAgentFront(root, transport, opts = {}) {
   }
   boot('connecting');
   // 맨 위 헤더 = 세션 이름·상태 … 설정·사이드바 버튼, 폭이 좁아도 늘 보인다 (사용자 2026-10-13). 전엔 왼쪽 레일이라 1100px 아래에서 숨었다
+  // 관련 세션 메뉴 — 헤더의 세션 이름 옆, 가족이 있을 때만 (ticket slcode-web-session-url, 사용자 2026-11-05: 사이드바는 기본으로 닫혀 있어 어느 화면에서든 보이는 헤더로). 채우는 쪽은 paintFamily
+  const famMenu = h('div', { class: 'menu fam-menu', popover: '' });
+  const famBtn = h('button', { class: 'fam-chip', hidden: '' });
+  famBtn.popoverTargetElement = famMenu;
+  famMenu.ontoggle = () => { if (famMenu.matches(':popover-open')) { const r = famBtn.getBoundingClientRect(); famMenu.style.left = `${r.left}px`; famMenu.style.top = `${r.bottom + 6}px`; opts.preload?.(family.sessions.filter((x) => x.live && x.id !== current).map((x) => x.id)); } };
   const center = h('div', { class: 'main' }, feed, dock, composer);
   center.addEventListener('pointerdown', () => el.classList.remove('peek'));
   el.append(
-    h('header', { class: 'hdr' }, nameRow, pill, bootEl, h('span', { class: 'gap' }), updBtn, gearBtn, sideBtn),
+    h('header', { class: 'hdr' }, nameRow, famBtn, famMenu, pill, bootEl, h('span', { class: 'gap' }), updBtn, gearBtn, sideBtn),
     center,
     side,
     settingsUi.el,
@@ -360,6 +369,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   // 활동 기록 (ticket slcode-activity-state) — 사이드바 칸과 모달, 이 화면의 사람 행동 신호
   const act = activityPanel(h, rpc, { getId: () => current, root: el, feed, input });
   el.append(act.dialog);
+  let family = null, refused = null; // 같은 가족의 세션(serve.sessions), 주소가 가리켰지만 열지 못한 세션
   let current = null, lastSeq = 0, curSeq = 0, replaying = false, info = null, ready = null, connected = false, exitNote = null;
   // 스트리밍 상태는 범위마다 — 본문(main)과 서브에이전트(부모 tool_use id)마다 따로 (2026-09-30, 작업 카드)
   let main = { col: null, textEl: null, textBuf: '', thinkEl: null, thinkBuf: '' };
@@ -997,6 +1007,49 @@ export function mountAgentFront(root, transport, opts = {}) {
       h('span', { class: 'grp cost', onmouseenter: fit }, icon('coin'), h('span', {}, usage.turns && !costKnown ? '—' : usage.cost ? `$${usage.cost.toFixed(2)}` : '$0'), tok), // 턴이 있는데 비용을 모르면(가격표에 없는 Codex 모델) —
     ].filter(Boolean));
   }
+  // ---- 같은 가족의 세션 (ticket slcode-web-session-url) — 웹은 링크(같은 탭, Ctrl+클릭은 새 탭), 카드는 플러그인에 그 카드로 옮겨 달라고 한다
+  const famName = (s) => s.title || s.id;
+  const famGo = (s, cls, ...kids) => h('a', { class: cls, href: viaHost ? '#' : `s/${encodeURIComponent(s.id)}`, onclick: (e) => {
+    if (!viaHost && (!opts.navigate || e.ctrlKey || e.metaKey || e.shiftKey)) return; // 새 탭·새 창은 브라우저 몫
+    e.preventDefault();
+    if (famMenu.matches(':popover-open')) famMenu.hidePopover();
+    if (viaHost) hostPost({ type: 'slcode.goto', target: s.id }); else opts.navigate(s.id);
+  } }, ...kids);
+  function famRows() {
+    const depth = new Map();
+    return family.sessions.map((s) => {
+      const d = depth.has(s.parent?.id) ? depth.get(s.parent.id) + 1 : 0;
+      depth.set(s.id, d);
+      return famGo(s, `fam-row${s.id === current ? ' cur' : ''}${s.live ? '' : ' off'}`,
+        h('span', { class: 'fam-indent', style: `width:${d * 14}px` }),
+        h('span', { class: 'fam-name' }, famName(s)),
+        s.id === family.main ? h('span', { class: 'fam-tag' }, '메인') : s.parent ? h('span', { class: 'fam-tag' }, s.parent.kind === 'fork' ? '분기' : '서브') : null,
+        s.live ? null : h('span', { class: 'fam-tag' }, '꺼짐'));
+    });
+  }
+  function paintFamily() {
+    const many = (family?.sessions.length ?? 0) > 1;
+    famBtn.hidden = !many;
+    if (many) { famBtn.textContent = `세션 ${family.sessions.length} ▾`; famBtn.title = '관련 세션'; famMenu.replaceChildren(...famRows()); }
+  }
+  async function loadFamily() {
+    let r;
+    try { r = await rpc('serve.sessions'); } catch { return; }
+    if (JSON.stringify(r) === JSON.stringify(family)) return;
+    family = r; paintFamily();
+    if (refused && r.sessions.some((s) => s.id === refused && s.live)) location.reload(); // 안내를 보던 세션이 다시 켜졌다
+  }
+  setInterval(() => { if (connected && !document.hidden && !behind()) void loadFamily(); }, 5000);
+  /** 주소가 가리키는 세션을 열 수 없다 — 그 세션을 열지 않고 사유와 메인 세션 링크를 보인다. 다른 세션으로 말없이 옮기지 않는다 */
+  function refuseSession(id, me) {
+    setState('exited');
+    if (!me) pill.textContent = '열 수 없음'; // 그 세션이 끝난 것이 아니다
+    if (refused === id) return; // 다시 붙을 때마다 쌓이지 않게
+    refused = id;
+    const main = family.sessions.find((s) => s.id === family.main);
+    push(h('div', { class: 'meta err fam-refused' }, me ? `꺼진 세션입니다: ${famName(me)}` : `이 화면에서 열 수 없는 세션입니다: ${id}`, ' ', main ? famGo(main, 'fam-back', `메인 세션 열기 (${famName(main)})`) : null));
+  }
+
   function renderSide() {
     renderStat(); // 남은 시간도 사이드바를 다시 그릴 때 같이 다시 잰다
     side.innerHTML = '';
@@ -1320,7 +1373,13 @@ export function mountAgentFront(root, transport, opts = {}) {
         const si = await rpc('server.info');
         settingsUi.version(document.documentElement.dataset.version, si.version);
         const id = opts.sessionId ?? current ?? si.session;
+        await loadFamily();
+        if (page.kind === 'web' && family) {
+          const me = family.sessions.find((s) => s.id === id);
+          if (!me?.live) { refuseSession(id, me); return; }
+        }
         await attach(id);
+        paintFamily();
       } catch (e) { push(h('div', { class: 'meta err' }, e.message)); }
       finally { boot(null); }
     }
@@ -1476,9 +1535,9 @@ export function mountAgentFront(root, transport, opts = {}) {
   // superlite 우선 단축키는 카드 문서의 전달 스크립트가 window capture 에서 먼저 받아 전파를 끊으므로 여기 오지 않는다
   const typingIn = (t) => t instanceof Element && t.closest('input, textarea, select, [contenteditable]:not([contenteditable=false]), dialog, [popover]');
   const canTake = () => !input.disabled && !composer.hidden && !el.querySelector('.menu:popover-open:not(.slash)');
-  document.addEventListener('keydown', (e) => { if (e.key !== 'Escape' && !['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) esc.reset(); }, true);
+  document.addEventListener('keydown', (e) => { if (!behind() && e.key !== 'Escape' && !['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) esc.reset(); }, true);
   document.addEventListener('keydown', (e) => {
-    if (e.defaultPrevented || e.isComposing || typingIn(e.target) || !canTake()) return;
+    if (behind() || e.defaultPrevented || e.isComposing || typingIn(e.target) || !canTake()) return;
     if (e.key === 'Escape') { onEscape(); return; }
     const mod = e.ctrlKey || e.metaKey || e.altKey;
     const char = e.key.length === 1 && e.key !== ' ' && (!mod || e.getModifierState('AltGraph'));
@@ -1495,5 +1554,13 @@ export function mountAgentFront(root, transport, opts = {}) {
   });
   for (const t of ['keydown', 'input', 'mousedown', 'blur']) input.addEventListener(t, () => input.classList.remove('parked'));
   renderSide();
-  return { rpc, get sessionId() { return current; } };
+  return {
+    rpc, get sessionId() { return current; },
+    /** 숨겨 둔 화면이 다시 보인다 — 사이드바는 열림 기억을 따르고, 목록을 새로 받고(숨은 동안은 받지 않는다), 입력창으로 */
+    shown() {
+      el.classList.toggle('side-open', store.get(SIDE_KEY) === 'open');
+      void loadFamily();
+      if (!input.disabled) input.focus({ preventScroll: true });
+    },
+  };
 }

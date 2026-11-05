@@ -60,9 +60,11 @@
   --acf-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, "Noto Sans KR", Roboto, sans-serif;
 }
 html, body { margin: 0; height: 100%; background: var(--acf-bg); }
-#root { height: 100%; container-type: inline-size; } /* 좁은 화면 기준은 창이 아니라 이 컨테이너 폭 — superlite 카드 안에서는 카드 폭 (ticket agent-plugin-card) */
+#root { position: relative; height: 100%; container-type: inline-size; } /* 좁은 화면 기준은 창이 아니라 이 컨테이너 폭 — superlite 카드 안에서는 카드 폭 (ticket agent-plugin-card) */
 
 /* 헤더 한 줄 + 본문, 사이드바는 열었을 때만 오른쪽 칸 (사용자 2026-10-13) */
+.session-slot { position: absolute; inset: 0; } /* 웹의 세션 화면 하나. 숨겨도 레이아웃을 유지해 스크롤이 그대로다 (index.html, ticket slcode-web-session-url) */
+.session-slot[inert] { visibility: hidden; }
 .acf { font: 15px/1.55 var(--acf-sans); color: var(--acf-fg); background: var(--acf-bg); height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); grid-template-columns: minmax(0, 1fr); min-height: 320px; }
 .acf.side-open { grid-template-columns: minmax(0, 1fr) 300px; }
 .acf * { box-sizing: border-box; }
@@ -83,6 +85,17 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 /* 헤더 — 세션 이름·상태 … 세션 종료·사이드바 버튼. 왼쪽 레일(2026-09-27)에서 옮겼고 폭이 좁아도 숨지 않는다, 이름만 잘린다 (사용자 2026-10-13) */
 .acf > .hdr { grid-row: 1; grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; padding: 6px 10px 6px 16px; border-bottom: 1px solid var(--acf-line); min-width: 0; }
 .acf .hdr .gap { flex: 1; }
+.acf .fam-chip { flex: none; border: 1px solid var(--acf-line); border-radius: 999px; background: transparent; color: var(--acf-muted); padding: 1px 9px; font-size: 12px; cursor: pointer; }
+.acf .fam-chip:hover { background: var(--acf-soft); }
+.acf .fam-back { color: var(--acf-accent); text-decoration: none; }
+.acf .fam-back:hover { text-decoration: underline; }
+.acf .fam-row { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 8px; color: inherit; text-decoration: none; font-size: 13px; min-width: 0; }
+.acf .fam-row:hover { background: var(--acf-soft); }
+.acf .fam-row.cur { font-weight: 600; background: var(--acf-soft); }
+.acf .fam-row.off { color: var(--acf-muted); }
+.acf .fam-indent { flex: none; }
+.acf .fam-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acf .fam-tag { flex: none; font-size: 11px; color: var(--acf-muted); border: 1px solid var(--acf-line); border-radius: 6px; padding: 0 5px; }
 .acf .hdr .pill { flex: none; }
 .acf .hdr .boot { flex: none; font-family: var(--acf-mono); font-size: 12px; color: var(--acf-muted); white-space: nowrap; }
 .acf .hdr .title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
@@ -401,7 +414,7 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .composer button.add svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 .acf button.pill-btn { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 3px 8px 3px 10px; border-radius: 8px; background: var(--acf-soft); color: var(--acf-fg); }
 .acf button.pill-btn svg { width: 14px; height: 14px; fill: none; stroke: var(--acf-muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.acf #acf-models { min-width: 260px; }
+.acf .menu.acf-models { min-width: 260px; }
 /* 첫 메시지 전 시작 프로필 고르기 — 빈 채팅창 가운데 (ticket slcode-session-profile) */
 .acf .hero { max-width: 560px; margin: 18vh auto 0; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .acf .hero[hidden] { display: none; }
@@ -415,31 +428,31 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .hero-note { font-size: 11px; color: var(--acf-muted); }
 .acf .hero-back { font-size: 12px; margin-bottom: 10px; }
 /* 모델 메뉴 맨 위 벤더 토글 — 첫 메시지 뒤엔 지금 벤더만 칠한 채 흐리게 (ticket slcode-vendor-model-picker) */
-.acf #acf-models .vendor { display: flex; gap: 2px; padding: 2px; margin-bottom: 6px; border-radius: 8px; background: var(--acf-soft); }
-.acf #acf-models .vendor .seg { flex: 1; border: 0; padding: 5px 0; border-radius: 6px; background: transparent; color: var(--acf-muted); font-size: 13px; }
-.acf #acf-models .vendor .seg[aria-pressed=true] { background: var(--acf-panel); color: var(--acf-fg); box-shadow: 0 1px 2px var(--acf-shadow); }
-.acf #acf-models .vendor.locked { opacity: .5; }
-.acf #acf-models .vendor.locked .seg { cursor: default; }
-.acf #acf-models .note { padding: 7px 10px; color: var(--acf-muted); }
-.acf #acf-models .effort { border-top: 1px solid var(--acf-line); margin-top: 4px; padding: 10px 8px 8px; }
-.acf #acf-models .effort .lbl { text-align: center; text-transform: capitalize; font-size: 15px; margin-bottom: 10px; }
-.acf #acf-models .effort .track { position: relative; height: 32px; }
-.acf #acf-models .effort input[type=range] { position: absolute; inset: 0; width: 100%; margin: 0; -webkit-appearance: none; appearance: none; background: transparent; cursor: pointer; z-index: 1; }
-.acf #acf-models .effort input[type=range]::-webkit-slider-runnable-track { height: 32px; border-radius: 16px; background: linear-gradient(to right, var(--acf-accent) var(--p), var(--acf-soft) var(--p)); }
-.acf #acf-models .effort input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 32px; height: 32px; border-radius: 50%; background: #fff; border: 0; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
-.acf #acf-models .effort input[type=range]::-moz-range-track { height: 32px; border-radius: 16px; background: var(--acf-soft); }
-.acf #acf-models .effort input[type=range]::-moz-range-progress { height: 32px; border-radius: 16px; background: var(--acf-accent); }
-.acf #acf-models .effort input[type=range]::-moz-range-thumb { width: 32px; height: 32px; border-radius: 50%; background: #fff; border: 0; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
+.acf .menu.acf-models .vendor { display: flex; gap: 2px; padding: 2px; margin-bottom: 6px; border-radius: 8px; background: var(--acf-soft); }
+.acf .menu.acf-models .vendor .seg { flex: 1; border: 0; padding: 5px 0; border-radius: 6px; background: transparent; color: var(--acf-muted); font-size: 13px; }
+.acf .menu.acf-models .vendor .seg[aria-pressed=true] { background: var(--acf-panel); color: var(--acf-fg); box-shadow: 0 1px 2px var(--acf-shadow); }
+.acf .menu.acf-models .vendor.locked { opacity: .5; }
+.acf .menu.acf-models .vendor.locked .seg { cursor: default; }
+.acf .menu.acf-models .note { padding: 7px 10px; color: var(--acf-muted); }
+.acf .menu.acf-models .effort { border-top: 1px solid var(--acf-line); margin-top: 4px; padding: 10px 8px 8px; }
+.acf .menu.acf-models .effort .lbl { text-align: center; text-transform: capitalize; font-size: 15px; margin-bottom: 10px; }
+.acf .menu.acf-models .effort .track { position: relative; height: 32px; }
+.acf .menu.acf-models .effort input[type=range] { position: absolute; inset: 0; width: 100%; margin: 0; -webkit-appearance: none; appearance: none; background: transparent; cursor: pointer; z-index: 1; }
+.acf .menu.acf-models .effort input[type=range]::-webkit-slider-runnable-track { height: 32px; border-radius: 16px; background: linear-gradient(to right, var(--acf-accent) var(--p), var(--acf-soft) var(--p)); }
+.acf .menu.acf-models .effort input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 32px; height: 32px; border-radius: 50%; background: #fff; border: 0; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
+.acf .menu.acf-models .effort input[type=range]::-moz-range-track { height: 32px; border-radius: 16px; background: var(--acf-soft); }
+.acf .menu.acf-models .effort input[type=range]::-moz-range-progress { height: 32px; border-radius: 16px; background: var(--acf-accent); }
+.acf .menu.acf-models .effort input[type=range]::-moz-range-thumb { width: 32px; height: 32px; border-radius: 50%; background: #fff; border: 0; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
 /* 단계 점: 트랙 위에 n 개, 엄지 폭만큼 안쪽으로 */
-.acf #acf-models .effort .track i { position: absolute; top: 14px; width: 4px; height: 4px; border-radius: 50%; background: var(--acf-muted); opacity: .6; pointer-events: none; z-index: 2; }
+.acf .menu.acf-models .effort .track i { position: absolute; top: 14px; width: 4px; height: 4px; border-radius: 50%; background: var(--acf-muted); opacity: .6; pointer-events: none; z-index: 2; }
 .acf .menu { position: fixed; margin: 0; inset: auto; min-width: 220px; max-height: 70vh; overflow-y: auto; padding: 6px; border: 1px solid var(--acf-line); border-radius: 12px; background: var(--acf-panel); color: var(--acf-fg); box-shadow: 0 8px 24px var(--acf-shadow); font: 14px/1.4 var(--acf-sans); }
 .acf .menu .item { display: flex; justify-content: space-between; align-items: center; width: 100%; text-align: left; border: 0; background: transparent; padding: 7px 10px; border-radius: 8px; }
 .acf .menu .item:hover { background: var(--acf-soft); }
 .acf .menu .item[aria-checked=true]::after { content: "✓"; color: var(--acf-accent); }
 /* 권한 모드 메뉴 — 항목 앞에 모드 아이콘 (사용자 2026-10-24) */
-#acf-mode .item { justify-content: flex-start; gap: 10px; }
-#acf-mode .item::after { margin-left: auto; padding-left: 12px; }
-#acf-mode .item svg { width: 16px; height: 16px; flex: none; fill: none; stroke: var(--acf-muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.acf .menu.acf-mode .item { justify-content: flex-start; gap: 10px; }
+.acf .menu.acf-mode .item::after { margin-left: auto; padding-left: 12px; }
+.acf .menu.acf-mode .item svg { width: 16px; height: 16px; flex: none; fill: none; stroke: var(--acf-muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .acf .menu .item.toggle { border-top: 1px solid var(--acf-line); border-radius: 0; margin-top: 4px; padding-top: 10px; color: var(--acf-muted); }
 .acf .menu .item.toggle::after { content: "›"; }
 .acf .menu .more { display: none; } .acf .menu .more.open { display: block; }
@@ -523,8 +536,8 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf dialog.settings .dual .tip.hi { left: var(--r); }
 .acf dialog.settings .dual input.lo:is(:hover, :active, :focus-visible) ~ .tip.lo, .acf dialog.settings .dual input.hi:is(:hover, :active, :focus-visible) ~ .tip.hi { opacity: 1; }
 /* 권한 모드 메뉴 (agent-core-claude-finish) — 이름 뒤에 흐린 설명, 체크는 맨 뒤 */
-.acf #acf-mode .item { gap: 12px; }
-.acf #acf-mode .item .desc { flex: 1; color: var(--acf-muted); font-size: 12px; }
+.acf .menu.acf-mode .item { gap: 12px; }
+.acf .menu.acf-mode .item .desc { flex: 1; color: var(--acf-muted); font-size: 12px; }
 /* 슬래시 명령 자동완성 (agent-core-claude-finish) — 한 항목 한 줄: 이름은 고정폭으로 앞, 설명은 흐리게 뒤에서 잘린다 */
 .acf .menu.slash .item { justify-content: flex-start; gap: 12px; min-width: 0; padding: 5px 10px; }
 .acf .menu.slash .item[aria-selected=true] { background: var(--acf-soft); }

@@ -17,5 +17,5 @@ export fn startPageHtml(dir, kind, cwd, inline) -> String {
   role: start.html 에 withPageAttrs(테마·버전·입구)와 data-start(web|card)·data-cwd 를 넣는다. inline 이면 style.css·plugins.js·start.js 를 넣어 주소 없이 돈다 (카드 iframe srcdoc — 상대 경로가 풀릴 주소가 없다). plugins.js 는 export 를 떼고 globalThis.slcodePlugins 로 건넨다 — start.js 가 import 대신 그것을 쓴다
 }
 export fn startServer(dir, cwd) -> StartServer {
-  role: 웹 입구의 시작 화면 서버 (루프백 웹만 — loopbackAllowed 로 같은 PC 의 다른 사이트를 403). GET / 는 화면, style.css·start.js·plugins.js 는 web/ 의 것. POST api/<PLUGIN_METHODS>(에이전트 플러그인 관리 — pluginMethod, ticket slcode-agent-plugin-ui; 카드 시작 화면은 플러그인이 slcode.start.plugins.* 를 `slcode start-call` 로 중계한다)·api/list(startList)·api/go({new: true} 새 세션, {resume} 그 폴더의 꺼진 세션 — chosen 을 그것으로 풀고, 두 번째부터는 무시). 응답은 모두 connection close — 고른 뒤 새로 고친 화면이 새 연결로 세션 serve 에 닿게
+  role: 웹 입구의 시작 화면 서버 (루프백 웹만 — loopbackAllowed 로 같은 PC 의 다른 사이트를 403). GET / 는 화면, style.css·start.js·plugins.js 는 web/ 의 것, 세션 주소 /s/<id> 는 / 로 돌린다. POST api/<PLUGIN_METHODS>(에이전트 플러그인 관리 — pluginMethod, ticket slcode-agent-plugin-ui; 카드 시작 화면은 플러그인이 slcode.start.plugins.* 를 `slcode start-call` 로 중계한다)·api/list(startList)·api/go({new: true} 새 세션, {resume} 그 폴더의 꺼진 세션 — chosen 을 그것으로 풀고, 두 번째부터는 무시). 응답은 모두 connection close — 고른 뒤 새로 고친 화면이 새 연결로 세션 serve 에 닿게
 }

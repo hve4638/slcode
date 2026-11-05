@@ -3,6 +3,7 @@
 // 카드 화면·사이드바와는 메모리를 함께 쓰지 않는다 — 화면이 post 로 보낸 {type} 을 받고 views.post 로 돌려준다:
 //   카드 → tab(이 창의 탭 id 를 알림)·count(목록 다시 세기)·moveOut(핸드오프 — 옛 카드를 옮겨진 카드로)
 //   사이드바 → refresh·open(id 또는 spawn {cwd}, 둘 다 없으면 시작 화면)·forceClose·goTo(다른 superlite 세션 탭의 카드로 {id, root})
+//   카드 → goto(같은 가족의 세션 카드로 {id})
 //   카드로 → revive(닫힌 세션의 카드를 다시 띄움)·close(세션 종료)·closing·closed·moveOut·seen(사이드바가 눌러 앞에 보였다), 사이드바로 → rows
 
 const VIEW = 'session';
@@ -25,12 +26,12 @@ export function activate(api) {
    *  tmux(요청자 터미널)가 있으면 새 카드는 그 deck 끝에 조용히 붙이고 포커스는 옮기지 않는다 (ticket slcode-new-card-no-focus, 사용자 2026-10-25 —
    *  orchestrate 가 워커 카드를 열 때마다 보던 카드에서 포커스가 빠져서. 2026-10-07 의 "그 카드로 포커스" 를 뒤집음). focus(사람이 친 slcode new)면
    *  superlite focus — 사용자가 그 순간 요청자 터미널을 보고 있을 때만 새 카드를 보인다 */
-  async function open({ key, id = null, spawn, pick, start, title, tmux, focus, seen } = {}) {
+  async function open({ key, id = null, spawn, pick, start, title, tmux, focus, seen, opener, reveal } = {}) {
     if (!key && id) key = await keyOf(id);
     key ??= newKey();
     const state = pick ? { key, id: null, pick } : start ? { key, id: null, start } : spawn ? { key, id: null, spawn } : { key, id, ...(seen ? { seen: true } : {}) };
     const at = { as: 'card', key, title: title ?? (pick ? PICK_NAME : start ? START_NAME : DEFAULT_NAME), preserve: true };
-    await api.views.open(VIEW, state, tmux ? { ...at, opener: tmux, end: true, ...(focus ? { focus: true } : {}) } : at);
+    await api.views.open(VIEW, state, { ...(tmux ? { ...at, opener: tmux, end: true, ...(focus ? { focus: true } : {}) } : at), ...(opener ? { opener, focus: true } : {}), ...(reveal ? { reveal: true } : {}) });
     if (id) void api.views.post({ type: 'revive', key }); // 닫힌 세션의 카드가 남아 있다 — 활성화만 하면 "세션이 닫혔습니다" 그대로라 다시 띄운다
   }
 
@@ -94,9 +95,9 @@ export function activate(api) {
   }
   /** 사이드바에서 누름 — 그 카드로 간다. 카드가 실제로 앞에 보였으면(지금 보는 카드가 그것) "봤다" 를 카드에 알린다. 다른 superlite 세션 탭에
    *  있는 카드는 그 탭 안에서만 앞에 놓여 화면이 옮겨 가지 않으므로 초록으로 남는다. 카드가 없던 세션은 새 카드가 붙은 뒤 스스로 알린다 */
-  async function openFromSidebar(id, tries = 1) {
+  async function openFromSidebar(id, tries = 1, at = {}) {
     const key = await keyOf(id);
-    await open({ id, ...(key ? {} : { seen: true }) });
+    await open({ id, ...at, ...(key ? {} : { seen: true }) });
     if (!key) return;
     for (let i = 0; i < tries; i++) {
       if (i) await new Promise((r) => setTimeout(r, 250));
@@ -126,6 +127,8 @@ export function activate(api) {
       case 'open': void (m.id ? openFromSidebar(m.id) : m.spawn?.cwd ? open({ spawn: { cwd: m.spawn.cwd } }) : openStart()).catch(fail); return;
       case 'forceClose': void forceClose(m.id); return;
       case 'goTo': void goTo(m.id, m.root).catch(fail); return;
+      // 카드 화면의 관련 세션 링크 (ticket slcode-web-session-url) — 사용자가 누른 동작이라 다른 superlite 세션 탭의 카드면 그 탭으로 옮긴다(reveal). 카드가 없으면 누른 카드 옆에
+      case 'goto': void openFromSidebar(m.id, 4, { opener: from.tabId, reveal: true }).catch(fail); return;
       case 'moveOut': void api.views.post({ type: 'moveOut', key: m.from }); return;
     }
   });
