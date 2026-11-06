@@ -16,15 +16,16 @@ const chrome = ['google-chrome', 'chromium', 'chromium-browser'].find((c) => { t
 /** headless Chrome 과 CDP 탭 하나. 뜨지 못하면 프로세스·프로필을 치우고 던진다 — 이 테스트는 그 경우 건너뛴다 */
 async function openChrome(bin: string) {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-chrome-'));
-  const proc = spawn(bin, ['--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const proc = spawn(bin, ['--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'], detached: true });
   let err = '';
   proc.stderr.setEncoding('utf8').on('data', (d: string) => { err += d; });
   let ws: WebSocket | undefined;
-  // 이미 끝난 프로세스엔 exit 가 다시 오지 않는다 — 기다리면 테스트 파일이 끝나지 않는다
+  // 이미 끝난 프로세스엔 exit 가 다시 오지 않는다 — 기다리면 테스트 파일이 끝나지 않는다.
+  // 프로세스 그룹째 끈다: 본체만 끄면 자식이 프로필에 계속 써서 CI 에서 rmSync 가 ENOTEMPTY 로 던졌다. 지우기는 실패해도 넘어간다
   const close = async () => {
     ws?.close();
-    if (proc.exitCode === null && proc.signalCode === null) { const out = new Promise((r) => proc.once('exit', r)); proc.kill(); await out; }
-    fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    if (proc.exitCode === null && proc.signalCode === null) { const out = new Promise((r) => proc.once('exit', r)); try { process.kill(-proc.pid!, 'SIGKILL'); } catch { proc.kill('SIGKILL'); } await out; }
+    try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch { /* 임시 폴더 — 남아도 테스트와 무관 */ }
   };
   try {
     const t0 = Date.now();
@@ -105,7 +106,8 @@ test('웹 세션 전환: 페이지를 새로 읽지 않고 바뀌고, 숨은 화
     assert.equal(await b.ev(`${visible}.querySelector('.menu.acf-mode').matches(':popover-open')`), true, '보이는 화면의 메뉴');
     assert.equal(await b.ev(`document.querySelector('.session-slot[inert] .menu.acf-mode').matches(':popover-open')`), false);
   } finally {
-    await b.close();
+    // 정리 하나가 던져도 나머지를 닫는다 — 남은 연결이 있으면 파일이 끝나지 않고, 본래 실패도 가려진다
+    await b.close().catch(() => {});
     const gone = owner.done;
     owner.request('session.close', { id: kid.id }).catch(() => {});
     await gone;
