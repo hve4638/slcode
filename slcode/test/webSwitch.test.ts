@@ -13,30 +13,53 @@ import { spawnCore } from '../src/live.ts';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const chrome = ['google-chrome', 'chromium', 'chromium-browser'].find((c) => { try { execFileSync('which', [c], { stdio: 'ignore' }); return true; } catch { return false; } });
 
+/** headless Chrome 과 CDP 탭 하나. 뜨지 못하면 프로세스·프로필을 치우고 던진다 — 이 테스트는 그 경우 건너뛴다 */
 async function openChrome(bin: string) {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-chrome-'));
   const proc = spawn(bin, ['--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
   let err = '';
   proc.stderr.setEncoding('utf8').on('data', (d: string) => { err += d; });
-  const t0 = Date.now();
-  let browserWs = '';
-  while (!browserWs && Date.now() - t0 < 15000) { browserWs = /DevTools listening on (ws:\S+)/.exec(err)?.[1] ?? ''; await sleep(50); }
-  assert.ok(browserWs, 'chrome did not start');
-  const base = new URL(browserWs); base.protocol = 'http:'; base.pathname = '';
-  const target = await (await fetch(`${base.origin}/json/new?about:blank`, { method: 'PUT' })).json() as { webSocketDebuggerUrl: string };
-  const ws = new WebSocket(target.webSocketDebuggerUrl);
-  await new Promise((r) => { ws.onopen = r; });
-  let n = 0;
-  const wait = new Map<number, (m: any) => void>();
-  ws.onmessage = (e) => { const m = JSON.parse(String(e.data)); if (m.id && wait.has(m.id)) { wait.get(m.id)!(m); wait.delete(m.id); } };
-  const send = (method: string, params: unknown = {}) => new Promise<any>((r) => { const id = ++n; wait.set(id, r); ws.send(JSON.stringify({ id, method, params })); });
-  const ev = async (expression: string) => (await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })).result.result?.value;
-  const until = async (expression: string, what: string) => { const t = Date.now(); while (Date.now() - t < 15000) { if (await ev(expression)) return; await sleep(30); } assert.fail(`timed out: ${what}`); };
-  await send('Page.enable'); await send('Runtime.enable');
-  return { send, ev, until, close: async () => { ws.close(); const out = new Promise((r) => proc.once('exit', r)); proc.kill(); await out; fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } };
+  let ws: WebSocket | undefined;
+  // 이미 끝난 프로세스엔 exit 가 다시 오지 않는다 — 기다리면 테스트 파일이 끝나지 않는다
+  const close = async () => {
+    ws?.close();
+    if (proc.exitCode === null && proc.signalCode === null) { const out = new Promise((r) => proc.once('exit', r)); proc.kill(); await out; }
+    fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  };
+  try {
+    const t0 = Date.now();
+    let browserWs = '';
+    while (!browserWs && proc.exitCode === null && Date.now() - t0 < 15000) { browserWs = /DevTools listening on (ws:\S+)/.exec(err)?.[1] ?? ''; await sleep(50); }
+    if (!browserWs) throw new Error(`chrome did not start (exit ${proc.exitCode}): ${err.trim().slice(-400)}`);
+    const base = new URL(browserWs); base.protocol = 'http:'; base.pathname = '';
+    const target = await (await fetch(`${base.origin}/json/new?about:blank`, { method: 'PUT', signal: AbortSignal.timeout(15000) })).json() as { webSocketDebuggerUrl: string };
+    const sock = new WebSocket(target.webSocketDebuggerUrl);
+    ws = sock;
+    await new Promise((r, j) => { sock.onopen = r; sock.onerror = () => j(new Error('cdp socket did not open')); });
+    let n = 0;
+    const wait = new Map<number, (m: any) => void>();
+    sock.onmessage = (e) => { const m = JSON.parse(String(e.data)); if (m.id && wait.has(m.id)) { wait.get(m.id)!(m); wait.delete(m.id); } };
+    // 응답이 끊겨도 finally 의 정리까지 가도록 호출마다 시한을 둔다
+    const send = (method: string, params: unknown = {}) => new Promise<any>((r, j) => {
+      const id = ++n;
+      const timer = setTimeout(() => { wait.delete(id); j(new Error(`cdp ${method} timed out`)); }, 15000);
+      wait.set(id, (m) => { clearTimeout(timer); r(m); });
+      sock.send(JSON.stringify({ id, method, params }));
+    });
+    const ev = async (expression: string) => (await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })).result.result?.value;
+    const until = async (expression: string, what: string) => { const t = Date.now(); while (Date.now() - t < 15000) { if (await ev(expression)) return; await sleep(30); } assert.fail(`timed out: ${what}`); };
+    await send('Page.enable'); await send('Runtime.enable');
+    return { send, ev, until, close };
+  } catch (e) {
+    await close();
+    throw e;
+  }
 }
 
-test('웹 세션 전환: 페이지를 새로 읽지 않고 바뀌고, 숨은 화면은 키 입력·포커스·활동 신호에 끼어들지 않는다', { skip: !chrome && 'chrome 없음' }, async () => {
+test('웹 세션 전환: 페이지를 새로 읽지 않고 바뀌고, 숨은 화면은 키 입력·포커스·활동 신호에 끼어들지 않는다', { skip: !chrome && 'chrome 없음' }, async (t) => {
+  // 세션보다 먼저 띄운다 — 못 뜨면 열어 둔 core·연결 없이 건너뛴다 (CI 에서 열린 연결이 남아 파일이 끝나지 않았다)
+  const b = await openChrome(chrome!).catch((e: Error) => e);
+  if (b instanceof Error) { t.skip(b.message); return; }
   process.env.SLCODE_GRACE_SECS = '30';
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-switch-'));
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
@@ -44,7 +67,6 @@ test('웹 세션 전환: 페이지를 새로 읽지 않고 바뀌고, 숨은 화
   const kid = await spawnCore({ dir, cwd: work, title: 'kid', parent: { id: h.session.id, kind: 'child' } });
   const owner = await connectSession(kid.sock);
   await owner.request('core.own', { pid: process.pid, follows: true });
-  const b = await openChrome(chrome!);
   try {
     // 화면이 보낸 프레임을 연결 주소와 함께 남긴다 — 숨은 화면의 활동 신호를 보려고
     await b.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__sent = []; { const s = WebSocket.prototype.send; WebSocket.prototype.send = function (d) { window.__sent.push([this.url, String(d)]); return s.call(this, d); }; }` });
