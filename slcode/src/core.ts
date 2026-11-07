@@ -17,9 +17,11 @@ import { CodexSession, codexRunnable } from './codex.js';
 import { PARAM_ENV, sessionEnvError, sessionParamsError, type AgentSession, type Command } from './base.js';
 import { EventLog, historyPage, outline, promptTurns, summarize, type SessionMeta, type SessionParent } from './eventLog.js';
 import { isLoopback, reachable, sockAlive, spawnCore } from './live.js';
-import { BUILD, PKG, VERSION, replacingMark } from './client.js';
+import { BUILD, PKG, VERSION, replacing, replacingMark } from './client.js';
 import { corePaths, ensureDir, readOrCreateToken, sessionDir } from './paths.js';
 import { formatMail, newMail, parseMails, sendMail, sessionMeta } from './mail.js';
+import { Children } from './children.js';
+import { familyPrompt } from './prompt.js';
 import { blockInspect, CODEX_ROUTE, codexArgs, codexUpstream, inspectBlocked, inspectEnv, keepsFirstParty, sdkVersion, startInspect, turnCalls, upstreamOf, type InspectProxy } from './inspect.js';
 import { InspectStore, maybeSweep } from './inspectDb.js';
 import { Activity } from './activity.js';
@@ -155,8 +157,14 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   // 세션 인자(meta.params, ticket slcode-agent-plugin-part-when)는 SLCODE_PARAM_<이름> 으로 — 물려받은 SLCODE_PARAM_* 는 지운다. leader 세션 안에서 친 slcode new 의
   // core 는 leader 의 env 를 물려받으므로, 지우지 않으면 worker 의 훅이 leader 의 값을 읽는다 (사용자 2026-11-02)
   const params = logFile.meta.params ?? {};
-  const shell = Object.fromEntries(Object.entries(SDK_ENV).filter(([k]) => !k.toUpperCase().startsWith(PARAM_ENV)));
-  const env: NodeJS.ProcessEnv = withBinPath({ ...shell, ...logFile.meta.env, ...Object.fromEntries(Object.entries(params).map(([k, v]) => [PARAM_ENV + k, v])), SLCODE_SESSION_ID: logFile.meta.id }, PKG);
+  // 자식 세션 (ticket slcode-subagent-sessions, 사용자 결정 2026-11-07) — 부모 core 가 띄운 자식은 meta.parent {kind: child}. 자식은 다시 자식을 만들지 못하고(한 단계만),
+  // 그 밖의 세션은 SLCODE_EXPERIMENTAL_SUBAGENTS=1 로 떴을 때만 만들 수 있다 — 기능을 따로 다듬을 때까지 기본은 꺼 두고 모델이 부를 통로(지시문·spawnChild)를 막는다
+  // (사용자 2026-11-07). 띄울 때 읽는다 — 떠 있는 세션은 바뀌지 않는다.
+  // 자식의 벤더 env 에는 SLCODE_PARENT_ID(`slcode mail parent`) — 물려받은 값은 지운다
+  const parentId = logFile.meta.parent?.kind === 'child' ? logFile.meta.parent.id : null;
+  const subagents = !parentId && process.env.SLCODE_EXPERIMENTAL_SUBAGENTS === '1';
+  const shell = Object.fromEntries(Object.entries(SDK_ENV).filter(([k]) => !k.toUpperCase().startsWith(PARAM_ENV) && k !== 'SLCODE_PARENT_ID'));
+  const env: NodeJS.ProcessEnv = withBinPath({ ...shell, ...logFile.meta.env, ...Object.fromEntries(Object.entries(params).map(([k, v]) => [PARAM_ENV + k, v])), SLCODE_SESSION_ID: logFile.meta.id, ...(parentId ? { SLCODE_PARENT_ID: parentId } : {}) }, PKG);
   // inspect (ticket slcode-inspect-proxy·slcode-inspect-default-on) — 켜져 있으면 벤더를 띄우기 전에 proxy 를 세우고 벤더 env 의 ANTHROPIC_BASE_URL 을 그리로.
   // 기록은 세션 폴더 inspect/inspect.db. proxy 를 띄운 core 는 3일마다 상태 폴더의 꺼진 세션 raw 를 정리한다 (기록이 늘어나는 것은 proxy 가 떠 있을 때뿐)
   const inspectDir = path.join(logFile.dir, 'inspect');
@@ -235,8 +243,8 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   try { firstEnv = await vendorEnv(); firstArgs = await vendorArgs(); } catch (e) { logFile.updateMeta({ inspect: false }); inspectFailed = (e as Error).message; }
   if (inspectFailed && codex) firstArgs = codexBaseArgs();
   const session: AgentSession = codex
-    ? new CodexSession({ log: logFile, env: codexEnv(), permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, args: firstArgs, onConfig: (base) => gotBase(base), skillRoots: agent?.codex.roots ?? [], instructions: agent?.append ?? '' })
-    : new ClaudeSession({ log: logFile, env: firstEnv, resume: logFile.meta.vendorSessionId, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, ...(agent ? { agent } : {}), ...(load ? { load } : {}), ...(hooks ? { hooks: hooks.sdkHooks() } : {}) });
+    ? new CodexSession({ log: logFile, env: codexEnv(), permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, args: firstArgs, onConfig: (base) => gotBase(base), skillRoots: agent?.codex.roots ?? [], instructions: agent?.append ?? '', family: familyPrompt({ subagents, parent: parentId }) })
+    : new ClaudeSession({ log: logFile, env: firstEnv, resume: logFile.meta.vendorSessionId, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, ...(agent ? { agent } : {}), ...(load ? { load } : {}), ...(hooks ? { hooks: hooks.sdkHooks() } : {}), family: familyPrompt({ subagents, parent: parentId }) });
   // 연 표지를 열 때의 훅 기록보다 먼저 — 화면은 이것을 만나면 마지막 턴 뒤의 앞선 열 때 알림(바꾸기 전 프로필·벤더의 것 등)을 지운다
   session.opened(openSource);
   for (const ev of hookQueue ?? []) (session as ClaudeSession).emitHook(ev);
@@ -311,7 +319,8 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
 
   // ---- 디스패치 (UDS 연결마다 — CLI 동사, serve 의 중계 연결과 제어 연결)
   type Web = { host: string; port: number; url: string; version: string };
-  type Conn = { detach: (() => void) | null; send: (o: unknown) => void; ownerPid: number | null; web: Web | null; follows: boolean };
+  /** parent — 자식 세션의 부모 core 가 core.own {parent} 으로 붙은 소유 연결 */
+  type Conn = { detach: (() => void) | null; send: (o: unknown) => void; ownerPid: number | null; web: Web | null; follows: boolean; parent: boolean };
   const conns = new Set<Conn>();
   let owner: Conn | null = null;
   let closed = false;
@@ -335,12 +344,17 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       return { ok: true, pid: process.pid, protocol: PROTOCOL_VERSION, session: sid };
     },
     'core.own': (conn, p) => {
+      if (p?.parent && !parentId) throw new CoreError(ERR.badRequest, `session ${sid} is not a child session`);
       if (owner && owner !== conn) {
+        // 부모가 소유한 자식은 다른 연결이 가져가지 못한다(카드 핸드오프는 붙기만 한다), 부모 쪽은 사람이 따로 소유한 자식을 가져가지 못한다 (ticket slcode-subagent-sessions)
+        if (owner.parent && !p?.parent) throw new CoreError(ERR.parentOwned, `session ${sid} is a child session owned by its parent ${parentId}`);
+        if (!owner.parent && p?.parent) throw new CoreError(ERR.owned, `session ${sid} is owned by pid ${owner.ownerPid ?? '?'}, not by its parent`);
         if (!p?.takeover) throw new CoreError(ERR.owned, `session ${sid} is owned by pid ${owner.ownerPid ?? '?'}`);
         owner.send({ event: 'core.owner', params: { pid: p.pid ?? null } });
       }
-      owner = conn; conn.ownerPid = p?.pid ?? null; conn.follows = !!p?.follows;
+      owner = conn; conn.ownerPid = p?.pid ?? null; conn.follows = !!p?.follows; conn.parent = !!p?.parent;
       disarmOwnerGrace();
+      if (parentId) broadcast('session.changed', session.info()); // 잠김이 바뀌었을 수 있다
       return { ok: true };
     },
     'core.retire': async (conn, p) => {
@@ -530,6 +544,9 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       mine(p?.id);
       const m = p.mail;
       if (typeof m?.from !== 'string' || !m.from) throw new CoreError(ERR.badRequest, 'mail.from required');
+      // 잠긴 자식은 부모의 메시지만, 넘겨받은 자식은 부모의 메시지를 거절한다 (사용자 결정 2026-11-07)
+      if (parentId && locked() && m.from !== parentId) throw new CoreError(ERR.locked, lockedWhy());
+      if (parentId && logFile.meta.unlocked && m.from === parentId) throw new CoreError(ERR.unlocked, unlockedWhy());
       const mail = newMail({ id: typeof m.id === 'string' && /^[\w-]{1,40}$/.test(m.id) ? m.id : undefined, ts: Number(m.ts) || undefined, from: m.from, to: sid, kind: typeof m.kind === 'string' && m.kind ? m.kind : 'message', body: m.body ?? '', ...(m.re ? { re: String(m.re) } : {}), ...(m.via ? { via: String(m.via) } : {}) });
       take(mail);
       return { mailId: mail.id };
@@ -557,7 +574,74 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       if (!to) throw new CoreError(ERR.badRequest, `unknown mail ${p.re} — this session did not receive it (use: slcode mail <to> <text>)`);
       return sendMail(P.sessionsDir, to, { from: sid, kind: 'reply', body: String(p.text ?? ''), re: String(p.re) });
     },
+    // ---- 자식 세션 (ticket slcode-subagent-sessions, 사용자 결정 2026-11-07)
+    'session.spawnChild': async (_c, p) => {
+      const s = mine(p?.id);
+      if (parentId) throw new CoreError(ERR.badRequest, 'a child session cannot start child sessions (one level only)');
+      if (!subagents) throw new CoreError(ERR.subagentsDisabled, 'child sessions are off in this session (experimental: start it with SLCODE_EXPERIMENTAL_SUBAGENTS=1)');
+      if (typeof p.cwd !== 'string' || !path.isAbsolute(p.cwd)) throw new CoreError(ERR.badRequest, 'cwd must be an absolute folder');
+      if (p.vendor !== undefined && p.vendor !== 'claude' && p.vendor !== 'codex') throw new CoreError(ERR.badRequest, 'vendor claude|codex');
+      // 주지 않은 벤더·모델·effort·권한 모드는 부모를 따른다 — 모델·effort 는 벤더가 같을 때만 (사용자 결정 5-1·3)
+      const vendor = p.vendor ?? logFile.meta.vendor;
+      const same = vendor === logFile.meta.vendor;
+      const id = await children.spawn({
+        cwd: p.cwd, vendor, title: p.title, model: p.model ?? (same ? s.model ?? undefined : undefined), effort: p.effort ?? (same ? s.effort ?? undefined : undefined),
+        permissionMode: p.mode ?? logFile.meta.permissionMode ?? undefined, profile: p.profile, env: p.env, params: p.params, prompt: p.prompt, raw: opts.raw,
+        ...(logFile.meta.inspect ? { inspect: true } : {}),
+      });
+      return { id };
+    },
+    'session.childCall': async (_c, p) => {
+      mine(p?.id);
+      if (!['session.send', 'session.interrupt', 'session.approve', 'session.close'].includes(p.method)) throw new CoreError(ERR.badRequest, `${p.method} is not a child instruction`);
+      // 부모 모델은 질문에만 답한다 — 도구 승인은 사람이 화면에서 (사용자 결정 3)
+      if (p.method === 'session.approve') {
+        const req = children.pendingOf(p.child, p.params?.requestId);
+        if (req && req.name !== 'AskUserQuestion') throw new CoreError(ERR.badRequest, `${req.requestId} is a tool approval (${req.name}) — the user answers it in the screen, not the parent session`);
+      }
+      return children.call(p.child, p.method, p.params ?? {});
+    },
+    'session.childApprove': async (_c, p) => {
+      mine(p?.id);
+      if (p.decision !== 'allow' && p.decision !== 'deny') throw new CoreError(ERR.badRequest, 'decision allow|deny');
+      return children.call(p.child, 'session.approve', { requestId: p.requestId, decision: p.decision, ...(p.updatedInput ? { updatedInput: p.updatedInput } : {}) }) as Promise<{ ok: boolean }>;
+    },
+    'session.children': (_c, p) => { mine(p?.id); return { children: children.list() }; },
+    'session.unlock': (_c, p) => { mine(p?.id); setUnlocked(true); return { ok: true }; },
+    'session.lock': (_c, p) => { mine(p?.id); setUnlocked(false); return { ok: true }; },
   };
+  // ---- 자식 세션의 잠김 (ticket slcode-subagent-sessions, 사용자 결정 2026-11-07) — 부모가 소유하는 동안(소유자 유예 중 포함) 화면·CLI 의 지시를 받지 않는다.
+  // 사람이 따로 소유하면(부모 없이 resume) 잠기지 않는다. "강제로 풀기"(meta.unlocked) 뒤에는 반대로 부모의 지시를 거절한다. 도구 승인과 닫기는 잠김과 상관없다
+  const locked = () => !!parentId && !logFile.meta.unlocked && (!owner || owner.parent);
+  const lockedWhy = () => `session ${sid} is a child session controlled by its parent ${parentId} — unlock it in its screen (강제로 풀기) to give it instructions yourself`;
+  const unlockedWhy = () => `the user took over child session ${sid} (unlocked it) — instructions from the parent are refused until the user locks it again`;
+  session.extraInfo = () => ({ ...(parentId ? { locked: locked() } : {}), subagents });
+  function setUnlocked(on: boolean) {
+    if (!parentId) throw new CoreError(ERR.badRequest, `session ${sid} is not a child session`);
+    if (on === !!logFile.meta.unlocked) return;
+    logFile.updateMeta({ unlocked: on ? true : undefined });
+    broadcast('session.changed', session.info());
+    tellParent(on ? 'unlocked' : 'locked', on
+      ? 'The user unlocked this child session and took it over. Your instructions to it are refused, and its turns are not reported to you, until the user locks it again.'
+      : 'The user locked this child session again. It takes your instructions again.');
+  }
+  /** 부모에게 메시지 — 부모가 꺼졌으면 그만 */
+  function tellParent(kind: string, body: string) {
+    if (!parentId) return;
+    sendMail(P.sessionsDir, parentId, { from: sid, kind, body }).catch((e) => log(`could not tell the parent (${kind}): ${(e as Error).message}`));
+  }
+  /** 부모가 지시하는 메서드 — 잠긴 동안 부모 밖의 연결은 거절, 넘겨받은 동안 부모는 거절 */
+  const LOCKED_METHODS = new Set(['session.send', 'session.interrupt', 'session.setModel', 'session.setEffort', 'session.setVendor', 'session.setProfile', 'session.setMode', 'session.rewind']);
+  function gate(conn: Conn, method: string) {
+    if (!parentId) return;
+    if (LOCKED_METHODS.has(method) && locked() && !conn.parent) throw new CoreError(ERR.locked, lockedWhy());
+    if (conn.parent && logFile.meta.unlocked && (LOCKED_METHODS.has(method) || method === 'session.approve')) throw new CoreError(ERR.unlocked, unlockedWhy());
+  }
+  const children = new Children({
+    dir: P.dir, sessionsDir: P.sessionsDir, parent: sid, log,
+    changed: () => broadcast('session.children', { id: sid, children: children.list() }),
+    exited: (id, reason) => take(newMail({ from: id, to: sid, kind: 'closed', body: `Child session ${id} ended (${reason}) without this session closing it.` })),
+  });
   function broadcast(event: string, params: unknown) { for (const c of conns) c.send({ event, params }); }
 
   // ---- 에이전트 플러그인 다시 싣기 (ticket slcode-agent-plugin) — 링크를 지금 설정의 빌드로 바꾸고 SDK reloadPlugins(). 결과는 plugins.reloaded 이벤트로.
@@ -597,6 +681,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     try {
       const h = (handlers as Record<string, Handler<MethodName>>)[msg.method];
       if (!h) throw new CoreError(ERR.badRequest, `unknown method ${msg.method}`);
+      gate(conn, msg.method);
       conn.send({ id: msg.id, result: await h(conn, msg.params as never) });
     } catch (e) {
       conn.send({ id: msg.id, error: { code: e instanceof CoreError ? e.code : 'error', message: e instanceof Error ? e.message : String(e) } });
@@ -608,16 +693,33 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   session.onEvent((e) => {
     if (e.ev.kind === 'session.state') broadcast('session.changed', session.info());
     if (e.ev.kind === 'session.state' && (e.ev.state === 'idle' || e.ev.state === 'starting')) { drainWaiting(); flushMail(); }
+    if (parentId) reportToParent(e);
     if (e.ev.kind === 'session.exit') { broadcast('session.closed', { id: sid, reason: e.ev.reason }); const r = `session exited: ${e.ev.reason}`; if (closeFn) void closeFn(r); else earlyExit = r; }
     if (e.ev.kind === 'task') { if (e.ev.phase === 'ended') bg.delete(e.ev.taskId); else if (e.ev.background) bg.add(e.ev.taskId); }
     if (retire) setImmediate(maybeRetire); // idle 에서 밀린 메시지가 턴으로 들어갔는지 본 뒤에
   });
 
+  // ---- 자식의 보고 (사용자 결정 2026-11-07) — 잠긴 동안(부모가 소유) 턴이 끝나면 마지막 답 전체를 kind=result 로, 질문(AskUserQuestion)은 kind=question 으로 부모에게.
+  // 넘겨받은 동안의 턴은 보고하지 않는다. 도구 승인은 부모 화면이 소유 연결로 본다
+  function reportToParent(e: LoggedEvent) {
+    if (!locked()) return; // 부모가 소유하기 전(첫 프롬프트가 곧 끝난 턴)도 잠긴 것으로 — 부모는 그 사이에 소유한다
+    const ev = e.ev;
+    if (ev.kind === 'turn.end') {
+      const answer = lastAnswer(logFile.all);
+      const head = ev.ok ? '' : ev.interrupted ? '(the turn was interrupted)\n' : `(the turn failed: ${ev.error ?? 'unknown error'})\n`;
+      tellParent('result', `${head}${answer || '(no answer text)'}`);
+    } else if (ev.kind === 'approval.requested' && ev.name === 'AskUserQuestion') {
+      tellParent('question', `Request ${ev.requestId}: ${JSON.stringify(ev.input)}\nAnswer with: slcode respond ${sid} ${ev.requestId} --answer <text>`);
+    }
+  }
+
   // ---- 소유권 — 소유자가 없는 동안은 유예 시계가 돈다 (기동 직후, 소유자가 close 없이 끊긴 뒤)
   let ownerGrace: NodeJS.Timeout | null = null;
+  /** 자식의 부모 core 가 교체 중이다 — 새 부모 core 가 다시 소유할 때까지 유예를 늘린다 (교체는 소유자 유예보다 길 수 있다) */
+  const parentReplacing = () => { const m = parentId ? sessionMeta(P.sessionsDir, parentId) : null; return !!m && replacing(new EventLog(P.sessionsDir, m).sockPath); };
   function armOwnerGrace() {
     if (ownerGrace || closed) return;
-    ownerGrace = setTimeout(() => { ownerGrace = null; if (!owner) void close('owner gone'); }, OWNER_GRACE_MS);
+    ownerGrace = setTimeout(() => { ownerGrace = null; if (owner) return; if (parentReplacing()) armOwnerGrace(); else void close('owner gone'); }, OWNER_GRACE_MS);
   }
   function disarmOwnerGrace() { if (ownerGrace) { clearTimeout(ownerGrace); ownerGrace = null; } }
 
@@ -628,7 +730,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   const socks = new Set<net.Socket>();
   const uds = net.createServer((sock) => {
     socks.add(sock);
-    const conn: Conn = { detach: null, send: (o) => { if (!sock.destroyed) sock.write(JSON.stringify(o) + '\n'); }, ownerPid: null, web: null, follows: false };
+    const conn: Conn = { detach: null, send: (o) => { if (!sock.destroyed) sock.write(JSON.stringify(o) + '\n'); }, ownerPid: null, web: null, follows: false, parent: false };
     conns.add(conn);
     let buf = '';
     sock.setEncoding('utf8'); // 청크 경계에 걸린 한글이 깨지지 않게 — 웹·stdio 프레임이 모두 이 스트림을 거친다
@@ -691,6 +793,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     session.send(batch.map(renderMail).join('\n\n'), 'mail');
   }
   logFile.updateMeta({ pid: process.pid });
+  if (!parentId) void children.adoptLive(); // 교체 전의 core 가 띄운 켜진 자식
 
   // ---- 수명
   let resolveDone!: () => void;
@@ -705,6 +808,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     // 꺼진 시각은 먼저 — 벤더 종료가 길어 SIGKILL 을 맞아도 남는다
     try { logFile.updateMeta({ closedAt: Date.now() }); } catch { /* delete 가 세션 폴더를 먼저 지웠다 */ }
     for (const [id, w] of asks) { asks.delete(id); w.reject(new CoreError('closed', `session closed: ${reason}`)); }
+    children.closeAll(); // 부모가 닫히면 자식도 (사용자 결정 4-1)
     let deadline: NodeJS.Timeout | undefined;
     await Promise.race([session.close(reason), new Promise<void>((r) => { deadline = setTimeout(() => { log(`vendor did not close in ${CLOSE_DEADLINE_MS / 1000}s — leaving it`); r(); }, CLOSE_DEADLINE_MS); })]);
     clearTimeout(deadline);
@@ -748,6 +852,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     await Promise.race([session.close('replaced', true), new Promise<void>((r) => { deadline = setTimeout(() => { log(`vendor did not close in ${CLOSE_DEADLINE_MS / 1000}s — leaving it`); r(); }, CLOSE_DEADLINE_MS); })]);
     clearTimeout(deadline);
     await hooks?.close(); // 상태는 파일에 있다 — 새 core 가 이어 쓴다
+    children.release(); // 새 core 가 다시 소유한다 (Children.adoptLive)
     await inspect?.close();
     if (sweeper) clearInterval(sweeper);
     store?.close();
@@ -771,4 +876,18 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   if (earlyExit) { await close(earlyExit); throw new CoreError('vendor_exit', earlyExit); }
   armOwnerGrace();
   return { sock: sockPath, session: session.info(), close, done };
+}
+
+/** 마지막 턴의 답 — 본문(서브에이전트 밖)의 마지막 도구 뒤 글, 없으면 그 턴의 본문 글 전부 (자식 세션의 보고, ticket slcode-subagent-sessions) */
+function lastAnswer(events: readonly LoggedEvent[]): string {
+  let start = -1;
+  for (let i = events.length - 1; i >= 0; i--) if (events[i].ev.kind === 'turn.start') { start = i; break; }
+  if (start < 0) return '';
+  let all = '', tail = '';
+  for (const e of events.slice(start + 1)) {
+    const ev = e.ev;
+    if (ev.kind === 'text.delta' && !ev.parent) { all += ev.text; tail += ev.text; }
+    else if ((ev.kind === 'tool.start' || ev.kind === 'tool.end') && !ev.parent) tail = '';
+  }
+  return (tail.trim() || all).trim();
 }

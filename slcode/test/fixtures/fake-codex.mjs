@@ -72,6 +72,12 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
         notify('turn/completed', { threadId: thread.id, turn: { id: 't-1', status: 'failed', error: error('unexpected status 401 Unauthorized'), durationMs: 5, items: [] } });
         return;
       }
+      // 자식 세션 시험 (children.test.ts) — 메시지 턴은 승인을 묻지 않고 끝낸다. 부모가 승인 대기에 서 있으면 다음 메시지가 턴이 되지 않는다
+      if (process.env.FAKE_CODEX_MAIL_DONE && text.startsWith('<slcode-message')) {
+        notify('item/agentMessage/delta', { threadId: thread.id, turnId: 't-1', itemId: 'msg-1', delta: 'read' });
+        notify('turn/completed', { threadId: thread.id, turn: { id: 't-1', status: 'completed', error: null, durationMs: 1, items: [] } });
+        return;
+      }
       if (text === 'ws' || text === 'no-call') {
         wsTurn(text).then(() => {
           notify('item/agentMessage/delta', { threadId: thread.id, turnId: 't-1', itemId: 'msg-1', delta: 'done' });

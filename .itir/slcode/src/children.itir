@@ -1,0 +1,13 @@
+import { connectSession, BUILD, PKG } from './client'
+import { spawnCore, sockAlive } from './live'
+import { EventLog } from './eventLog'
+import { CoreError, ERR } from './protocol'
+import { sessionMeta } from './mail'
+
+role: 부모 core 쪽 자식 세션 (ticket slcode-subagent-sessions, 사용자 결정 2026-11-07). 부모 core 가 자식 core 를 spawnCore 로 띄우고(meta.parent {id: 부모, kind: child}) 그 소켓에 연결 하나를 붙여 소유한다 — core.own {parent: true, follows: true}. 자식의 수명은 이 연결이 정한다: 부모가 닫히면 closeAll 로 자식을 닫고(4-1), 부모 프로세스가 죽으면 연결이 끊겨 자식은 소유자 유예 뒤 닫힌다. 카드·웹은 자식을 보기만 한다. 같은 연결에 session.attach 를 걸어 자식의 대기 승인을 들고(부모 화면이 "서브 <이름>" 승인 줄로 보인다, 3A), 지시(send·interrupt·approve·close)는 이 연결로 중계한다 — 자식 core 는 잠긴 동안 이 연결의 요청만 받는다. 자식 core 가 교체되면(core.replaced) 다시 붙어 소유권을 다시 잡는다. 붙을 때 자식 core 가 이 부모보다 옛 빌드면 core.retire {pkg: PKG} 로 이 판으로 바꾼다(serve 교체가 메인에만 청하던 엣지). 부모 core 가 교체로 새로 뜨면 adoptLive 가 켜진 자식을 takeover 로 다시 소유한다 — 사람이 따로 소유한 자식(부모 없이 resume)은 자식 core 가 거절해 그대로 둔다. 자식이 부모의 요청 없이 끝나면 exited 로 알린다(부모 core 가 메시지로 모델에 알린다). 교체로 내려가는 부모는 release 로 알림 없이 놓는다.
+
+export class Children {
+  role: 부모 core 하나의 자식 표 — spawn(새 자식)·adoptLive(기동 때)·call(소유 연결로 중계, close 면 기대한 종료로 표시)·pendingOf·list(화면용 {id, title, pending})·closeAll·release
+}
+
+export type SpawnOptions

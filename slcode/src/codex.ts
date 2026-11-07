@@ -25,6 +25,8 @@ export type CodexOptions = {
   skillRoots?: string[];
   /** 에이전트 플러그인의 지시문 — 새 thread 의 developerInstructions 에서 SLCODE_PROMPT 뒤에 */
   instructions?: string;
+  /** 자식 세션 지시 (prompt.familyPrompt, ticket slcode-subagent-sessions) — SLCODE_PROMPT 바로 뒤에 */
+  family?: string;
 };
 
 /** Codex 는 비용을 주지 않는다 — 공식 가격표(USD / 1M 토큰: 입력·캐시 입력·출력, developers.openai.com 2026-10-09)로 추정한다.
@@ -215,7 +217,7 @@ export class CodexSession extends AgentSession {
         try { await this.request('skills/extraRoots/set', { extraRoots: this.opts.skillRoots }); }
         catch (e) { this.notice(`에이전트 플러그인 skill 을 싣지 못했습니다: ${(e as Error).message}`); }
       }
-      const developerInstructions = [SLCODE_PROMPT, this.opts.instructions?.trim()].filter(Boolean).join('\n\n');
+      const developerInstructions = [SLCODE_PROMPT, this.opts.family, this.opts.instructions?.trim()].filter(Boolean).join('\n\n');
       const pol = policyOf(this.mode);
       const base = { cwd: this.cwd, approvalPolicy: pol.approvalPolicy, approvalsReviewer: pol.approvalsReviewer, sandbox: sandboxModeOf(this.mode), ...(this.model ? { model: this.model } : {}) };
       let r: any = null;

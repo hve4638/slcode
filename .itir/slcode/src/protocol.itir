@@ -55,3 +55,4 @@ type InspectUsage
 type ActivityAgentState
 type ActivityRecord
 type ActivityResult
+export type ChildView

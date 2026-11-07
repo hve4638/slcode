@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { connectSession, diskBuild, type RpcClient } from './client.js';
-import { sendMail } from './mail.js';
+import { sendMail, sessionMeta } from './mail.js';
 import { EventLog } from './eventLog.js';
 import { corePaths, readOrCreateToken } from './paths.js';
 import { readSettings } from './settings.js';
@@ -82,7 +82,8 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
   respond <s> <req> --json '<updatedInput>'  입력 수정·여러 질문 등 복잡한 답
 메시지 (<to> 는 켜진 세션의 id 또는 제목 — 꺼진 세션에는 보내지 않는다)
   mail <to> <text> [--from X] [--re <id>]
-                                 보낸 이는 --from, 없으면 지금 세션, 세션 밖이면 unknown. --re 는 그 메시지의 답장으로
+                                 보낸 이는 --from, 없으면 지금 세션, 세션 밖이면 unknown. --re 는 그 메시지의 답장으로.
+                                 자식 세션 안에서 <to> 가 parent 면 부모 세션 (SLCODE_PARENT_ID)
 * check                          밀린 메시지를 지금 읽는다
 * ask <to> <text> [--timeout S]  묻고 답장을 기다린다
 * reply <id> <text>              받은 메시지에 답장
@@ -198,6 +199,47 @@ async function liveClient(s: string | undefined) {
   const log = openLog(s);
   try { return { client: await connectSession(log.sockPath), id: log.meta.id, log }; }
   catch { err(`session ${log.meta.id} is not live — slcode resume ${log.meta.id}`); process.exit(1); }
+}
+/** 세션 안에서 친 slcode new — 그 세션(부모)의 core 에 자식을 청한다 (ticket slcode-subagent-sessions, 사용자 결정 2026-11-07). 부모 core 가 띄우고 소유하므로
+ *  이 명령은 id 를 출력하고 바로 끝난다. superlite 안이면 그 터미널의 deck 끝에 자식 카드를 조용히 연다(보기만 하는 카드 — 못 열어도 자식은 돈다).
+ *  false 면 지금까지처럼 독립 세션: 세션 밖, --web·--stdio·--no-web·--host·--port, 부모가 자식 기능을 끈 세션, 자식 기능을 모르는 옛 core */
+async function newChild(cwd: string): Promise<boolean> {
+  const me = process.env.SLCODE_SESSION_ID;
+  if (!me || flags.web || flags.stdio || flags['no-web'] || flags.host !== undefined || flags.port !== undefined) return false;
+  const pm = sessionMeta(P.sessionsDir, me);
+  if (!pm) return false;
+  let client: RpcClient<Methods>;
+  try { client = await connectSession(new EventLog(P.sessionsDir, pm).sockPath); } catch { return false; }
+  let id: string;
+  try {
+    ({ id } = await client.request('session.spawnChild', {
+      id: me, cwd, title: flags.title, vendor: flags.vendor as 'claude' | 'codex' | undefined, model: flags.model, effort: flags.effort, mode: flags.mode, profile: flags.profile,
+      env: newEnv(), params: newParams(), prompt: firstPrompt,
+    }));
+  } catch (e) {
+    const { code, message } = e as { code?: string; message: string };
+    if (code === 'subagents_disabled' || /unknown method/.test(message)) return false;
+    err(message); process.exit(1);
+  } finally { client.close(); }
+  unused(['raw', 'no-inspect'], 'a child session follows its parent');
+  console.log(id);
+  if (process.env.SUPERLITE_SOCK) spawnSync('superlite', ['slcode.resume', '--id', id], { encoding: 'utf8' });
+  err(`child session ${id} started in ${cwd} — its answers come back to this session as messages (slcode close ${id} to stop it)`);
+  return true;
+}
+/** 이 세션(SLCODE_SESSION_ID)의 자식이면 부모 core 를 거쳐 지시한다 — 잠긴 자식은 부모의 소유 연결로 온 지시만 받는다. 자식이 아니면 null */
+async function viaParent(s: string | undefined, method: 'session.send' | 'session.interrupt' | 'session.approve' | 'session.close', params: Record<string, unknown> = {}): Promise<{ result: unknown } | null> {
+  const me = process.env.SLCODE_SESSION_ID;
+  if (!me) return null;
+  const child = resolve(s);
+  const m = sessionMeta(P.sessionsDir, child);
+  const pm = sessionMeta(P.sessionsDir, me);
+  if (m?.parent?.kind !== 'child' || m.parent.id !== me || !pm) return null;
+  let client: RpcClient<Methods>;
+  try { client = await connectSession(new EventLog(P.sessionsDir, pm).sockPath); } catch { return null; }
+  try { return { result: await client.request('session.childCall', { id: me, child, method, params }) }; }
+  catch (e) { err((e as Error).message); process.exit(1); }
+  finally { client.close(); }
 }
 /** close --force (사이드바 강제 종료, 사용자 2026-10-11) — session.close 를 보내고 3초 안에 소켓이 닫히지 않으면(멈춘 세션) core 가 meta 에 남긴 pid 를 SIGKILL.
  *  kill 은 serve 의 close 를 거치지 않으니 closedAt 을 여기서 남긴다 */
@@ -477,6 +519,7 @@ try {
       if (rest[0] === undefined) usage('new needs a folder: slcode new <folder> (slcode alone opens the start screen)');
       const cwd = folderArg(rest[0]);
       checkNew();
+      if (await newChild(cwd)) break;
       if (toCard()) newCard(cwd);
       await serve({ cwd });
       break;
@@ -566,7 +609,7 @@ try {
       const me = process.env.SLCODE_SESSION_ID ?? null;
       // 살아 있는 세션은 활동 기록의 지금 상태(state·stateSince·seen)도 — superlite 사이드바의 상태 점 (ticket slcode-sidebar-orca). 기록이 없으면 null
       const now = (m: (typeof stored)[number]) => { const a = summarize(new EventLog(P.sessionsDir, m).dir); return { state: a?.state ?? null, stateSince: a?.stateSince ?? null, seen: a?.seen ?? true }; };
-      const rows = stored.map((m) => ({ id: m.id, vendor: m.vendor, cwd: m.cwd, title: m.title, createdAt: m.createdAt, updatedAt: m.updatedAt ?? m.createdAt, closedAt: m.closedAt ?? null, live: live.has(m.id), pid: live.get(m.id) ?? null, ...(live.has(m.id) ? now(m) : {}), ...(m.id === me ? { me: true } : {}) }))
+      const rows = stored.map((m) => ({ id: m.id, vendor: m.vendor, cwd: m.cwd, title: m.title, createdAt: m.createdAt, updatedAt: m.updatedAt ?? m.createdAt, closedAt: m.closedAt ?? null, parent: m.parent ?? null, live: live.has(m.id), pid: live.get(m.id) ?? null, ...(live.has(m.id) ? now(m) : {}), ...(m.id === me ? { me: true } : {}) }))
         .sort((a, b) => a.updatedAt - b.updatedAt);
       print(flags.all ? rows : rows.filter((r) => r.live));
       break;
@@ -580,6 +623,8 @@ try {
     }
     case 'close': {
       if (flags.force) { print(await forceClose(openLog(rest[0]))); break; }
+      const child = await viaParent(rest[0], 'session.close');
+      if (child) { print(child.result); break; }
       const { client, id } = await liveClient(rest[0]); print(await client.request('session.close', { id })); client.close(); break;
     }
     case 'discard': { // 카드의 '시작 화면으로' — 시작 화면에서 연 빈 세션만 (live.discardSession)
@@ -594,8 +639,8 @@ try {
       print({ ok: true }); break;
     }
     // ---- 대화
-    case 'prompt': { if (!rest[1]) usage('prompt <s> <text>'); const { client, id } = await liveClient(rest[0]); print(await client.request('session.send', { id, text: rest.slice(1).join(' ') })); client.close(); break; }
-    case 'interrupt': { const { client, id } = await liveClient(rest[0]); print(await client.request('session.interrupt', { id })); client.close(); break; }
+    case 'prompt': { if (!rest[1]) usage('prompt <s> <text>'); const child = await viaParent(rest[0], 'session.send', { text: rest.slice(1).join(' ') }); if (child) { print(child.result); break; } const { client, id } = await liveClient(rest[0]); print(await client.request('session.send', { id, text: rest.slice(1).join(' ') })); client.close(); break; }
+    case 'interrupt': { const child = await viaParent(rest[0], 'session.interrupt'); if (child) { print(child.result); break; } const { client, id } = await liveClient(rest[0]); print(await client.request('session.interrupt', { id })); client.close(); break; }
     // ---- 조회 — 평문 기본, --json 이면 같은 내용을 JSON 으로. 꺼진 세션은 로그 파일에서
     case 'status': {
       const s = await snapshot(rest[0]);
@@ -673,7 +718,9 @@ try {
         if (questionsOf(r!).length) usage(`${req} is a question — respond ${req} --answer <text>`);
         params = { id: s.id, requestId: req, decision: word as 'allow' | 'deny', remember: flags.remember };
       }
-      const out = await s.client!.request('session.approve', params);
+      // 이 세션의 자식이면 부모 core 를 거쳐 — 부모 모델은 질문에만 답한다 (도구 승인은 core 가 거절한다)
+      const child = await viaParent(s.id, 'session.approve', params);
+      const out = (child ? child.result : await s.client!.request('session.approve', params)) as { ok: boolean };
       if (!out.ok) notOpen(); // 그 사이 풀렸다
       s.client!.close();
       print({ ok: true, requestId: req, decision: params.decision });
@@ -683,6 +730,7 @@ try {
     // via 는 옵션으로 열지 않는다 — 세션 안에서 다른 이름으로 보내면 그 세션 id, 세션 밖이면 outside (env 를 바꿔 치는 것은 막지 않는다)
     case 'mail': {
       if (!rest[1]) usage('mail <to> <text> [--from X] [--re <id>]');
+      if (rest[0] === 'parent' && process.env.SLCODE_PARENT_ID) rest[0] = process.env.SLCODE_PARENT_ID; // 자식 세션의 축약 (ticket slcode-subagent-sessions)
       const me = process.env.SLCODE_SESSION_ID;
       const from = flags.from ?? me ?? 'unknown';
       const via = !me ? 'outside' : from !== me ? me : undefined;

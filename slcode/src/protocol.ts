@@ -61,6 +61,14 @@ export type SessionInfo = {
   inspect?: boolean;
   /** 시작 화면(동사 없는 slcode)에서 연 새 세션 — 첫 메시지 전엔 대화 화면에서 시작 화면으로 돌아갈 수 있다(그 빈 세션은 지운다, ticket slcode-session-profile) */
   fromStart?: boolean;
+  /** 이 세션을 낳은 세션 (SessionMeta.parent) — child 는 자체 서브에이전트 (ticket slcode-subagent-sessions) */
+  parent?: { id: string; kind: 'child' | 'fork' };
+  /** 사용자가 "강제로 풀기" 로 부모에게서 넘겨받은 자식 세션 — meta 에 남는다 */
+  unlocked?: boolean;
+  /** 부모가 제어하는 자식 세션이라 화면 입력을 받지 않는다 — 부모가 소유하고(또는 소유자 유예 중이고) 풀지 않았을 때 */
+  locked?: boolean;
+  /** 이 세션의 모델이 자식 세션을 만들 수 있다 — 자식이 아니고 SLCODE_EXPERIMENTAL_SUBAGENTS=1 로 떴을 때 */
+  subagents?: boolean;
 };
 
 /** inspect 기록의 호출 하나 요약 (inspect/inspect.db 의 calls 한 행). at 은 요청이 들어온 시각, ms 는 응답이 끝날 때까지 */
@@ -223,7 +231,9 @@ export type Methods = {
   /** 이 연결이 세션 소유자가 된다 (protocol 3). 살아 있는 소유자가 따로 있으면 owned, takeover 면 빼앗고 옛 소유자에게 core.owner 를 보낸다.
    *  소유자가 session.close 없이 끊기면 core 는 SLCODE_OWNER_GRACE_SECS(기본 10초) 동안 새 소유자를 기다리고, 없으면 닫는다 (기동 직후도 같다).
    *  follows 는 이 소유자가 core.replaced 를 받으면 같은 소켓에 다시 붙는다는 뜻 — 없는 소유자가 있으면 core 는 교체를 거절한다 (3단계) */
-  'core.own': { params: { pid?: number; takeover?: boolean; follows?: boolean }; result: { ok: true } };
+  /** parent 는 자식 세션의 부모 core 가 보낸다 (ticket slcode-subagent-sessions) — 부모가 소유한 동안 다른 연결은 takeover 로도 가져가지 못하고(parent_owned),
+   *  부모 쪽은 사람이 따로 소유한 자식을 takeover 로 가져가지 못한다(owned) */
+  'core.own': { params: { pid?: number; takeover?: boolean; follows?: boolean; parent?: boolean }; result: { ok: true } };
   /** 새 코드의 serve 가 core 에 교체를 청한다 (ticket slcode-core-serve-split 3단계). pkg 는 그 serve 의 설치 폴더 — core 는 그 폴더의 새 빌드가 도는지 확인하고
    *  (깨졌으면 bad_request) idle 을 기다렸다가 그 폴더의 coreMain 으로 새 core 를 띄우고 내려간다. 보낸 연결이 그 전에 끊기면 취소된다 */
   'core.retire': { params: { pkg: string }; result: { ok: true } };
@@ -315,7 +325,22 @@ export type Methods = {
   'session.ask': { params: { id: string; to: string; text: string; timeoutMs?: number }; result: { mailId: string; reply: Mail; text: string } };
   /** 받은 메시지 id 로 그 보낸 이에게 kind=reply. 모르는 id(이 세션이 받은 적 없음)면 bad_request, 보낸 이가 켜진 세션이 아니면 no_session */
   'session.reply': { params: { id: string; re: string; text: string }; result: { id: string; to: string } };
+  // ---- 자식 세션 (ticket slcode-subagent-sessions, 사용자 결정 2026-11-07) — 부모 core 가 자식 core 를 띄우고 소유한다
+  /** 부모 세션 안의 `slcode new` 가 부른다 — 자식을 띄우고 소유한 뒤 id 를 돌려준다. vendor·model·effort·mode 는 주지 않으면 부모를 따른다(모델·effort 는 벤더가 같을 때만).
+   *  자식이 부르면 bad_request (한 단계만), SLCODE_EXPERIMENTAL_SUBAGENTS=1 로 뜨지 않은 세션이면 subagents_disabled */
+  'session.spawnChild': { params: { id: string; cwd: string; title?: string; vendor?: Vendor; model?: string; effort?: string; mode?: string; profile?: string; env?: Record<string, string>; params?: Record<string, string>; prompt?: string }; result: { id: string } };
+  /** 부모 모델의 지시를 소유 연결로 자식에게 (`slcode prompt·interrupt·respond·close <자식>`). approve 는 질문(AskUserQuestion)만 — 도구 승인은 사람이 답한다 */
+  'session.childCall': { params: { id: string; child: string; method: 'session.send' | 'session.interrupt' | 'session.approve' | 'session.close'; params?: Record<string, unknown> }; result: unknown };
+  /** 부모 화면의 "서브" 승인 줄 — 사람이 자식의 도구 승인·질문에 답한다 */
+  'session.childApprove': { params: { id: string; child: string; requestId: string; decision: ApprovalDecision; updatedInput?: Record<string, unknown> }; result: { ok: boolean } };
+  /** 이 세션이 소유한 켜진 자식과 대기 승인 — 바뀔 때마다 session.children 방송 */
+  'session.children': { params: { id: string }; result: { children: ChildView[] } };
+  /** 자식 화면의 "강제로 풀기"·"다시 잠그기" — meta.unlocked 를 바꾸고 부모에게 메시지로 알린다 */
+  'session.unlock': { params: { id: string }; result: { ok: true } };
+  'session.lock': { params: { id: string }; result: { ok: true } };
 };
+/** 부모 화면에 보이는 자식 하나 (children.ts) */
+export type ChildView = { id: string; title: string | null; pending: ApprovalRequest[] };
 
 export type MethodName = keyof Methods;
 
@@ -362,6 +387,8 @@ export type Broadcasts = {
   'session.closed': { id: string; reason: string };
   /** 입력 큐가 바뀔 때마다 큐 전체 — 메모리에만 있으므로 이벤트 로그에 남기지 않는다 (ticket slcode-agent-plugin-command) */
   'session.queue': { id: string; items: QueueItem[] };
+  /** 이 세션이 소유한 자식 목록·대기 승인이 바뀌었다 (ticket slcode-subagent-sessions) */
+  'session.children': { id: string; children: ChildView[] };
   /** 소유권을 빼앗긴 연결에만 — 새 소유자의 pid (protocol 3) */
   'core.owner': { pid: number | null };
   /** 내려가는 core 가 연결을 끊기 직전에 모든 연결에 — 새 core 의 pid·version. 받은 쪽은 닫힘이 아니라 같은 소켓에 다시 붙기로 다룬다 (3단계). 화면은 serve 중계가 새 core 에 다시 붙은 뒤에 받는다 */
@@ -388,6 +415,14 @@ export const ERR = {
   owned: 'owned',
   /** 내려가기로 정한 core 가 그 뒤 온 요청에 — 새 core 에 다시 보내면 된다 (3단계) */
   retiring: 'retiring',
+  /** 부모가 제어하는 자식 세션 — 화면에서 "강제로 풀기" 전에는 부모만 지시한다 (ticket slcode-subagent-sessions) */
+  locked: 'locked',
+  /** 사용자가 넘겨받은 자식 세션 — 다시 잠그기 전에는 부모의 지시를 거절한다 */
+  unlocked: 'unlocked',
+  /** 부모가 소유한 자식 — 다른 연결이 소유권을 가져가지 못한다 (카드 핸드오프는 붙기만 한다) */
+  parentOwned: 'parent_owned',
+  /** SLCODE_EXPERIMENTAL_SUBAGENTS=1 로 뜨지 않은 세션 — 세션 안의 slcode new 는 독립 세션으로 */
+  subagentsDisabled: 'subagents_disabled',
 } as const;
 
 export class CoreError extends Error {

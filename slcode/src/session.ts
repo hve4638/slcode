@@ -51,6 +51,8 @@ export type SessionOptions = {
   load?: ClaudeLoad;
   /** 에이전트 플러그인 js/ts 훅의 디스패처 (hookRunner.sdkHooks, ticket slcode-agent-plugin-hooks) — SDK options.hooks */
   hooks?: Options['hooks'];
+  /** 자식 세션 지시 (prompt.familyPrompt, ticket slcode-subagent-sessions) — SLCODE_PROMPT 바로 뒤에. 없으면 빈 문자열 */
+  family?: string;
 };
 
 export function summarize(content: unknown): string {
@@ -342,7 +344,7 @@ export class ClaudeSession extends AgentSession {
         agentProgressSummaries: true,   // task_progress 에 한 줄 진행 요약 (약 30초마다 짧은 포크, 비용은 작다)
         thinking: { type: 'adaptive', display: 'summarized' },
         // slcode 고정 지시를 기본 프롬프트 뒤에 (ticket slcode-append-system-prompt). 에이전트 플러그인의 지시문은 그 뒤에 (ticket slcode-agent-plugin)
-        systemPrompt: { type: 'preset', preset: 'claude_code', append: opts.agent?.append ? `${SLCODE_PROMPT}\n\n${opts.agent.append}` : SLCODE_PROMPT },
+        systemPrompt: { type: 'preset', preset: 'claude_code', append: [SLCODE_PROMPT, opts.family, opts.agent?.append].filter(Boolean).join('\n\n') },
         // snapshot 을 끈다 — 켜 두면 첫 요청 때 기록한 시스템 프롬프트를 resume 이 그대로 보내 바뀐 지시문이 안 들어가고, import 한 세션은 그쪽 기록이라 위 append 가 빠진다.
         // SDK 옵션 systemPromptSnapshot:false 는 resume 에 듣지 않아 CLI 플래그로 (CLI 2.1.282 실측, ticket slcode-agent-plugin-instructions-resume, 사용자 결정 2026-11-02)
         extraArgs: { 'system-prompt-snapshot': 'off' },

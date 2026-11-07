@@ -247,7 +247,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
   const P = corePaths(opts.dir);
   /** core 를 이 serve 가 띄웠다 — 웹을 열지 못하면 세션을 닫는다. attach(takeover 포함)는 남의 세션이라 닫지 않는다 */
   const spawned = !opts.attach;
-  const owner = spawned || !!opts.attach?.takeover;
+  let owner = spawned || !!opts.attach?.takeover;
   const web = loadWeb();
 
   // ---- core: 띄우거나(소유자) 떠 있는 것에 붙는다(attach)
@@ -299,7 +299,11 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
     });
   };
   hook(control);
-  if (owner) await control.request('core.own', { pid: process.pid, takeover: opts.attach?.takeover, follows: true }).catch((e) => { control.close(); throw e; });
+  // 부모가 소유한 자식 세션(ticket slcode-subagent-sessions)은 카드 핸드오프의 takeover 로도 가져가지 못한다 — 보기만 하는 attach 로 붙는다
+  if (owner) await control.request('core.own', { pid: process.pid, takeover: opts.attach?.takeover, follows: true }).catch((e) => {
+    if (opts.attach && (e as CoreError).code === ERR.parentOwned) { owner = false; owns = false; return; }
+    control.close(); throw e;
+  });
   if (opts.attach) {
     // 기록은 받지 않는다 — since 를 끝으로 (CLI 는 id 만 쓰지만 핸들 꼴을 맞춘다)
     session = (await control.request('session.attach', { id: sid, since: Number.MAX_SAFE_INTEGER })).info;

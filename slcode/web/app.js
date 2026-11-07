@@ -316,7 +316,10 @@ export function mountAgentFront(root, transport, opts = {}) {
     if (!ok || input.value !== text) { input.value = text; input.oninput(); }
   };
   const hist = inputHistory(input, setInputText, (pos, total) => { inputHint.textContent = pos === null ? '' : `기록 ${pos}/${total}`; inputHint.hidden = pos === null; });
-  const composer = h('div', { class: 'composer' }, queueTray, h('div', { class: 'box' }, inputHint, chips, input, h('div', { class: 'row' }, addBtn, modeBtn, modeMenu, h('span', { class: 'gap' }), modelBtn, modelMenu, stopBtn, sendBtn), slashMenu, filePick), stat);
+  // 자식 세션 (ticket slcode-subagent-sessions, 사용자 결정 2026-11-07) — lockBar: 자식의 입력창 위 안내 줄, kidAsks: 부모의 입력창 위 "서브" 승인 줄 (paintLock·paintKids)
+  const lockBar = h('div', { class: 'lockbar', hidden: '' });
+  const kidAsks = h('div', { class: 'kid-asks', hidden: '' });
+  const composer = h('div', { class: 'composer' }, kidAsks, queueTray, lockBar, h('div', { class: 'box' }, inputHint, chips, input, h('div', { class: 'row' }, addBtn, modeBtn, modeMenu, h('span', { class: 'gap' }), modelBtn, modelMenu, stopBtn, sendBtn), slashMenu, filePick), stat);
   const side = h('aside', { class: 'side' });
   const dock = h('div', { class: 'dock' });
   // 실행 중 표시 — 피드 맨 끝(내 요청 바로 아래)에 한 줄: 맥동 점 · 지금 하는 일 · 경과. state 가 running 일 때만, 새 항목이 와도 늘 마지막 (사용자 2026-09-30)
@@ -689,7 +692,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     busyNow = state === 'running' || state === 'requires_action';
     showBusy(state === 'running');
     if (busyNow && picker.el.isConnected) showDock(); // 메시지 턴 등이 시작됐다 — session.rewind 는 idle 에서만 된다
-    input.disabled = state === 'exited'; settingsUi.endable(state !== 'exited'); canSend();
+    input.disabled = state === 'exited' || !!info?.locked; settingsUi.endable(state !== 'exited'); canSend();
     if (state !== 'exited' && exitNote) { exitNote.remove(); exitNote = null; }
     if (opts.onState) opts.onState(state);
     renderSide();
@@ -1036,10 +1039,53 @@ export function mountAgentFront(root, transport, opts = {}) {
     let r;
     try { r = await rpc('serve.sessions'); } catch { return; }
     if (JSON.stringify(r) === JSON.stringify(family)) return;
-    family = r; paintFamily();
+    family = r; paintFamily(); paintLock();
     if (refused && r.sessions.some((s) => s.id === refused && s.live)) location.reload(); // 안내를 보던 세션이 다시 켜졌다
   }
   setInterval(() => { if (connected && !document.hidden && !behind()) void loadFamily(); }, 5000);
+  // ---- 자식 세션 (ticket slcode-subagent-sessions, 사용자 결정 2026-11-07)
+  // 잠긴 자식: 입력창 위에 "부모 세션이 제어 중입니다" 와 [부모로 가기] [강제로 풀기]. 입력·첨부·모드·모델·중단은 잠기고 승인 카드는 그대로 눌린다(입력창 자리에 뜬다).
+  // 넘겨받은 자식: 같은 자리에 [다시 잠그기]. 웹·카드·1단 카드가 이 화면을 같이 쓴다
+  function paintLock() {
+    const child = info?.parent?.kind === 'child', locked = !!info?.locked;
+    composer.classList.toggle('locked', locked);
+    for (const b of [addBtn, modeBtn, modelBtn, stopBtn]) b.disabled = locked;
+    input.disabled = info?.state === 'exited' || locked;
+    input.placeholder = locked ? '부모 세션이 제어하는 세션입니다' : '';
+    canSend();
+    lockBar.hidden = !child || (!locked && !info?.unlocked);
+    if (lockBar.hidden) return;
+    const pid = info.parent.id;
+    const parent = family?.sessions.find((s) => s.id === pid) ?? { id: pid, title: null };
+    const toggle = h('button', { class: locked ? 'danger' : '', onclick: () => {
+      toggle.disabled = true;
+      rpc(locked ? 'session.unlock' : 'session.lock', { id: current }).catch((e) => { toggle.disabled = false; push(h('div', { class: 'meta err' }, e.message)); });
+    } }, locked ? '강제로 풀기' : '다시 잠그기');
+    lockBar.replaceChildren(
+      h('span', { class: 'what' }, locked ? '부모 세션이 제어 중입니다: ' : '부모 세션에게서 넘겨받았습니다. 다시 잠글 때까지 부모의 지시는 거절됩니다: ', h('b', {}, famName(parent))),
+      h('span', { class: 'gap' }), famGo(parent, 'lock-go', '부모로 가기'), toggle);
+  }
+  // 부모: 자식의 대기 승인 (사용자 결정 3) — 입력창 위에 "서브 <이름>" 한 줄씩. 도구 승인은 여기서 [허용]·[거부], 질문은 부모 모델이 답하므로 [열기] 만
+  function paintKids(list) {
+    const rows = [];
+    for (const k of list ?? []) for (const req of k.pending) {
+      const isQ = req.name === 'AskUserQuestion';
+      const row = h('div', { class: 'kid-ask' });
+      const decide = (decision) => () => {
+        for (const b of row.querySelectorAll('button')) b.disabled = true;
+        rpc('session.childApprove', { id: current, child: k.id, requestId: req.requestId, decision }).catch((e) => { for (const b of row.querySelectorAll('button')) b.disabled = false; push(h('div', { class: 'meta err' }, e.message)); });
+      };
+      row.append(h('span', { class: 'kind' }, isQ ? '질문' : '승인'), h('span', { class: 'who' }, `서브 ${famName(k)}`),
+        h('span', { class: 'what' }, isQ ? '부모 모델이 답합니다' : `${req.name} ${toolArg(req.name, req.input)}`), h('span', { class: 'gap' }),
+        ...(isQ ? [] : [h('button', { class: 'primary', onclick: decide('allow') }, '허용'), h('button', { onclick: decide('deny') }, '거부')]),
+        famGo(k, 'kid-open', '열기'));
+      rows.push(row);
+    }
+    kidAsks.hidden = !rows.length;
+    kidAsks.replaceChildren(...rows);
+  }
+  const loadKids = () => rpc('session.children', { id: current }).then((r) => paintKids(r.children), () => paintKids([])); // 옛 core 엔 없다
+
   /** 주소가 가리키는 세션을 열 수 없다 — 그 세션을 열지 않고 사유와 메인 세션 링크를 보인다. 다른 세션으로 말없이 옮기지 않는다 */
   function refuseSession(id, me) {
     setState('exited');
@@ -1340,7 +1386,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     }
     if (first && r.summary) { more = !!r.more; oldest = r.history[0]?.seq ?? 0; }
     if (first && r.prompts) outlineSeed(r.prompts);
-    info = r.info; setTitle(info.title); syncInspect();
+    info = r.info; setTitle(info.title); syncInspect(); paintLock(); loadKids();
     if (r.draft && !input.value) { input.value = r.draft; input.oninput(); } // 다시 로드된 화면 — 쓰던 글을 되살린다 (치던 중이면 그대로)
     replayHistory(r.history, first ? r.summary : null);
     loadInputHistory();
@@ -1352,7 +1398,8 @@ export function mountAgentFront(root, transport, opts = {}) {
   }
   transport.onEvent((m) => {
     if (m.event === 'session.event' && m.params.id === current) render(m.params, true);
-    else if (m.event === 'session.changed' && m.params.id === current) { info = m.params; setTitle(info.title); syncInspect(); renderMode(); renderSide(); paintVendor(); }
+    else if (m.event === 'session.changed' && m.params.id === current) { info = m.params; setTitle(info.title); syncInspect(); renderMode(); renderSide(); paintVendor(); paintLock(); }
+    else if (m.event === 'session.children' && m.params.id === current) paintKids(m.params.children);
     else if (m.event === 'session.queue' && m.params.id === current) paintQueue(m.params.items);
     else if (m.event === 'core.replaced') loadCommands(); // 옛 core 에서 받은 명령 목록을 새 core 의 것으로 — serve 가 다시 붙은 뒤에 알린다
     else if (m.event === 'session.closed' && m.params.id === current) paintQueue([]); // 큐는 메모리에만 있어 함께 사라진다. 나머지는 session.exit 이벤트가 이미 그렸다

@@ -44,6 +44,8 @@ export type SessionMeta = {
   fromStart?: boolean;
   /** 이 세션을 낳은 세션 (ticket slcode-web-session-url) — child 는 자체 서브에이전트, fork 는 복제. 메인 세션에는 없다. 자식 쪽만 적고 자식 목록은 meta 를 훑어 구한다. 지워져 찾을 수 없는 부모는 없는 것으로 다룬다 */
   parent?: SessionParent;
+  /** 사용자가 "강제로 풀기" 로 부모에게서 넘겨받은 자식 세션 (ticket slcode-subagent-sessions) — "다시 잠그기" 로 지운다 */
+  unlocked?: boolean;
 };
 
 /** turn.rewound 가 버린 턴(그 seq 부터)을 뺀 이벤트 — 버린 턴은 벤더 쪽에도 없으므로 대화 되돌리기의 유지 지점·다시 import 의 기준에서 뺀다. 코드만 되돌린 표지(conversation false)는 대화를 버리지 않는다 */
