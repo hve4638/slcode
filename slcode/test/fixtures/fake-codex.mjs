@@ -1,7 +1,7 @@
 // 가짜 codex app-server — stdio JSON 줄 프로토콜의 최소 흉내 (테스트용, API 호출 없음).
 // initialize·thread/start·thread/resume·thread/fork(새 id fork-<원본>)·thread/read(turns 는 FAKE_CODEX_TURNS 파일, 없으면 빈 배열)·model/list·turn/start·turn/interrupt·thread/compact/start 에 답하고,
 // turn/start 뒤 델타 → 명령 승인 요청 → 완료 알림을 낸다.
-// FAKE_CODEX_CALLS 면 thread/* 요청의 메서드·developerInstructions 와 skills/extraRoots/set 의 extraRoots 를 그 파일에 한 줄씩 남긴다.
+// FAKE_CODEX_CALLS 면 thread/* 요청의 메서드·developerInstructions(·thread/fork 의 lastTurnId) 와 skills/extraRoots/set 의 extraRoots 를 그 파일에 한 줄씩 남긴다.
 // 본문이 auth-fail 이면 인증 실패 턴을 흉내 낸다. FAKE_CODEX_IGNORE_INTERRUPT 면 turn/interrupt 에 답하지 않는다 (느린 종료 — slcode 는 2초 기다린다)
 // inspect (ticket slcode-inspect-codex): config/read 는 -c openai_base_url 을 sessionFlags 층, FAKE_CODEX_USER_BASE 를 user 층으로 답한다.
 // 본문이 ws 면 -c 로 받은 주소(없으면 FAKE_CODEX_USER_BASE)의 /responses 에 WebSocket 으로 response.create 둘(둘째는 previous_response_id 로 증분)을 보내고 끝난 뒤 턴을 마친다.
@@ -41,7 +41,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     return;
   }
   const reply = (result) => out({ jsonrpc: '2.0', id: m.id, result });
-  if (process.env.FAKE_CODEX_CALLS && m.method?.startsWith('thread/')) fs.appendFileSync(process.env.FAKE_CODEX_CALLS, JSON.stringify({ method: m.method, developerInstructions: m.params?.developerInstructions ?? null }) + '\n');
+  if (process.env.FAKE_CODEX_CALLS && m.method?.startsWith('thread/')) fs.appendFileSync(process.env.FAKE_CODEX_CALLS, JSON.stringify({ method: m.method, developerInstructions: m.params?.developerInstructions ?? null, ...(m.params?.lastTurnId ? { lastTurnId: m.params.lastTurnId } : {}) }) + '\n');
   if (process.env.FAKE_CODEX_CALLS && m.method === 'skills/extraRoots/set') fs.appendFileSync(process.env.FAKE_CODEX_CALLS, JSON.stringify({ method: m.method, extraRoots: m.params.extraRoots }) + '\n');
   switch (m.method) {
     case 'initialize': return reply({ userAgent: 'fake/0.0.1 (test)', codexHome: '/tmp', platformFamily: 'unix', platformOs: 'linux' });

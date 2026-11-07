@@ -1,0 +1,11 @@
+import { EventLog, unrewound } from './eventLog'
+import { pullHistory } from './history'
+import { forkClaude } from './vendor'
+import { CoreError, ERR } from './protocol'
+
+role: 세션 복제 (ticket slcode-session-fork, 사용자 결정 2026-11-07) — slcode 세션을 같은 폴더·같은 설정의 별도 세션으로 복제한다. 원본은 그대로 쓴다. 잠그지 않고 자동 보고도 없다(팀원 세션과 다른 기능). 워크트리·--cwd 는 보류. `slcode fork`(cli)와 화면의 /fork·응답 아래 복제 버튼(serve.fork)이 같이 쓴다
+
+export fn forkSession(sessionsDir, id, opts) -> EventLog {
+  role: id 의 기록을 opts.seq(그 턴의 turn.end)까지, 없으면 마지막으로 끝난 턴까지 복제한 새 세션 로그. 복제 지점은 unrewound 기록의 turn.end·session.imported 중 uuid 가 있는 것 — 늘 벤더 쪽 마지막 항목이라 턴 도중에 눌러도 진행 중인 턴은 들어가지 않는다(2026-11-07 실측: 두 벤더 모두 복제본 요청에 진행 중 턴·합성 답이 없고 원본 턴은 정상으로 끝난다). Claude 는 지금 forkClaude(upToMessageId), Codex 는 meta.forkFrom·forkAt 을 남겨 복제본의 첫 기동이 thread/fork(lastTurnId)로 가른다. 설정(권한 모드·raw·모델·effort·프로필·env·세션 인자·에이전트 플러그인 값·inspect)을 잇고, meta.parent {id, kind 'fork', seq}(원본 기록의 복제 지점) — 복제본 고유의 일은 제 기록의 session.imported(fork) 뒤라 합치기(slcode-session-merge)가 쓴다. 화면 기록은 pullHistory 로 벤더 기록에서 옮긴다(되돌리기의 uuid 가 복제본 벤더 세션의 것이어야 한다 — slcode 기록 복사는 Claude uuid 가 새로 매겨져 쓸 수 없다). 제목은 없으면 "<원본 이름> (forked)", 그 원본의 둘째 복제본부터 "(forked N)"(N 은 복제본 수 + 1, 사용자 2026-11-08: ⑂ 대신 forked). 끝난 턴이 없거나 모르는 seq 면 bad_request, 기록을 못 읽으면 만든 세션을 지운다. Claude 는 SDK 가 마지막 메시지 시각을 복제한 때로 바꿔 쓰므로 옮긴 마지막 턴의 끝 시각·소요 시간을 원본 값으로 되돌린다(keepTipTime)
+}
+fn keepTipTime(log, at, durationMs)

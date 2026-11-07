@@ -229,7 +229,8 @@ export class CodexSession extends AgentSession {
       // slcode import --fork — 원본은 두고 갈라 낸 새 thread 로 (원본이 없으면 새 thread 로 대체하지 않고 실패)
       // slcode 고정 지시는 새 thread 에만 — developer 메시지로 덧붙는다, 기본 프롬프트(baseInstructions)는 그대로 (ticket slcode-append-system-prompt, 사용자 결정 2026-10-17: 새 세션부터).
       // 에이전트 플러그인의 지시문은 그 뒤에 (ticket slcode-agent-plugin-codex)
-      if (!r && this.log.meta.forkFrom) r = await this.request('thread/fork', { threadId: this.log.meta.forkFrom, ...base, developerInstructions, excludeTurns: true });
+      // slcode fork 의 복제 지점(meta.forkAt)이 있으면 그 turn 까지만
+      if (!r && this.log.meta.forkFrom) r = await this.request('thread/fork', { threadId: this.log.meta.forkFrom, ...base, developerInstructions, excludeTurns: true, ...(this.log.meta.forkAt ? { lastTurnId: this.log.meta.forkAt } : {}) });
       r ??= await this.request('thread/start', { ...base, developerInstructions });
       this.threadId = r.thread.id;
       this.log.updateMeta({ vendorSessionId: r.thread.id });

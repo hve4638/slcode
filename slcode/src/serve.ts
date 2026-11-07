@@ -24,6 +24,7 @@ import { closedSessions, familySessions, isLoopback, spawnCore } from './live.js
 import { readSettings, watchSettings, writeSettings } from './settings.js';
 import { CoreError, ERR, FILES, type SessionInfo, type SettingsKind, type SettingsPatch, type UpdateCheck } from './protocol.js';
 import { inspectBlocked } from './inspect.js';
+import { forkSession } from './fork.js';
 import { cleanInspect, inspectUsage } from './inspectDb.js';
 import { listPlugins, scriptWarnings } from 'slcode-plugin/agentPlugins';
 
@@ -36,7 +37,7 @@ const TYPES: Record<string, string> = {
 /** 화면 연결(웹·stdio)에서는 부를 수 없는 제어 메서드 — 소유권·웹 주소 등록(토큰이 붙은 url 을 돌려준다)·core 교체는 serve 의 제어 연결만 */
 const CONTROL_ONLY = new Set(['core.own', 'serve.register', 'core.retire']);
 /** serve 가 답하는 메서드 (ServeMethods) — core 로 넘기지 않는다 */
-const SERVE_METHODS = new Set(['settings.get', 'settings.set', 'serve.info', 'serve.sessions', 'update.run', 'serve.restart', 'start.back', 'inspect.usage', 'inspect.clean', 'web.files', 'file.get']);
+const SERVE_METHODS = new Set(['settings.get', 'settings.set', 'serve.info', 'serve.sessions', 'update.run', 'serve.restart', 'start.back', 'inspect.usage', 'inspect.clean', 'web.files', 'file.get', 'serve.fork']);
 /** 프레임의 요청·응답 id — 앞머리만 본다 (첨부가 실린 큰 프레임을 해석하지 않게). 화면·core 는 id 를 맨 앞에 쓴다 ({id, method, params}·{id, result}). 아니면 null */
 const idOf = (line: string): string | null => /^\{"id":(-?\d+|"(?:[^"\\]|\\.)*")[,}]/.exec(line)?.[1] ?? null;
 /** 인증 전 줄 세워 둘 수 있는 요청 수 — 인증 안 된 원격 클라이언트가 serve 메모리를 키우지 못하게 */
@@ -339,6 +340,16 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
           const family = await familySessions(P.sessionsDir, sid, kind === 'superlite');
           return { main: family[0]?.id ?? sid, sessions: family.map(({ sock: _sock, ...s }) => s) };
         }
+        case 'serve.fork': { // 화면의 /fork·응답 아래 복제 버튼 (ticket slcode-session-fork) — 이 화면이 갈 수 있는 세션만
+          const p = m.params as { id?: unknown; seq?: unknown } | undefined;
+          const from = String(p?.id ?? '');
+          if (!(await familySessions(P.sessionsDir, sid, kind === 'superlite')).some((s) => s.id === from)) throw new CoreError(ERR.badRequest, `session ${from} is not reachable from this screen`);
+          const fork = await forkSession(P.sessionsDir, from, typeof p?.seq === 'number' ? { seq: p.seq } : {});
+          log(`forked ${from} as ${fork.meta.id}`);
+          // 웹은 켜진 가족 세션으로만 간다 — 복제본 core 를 띄워 이 serve 가 소유한다(이 웹을 닫으면 함께 닫힌다). 카드는 화면이 플러그인에 그 카드를 열어 달라고 한다
+          if (kind === 'web') await ownFork((await spawnCore({ dir: P.dir, cwd: fork.meta.cwd, resume: fork.meta.id })).sock, fork.meta.id);
+          return { id: fork.meta.id };
+        }
         case 'web.files': return webFiles(web, P.dir, kind);
         case 'file.get': return fileGet((m.params as { path?: unknown } | undefined)?.path);
         case 'serve.restart':
@@ -361,6 +372,18 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
     answer().then((result) => send(JSON.stringify({ id: m.id, result })), (e) => send(JSON.stringify({ id: m.id, error: { code: (e as CoreError).code, message: (e as Error).message } })));
     return true;
   }
+
+  // ---- 웹에서 복제한 세션 (ticket slcode-session-fork) — 이 serve 가 소유한다. core 가 교체되면 새 core 를 다시 소유하고, serve 를 닫으면 함께 닫는다
+  const forks = new Map<RpcClient, string>();
+  async function ownFork(fsock: string, fid: string): Promise<void> {
+    const c = await connectSession(fsock);
+    let replaced = false;
+    c.onEvent((e) => { if (e.event === 'core.replaced') replaced = true; });
+    await c.request('core.own', { pid: process.pid, follows: true });
+    forks.set(c, fid);
+    void c.done.then(() => { forks.delete(c); if (replaced && !down) ownFork(fsock, fid).catch((e) => log(`fork ${fid}: core replaced but reconnecting failed: ${(e as Error).message}`)); });
+  }
+  stopAll.push(() => { for (const c of forks.keys()) c.close(); });
 
   // ---- 중계: 화면 연결 하나 ↔ 세션 소켓 연결 하나
   /** gate 면 core.auth 가 통과할 때까지 다른 요청을 막고 core 의 프레임을 넘기지 않는다. 그 사이 온 요청은 줄 세워 두었다가(HELD_MAX 까지) 통과하면 보낸다.
@@ -581,10 +604,11 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
   const close = (reason = 'closed'): Promise<void> => (closing ??= (async () => {
     log(`closing: ${reason}`);
     // 소유자면 세션을 닫는다. core 는 detached 라 이 프로세스가 먼저 kill 돼도(superlite 는 SIGTERM 3초 뒤 SIGKILL) 스스로 닫기를 마친다
-    if (owns && !control.closed) {
-      control.request('session.close', { id: sid }).catch(() => {});
+    const ending = [...forks].map(([c, fid]) => { c.request('session.close', { id: fid }).catch(() => {}); return c.done; }); // 웹에서 복제한 세션도 함께
+    if (owns && !control.closed) { control.request('session.close', { id: sid }).catch(() => {}); ending.push(control.done); }
+    if (ending.length) {
       let t: NodeJS.Timeout | undefined;
-      await Promise.race([control.done, new Promise((r) => (t = setTimeout(r, 15000)))]);
+      await Promise.race([Promise.all(ending), new Promise((r) => (t = setTimeout(r, 15000)))]);
       clearTimeout(t);
     }
     shutdown();

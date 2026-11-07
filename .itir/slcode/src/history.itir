@@ -12,8 +12,8 @@ export fn claudeEvents(msgs) -> TimedEvent[] {
 export fn codexEvents(turns) -> TimedEvent[] {
   role: Turn 하나 = turn.start(첫 userMessage, 없으면 생략 — 압축만 한 턴) … turn.end(status, durationMs, uuid 는 turn id). 항목은 codex.ts 의 실시간 매핑대로 — toolOf 항목은 tool.start+tool.end, agentMessage 는 text.delta, reasoning 은 요약(없으면 본문)을 thinking.delta, contextCompaction 은 context.compacted, collabAgentToolCall 은 task started+ended. failed 턴은 turn.error 의 문구와 errorKind(codexErrorInfo 가 인증 실패면 'auth'). inProgress 턴은 빼고 다음 import 로 미룬다. Turn 엔 사용량이 없어 usage null
 }
-export fn pullHistory(log, from, mark) -> Pulled? {
-  role: 벤더 세션 from 의 기록에서 로그가 모르는 뒤쪽을 이벤트로 붙이고 session.imported 표지(mark 의 vendorSessionId·fork, uuid 는 기록의 마지막 지점)를 남긴다. 세션 프로세스가 떠 있지 않을 때만 부른다(seq 는 core 가 쥔다). 빈 로그(처음 import)면 전부. 아니면 unrewound 로그의 turn.end·session.imported uuid 를 뒤에서부터 벤더 기록에서 찾아 그 뒤만 — 찾은 지점보다 뒤의 우리 턴이 벤더 기록에 없으면(벤더 쪽에서 되돌렸다) 그 첫 turn.start 부터 turn.rewound(conversation) 로 지운다. 하나도 못 찾으면: Claude 기록이 compact 요약으로 시작하면(그 뒤 벤더에서 compact 했다) 전부, 아니면 null(어디까지 가져왔는지 모른다 — 옛 Codex 세션). 붙일 것이 없으면 표지도 없다(처음 import 는 늘 남긴다)
+export fn pullHistory(log, from, mark, upTo) -> Pulled? {
+  role: 벤더 세션 from 의 기록에서 로그가 모르는 뒤쪽을 이벤트로 붙이고 session.imported 표지(mark 의 vendorSessionId·fork, uuid 는 기록의 마지막 지점)를 남긴다. 세션 프로세스가 떠 있지 않을 때만 부른다(seq 는 core 가 쥔다). 빈 로그(처음 import)면 전부. 아니면 unrewound 로그의 turn.end·session.imported uuid 를 뒤에서부터 벤더 기록에서 찾아 그 뒤만 — 찾은 지점보다 뒤의 우리 턴이 벤더 기록에 없으면(벤더 쪽에서 되돌렸다) 그 첫 turn.start 부터 turn.rewound(conversation) 로 지운다. 하나도 못 찾으면: Claude 기록이 compact 요약으로 시작하면(그 뒤 벤더에서 compact 했다) 전부, 아니면 null(어디까지 가져왔는지 모른다 — 옛 Codex 세션). 붙일 것이 없으면 표지도 없다(처음 import 는 늘 남긴다). upTo 면 벤더 기록을 그 지점까지 자른다(없으면 던진다) — slcode fork 가 Codex 원본 thread 를 복제 지점까지 읽을 때
 }
 type TimedEvent
 type Pulled

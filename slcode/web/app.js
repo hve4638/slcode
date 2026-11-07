@@ -293,7 +293,9 @@ export function mountAgentFront(root, transport, opts = {}) {
     } else input.value = `/${c.name} `;
     input.focus(); argQuery(); slashDraw();
   }
-  async function loadCommands() { try { commands = await rpc('session.commands', { id: current }); } catch { commands = []; } }
+  // /fork 는 화면이 처리한다 (복제, ticket slcode-session-fork) — 벤더에 같은 이름이 있으면 가린다
+  const FORK_CMD = { name: 'fork', description: '이 세션을 복제해 새 세션으로 엽니다 (끝난 턴까지, 같은 폴더)' };
+  async function loadCommands() { try { commands = [FORK_CMD, ...(await rpc('session.commands', { id: current })).filter((c) => c.name !== 'fork')]; } catch { commands = [FORK_CMD]; } }
   // 작성창 = 입력칸 위, 아래 한 줄: 왼쪽 끝 첨부·권한 모드, 오른쪽 모델(effort 포함)·보내기 (Codex Desktop 꼴, 사용자 2026-10-13). 상자 밖 아래에 폴더·repo·리밋·context·비용 한 줄(stat)
   const stat = h('div', { class: 'stat' });
   // 입력 큐 (ticket slcode-agent-plugin-command, 사용자 2026-11-02) — 턴 중에 친 명령과 그 뒤 메시지는 피드에 섞지 않고 입력창 바로 위에 보통 내 메시지와 같은 말풍선으로 순서대로 붙여 둔다. 처리되면 여기서 빠지고 피드에 보통 줄로 들어간다
@@ -564,6 +566,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     // 상태 아이콘 — claude 상태줄의 📁🌿⌛📦·비용(작성창 아래)·💻(사이드바 위) 자리, 외곽선만 — lucide 꼴
     folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
     branch: '<line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
+    fork: '<circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/>',
     hourglass: '<path d="M5 22h14"/><path d="M5 2h14"/><path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22"/><path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2"/>',
     box: '<path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>',
     cpu: '<rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/>',
@@ -645,6 +648,21 @@ export function mountAgentFront(root, transport, opts = {}) {
   // 버튼은 inspect 를 한 번이라도 켠 세션에서만 보인다 (.inspectable). 응답 글이 없는 턴(오류·중단)은 버튼만 한 줄로
   const inspectUi = inspectDialog(h, rpc, () => status?.context?.max ?? null, (text) => iconBtn('copy', '복사', copyOf(text)), store);
   el.append(inspectUi.el);
+  // 복제 (ticket slcode-session-fork, 사용자 결정 2026-11-07) — 응답 아래 버튼은 그 응답까지, /fork 는 끝난 턴까지 전체. 복제본은 같은 폴더의 별도 세션이고
+  // 만들면 그리로 간다: 카드는 플러그인이 이 카드 옆에 그 카드를 연다(slcode.goto), 웹은 serve 가 띄운 복제본 화면으로
+  let forking = false;
+  async function fork(seq) {
+    if (forking || !current) return;
+    forking = true;
+    const note = push(h('div', { class: 'notice' }, '복제 중…'));
+    try {
+      const { id } = await rpc('serve.fork', { id: current, ...(seq != null ? { seq } : {}) });
+      if (viaHost) hostPost({ type: 'slcode.goto', target: id });
+      else if (opts.navigate) { await loadFamily(); opts.navigate(id); } else location.assign(`s/${encodeURIComponent(id)}`);
+    } catch (e) { push(h('div', { class: 'meta err' }, `복제하지 못했습니다: ${e.message}`)); }
+    finally { note.remove(); forking = false; }
+  }
+  const forkBtn = (endSeq) => iconBtn('fork', '이 응답까지 복제', () => fork(endSeq));
   const inspectBtn = (endSeq) => { const b = iconBtn('inspect', '이 턴의 API 호출 보기', () => inspectUi.open(current, endSeq)); b.classList.add('insp'); return b; };
   const syncInspect = () => el.classList.toggle('inspectable', info?.inspect != null);
   // 사이드바 inspect 토글의 확인 창 (사용자 2026-10-19, ticket slcode-inspect-default-on) — 켜고 끄면 벤더를 다시 띄워 다음 호출의 캐시가 깨질 수 있다
@@ -786,7 +804,8 @@ export function mountAgentFront(root, transport, opts = {}) {
           if (u) parts.push(`↑${fmtTok(u.input + u.cacheRead + u.cacheWrite)} ↓${fmtTok(u.output)}`);
           if (e.at) parts.push(new Date(e.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })); // 끝난 시각 — claude 의 "done 오후 9:14" 자리 (사용자 2026-10-15)
         }
-        if (main.acts) main.acts.append(startBtn(main.turnEl?.nextElementSibling ?? main.acts.parentNode), inspectBtn(e.seq)); else push(h('div', { class: 'acts solo' }, inspectBtn(e.seq)));
+        const fb = ev.uuid ? forkBtn(e.seq) : null; // 벤더 지점이 없는 턴(벤더가 뜨기 전에 실패 등)은 복제할 자리가 없다
+        if (main.acts) main.acts.append(startBtn(main.turnEl?.nextElementSibling ?? main.acts.parentNode), ...(fb ? [fb] : []), inspectBtn(e.seq)); else push(h('div', { class: 'acts solo' }, ...(fb ? [fb] : []), inspectBtn(e.seq)));
         if (parts.length) push(h('div', { class: `meta${ev.interrupted ? ' err' : ''}` }, parts.join(' · ')));
         if (!replaying) renderSide();
         break;
@@ -803,7 +822,8 @@ export function mountAgentFront(root, transport, opts = {}) {
         if (live) loadCommands(); // 다시 실은 플러그인의 명령
         break;
       }
-      case 'session.imported': push(h('div', { class: 'notice' }, `imported from ${ev.vendor} (${ev.vendorSessionId.slice(0, 8)})`)); break; // 표지는 옮겨 온 대화 뒤에 선다 (사용자 2026-10-15: 짧게)
+      case 'session.imported': // 표지는 옮겨 온 대화 뒤에 선다 (사용자 2026-10-15: 짧게). slcode 복제본의 표지는 복제 지점 (ticket slcode-session-fork)
+        push(ev.fork && info?.parent?.kind === 'fork' ? forkMark(info.parent.id) : h('div', { class: 'notice' }, `imported from ${ev.vendor} (${ev.vendorSessionId.slice(0, 8)})`)); break;
       case 'context.compacted': endText(); push(h('div', { class: 'notice' }, `컨텍스트 압축${ev.preTokens ? ` · ${fmtTok(ev.preTokens)}` : ''}`)); break;
       case 'hook': if (live) { hooks++; lastHook = `${ev.event} ${ev.phase}`; } break;
       case 'agent.hook': { // 에이전트 플러그인 js/ts 훅 (ticket slcode-agent-plugin-hooks) — 한 일이 있을 때만 그린다 (사용자 2026-10-30, 프로토타입 D)
@@ -1026,11 +1046,20 @@ export function mountAgentFront(root, transport, opts = {}) {
       return famGo(s, `fam-row${s.id === current ? ' cur' : ''}${s.live ? '' : ' off'}`,
         h('span', { class: 'fam-indent', style: `width:${d * 14}px` }),
         h('span', { class: 'fam-name' }, famName(s)),
-        s.id === family.main ? h('span', { class: 'fam-tag' }, '메인') : s.parent ? h('span', { class: 'fam-tag' }, s.parent.kind === 'fork' ? '분기' : '서브') : null,
+        s.id === family.main ? h('span', { class: 'fam-tag' }, '메인') : s.parent ? h('span', { class: 'fam-tag' }, s.parent.kind === 'fork' ? '복제' : '서브') : null,
         s.live ? null : h('span', { class: 'fam-tag' }, '꺼짐'));
     });
   }
+  // 복제본의 복제 지점 표지 (ticket slcode-session-fork, 사용자 2026-11-08) — forked from <원본 이름> (<원본 id>), id 는 가족 메뉴와 같은 링크.
+  // 이름은 가족 목록에서 — 목록이 표지보다 늦게 오면 받은 뒤 다시 그린다. 이름이 없는 세션은 id 만
+  const forkMarks = new Set();
+  function paintForkMark(el) {
+    const title = family?.sessions.find((s) => s.id === el._pid)?.title;
+    el.replaceChildren('forked from ', ...(title ? [`${title} (`] : []), famGo({ id: el._pid }, 'fork-src', el._pid), ...(title ? [')'] : []));
+  }
+  function forkMark(pid) { const el = h('div', { class: 'notice' }); el._pid = pid; paintForkMark(el); forkMarks.add(el); return el; }
   function paintFamily() {
+    for (const el of forkMarks) paintForkMark(el);
     const many = (family?.sessions.length ?? 0) > 1;
     famBtn.hidden = !many;
     if (many) { famBtn.textContent = `세션 ${family.sessions.length} ▾`; famBtn.title = '관련 세션'; famMenu.replaceChildren(...famRows()); }
@@ -1495,6 +1524,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   }
   function send() {
     const t = resolveSlash(input.value.trim()); if ((!t && !pendingFiles.length) || !current) return;
+    if (t === '/fork' && !pendingFiles.length) { input.value = ''; input.style.height = ''; canSend(); hist.reset(); saveDraft(true); void fork(null); return; }
     const attachments = pendingFiles.splice(0).map(({ dataUrl, ...a }) => { if (a.mediaType.startsWith('image/')) sentFiles.set(a.name, dataUrl); return a; });
     chips.innerHTML = '';
     input.value = ''; input.style.height = ''; canSend(); argRes = null; argSeq++; hist.reset();

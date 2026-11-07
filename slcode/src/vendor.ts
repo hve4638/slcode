@@ -62,9 +62,10 @@ export function findVendorSession(id: string, vendor?: Vendor): VendorSession | 
   return (vendor !== 'codex' ? findClaude(id) : null) ?? (vendor !== 'claude' ? findCodex(id) : null);
 }
 
-/** Claude 세션을 SDK forkSession 으로 갈라 새 세션 id 를 받는다 — 원본은 그대로, 메시지 uuid 는 새로 매겨진다(file-history 는 따라오지 않는다) */
-export async function forkClaude(id: string, cwd: string): Promise<string> {
-  return (await forkSession(id, { dir: cwd })).sessionId;
+/** Claude 세션을 SDK forkSession 으로 갈라 새 세션 id 를 받는다 — 원본은 그대로, 메시지 uuid 는 새로 매겨진다(file-history 는 따라오지 않는다).
+ *  upTo 는 그 메시지 uuid 까지만 (slcode fork 의 복제 지점) */
+export async function forkClaude(id: string, cwd: string, upTo?: string): Promise<string> {
+  return (await forkSession(id, { dir: cwd, ...(upTo ? { upToMessageId: upTo } : {}) })).sessionId;
 }
 
 /** 벤더 하네스에서 이어 갈 명령 한 줄 — `slcode export` */

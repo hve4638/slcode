@@ -5,8 +5,8 @@ role: 벤더 하네스(Claude Code·Codex)가 직접 저장한 세션 찾기 (ti
 export fn findVendorSession(id, vendor) -> VendorSession? {
   role: 벤더 세션 id 로 기록 파일·폴더를 찾는다. vendor 를 주면 그쪽만, 없으면 claude 먼저. 영숫자·- 밖 글자가 든 id 는 거절(경로 조각 방지)
 }
-export fn forkClaude(id, cwd) -> String {
-  role: Agent SDK forkSession({dir: cwd}) 으로 Claude 세션을 갈라 새 세션 id — 원본은 그대로, uuid 는 새로 매겨지고 file-history 는 따라오지 않는다 (사용자 2026-10-07: 기록 파일 복사 대신 벤더 복제 기능)
+export fn forkClaude(id, cwd, upTo) -> String {
+  role: Agent SDK forkSession({dir: cwd}) 으로 Claude 세션을 갈라 새 세션 id — 원본은 그대로, uuid 는 새로 매겨지고 file-history 는 따라오지 않는다 (사용자 2026-10-07: 기록 파일 복사 대신 벤더 복제 기능). upTo 면 그 메시지 uuid 까지만(upToMessageId — slcode fork 의 복제 지점)
 }
 export fn vendorResumeCommand(vendor, cwd, id) -> String {
   role: `cd '<폴더>' && claude --resume <id>` 또는 `codex resume <id>` 한 줄 (폴더는 홑따옴표)

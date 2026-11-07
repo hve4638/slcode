@@ -21,6 +21,7 @@ import { reachable, closedSessions, closedTime, discardSession, isLoopback, sock
 import { startList, startPageHtml } from './startPage.js';
 import { pluginMethod, PLUGIN_METHODS, serveSession } from './serve.js';
 import { findVendorSession, forkClaude, vendorResumeCommand } from './vendor.js';
+import { forkSession } from './fork.js';
 import { pullHistory } from './history.js';
 import { CLAUDE_EFFORTS, sessionEnv, sessionParams } from './base.js';
 import { randomUUID } from 'node:crypto';
@@ -64,6 +65,9 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
                                  Claude Code·Codex 세션을 복제해 slcode 세션으로 만들고 resume (원본은 그대로, 폴더는 벤더 기록에서).
                                  이전 대화도 옮겨 보인다 (Claude 는 마지막 compact 뒤부터). 같은 원본을 다시 import 하면 또 새 복제본.
                                  slcode 세션이 이어 쓰는 벤더 세션 id(export 뒤 벤더에서 이어 간 것)면 늘어난 턴을 그 세션에 붙인다
+  fork [<s>] [--title T]         세션을 같은 폴더·같은 설정(모델·effort·권한 모드·프로필·env·세션 인자)의 새 세션으로 복제하고 resume (원본은 그대로).
+                                 마지막으로 끝난 턴까지 복제한다 (진행 중인 턴은 넣지 않는다). 세션 안에서 <s> 를 빼면 지금 세션.
+                                 제목은 생략 시 "<원본 이름> (forked)" (둘째부터 "(forked N)"). 세션 안이고 superlite 밖이면 id 만 출력한다 (slcode resume <id> 로 연다)
   export <s>                     그 세션을 벤더 하네스에서 이어 갈 명령을 출력 (cd <폴더> && claude --resume <id> | codex resume <id>)
   list [--all]                   살아 있는 세션 (--all 은 꺼진 세션까지)
   rename <s> <title> | close <s> [--force] | delete <s>
@@ -589,6 +593,17 @@ try {
       log.close();
       err(`imported ${found.vendor} session ${found.id} as ${log.meta.id} (${found.cwd}, ${r?.turns ?? 0} earlier turns) — a copy${vsid ? ` (${vsid})` : ''}, the original is untouched`);
       await resumeLog(log, ['raw', 'no-inspect', 'no-web', 'dir']); // --title·--mode 는 위 기록(meta)에 들어가 카드 세션에도 간다
+      break;
+    }
+    case 'fork': { // 세션 복제 (ticket slcode-session-fork, fork.ts) — 같은 폴더의 별도 세션
+      onlyNew();
+      const me = process.env.SLCODE_SESSION_ID;
+      if (rest[0] === undefined && !me) usage('fork <s> — outside a slcode session the session is required');
+      const log = await forkSession(P.sessionsDir, rest[0] === undefined ? me! : resolve(rest[0]), { title: flags.title }).catch((e: Error) => { err(e.message); process.exit(1); });
+      err(`forked ${log.meta.parent!.id} as ${log.meta.id} (${log.meta.title}) in ${log.meta.cwd} — the original is untouched`);
+      // 세션 안에서 친 명령이 superlite 밖이면 웹을 서빙하며 그 셸을 붙잡지 않는다 — 열 길만 알린다
+      if (me && !toCard()) { console.log(log.meta.id); err(`open it with: slcode resume ${log.meta.id}`); break; }
+      await resumeLog(log, ['raw', 'no-inspect', 'no-web', 'dir']); // --title 은 위 기록(meta)에 들어갔다
       break;
     }
     case 'export': {

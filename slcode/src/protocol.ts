@@ -62,7 +62,7 @@ export type SessionInfo = {
   /** 시작 화면(동사 없는 slcode)에서 연 새 세션 — 첫 메시지 전엔 대화 화면에서 시작 화면으로 돌아갈 수 있다(그 빈 세션은 지운다, ticket slcode-session-profile) */
   fromStart?: boolean;
   /** 이 세션을 낳은 세션 (SessionMeta.parent) — child 는 자체 서브에이전트 (ticket slcode-subagent-sessions) */
-  parent?: { id: string; kind: 'child' | 'fork' };
+  parent?: { id: string; kind: 'child' | 'fork'; seq?: number };
   /** 사용자가 "강제로 풀기" 로 부모에게서 넘겨받은 자식 세션 — meta 에 남는다 */
   unlocked?: boolean;
   /** 부모가 제어하는 자식 세션이라 화면 입력을 받지 않는다 — 부모가 소유하고(또는 소유자 유예 중이고) 풀지 않았을 때 */
@@ -355,7 +355,10 @@ export type ServeMethods = {
    *  inspectBlocked 는 inspect 의 내부 플래그가 듣지 않는다고 기록된 SDK 버전 (없으면 null) — 설정 창이 새 세션 inspect 를 막고 사유를 보인다 */
   'serve.info': { params: Record<string, never>; result: { version: string; build: number; pid: number; update: UpdateCheck | null; inspectBlocked?: string | null } };
   /** 이 화면에서 갈 수 있는 세션 (ticket slcode-web-session-url). 웹은 그 serve 의 메인 세션과 자손, 카드는 그 세션이 속한 가족 전체. main 은 그 맨 앞 */
-  'serve.sessions': { params: Record<string, never>; result: { main: string; sessions: { id: string; title: string | null; parent: { id: string; kind: 'child' | 'fork' } | null; live: boolean }[] } };
+  'serve.sessions': { params: Record<string, never>; result: { main: string; sessions: { id: string; title: string | null; parent: { id: string; kind: 'child' | 'fork'; seq?: number } | null; live: boolean }[] } };
+  /** 세션 복제 (ticket slcode-session-fork) — id 의 기록을 seq(그 턴의 turn.end)까지, 없으면 마지막으로 끝난 턴까지 복제한 새 세션. 진행 중인 턴은 넣지 않는다.
+   *  웹 입구는 그 core 를 띄워 이 serve 가 소유한다(가족 메뉴로 간다). 카드는 저장만 하고 화면이 플러그인에 그 카드를 열어 달라고 한다 */
+  'serve.fork': { params: { id: string; seq?: number }; result: { id: string } };
   /** [업데이트] — 웹(TCP) 입구만. 설치 폴더의 package.json version·dist/cli.js mtime 을 이 serve 가 뜰 때의 것과 견준다.
    *  카드는 serve 가 아니라 플러그인이 확인한다 (원격 deploy 경로는 내용 해시라 serve 가 자기 폴더를 봐서는 모른다) */
   'update.run': { params: Record<string, never>; result: UpdateCheck };

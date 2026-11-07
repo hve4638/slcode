@@ -7,7 +7,8 @@ import path from 'node:path';
 import type { HistorySummary, LoggedEvent, OutlineItem, PromptTurn, SessionInfo, Vendor } from './protocol.js';
 import { cwdSlug, sessionDir, sessionRoots } from './paths.js';
 
-export type SessionParent = { id: string; kind: 'child' | 'fork' };
+/** seq 는 kind fork 의 복제 지점 — 원본 기록에서 복제본에 들어간 마지막 턴 끝(turn.end·session.imported)의 seq (ticket slcode-session-fork). 복제본 자신의 일은 제 기록의 session.imported(fork) 뒤다 */
+export type SessionParent = { id: string; kind: 'child' | 'fork'; seq?: number };
 
 export type SessionMeta = {
   id: string;
@@ -30,6 +31,8 @@ export type SessionMeta = {
   effort?: string | null;
   /** `slcode import --fork` 의 원본 벤더 세션 — Codex 는 첫 기동 때 thread/fork 로 갈라 vendorSessionId 를 얻는다 (Claude 는 import 때 이미 갈랐다) */
   forkFrom?: string | null;
+  /** slcode fork 의 Codex 복제 지점 — forkFrom thread 의 이 turn 까지만 가른다 (thread/fork lastTurnId). 없으면 끝까지 */
+  forkAt?: string | null;
   /** inspect 모드 (session.setInspect) — Claude 벤더의 API 호출 원본을 inspect/ 에 남긴다 */
   inspect?: boolean;
   /** 에이전트 플러그인의 세션 단위 설정 값 — 플러그인 이름별 {parts, options}. 기본 설정·프로필 위에 덮는다 (자리만 — 채우는 명령·화면은 아직 없다) */

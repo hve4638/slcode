@@ -283,6 +283,7 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .errblock .msg { word-break: break-word; } .acf .errblock .msg b { font-weight: 600; color: var(--acf-err); }
 .acf .errblock .hint { margin-top: 4px; }
 .acf .notice { color: var(--acf-muted); font-size: 12px; border: 1px dashed var(--acf-line); border-radius: 10px; padding: 6px 12px; text-align: center; }
+.acf .notice a.fork-src { color: inherit; text-decoration: underline; cursor: pointer; } /* 복제본 표지의 원본 id (ticket slcode-session-fork) */
 /* 에이전트 플러그인 훅 (ticket slcode-agent-plugin-hooks) — 알림은 응답처럼 제 줄(흐린 테두리), 추가 컨텍스트는 대상 아래 '겹 +N', 도구 훅은 카드 표시 */
 .acf .hk-note { display: flex; align-items: baseline; gap: 6px; font-size: 13px; color: var(--acf-fg); opacity: .8; padding: 5px 10px; border: 1px solid var(--acf-line); border-radius: 8px; }
 .acf .hk-note .ic, .acf .hk-ctx .ic { display: inline-flex; width: 13px; height: 13px; flex: none; color: var(--acf-muted); align-self: center; }

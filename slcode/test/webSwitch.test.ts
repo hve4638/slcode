@@ -8,7 +8,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { serveSession } from '../src/serve.ts';
 import { connectSession } from '../src/client.ts';
-import { spawnCore } from '../src/live.ts';
+import { spawnCore, sockAlive } from '../src/live.ts';
+import { EventLog } from '../src/eventLog.ts';
+import { pullHistory } from '../src/history.ts';
+import { corePaths } from '../src/paths.ts';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const chrome = ['google-chrome', 'chromium', 'chromium-browser'].find((c) => { try { execFileSync('which', [c], { stdio: 'ignore' }); return true; } catch { return false; } });
@@ -113,4 +116,60 @@ test('웹 세션 전환: 페이지를 새로 읽지 않고 바뀌고, 숨은 화
     await gone;
     await h.close('test');
   }
+});
+
+test('웹 복제 (ticket slcode-session-fork): 응답 아래 복제 버튼은 그 응답까지, /fork 는 끝난 턴까지 — 복제본 화면으로 옮겨 가고 가족 메뉴에 "복제", 웹을 닫으면 복제본도 닫힌다', { skip: !chrome && 'chrome 없음' }, async (t) => {
+  const b = await openChrome(chrome!).catch((e: Error) => e);
+  if (b instanceof Error) { t.skip(b.message); return; }
+  process.env.SLCODE_GRACE_SECS = '30';
+  // 원본: 실제 Claude 기록(두 턴, test/fixtures)을 옮겨 쓴 세션 — 프롬프트를 보내지 않아 API 호출이 없다
+  const CID = 'eca2ea0c-cd14-4216-b88c-558435351e88';
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-wfork-'));
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-wfork-claude-'));
+  const pd = path.join(home, 'projects', work.replace(/[^A-Za-z0-9-]/g, '-'));
+  fs.mkdirSync(pd, { recursive: true });
+  fs.writeFileSync(path.join(pd, `${CID}.jsonl`), fs.readFileSync(path.join(import.meta.dirname, 'fixtures', 'claude-session.jsonl'), 'utf8').replaceAll('__CWD__', work));
+  const prevHome = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = home;
+  const { sessionsDir } = corePaths(dir);
+  const src = EventLog.create(sessionsDir, { id: 'wsrc0001', vendor: 'claude', cwd: work, title: 'A', vendorSessionId: CID, createdAt: 1, permissionMode: 'auto', raw: false });
+  await pullHistory(src, CID);
+  src.close();
+  const h = await serveSession({ dir, cwd: work, resume: 'wsrc0001' });
+  const forks = () => EventLog.list(sessionsDir).filter((m) => m.parent?.kind === 'fork');
+  try {
+    await b.send('Page.navigate', { url: h.url });
+    const visible = `document.querySelector('.session-slot:not([inert])')`;
+    const shown = (title: string, users: number) => `${visible}?.querySelector('.hdr .title')?.textContent === ${JSON.stringify(title)} && ${visible}.querySelectorAll('.user').length === ${users}`;
+    await b.until(shown('A', 2), '원본 화면');
+    await b.until(`${visible}.querySelectorAll('button[title="이 응답까지 복제"]').length === 2`, '응답마다 복제 버튼');
+    await b.ev(`${visible}.querySelectorAll('button[title="이 응답까지 복제"]')[0].click()`);
+    await b.until(shown('A (forked)', 1), '첫 응답까지 복제한 화면');
+    const f1 = forks().find((m) => m.title === 'A (forked)')!;
+    assert.equal(await b.ev(`location.pathname`), `/s/${f1.id}`);
+    await b.until(`${visible}.querySelector('.fam-chip')?.textContent === '세션 2 ▾'`, '가족 메뉴');
+    assert.deepEqual(await b.ev(`[...${visible}.querySelectorAll('.fam-row')].map((a) => a.textContent)`), ['A메인', 'A (forked)복제']);
+    // 복제 지점 표지 — forked from 원본 이름 (원본 id), id 를 누르면 원본 화면으로
+    await b.until(`${visible}.querySelector('.notice')?.textContent === 'forked from A (wsrc0001)'`, '복제 표지');
+    await b.ev(`${visible}.querySelector('.notice a.fork-src').click()`);
+    await b.until(shown('A', 2), '표지의 링크로 원본');
+    assert.equal(await b.ev(`location.pathname`), '/s/wsrc0001');
+    await b.ev(`history.back()`);
+    await b.until(shown('A (forked)', 1), '뒤로 가기로 복제본');
+    // 원본으로 돌아가 /fork — 끝난 턴까지 전체
+    await b.ev(`history.back()`);
+    await b.until(shown('A', 2), '원본으로');
+    await b.ev(`{ const i = ${visible}.querySelector('textarea'); i.focus(); i.value = '/fork'; i.oninput(); }`);
+    for (const type of ['keyDown', 'keyUp']) await b.send('Input.dispatchKeyEvent', { type, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, ...(type === 'keyDown' ? { text: '\r' } : {}) });
+    await b.until(shown('A (forked 2)', 2), '/fork 한 화면');
+    assert.equal(EventLog.open(sessionsDir, 'wsrc0001')!.all.filter((e) => e.ev.kind === 'turn.start').length, 2, '/fork 는 원본에 턴을 보내지 않는다');
+  } finally {
+    await b.close().catch(() => {});
+    await h.close('test');
+    if (prevHome === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prevHome;
+  }
+  // 이 웹이 띄운 복제본은 웹을 닫을 때 함께 닫힌다 — 연결이 끊긴 뒤 core 가 소켓을 지우기까지 잠깐 걸린다
+  for (const m of forks()) { const sock = new EventLog(sessionsDir, m).sockPath; for (let i = 0; i < 25 && await sockAlive(sock); i++) await sleep(200); assert.ok(!(await sockAlive(sock)), `${m.title} 이 떠 있다`); }
+  assert.equal(forks().length, 2);
 });

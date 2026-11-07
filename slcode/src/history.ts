@@ -132,10 +132,11 @@ function withApiErrors(id: string, msgs: ClaudeMsg[]): ClaudeMsg[] {
 }
 
 /** 벤더 세션 from 의 기록에서 로그가 모르는 뒤쪽을 이벤트로 붙이고 session.imported 표지를 남긴다. 세션 프로세스가 떠 있지 않을 때만 부른다 (seq 는 core 가 쥔다).
- *  어디까지 가져왔는지 모르면 null. mark 는 표지의 vendorSessionId·fork (처음 import 면 원본) */
-export async function pullHistory(log: EventLog, from: string, mark: { vendorSessionId: string; fork?: boolean } = { vendorSessionId: from }): Promise<Pulled | null> {
+ *  어디까지 가져왔는지 모르면 null. mark 는 표지의 vendorSessionId·fork (처음 import 면 원본). upTo 면 그 지점(Codex turn id)까지만 — slcode fork 가 원본 thread 를 읽을 때 */
+export async function pullHistory(log: EventLog, from: string, mark: { vendorSessionId: string; fork?: boolean } = { vendorSessionId: from }, upTo?: string): Promise<Pulled | null> {
   const claude = log.meta.vendor === 'claude';
-  const items: any[] = claude ? withApiErrors(from, await getSessionMessages(from)) : (await readThread(from, log.meta.cwd)).filter((t) => t.status !== 'inProgress');
+  let items: any[] = claude ? withApiErrors(from, await getSessionMessages(from)) : (await readThread(from, log.meta.cwd)).filter((t) => t.status !== 'inProgress');
+  if (upTo) { const i = items.findIndex((x) => (claude ? x.uuid : x.id) === upTo); if (i < 0) throw new Error(`no ${upTo} in ${log.meta.vendor} session ${from}`); items = items.slice(0, i + 1); }
   const ids: string[] = items.map((x) => (claude ? x.uuid : x.id)); // 지점 — Claude 는 메시지 uuid, Codex 는 turn id
   let base = -1, cut: number | null = null;
   if (log.lastSeq) {
