@@ -10,7 +10,9 @@ import { connectSession } from '../src/client.ts';
 import { EventLog } from '../src/eventLog.ts';
 import { corePaths } from '../src/paths.ts';
 import { estimateCostUsd } from '../src/codex.ts';
-import { SLCODE_PROMPT } from '../src/prompt.ts';
+import { SLCODE_PROMPT, familyPrompt } from '../src/prompt.ts';
+/** 새 세션의 고정 지시 — 팀원 기능은 기본 켜짐이라 만드는 법이 붙는다 (ticket slcode-team-agent) */
+const LEAD_PROMPT = `${SLCODE_PROMPT}\n\n${familyPrompt({ team: true, leader: null, options: null })}`;
 import { addPlugin, setPlugin } from 'slcode-plugin/agentPlugins';
 
 const FAKE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-codex.mjs');
@@ -144,7 +146,7 @@ test('codex: slcode 고정 지시는 thread/start·thread/fork 의 developerInst
     await launch(1, 'ffff0002');
   } finally { delete process.env.FAKE_CODEX_CALLS; }
   const got = fs.readFileSync(calls, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-  assert.deepEqual(got.map((c) => [c.method, c.developerInstructions === SLCODE_PROMPT ? 'prompt' : c.developerInstructions]),
+  assert.deepEqual(got.map((c) => [c.method, c.developerInstructions === LEAD_PROMPT ? 'prompt' : c.developerInstructions]),
     [['thread/start', 'prompt'], ['thread/resume', null], ['thread/fork', 'prompt']]);
 });
 
@@ -171,7 +173,7 @@ test('codex: 에이전트 플러그인 — thread 전에 skills/extraRoots/set, 
     let got = fs.readFileSync(calls, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
     assert.deepEqual(got.map((c) => c.method), ['skills/extraRoots/set', 'thread/start']);
     assert.deepEqual(got[0].extraRoots, [path.join(root, 'skills')]);
-    assert.equal(got[1].developerInstructions, `${SLCODE_PROMPT}\n\nPlugin rule.`);
+    assert.equal(got[1].developerInstructions, `${LEAD_PROMPT}\n\nPlugin rule.`);
     const env = JSON.parse(fs.readFileSync(envFile, 'utf8'));
     assert.equal(env.CORE_X, '1');
     assert.ok(env.PATH.startsWith(`${path.join(root, 'bin')}${path.delimiter}`), env.PATH);

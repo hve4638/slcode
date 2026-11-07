@@ -95,7 +95,7 @@ export abstract class AgentSession {
   get cwd() { return this.log.meta.cwd; }
   get vendorSessionId() { return this.log.meta.vendorSessionId; }
 
-  /** core 가 얹는 세션 정보 — 자식 세션의 잠김·자식 기능 켜짐 (ticket slcode-subagent-sessions). meta 에 없는 지금 상태라 info 를 부를 때마다 계산한다 */
+  /** core 가 얹는 세션 정보 — 팀원의 잠김 (ticket slcode-team-agent). meta 에 없는 지금 상태라 info 를 부를 때마다 계산한다 */
   extraInfo: () => Partial<SessionInfo> = () => ({});
 
   info(): SessionInfo {

@@ -12,7 +12,7 @@ export class ClaudeSession {
     role: attach 응답 pending — 대기 중 canUseTool 목록
   }
   export fn send(text, origin, attachments) {
-    role: 턴 넣기 한 호출 — turn.start 이벤트(첨부는 이름·종류·크기만) 뒤 buildContent 로 큐 push. running 이면 다음 턴으로 줄 선다
+    role: 턴 넣기 한 호출 — turn.start 이벤트(첨부는 이름·종류·크기만) 뒤 buildContent 로 큐 push. running 이면 SDK 가 다음 도구 결과와 함께 같은 턴에 넣는다(도구 호출이 더 없으면 그 턴 뒤 새 턴 — SDK 0.3.282 실측 2026-11-07)
   }
   export fn models() {
     role: SDK supportedModels + 지금 모델·effort (init 의 값 또는 setModel/setEffort 값, 첫 턴 전엔 getSettings 의 applied). 모델의 efforts 는 supportedEffortLevels, 없으면 CLAUDE_EFFORTS — 화면의 effort 슬라이더는 이 목록만 본다 (ticket slcode-vendor-model-picker)
@@ -48,7 +48,7 @@ export class ClaudeSession {
     role: 되돌리기 창 확인 단계 — rewind 와 같은 턴·유지 지점을 보고 파일은 SDK rewindFiles dryRun 으로만 잰다. 체크포인트가 없으면 files null, 가져온 대화 앞이면 conversation false
   }
   export fn queued() -> Int {
-    role: 보냈지만 아직 turn.end 가 오지 않은 턴 수 — idle 경계에서도 다음 턴이 줄 서 있을 수 있다
+    role: 보냈지만 아직 turn.end 가 오지 않은 턴 수 — idle 경계에서도 다음 턴이 줄 서 있을 수 있다. 턴 중에 넣어 같은 턴에서 처리된 메시지는 SDK 의 command_lifecycle completed(맨 앞이 아닌 uuid)로 뺀다 — 그 메시지에는 따로 result 가 오지 않는다
   }
   export fn reopen(env) {
     role: idle(또는 첫 프롬프트 전 starting)이고 줄 선 턴이 없을 때만(있으면 옛 프로세스와 함께 사라져 turn.end 가 오지 않는다 — 리뷰 2026-10-19) — 큐를 먼저 새로 바꾸고(내려가는 사이 온 프롬프트는 새 프로세스가 받는다) 생성기를 닫고(restarting) 기다린 뒤, 그사이 닫혔으면 그만두고 아니면 같은 벤더 세션으로 run 을 env 만 바꿔 재기동한다. inspect 토글이 쓴다 (ticket slcode-inspect-proxy). 세션 한정 승인 규칙(remember)은 rewind 처럼 잃는다

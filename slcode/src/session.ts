@@ -51,7 +51,7 @@ export type SessionOptions = {
   load?: ClaudeLoad;
   /** 에이전트 플러그인 js/ts 훅의 디스패처 (hookRunner.sdkHooks, ticket slcode-agent-plugin-hooks) — SDK options.hooks */
   hooks?: Options['hooks'];
-  /** 자식 세션 지시 (prompt.familyPrompt, ticket slcode-subagent-sessions) — SLCODE_PROMPT 바로 뒤에. 없으면 빈 문자열 */
+  /** 팀 지시 (prompt.familyPrompt, ticket slcode-team-agent) — SLCODE_PROMPT 바로 뒤에. 없으면 빈 문자열 */
   family?: string;
 };
 
@@ -99,7 +99,7 @@ export class ClaudeSession extends AgentSession {
     return [...this.pending.values()].map(({ resolve: _r, ...p }) => p);
   }
 
-  /** idle 세션에 턴 넣기 — 한 호출. 큐에 넣으면 CLI 가 다음 턴으로 집어간다. running 이면 뒤에 선다 */
+  /** 턴 넣기 — 한 호출. 큐에 넣으면 CLI 가 집어간다. running 이면 SDK 가 다음 도구 결과와 함께 같은 턴에 넣는다 (도구 호출이 더 없으면 그 턴 뒤 새 턴 — SDK 0.3.282 실측 2026-11-07) */
   send(text: string, origin: string | null = null, attachments: Attachment[] = []) {
     // 로그에는 첨부의 이름·종류·크기만 — base64 본문은 events.jsonl 에 남기지 않는다 (ponytail: 재접속 화면엔 이름만 보인다)
     this.emit({ kind: 'turn.start', text, origin, ...(attachments.length ? { attachments: attachments.map((a) => ({ name: a.name, mediaType: a.mediaType, size: Buffer.byteLength(a.data, 'base64') })) } : {}) });
@@ -455,6 +455,14 @@ export class ClaudeSession extends AgentSession {
           else if (parent.parent && b.type === 'thinking' && b.thinking) this.emit({ kind: 'thinking.delta', text: b.thinking, ...parent }, raw);
         }
         return;
+      // 턴 중에 넣은 메시지를 SDK 가 같은 턴에서 처리했다 — 그 메시지에는 따로 result 가 오지 않으니 줄 선 턴에서 뺀다 (맨 앞은 지금 턴, result 가 뺀다).
+      // 실측(2026-11-07): 도구 결과와 함께 들어가면 completed 가 지금 턴의 result 보다 먼저, 턴 뒤 새 턴이면 앞 턴의 result 뒤에 온다. 0.3.282 의 SDKMessage 타입에는 없다
+      case 'command_lifecycle' as SDKMessage['type']: {
+        const c: any = m;
+        const i = c.state === 'completed' ? this.turnUuids.indexOf(c.command_uuid) : -1;
+        if (i > 0) this.turnUuids.splice(i, 1);
+        return;
+      }
       case 'user': {
         const c = (m as any).message?.content;
         if (Array.isArray(c)) for (const b of c) if (b.type === 'tool_result') this.emit({ kind: 'tool.end', toolUseId: b.tool_use_id, ok: !b.is_error, summary: summarize(b.content), ...parentOf(m) }, raw);

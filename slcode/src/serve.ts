@@ -53,6 +53,8 @@ export type ServeOptions = {
   title?: string;
   raw?: boolean;
   inspect?: boolean;
+  /** 새 세션이 팀원을 만들지 못한다 (CoreOptions.noTeam — 입구 설정 team 이 꺼졌을 때, ticket slcode-team-agent) */
+  noTeam?: boolean;
   permissionMode?: string;
   /** 새 세션의 모델 — 없으면 벤더 기본. 이어받는 세션은 meta.model 을 따른다 */
   model?: string;
@@ -260,7 +262,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
       resume = (await closedSessions(P.sessionsDir, opts.cwd))[0]?.id;
       if (!resume) log(`no closed session in ${opts.cwd} — starting a new one`);
     }
-    ({ id: sid, sock, session } = await spawnCore({ dir: P.dir, cwd: opts.cwd, resume, title: opts.title, raw: opts.raw, inspect: opts.inspect, permissionMode: opts.permissionMode, model: opts.model, effort: opts.effort, prompt: opts.prompt, vendor: opts.vendor, profile: opts.profile, env: opts.env, params: opts.params, fromStart: opts.fromStart }));
+    ({ id: sid, sock, session } = await spawnCore({ dir: P.dir, cwd: opts.cwd, resume, title: opts.title, raw: opts.raw, inspect: opts.inspect, noTeam: opts.noTeam, permissionMode: opts.permissionMode, model: opts.model, effort: opts.effort, prompt: opts.prompt, vendor: opts.vendor, profile: opts.profile, env: opts.env, params: opts.params, fromStart: opts.fromStart }));
   }
   let control = await connectSession(sock);
   const stopAll: (() => void)[] = [];

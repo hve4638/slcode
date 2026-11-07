@@ -4,7 +4,7 @@
 // 옛 평탄 구조 sessions/<id>/ 는 migrate 가 슬러그 아래로 옮긴다 (2026-09-27 이전 세션).
 import fs from 'node:fs';
 import path from 'node:path';
-import type { HistorySummary, LoggedEvent, OutlineItem, PromptTurn, SessionInfo, Vendor } from './protocol.js';
+import type { HistorySummary, LoggedEvent, OutlineItem, PromptTurn, SessionInfo, TeamOptions, Vendor } from './protocol.js';
 import { cwdSlug, sessionDir, sessionRoots } from './paths.js';
 
 /** seq 는 kind fork 의 복제 지점 — 원본 기록에서 복제본에 들어간 마지막 턴 끝(turn.end·session.imported)의 seq (ticket slcode-session-fork). 복제본 자신의 일은 제 기록의 session.imported(fork) 뒤다 */
@@ -45,10 +45,12 @@ export type SessionMeta = {
   params?: Record<string, string>;
   /** 시작 화면에서 연 새 세션 — 첫 메시지 전엔 시작 화면으로 돌아갈 수 있다 (protocol SessionInfo.fromStart) */
   fromStart?: boolean;
-  /** 이 세션을 낳은 세션 (ticket slcode-web-session-url) — child 는 자체 서브에이전트, fork 는 복제. 메인 세션에는 없다. 자식 쪽만 적고 자식 목록은 meta 를 훑어 구한다. 지워져 찾을 수 없는 부모는 없는 것으로 다룬다 */
+  /** 이 세션을 낳은 세션 (ticket slcode-web-session-url) — child 는 link 팀원(ticket slcode-team-agent), fork 는 복제. 메인 세션에는 없다. 자식 쪽만 적고 자식 목록은 meta 를 훑어 구한다. 지워져 찾을 수 없는 부모는 없는 것으로 다룬다 */
   parent?: SessionParent;
-  /** 사용자가 "강제로 풀기" 로 부모에게서 넘겨받은 자식 세션 (ticket slcode-subagent-sessions) — "다시 잠그기" 로 지운다 */
-  unlocked?: boolean;
+  /** `slcode team new` 로 띄운 팀원의 관여 옵션 (ticket slcode-team-agent) — 끊으면 cut 과 함께 입력 제어·출력 수신·질문 수신이 꺼진다 */
+  team?: TeamOptions;
+  /** 이 세션은 팀원을 만들지 못한다 — 설정의 "새 세션 팀원" 을 끄고 열었거나 noTeam 팀원 */
+  noTeam?: boolean;
 };
 
 /** turn.rewound 가 버린 턴(그 seq 부터)을 뺀 이벤트 — 버린 턴은 벤더 쪽에도 없으므로 대화 되돌리기의 유지 지점·다시 import 의 기준에서 뺀다. 코드만 되돌린 표지(conversation false)는 대화를 버리지 않는다 */

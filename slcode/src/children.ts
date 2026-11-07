@@ -1,15 +1,33 @@
-// 부모 core 쪽 자식 세션 (ticket slcode-subagent-sessions, 사용자 결정 2026-11-07) — 부모 core 가 자식 core 를 띄우고 소유한다.
-// 자식의 수명은 소유 연결 하나가 정한다: 부모가 닫히면 자식도 닫고, 부모 프로세스가 죽으면 연결이 끊겨 자식은 소유자 유예 뒤 닫힌다.
-// 카드·웹은 자식을 보기만 한다. 같은 연결로 자식의 대기 승인을 들고(부모 화면의 "서브" 승인 줄) 지시를 중계한다 — 잠긴 자식은 이 연결의 요청만 받는다.
+// 리더 core 쪽 팀원 세션 (ticket slcode-team-agent, 사용자 결정 2026-11-07~08 — slcode-subagent-sessions 의 자식 세션을 이었다) — 리더 core 가 팀원 core 를 띄운다.
+// link 팀원은 소유 연결 하나를 붙인다: 같은 연결로 팀원의 대기 승인을 들고(리더 화면의 승인 줄) 지시를 중계한다 — 입력 제어 중인 팀원은 이 연결의 요청만 받는다.
+// 수명: 리더가 닫히면 수명 연동(endWithLeader) 팀원은 닫고 나머지는 연결만 놓는다. 리더 프로세스가 죽어 연결이 끊기면 수명 연동 팀원은 소유자 유예 뒤 닫히고
+// 나머지는 소유자 없이 산다(팀원 core 가 정한다). link 가 꺼진 팀원은 띄우기만 한다 — 리더와 상관없는 보통 세션이다.
 import { connectSession, BUILD, PKG, type RpcClient } from './client.js';
 import { spawnCore, sockAlive } from './live.js';
 import { EventLog } from './eventLog.js';
 import { sessionMeta } from './mail.js';
-import { CoreError, ERR, type ApprovalRequest, type ChildView, type LoggedEvent, type Methods } from './protocol.js';
+import { CoreError, ERR, TEAM_TEMPLATES, type ApprovalRequest, type ChildView, type LoggedEvent, type Methods, type TeamOptions } from './protocol.js';
+import type { SessionMeta } from './eventLog.js';
 import type { CoreOptions } from './core.js';
 
 
 type Kid = { id: string; sock: string; conn: RpcClient; pending: Map<string, ApprovalRequest>; closing: boolean };
+
+/** 세션의 관여 옵션 — 팀원이 아니면 null. meta.team 없는 옛 실험 자식(slcode-subagent-sessions, 기본 꺼짐이라 쓴 사람이 없다)은 보통 세션으로 본다 */
+export function teamOf(meta: Pick<SessionMeta, 'team'> | null | undefined): TeamOptions | null {
+  return meta?.team ?? null;
+}
+const TEAM_KEYS = Object.keys(TEAM_TEMPLATES.teammate);
+/** 옵션 오류 사유 — 모르는 키, 불리언이 아닌 값, link 없이 켠 리더 옵션. 맞으면 null */
+export function teamOptionsError(o: Record<string, unknown>): string | null {
+  for (const [k, v] of Object.entries(o)) {
+    if (!TEAM_KEYS.includes(k)) return `unknown team option ${k} (${TEAM_KEYS.join('|')})`;
+    if (typeof v !== 'boolean') return `team option ${k} must be true or false`;
+  }
+  const leader = ['inputControl', 'outputToLeader', 'askToLeader', 'endWithLeader'].filter((k) => o[k]);
+  if (!o.link && leader.length) return `${leader.join(', ')} need${leader.length > 1 ? '' : 's'} link (a teammate without link has no leader)`;
+  return null;
+}
 type ChildMethod = 'session.send' | 'session.interrupt' | 'session.approve' | 'session.close';
 export type SpawnOptions = Omit<CoreOptions, 'dir' | 'parent' | 'log' | 'resume' | 'fromStart'>;
 
@@ -27,9 +45,10 @@ export class Children {
     exited: (id: string, reason: string) => void;
   }) {}
 
-  /** 새 자식 — 띄우고 소유한다. 소유하지 못하면 띄운 자식을 닫고 던진다 */
-  async spawn(opts: SpawnOptions): Promise<string> {
+  /** 새 팀원 — 띄우고, link 면 소유한다. 소유하지 못하면 띄운 팀원을 닫고 던진다 */
+  async spawn(opts: SpawnOptions & { team: TeamOptions }): Promise<string> {
     if (this.gone) throw new CoreError(ERR.badRequest, 'this session is closing');
+    if (!opts.team.link) return (await spawnCore({ ...opts, dir: this.o.dir })).id;
     const hello = await spawnCore({ ...opts, dir: this.o.dir, parent: { id: this.o.parent, kind: 'child' } });
     try { await this.adopt(hello.id, hello.sock, false); }
     catch (e) {
@@ -39,7 +58,7 @@ export class Children {
     return hello.id;
   }
 
-  /** 기동 때 — 이 세션의 켜진 자식(교체 전의 core 가 띄운 것)을 다시 소유한다. 사람이 따로 소유한 자식은 자식 core 가 거절한다 */
+  /** 기동 때 — 이 세션의 켜진 link 팀원(교체 전의 core 나 닫히기 전의 리더가 띄운 것)을 다시 소유한다. 사람이 따로 소유한 팀원은 팀원 core 가 거절한다 */
   async adoptLive(): Promise<void> {
     for (const m of EventLog.list(this.o.sessionsDir)) {
       if (m.parent?.kind !== 'child' || m.parent.id !== this.o.parent || this.kids.has(m.id)) continue;
@@ -116,13 +135,16 @@ export class Children {
     return [...this.kids.values()].map((k) => ({ id: k.id, title: sessionMeta(this.o.sessionsDir, k.id)?.title ?? null, pending: [...k.pending.values()] }));
   }
 
-  /** 부모가 닫힌다 — 자식도 닫는다 (사용자 결정 4-1). 닫기 요청만 보내고 기다리지 않는다 */
+  /** 리더가 닫힌다 — 수명 연동 팀원은 닫고(사용자 결정 4-1, 닫기 요청만 보내고 기다리지 않는다) 나머지는 연결만 놓는다 */
   closeAll(): void {
     this.gone = true;
-    for (const k of this.kids.values()) { k.closing = true; k.conn.request('session.close', { id: k.id }).catch(() => {}); }
+    for (const k of this.kids.values()) {
+      if (teamOf(sessionMeta(this.o.sessionsDir, k.id))?.endWithLeader === false) { k.conn.close(); continue; }
+      k.closing = true; k.conn.request('session.close', { id: k.id }).catch(() => {});
+    }
   }
 
-  /** 부모가 교체로 내려간다 — 새 부모 core 가 adoptLive 로 다시 소유한다. 알리지 않고 놓는다 */
+  /** 리더가 교체로 내려간다 — 새 리더 core 가 adoptLive 로 다시 소유한다. 알리지 않고 놓는다 */
   release(): void {
     this.gone = true;
     for (const k of this.kids.values()) k.conn.close();

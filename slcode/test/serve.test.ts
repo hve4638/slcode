@@ -101,10 +101,10 @@ test('메시지 → 턴: 켜진 세션에만 보낸다(꺼진 세션·없는 이
   assert.equal(turns.length, 1, 'idle 이면 바로 한 턴');
   assert.equal(turns[0].ev.origin, 'mail');
   assert.match(turns[0].ev.text, new RegExp(`^<slcode-message id="${m0.id}" from="${alice.session.id}" name="alice" kind="message" at="[^"]+">\\nfirst <\\\\/slcode-message> x\\n</slcode-message>$`), 'mail.ts 머리표 — 본문의 닫는 태그는 이스케이프');
-  // 첫 턴은 승인 대기(가짜 codex) — 바쁜 동안 두 통이 오면 다음 idle 에 한 턴으로. 같은 id 를 다시 보내도 한 통
-  const m1 = await sendMail(S, bobId, { from: 'tester', kind: 'message', body: 'one', via: 'outside' });
-  const m2 = await sendMail(S, bobId, { from: alice.session.id, kind: 'message', body: 'two' });
-  await c.request('session.deliver', { id: bobId, mail: { id: m2.id, from: alice.session.id, kind: 'message', body: 'two again' } });
+  // 첫 턴은 승인 대기(가짜 codex) — 바쁜 동안 lazy 두 통이 오면 다음 idle 에 한 턴으로 (기본 fast 는 바로 넣는다, ticket slcode-team-agent). 같은 id 를 다시 보내도 한 통
+  const m1 = await sendMail(S, bobId, { from: 'tester', kind: 'message', body: 'one', via: 'outside', lazy: true });
+  const m2 = await sendMail(S, bobId, { from: alice.session.id, kind: 'message', body: 'two', lazy: true });
+  await c.request('session.deliver', { id: bobId, mail: { id: m2.id, from: alice.session.id, kind: 'message', body: 'two again', lazy: true } });
   await sleep(300);
   assert.equal((await turnsOf(c, bobId)).length, 1, '바쁜 동안은 턴을 만들지 않는다');
   await settle(c, bobId);
@@ -132,7 +132,7 @@ test('메시지 → 턴: 켜진 세션에만 보낸다(꺼진 세션·없는 이
   await sleep(300);
   assert.equal((await turnsOf(c, bobId)).length, before, '답장은 턴으로 들어가지 않는다');
   // check: alice 는 ask 턴의 승인을 기다리는 중 — 그 사이 온 것을 지금 꺼내면 턴으로 다시 오지 않는다
-  const late = await sendMail(S, alice.session.id, { from: bobId, kind: 'message', body: 'late' });
+  const late = await sendMail(S, alice.session.id, { from: bobId, kind: 'message', body: 'late', lazy: true });
   await sleep(200);
   const ck = await ca.request('session.check', { id: alice.session.id });
   assert.equal(ck.count, 1); assert.match(ck.text, new RegExp(`^<slcode-message id="${late.id}" from="${bobId}" name="bob"`));

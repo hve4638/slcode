@@ -25,7 +25,7 @@ export type CodexOptions = {
   skillRoots?: string[];
   /** 에이전트 플러그인의 지시문 — 새 thread 의 developerInstructions 에서 SLCODE_PROMPT 뒤에 */
   instructions?: string;
-  /** 자식 세션 지시 (prompt.familyPrompt, ticket slcode-subagent-sessions) — SLCODE_PROMPT 바로 뒤에 */
+  /** 팀 지시 (prompt.familyPrompt, ticket slcode-team-agent) — SLCODE_PROMPT 바로 뒤에 */
   family?: string;
 };
 

@@ -28,9 +28,9 @@ import { randomUUID } from 'node:crypto';
 import { pluginCommand } from 'slcode-plugin/cli';
 import { addProfile, getProfile, listProfiles, removeProfile, setProfile, type Profile } from './profiles.js';
 import { summarize } from './activity.js';
-import { FILES, PERMISSION_MODES, type ApprovalRequest, type LoggedEvent, type Methods, type SessionInfo } from './protocol.js';
+import { FILES, PERMISSION_MODES, TEAM_TEMPLATES, type ApprovalRequest, type LoggedEvent, type Methods, type SessionInfo } from './protocol.js';
 
-type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; model?: string; effort?: string; profile?: string; env?: string[]; param?: string[]; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; 'no-inspect'?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; re?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; takeover?: boolean; version?: boolean; help?: boolean; 'from-start'?: boolean; to?: string[]; remove?: boolean };
+type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; model?: string; effort?: string; profile?: string; env?: string[]; param?: string[]; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; 'no-inspect'?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; re?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; takeover?: boolean; version?: boolean; help?: boolean; 'from-start'?: boolean; to?: string[]; remove?: boolean; name?: string; options?: string; subagent?: boolean; teammate?: boolean; detached?: boolean; lazy?: boolean };
 
 const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세션 id 또는 유일한 제목. * 는 세션 안(SLCODE_SESSION_ID)에서만)
 
@@ -85,12 +85,21 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
   respond <s> <req> --answer <text>         질문에 답 (선택지 번호·라벨·자유 텍스트)
   respond <s> <req> --json '<updatedInput>'  입력 수정·여러 질문 등 복잡한 답
 메시지 (<to> 는 켜진 세션의 id 또는 제목 — 꺼진 세션에는 보내지 않는다)
-  mail <to> <text> [--from X] [--re <id>]
+  mail <to> <text> [--from X] [--re <id>] [--lazy]
                                  보낸 이는 --from, 없으면 지금 세션, 세션 밖이면 unknown. --re 는 그 메시지의 답장으로.
-                                 자식 세션 안에서 <to> 가 parent 면 부모 세션 (SLCODE_PARENT_ID)
+                                 받는 세션이 일하는 중이어도 바로 넣는다 (Claude 는 다음 도구 호출 사이에). --lazy 면 받는 세션이 일을 마친 뒤에.
+                                 팀원 세션 안에서 <to> 가 leader 면 리더 세션 (SLCODE_PARENT_ID). 같은 이름이 여럿이면 자기 팀(리더·팀원)의 것
 * check                          밀린 메시지를 지금 읽는다
 * ask <to> <text> [--timeout S]  묻고 답장을 기다린다
 * reply <id> <text>              받은 메시지에 답장
+팀원 (세션 안의 에이전트가 친다 — 사람이 새 세션을 열 때는 new)
+* team new [folder] [--subagent|-s | --teammate|-t | --detached|-d] [-n name] [-m model] [-e effort] [--mode M] [-o '<JSON>'] [-- <지시>]
+                                 이 세션(리더)이 팀원 세션을 띄우고 id 를 출력한다. 폴더는 생략하면 지금 폴더, 지시는 -- 뒤나 stdin(heredoc).
+                                 --subagent: 리더가 입력을 쥐고 턴마다 답을 받는다, 질문도 리더에게, 리더가 닫히면 같이 닫힌다, 팀원을 만들지 못한다.
+                                 --teammate(기본): 첫 지시 뒤에는 메시지로만 주고받고 리더가 닫혀도 산다. --detached: 리더와 상관없는 세션.
+                                 -o 는 템플릿 위에 얹는 옵션 (true|false): link inputControl outputToLeader askToLeader endWithLeader noTeam.
+                                 -m 은 모델 이름 또는 anthropic:<모델>·openai:<모델>. 주지 않은 모델·effort·권한 모드는 리더를 따른다.
+                                 팀원에게 지시는 prompt·interrupt·respond·close <팀원> 이 리더 core 를 거쳐 간다
 에이전트 플러그인 (Claude·Codex 세션에 싣는다. 바꾼 설정은 새 세션부터, 떠 있는 세션은 사이드바의 다시 싣기로 — Codex 는 skill 만)
   plugin add <folder>            slcode-plugin.json(애드온은 slcode-addon.json)이 있는 원본 폴더를 설치한다. 같은 내용이면 아무것도 하지 않는다
   plugin remove <name> [--cascade]
@@ -132,10 +141,12 @@ try {
   parsed = parseArgs({
     allowPositionals: true, tokens: true,
     options: {
-      port: { type: 'string' }, host: { type: 'string' }, stdio: { type: 'boolean' }, vendor: { type: 'string' }, mode: { type: 'string' }, title: { type: 'string' }, model: { type: 'string' }, effort: { type: 'string' }, profile: { type: 'string' }, env: { type: 'string', multiple: true }, param: { type: 'string', multiple: true, short: 'P' },
+      port: { type: 'string' }, host: { type: 'string' }, stdio: { type: 'boolean' }, vendor: { type: 'string' }, mode: { type: 'string' }, title: { type: 'string' }, model: { type: 'string', short: 'm' }, effort: { type: 'string', short: 'e' }, profile: { type: 'string' }, env: { type: 'string', multiple: true }, param: { type: 'string', multiple: true, short: 'P' },
       since: { type: 'string' }, tail: { type: 'string' }, turn: { type: 'string' }, raw: { type: 'boolean' }, 'no-inspect': { type: 'boolean' }, all: { type: 'boolean' }, force: { type: 'boolean' }, json: { type: 'boolean' },
       remember: { type: 'boolean' }, from: { type: 'string' }, re: { type: 'string' }, timeout: { type: 'string' }, answer: { type: 'string' },
       'no-web': { type: 'boolean' }, web: { type: 'boolean' }, takeover: { type: 'boolean' }, 'from-start': { type: 'boolean' }, version: { type: 'boolean' }, dir: { type: 'string' }, help: { type: 'boolean', short: 'h' }, to: { type: 'string', multiple: true }, remove: { type: 'boolean' }, cascade: { type: 'boolean' },
+      // team new (ticket slcode-team-agent) 와 mail --lazy
+      name: { type: 'string', short: 'n' }, options: { type: 'string', short: 'o' }, subagent: { type: 'boolean', short: 's' }, teammate: { type: 'boolean', short: 't' }, detached: { type: 'boolean', short: 'd' }, lazy: { type: 'boolean' },
     },
   });
 } catch (e) { usage((e as Error).message); }
@@ -150,7 +161,7 @@ const bare = !flags.help && (argv0 === undefined || argv0.startsWith('-'));
 // 그 밖의 동사는 `--` 뒤도 지금처럼 위치 인자
 const dash = tokens.findIndex((t) => t.kind === 'option-terminator');
 const nBefore = dash < 0 ? words.length : tokens.slice(0, dash).filter((t) => t.kind === 'positional').length;
-const LIFE = new Set(['new', 'continue', 'resume', 'import']);
+const LIFE = new Set(['new', 'continue', 'resume', 'import', 'team']); // team new 의 `--` 뒤는 팀원의 첫 지시 (ticket slcode-team-agent)
 const life = bare || LIFE.has(words[0]);
 const positionals = life ? words.slice(0, nBefore) : words;
 const firstPrompt = life ? words.slice(nBefore).join(' ').trim() || undefined : undefined;
@@ -163,6 +174,10 @@ if (provider) {
   if (flags.vendor !== undefined && flags.vendor !== provider) usage(`--model ${flags.model} is a ${provider} model but --vendor is ${flags.vendor}`);
   flags.vendor = provider; flags.model = flags.model!.slice(colon + 1);
   if (!flags.model) usage('--model <provider>:<model> needs a model name');
+} else if (words[0] === 'team' && flags.model && flags.vendor === undefined) {
+  // team new 는 앞머리 없는 모델 이름으로도 벤더를 고른다 (사용자 2026-11-08: 모호하지 않으면 모델만). 모르는 이름은 리더의 벤더 (core)
+  if (/^(claude-|opus|sonnet|haiku|fable)/i.test(flags.model)) flags.vendor = 'claude';
+  else if (/^(gpt-|o\d|codex)/i.test(flags.model)) flags.vendor = 'codex';
 }
 // 권한 모드는 셋만 — 메뉴에서 뺀 acceptEdits·plan 도 거절한다 (ticket slcode-permission-modes-three, 사용자 결정 2026-10-23)
 if (flags.mode !== undefined && !(PERMISSION_MODES as readonly string[]).includes(flags.mode)) usage(`unknown mode '${flags.mode}' (${PERMISSION_MODES.join('|')})`);
@@ -204,34 +219,54 @@ async function liveClient(s: string | undefined) {
   try { return { client: await connectSession(log.sockPath), id: log.meta.id, log }; }
   catch { err(`session ${log.meta.id} is not live — slcode resume ${log.meta.id}`); process.exit(1); }
 }
-/** 세션 안에서 친 slcode new — 그 세션(부모)의 core 에 자식을 청한다 (ticket slcode-subagent-sessions, 사용자 결정 2026-11-07). 부모 core 가 띄우고 소유하므로
- *  이 명령은 id 를 출력하고 바로 끝난다. superlite 안이면 그 터미널의 deck 끝에 자식 카드를 조용히 연다(보기만 하는 카드 — 못 열어도 자식은 돈다).
- *  false 면 지금까지처럼 독립 세션: 세션 밖, --web·--stdio·--no-web·--host·--port, 부모가 자식 기능을 끈 세션, 자식 기능을 모르는 옛 core */
-async function newChild(cwd: string): Promise<boolean> {
+/** team new 의 stdin 지시 — 파이프·파일일 때만 (heredoc, `cat plan.md |`). 열린 채 0.5초 안에 아무것도 오지 않는 파이프는 지시 없음으로 (닫히지 않는 파이프를 주는 도구에서 멈추지 않게) */
+async function stdinPrompt(): Promise<string | undefined> {
+  const st = fs.fstatSync(0);
+  if (st.isFile()) return fs.readFileSync(0, 'utf8').trim() || undefined;
+  if (!st.isFIFO()) return undefined;
+  return new Promise((resolve) => {
+    let buf = '';
+    const idle = setTimeout(() => { process.stdin.destroy(); resolve(undefined); }, 500);
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (d: string) => { clearTimeout(idle); buf += d; });
+    process.stdin.on('end', () => { clearTimeout(idle); resolve(buf.trim() || undefined); });
+  });
+}
+/** `slcode team new` (ticket slcode-team-agent, 사용자 결정 2026-11-07~08) — 세션 안의 모델이 Bash 로 친다. 그 세션(리더)의 core 에 팀원을 청하고 id 를 출력하고 바로 끝난다.
+ *  템플릿(--subagent·--teammate·--detached, 생략하면 teammate)이 관여 옵션의 기본값을 채우고 -o 의 JSON 이 그 위에 얹힌다. 주지 않은 값은 리더를 따른다(core).
+ *  지시는 `--` 뒤, 없으면 stdin 이 파이프·파일일 때만 (heredoc) — Claude Code Bash 도구의 stdin 은 닫히지 않는 소켓이라 그대로 읽으면 멈춘다.
+ *  superlite 안이면 그 터미널의 deck 끝에 팀원 카드를 조용히 연다(보기만 하는 카드 — 못 열어도 팀원은 돈다) */
+async function teamNew(args: string[]): Promise<void> {
   const me = process.env.SLCODE_SESSION_ID;
-  if (!me || flags.web || flags.stdio || flags['no-web'] || flags.host !== undefined || flags.port !== undefined) return false;
+  if (!me) { err('team works only inside a slcode session (SLCODE_SESSION_ID) — the agent of a session runs it; to open a session yourself use slcode new <folder>'); process.exit(2); }
+  if (args.length > 1) usage(`team new takes one folder: ${args.join(' ')} (put instructions after --)`);
+  const tpl = (['subagent', 'teammate', 'detached'] as const).filter((k) => flags[k]);
+  if (tpl.length > 1) usage(`pick one of --subagent, --teammate, --detached (got ${tpl.map((k) => `--${k}`).join(' ')})`);
+  let given: Record<string, unknown> = {};
+  if (flags.options !== undefined) {
+    try { given = JSON.parse(flags.options); if (!given || typeof given !== 'object' || Array.isArray(given)) throw 0; } catch { usage(`--options needs a JSON object, e.g. -o '{"endWithLeader":true}'`); }
+  }
+  const team = { ...TEAM_TEMPLATES[tpl[0] ?? 'teammate'], ...given };
+  const cwd = folderArg(args[0]);
+  const prompt = firstPrompt ?? (await stdinPrompt());
   const pm = sessionMeta(P.sessionsDir, me);
-  if (!pm) return false;
+  if (!pm) { err(`no session ${me} (SLCODE_SESSION_ID)`); process.exit(1); }
   let client: RpcClient<Methods>;
-  try { client = await connectSession(new EventLog(P.sessionsDir, pm).sockPath); } catch { return false; }
+  try { client = await connectSession(new EventLog(P.sessionsDir, pm).sockPath); } catch { err(`session ${me} is not live`); process.exit(1); }
   let id: string;
   try {
     ({ id } = await client.request('session.spawnChild', {
-      id: me, cwd, title: flags.title, vendor: flags.vendor as 'claude' | 'codex' | undefined, model: flags.model, effort: flags.effort, mode: flags.mode, profile: flags.profile,
-      env: newEnv(), params: newParams(), prompt: firstPrompt,
+      id: me, cwd, title: flags.name, vendor: flags.vendor as 'claude' | 'codex' | undefined, model: flags.model, effort: flags.effort, mode: flags.mode, profile: flags.profile,
+      env: newEnv(), params: newParams(), prompt, team: team as never,
     }));
-  } catch (e) {
-    const { code, message } = e as { code?: string; message: string };
-    if (code === 'subagents_disabled' || /unknown method/.test(message)) return false;
-    err(message); process.exit(1);
-  } finally { client.close(); }
-  unused(['raw', 'no-inspect'], 'a child session follows its parent');
+  } catch (e) { err((e as Error).message); process.exit(1); }
+  finally { client.close(); }
   console.log(id);
   if (process.env.SUPERLITE_SOCK) spawnSync('superlite', ['slcode.resume', '--id', id], { encoding: 'utf8' });
-  err(`child session ${id} started in ${cwd} — its answers come back to this session as messages (slcode close ${id} to stop it)`);
-  return true;
+  const how = team.outputToLeader ? 'its answers come back to this session as messages' : team.link ? `it messages you when it has something (slcode mail ${flags.name ?? id} <text> to reach it)` : 'it is an independent session';
+  err(`teammate ${id} started in ${cwd} — ${how} (slcode close ${id} to stop it)`);
 }
-/** 이 세션(SLCODE_SESSION_ID)의 자식이면 부모 core 를 거쳐 지시한다 — 잠긴 자식은 부모의 소유 연결로 온 지시만 받는다. 자식이 아니면 null */
+/** 이 세션(SLCODE_SESSION_ID)의 link 팀원이면 리더 core 를 거쳐 지시한다 — 입력 제어 중인 팀원은 리더의 소유 연결로 온 지시만 받는다. 팀원이 아니면 null */
 async function viaParent(s: string | undefined, method: 'session.send' | 'session.interrupt' | 'session.approve' | 'session.close', params: Record<string, unknown> = {}): Promise<{ result: unknown } | null> {
   const me = process.env.SLCODE_SESSION_ID;
   if (!me) return null;
@@ -339,6 +374,8 @@ function inspectOf(resume: string | undefined): boolean | undefined {
   if (blocked) err(`warning: not recording with inspect — it is blocked for this Claude Code (Agent SDK ${blocked})`);
   return !blocked;
 }
+/** 새 세션이 팀원을 만들지 못하게 — 들어온 입구(--stdio 면 superlite 카드, 아니면 웹)의 설정 "새 세션 팀원" 이 꺼졌을 때 (ticket slcode-team-agent). 이어받는 세션은 meta 를 따른다 */
+const noTeamOf = (resume: string | undefined) => (!resume && !readSettings(P.dir, flags.stdio ? 'superlite' : 'web').team ? true : undefined);
 /** --env 를 이름→값으로 — 이름 오류는 checkNew 가 먼저 거절했다 */
 const newEnv = () => (flags.env ? sessionEnv(flags.env) : undefined);
 /** --param 을 이름→값으로 (ticket slcode-agent-plugin-part-when) — 이름 오류는 checkNew 가 먼저 거절했다 */
@@ -346,12 +383,12 @@ const newParams = () => (flags.param ? sessionParams(flags.param) : undefined);
 async function serve(opts: { cwd: string; resume?: string }) {
   try {
     const entry = !flags.stdio && !flags['no-web'];
-    const inspect = inspectOf(opts.resume);
+    const inspect = inspectOf(opts.resume), noTeam = noTeamOf(opts.resume);
     const h = entry ? await runEntry({
-      dir: flags.dir, ...opts, title: flags.title, raw: flags.raw, inspect, permissionMode: flags.mode, model: flags.model, effort: flags.effort, profile: flags.profile, env: newEnv(), params: newParams(), prompt: firstPrompt, vendor: flags.vendor === 'codex' ? 'codex' : 'claude',
+      dir: flags.dir, ...opts, title: flags.title, raw: flags.raw, inspect, noTeam, permissionMode: flags.mode, model: flags.model, effort: flags.effort, profile: flags.profile, env: newEnv(), params: newParams(), prompt: firstPrompt, vendor: flags.vendor === 'codex' ? 'codex' : 'claude',
       host: flags.host, port: flags.port ? Number(flags.port) : undefined, log: err,
     }) : await serveSession({
-      dir: flags.dir, ...opts, title: flags.title, raw: flags.raw, inspect, permissionMode: flags.mode, model: flags.model, effort: flags.effort, profile: flags.profile, env: newEnv(), params: newParams(), prompt: firstPrompt, vendor: flags.vendor === 'codex' ? 'codex' : 'claude',
+      dir: flags.dir, ...opts, title: flags.title, raw: flags.raw, inspect, noTeam, permissionMode: flags.mode, model: flags.model, effort: flags.effort, profile: flags.profile, env: newEnv(), params: newParams(), prompt: firstPrompt, vendor: flags.vendor === 'codex' ? 'codex' : 'claude',
       fromStart: flags['from-start'], web: !flags['no-web'], host: flags.host, port: flags.port ? Number(flags.port) : undefined, stdio: flags.stdio, log: err,
       // superlite 서비스(serviceStart web)면 데몬이 정한 웹 소켓 주소 (ticket plugin-service-web)
       webSock: flags.stdio ? process.env.SUPERLITE_SERVICE_WEB || undefined : undefined,
@@ -382,7 +419,7 @@ async function startWeb(cwd: string) {
     for (;;) {
       h = null;
       h = await runEntry({
-        dir: flags.dir, cwd, inspect: inspectOf(undefined), host: flags.host, port, log: err,
+        dir: flags.dir, cwd, inspect: inspectOf(undefined), noTeam: noTeamOf(undefined), host: flags.host, port, log: err,
         choose: (url) => {
           port = Number(new URL(url).port); // 돌아오면 같은 주소 — 화면이 그 주소를 다시 읽는다
           if (shown) return;
@@ -523,7 +560,6 @@ try {
       if (rest[0] === undefined) usage('new needs a folder: slcode new <folder> (slcode alone opens the start screen)');
       const cwd = folderArg(rest[0]);
       checkNew();
-      if (await newChild(cwd)) break;
       if (toCard()) newCard(cwd);
       await serve({ cwd });
       break;
@@ -593,6 +629,12 @@ try {
       log.close();
       err(`imported ${found.vendor} session ${found.id} as ${log.meta.id} (${found.cwd}, ${r?.turns ?? 0} earlier turns) — a copy${vsid ? ` (${vsid})` : ''}, the original is untouched`);
       await resumeLog(log, ['raw', 'no-inspect', 'no-web', 'dir']); // --title·--mode 는 위 기록(meta)에 들어가 카드 세션에도 간다
+      break;
+    }
+    case 'team': { // 팀원 (ticket slcode-team-agent) — 세션 안 전용
+      if (rest[0] !== 'new') usage('team new [folder] [--subagent|--teammate|--detached] [-n name] [-m model] [-e effort] [--mode M] [-o JSON] [-- <instructions>]');
+      checkNew();
+      await teamNew(rest.slice(1));
       break;
     }
     case 'fork': { // 세션 복제 (ticket slcode-session-fork, fork.ts) — 같은 폴더의 별도 세션
@@ -733,7 +775,7 @@ try {
         if (questionsOf(r!).length) usage(`${req} is a question — respond ${req} --answer <text>`);
         params = { id: s.id, requestId: req, decision: word as 'allow' | 'deny', remember: flags.remember };
       }
-      // 이 세션의 자식이면 부모 core 를 거쳐 — 부모 모델은 질문에만 답한다 (도구 승인은 core 가 거절한다)
+      // 이 세션의 팀원이면 리더 core 를 거쳐 — 리더 모델은 질문 수신 팀원의 질문에만 답한다 (도구 승인은 core 가 거절한다)
       const child = await viaParent(s.id, 'session.approve', params);
       const out = (child ? child.result : await s.client!.request('session.approve', params)) as { ok: boolean };
       if (!out.ok) notOpen(); // 그 사이 풀렸다
@@ -745,11 +787,11 @@ try {
     // via 는 옵션으로 열지 않는다 — 세션 안에서 다른 이름으로 보내면 그 세션 id, 세션 밖이면 outside (env 를 바꿔 치는 것은 막지 않는다)
     case 'mail': {
       if (!rest[1]) usage('mail <to> <text> [--from X] [--re <id>]');
-      if (rest[0] === 'parent' && process.env.SLCODE_PARENT_ID) rest[0] = process.env.SLCODE_PARENT_ID; // 자식 세션의 축약 (ticket slcode-subagent-sessions)
+      if ((rest[0] === 'leader' || rest[0] === 'parent') && process.env.SLCODE_PARENT_ID) rest[0] = process.env.SLCODE_PARENT_ID; // link 팀원의 리더 (ticket slcode-team-agent)
       const me = process.env.SLCODE_SESSION_ID;
       const from = flags.from ?? me ?? 'unknown';
       const via = !me ? 'outside' : from !== me ? me : undefined;
-      const r = await sendMail(P.sessionsDir, rest[0], { from, kind: flags.re ? 'reply' : 'message', body: rest.slice(1).join(' '), ...(flags.re ? { re: flags.re } : {}), ...(via ? { via } : {}) });
+      const r = await sendMail(P.sessionsDir, rest[0], { from, kind: flags.re ? 'reply' : 'message', body: rest.slice(1).join(' '), ...(flags.re ? { re: flags.re } : {}), ...(via ? { via } : {}), ...(flags.lazy ? { lazy: true } : {}) });
       print(r); break;
     }
     case 'check': { const sid = inSession(); const { client } = await liveClient(sid); const r = await client.request('session.check', { id: sid }); console.log(r.count ? r.text : '(no mail)'); client.close(); break; }

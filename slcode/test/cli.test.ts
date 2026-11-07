@@ -111,9 +111,10 @@ test('mail: 켜진 세션에만 — 꺼진 세션은 없는 이름과 같은 no 
   assert.equal(out.code, 0, out.stderr);
   const sent = JSON.parse(out.stdout);
   assert.deepEqual(Object.keys(sent).sort(), ['id', 'to']);
-  await run(dir, ['mail', 'beta', 'as', 'orch', '--from', 'orchestrator'], { SLCODE_SESSION_ID: 'aaaa1111' });
-  await run(dir, ['mail', 'beta', 'mine'], { SLCODE_SESSION_ID: 'aaaa1111' });
-  await run(dir, ['mail', 'beta', 'answer', '--re', 'q1', '--from', 'aaaa1111']);
+  // 바쁜 동안 보내는 세 통은 --lazy — idle 에 한 턴으로 묶인다 (기본 fast 는 바로 넣는다, ticket slcode-team-agent)
+  await run(dir, ['mail', 'beta', 'as', 'orch', '--from', 'orchestrator', '--lazy'], { SLCODE_SESSION_ID: 'aaaa1111' });
+  await run(dir, ['mail', 'beta', 'mine', '--lazy'], { SLCODE_SESSION_ID: 'aaaa1111' });
+  await run(dir, ['mail', 'beta', 'answer', '--re', 'q1', '--from', 'aaaa1111', '--lazy']);
   await sleep(300);
   // 첫 메시지 턴은 승인 대기(가짜 codex) — 허락하면 그 사이 온 세 통이 다음 턴 하나로 들어간다
   for (const r of JSON.parse((await run(dir, ['pending', 'beta', '--json'])).stdout)) await run(dir, ['respond', 'beta', r.requestId, 'allow']);

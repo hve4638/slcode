@@ -39,12 +39,18 @@ export function newMail(p: Omit<Mail, 'id' | 'ts'> & { id?: string; ts?: number 
   return { ...p, id: p.id || randomUUID().slice(0, 8), ts: p.ts || Date.now() };
 }
 
-/** 켜진 세션 중에서 id 또는 제목으로 — 교체 중인 세션도 켜진 것 (소켓이 잠깐 없다), 없으면 no_session, 같은 제목이 여럿 켜져 있으면 후보를 담아 bad_request */
-export async function findLive(sessionsDir: string, s: string): Promise<{ sock: string; meta: SessionMeta }> {
-  const hits = EventLog.list(sessionsDir).filter((m) => m.id === s || m.title === s).map((m) => ({ meta: m, sock: new EventLog(sessionsDir, m).sockPath }));
+/** 켜진 세션 중에서 id 또는 제목으로 — 교체 중인 세션도 켜진 것 (소켓이 잠깐 없다), 없으면 no_session.
+ *  같은 제목이 여럿 켜져 있으면 보내는 세션(from)의 팀 안에서 하나면 그것 (ticket slcode-team-agent — 리더·팀원은 이름만으로 주고받는다), 아니면 후보를 담아 bad_request */
+export async function findLive(sessionsDir: string, s: string, from?: string): Promise<{ sock: string; meta: SessionMeta }> {
+  const all = EventLog.list(sessionsDir);
+  const hits = all.filter((m) => m.id === s || m.title === s).map((m) => ({ meta: m, sock: new EventLog(sessionsDir, m).sockPath }));
   const alive = await Promise.all(hits.map(async (h) => replacing(h.sock) || (await sockAlive(h.sock))));
   const live = hits.filter((_, i) => alive[i]);
-  const one = live.find((h) => h.meta.id === s) ?? (live.length === 1 ? live[0] : null);
+  // 팀: 보내는 세션의 리더, 그 리더의 팀원(같은 리더의 팀원), 보내는 세션의 팀원
+  const leaderOf = (m: SessionMeta | undefined) => (m?.parent?.kind === 'child' ? m.parent.id : null);
+  const me = from ? all.find((m) => m.id === from) : undefined, lead = leaderOf(me);
+  const team = live.filter((h) => h.meta.id !== from && (h.meta.id === lead || (from && leaderOf(h.meta) === from) || (lead && leaderOf(h.meta) === lead)));
+  const one = live.find((h) => h.meta.id === s) ?? (live.length === 1 ? live[0] : team.length === 1 ? team[0] : null);
   if (one) return one;
   if (live.length > 1) throw new CoreError(ERR.badRequest, `ambiguous title "${s}": ${live.map((h) => h.meta.id).join(', ')}`);
   throw new CoreError(ERR.noSession, `no session ${s}`);
@@ -53,7 +59,7 @@ export async function findLive(sessionsDir: string, s: string): Promise<{ sock: 
 /** 켜진 세션을 찾아 그 소켓에 session.deliver — 받는 core 가 다음 idle 에 한 턴으로 넣는다.
  *  받는 core 가 교체 중이라 retiring 으로 거절하면 새 core 에 한 번 더 (connectSession 이 교체 표시를 보고 기다린다, 같은 id 라 두 번 들어가지 않는다) */
 export async function sendMail(sessionsDir: string, to: string, p: Omit<Mail, 'id' | 'ts' | 'to'>): Promise<{ id: string; to: string }> {
-  const target = await findLive(sessionsDir, to);
+  const target = await findLive(sessionsDir, to, p.from);
   const m = newMail({ ...p, to: target.meta.id });
   for (let attempt = 0; ; attempt++) {
     let client;

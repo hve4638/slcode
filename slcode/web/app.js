@@ -1082,16 +1082,17 @@ export function mountAgentFront(root, transport, opts = {}) {
     input.disabled = info?.state === 'exited' || locked;
     input.placeholder = locked ? '부모 세션이 제어하는 세션입니다' : '';
     canSend();
-    lockBar.hidden = !child || (!locked && !info?.unlocked);
+    // 끊기는 일방향이다 (ticket slcode-team-agent, 사용자 2026-11-08) — 다시 잠그는 버튼은 없다. 흐린 입력창·자물쇠·확인 창은 B 단계에서
+    lockBar.hidden = !child || !locked;
     if (lockBar.hidden) return;
     const pid = info.parent.id;
     const parent = family?.sessions.find((s) => s.id === pid) ?? { id: pid, title: null };
-    const toggle = h('button', { class: locked ? 'danger' : '', onclick: () => {
+    const toggle = h('button', { class: 'danger', onclick: () => {
       toggle.disabled = true;
-      rpc(locked ? 'session.unlock' : 'session.lock', { id: current }).catch((e) => { toggle.disabled = false; push(h('div', { class: 'meta err' }, e.message)); });
-    } }, locked ? '강제로 풀기' : '다시 잠그기');
+      rpc('session.unlock', { id: current }).catch((e) => { toggle.disabled = false; push(h('div', { class: 'meta err' }, e.message)); });
+    } }, '강제로 풀기');
     lockBar.replaceChildren(
-      h('span', { class: 'what' }, locked ? '부모 세션이 제어 중입니다: ' : '부모 세션에게서 넘겨받았습니다. 다시 잠글 때까지 부모의 지시는 거절됩니다: ', h('b', {}, famName(parent))),
+      h('span', { class: 'what' }, '부모 세션이 제어 중입니다: ', h('b', {}, famName(parent))),
       h('span', { class: 'gap' }), famGo(parent, 'lock-go', '부모로 가기'), toggle);
   }
   // 부모: 자식의 대기 승인 (사용자 결정 3) — 입력창 위에 "서브 <이름>" 한 줄씩. 도구 승인은 여기서 [허용]·[거부], 질문은 부모 모델이 답하므로 [열기] 만

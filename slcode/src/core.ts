@@ -20,7 +20,7 @@ import { isLoopback, reachable, sockAlive, spawnCore } from './live.js';
 import { BUILD, PKG, VERSION, replacing, replacingMark } from './client.js';
 import { corePaths, ensureDir, readOrCreateToken, sessionDir } from './paths.js';
 import { formatMail, newMail, parseMails, sendMail, sessionMeta } from './mail.js';
-import { Children } from './children.js';
+import { Children, teamOf, teamOptionsError } from './children.js';
 import { familyPrompt } from './prompt.js';
 import { blockInspect, CODEX_ROUTE, codexArgs, codexUpstream, inspectBlocked, inspectEnv, keepsFirstParty, sdkVersion, startInspect, turnCalls, upstreamOf, type InspectProxy } from './inspect.js';
 import { InspectStore, maybeSweep } from './inspectDb.js';
@@ -29,7 +29,7 @@ import { claudeLoad, DEFAULT_PROFILE, getProfile, listProfiles, profileSummary, 
 import { agentPaths, currentBuilds, loadSessionPlugins, reloadSessionPlugins, unlinkSessionPlugins, type Loaded, type SessionPlugins } from 'slcode-plugin/agentPlugins';
 import { HookRunner, type LoadedCommand } from 'slcode-plugin/hookRunner';
 import { commandTable, completeInput, fullName, resolveCommand } from './pluginCommands.js';
-import { CoreError, ERR, FILES, PERMISSION_MODES, PROTOCOL_VERSION, type AgentCommandEvent, type AgentHookEvent, type ApprovalRequest, type Attachment, type LoggedEvent, type Mail, type QueueItem, type MethodName, type Methods, type RequestFrame, type SessionInfo } from './protocol.js';
+import { CoreError, ERR, FILES, PERMISSION_MODES, PROTOCOL_VERSION, TEAM_TEMPLATES, type AgentCommandEvent, type AgentHookEvent, type ApprovalRequest, type Attachment, type LoggedEvent, type Mail, type QueueItem, type MethodName, type TeamOptions, type Methods, type RequestFrame, type SessionInfo } from './protocol.js';
 
 /** 벤더 자식(claude CLI·codex)에 넘기지 않을 env — 워커 Claude 세션 안에서 띄우면 그 세션의 표식(CLAUDECODE·CLAUDE_CODE_SESSION_ID·
  *  CLAUDE_CODE_CHILD_SESSION·CLAUDE_CODE_ENTRYPOINT·CLAUDE_CODE_MESSAGING_* 등, claude 2.1.282·2.1.300 실측)이 딸려 가 자식이 남의 세션 안이라 여긴다.
@@ -101,6 +101,10 @@ export type CoreOptions = {
   params?: Record<string, string>;
   /** 새 세션을 inspect 로 — 입구 설정(Settings.inspect)을 CLI 가 읽어 넘긴다. 이어받는 세션은 meta.inspect 를 따르고, false 면 끈다 (--no-inspect) */
   inspect?: boolean;
+  /** 새 세션이 팀원을 만들지 못한다 — 입구 설정(Settings.team)이 꺼졌을 때 CLI 가 넘긴다. meta.noTeam 으로 남긴다 (ticket slcode-team-agent) */
+  noTeam?: boolean;
+  /** 리더가 띄우는 팀원의 관여 옵션 (Children.spawn) — meta.team 으로 남기고, noTeam 이면 meta.noTeam 도 */
+  team?: TeamOptions;
   log?: (msg: string) => void;
 };
 
@@ -146,6 +150,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       ...(opts.env && Object.keys(opts.env).length ? { env: opts.env } : {}),
       ...(opts.params && Object.keys(opts.params).length ? { params: opts.params } : {}),
       ...(opts.parent ? { parent: opts.parent } : {}),
+      ...(opts.team ? { team: opts.team } : {}), ...(opts.noTeam || opts.team?.noTeam ? { noTeam: true } : {}),
     };
     // 새 세션의 권한 모드는 생략하면 auto (사용자 2026-10-24) — 이미 있는 세션의 null(벤더 기본 = 승인 요청)은 건드리지 않는다
     logFile = EventLog.create(P.sessionsDir, meta);
@@ -157,12 +162,12 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   // 세션 인자(meta.params, ticket slcode-agent-plugin-part-when)는 SLCODE_PARAM_<이름> 으로 — 물려받은 SLCODE_PARAM_* 는 지운다. leader 세션 안에서 친 slcode new 의
   // core 는 leader 의 env 를 물려받으므로, 지우지 않으면 worker 의 훅이 leader 의 값을 읽는다 (사용자 2026-11-02)
   const params = logFile.meta.params ?? {};
-  // 자식 세션 (ticket slcode-subagent-sessions, 사용자 결정 2026-11-07) — 부모 core 가 띄운 자식은 meta.parent {kind: child}. 자식은 다시 자식을 만들지 못하고(한 단계만),
-  // 그 밖의 세션은 SLCODE_EXPERIMENTAL_SUBAGENTS=1 로 떴을 때만 만들 수 있다 — 기능을 따로 다듬을 때까지 기본은 꺼 두고 모델이 부를 통로(지시문·spawnChild)를 막는다
-  // (사용자 2026-11-07). 띄울 때 읽는다 — 떠 있는 세션은 바뀌지 않는다.
-  // 자식의 벤더 env 에는 SLCODE_PARENT_ID(`slcode mail parent`) — 물려받은 값은 지운다
-  const parentId = logFile.meta.parent?.kind === 'child' ? logFile.meta.parent.id : null;
-  const subagents = !parentId && process.env.SLCODE_EXPERIMENTAL_SUBAGENTS === '1';
+  // 팀원 세션 (ticket slcode-team-agent, 사용자 결정 2026-11-07~08) — 리더 core 가 띄운 팀원은 meta.team 에 관여 옵션, link 팀원은 meta.parent {kind: child}.
+  // 옵션은 끊기(session.unlock)로 바뀌므로 쓸 때마다 meta 에서 읽는다 (team()). 팀원을 만들 수 있는지는 meta.noTeam — 설정의 "새 세션 팀원" 이나 noTeam 팀원.
+  // link 팀원의 벤더 env 에는 SLCODE_PARENT_ID(`slcode mail leader`) — 물려받은 값은 지운다
+  const team = () => teamOf(logFile.meta);
+  const parentId = team()?.link && logFile.meta.parent?.kind === 'child' ? logFile.meta.parent.id : null;
+  const canTeam = !logFile.meta.noTeam;
   const shell = Object.fromEntries(Object.entries(SDK_ENV).filter(([k]) => !k.toUpperCase().startsWith(PARAM_ENV) && k !== 'SLCODE_PARENT_ID'));
   const env: NodeJS.ProcessEnv = withBinPath({ ...shell, ...logFile.meta.env, ...Object.fromEntries(Object.entries(params).map(([k, v]) => [PARAM_ENV + k, v])), SLCODE_SESSION_ID: logFile.meta.id, ...(parentId ? { SLCODE_PARENT_ID: parentId } : {}) }, PKG);
   // inspect (ticket slcode-inspect-proxy·slcode-inspect-default-on) — 켜져 있으면 벤더를 띄우기 전에 proxy 를 세우고 벤더 env 의 ANTHROPIC_BASE_URL 을 그리로.
@@ -243,8 +248,8 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   try { firstEnv = await vendorEnv(); firstArgs = await vendorArgs(); } catch (e) { logFile.updateMeta({ inspect: false }); inspectFailed = (e as Error).message; }
   if (inspectFailed && codex) firstArgs = codexBaseArgs();
   const session: AgentSession = codex
-    ? new CodexSession({ log: logFile, env: codexEnv(), permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, args: firstArgs, onConfig: (base) => gotBase(base), skillRoots: agent?.codex.roots ?? [], instructions: agent?.append ?? '', family: familyPrompt({ subagents, parent: parentId }) })
-    : new ClaudeSession({ log: logFile, env: firstEnv, resume: logFile.meta.vendorSessionId, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, ...(agent ? { agent } : {}), ...(load ? { load } : {}), ...(hooks ? { hooks: hooks.sdkHooks() } : {}), family: familyPrompt({ subagents, parent: parentId }) });
+    ? new CodexSession({ log: logFile, env: codexEnv(), permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, args: firstArgs, onConfig: (base) => gotBase(base), skillRoots: agent?.codex.roots ?? [], instructions: agent?.append ?? '', family: familyPrompt({ team: canTeam, leader: parentId, options: team() }) })
+    : new ClaudeSession({ log: logFile, env: firstEnv, resume: logFile.meta.vendorSessionId, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, ...(agent ? { agent } : {}), ...(load ? { load } : {}), ...(hooks ? { hooks: hooks.sdkHooks() } : {}), family: familyPrompt({ team: canTeam, leader: parentId, options: team() }) });
   // 연 표지를 열 때의 훅 기록보다 먼저 — 화면은 이것을 만나면 마지막 턴 뒤의 앞선 열 때 알림(바꾸기 전 프로필·벤더의 것 등)을 지운다
   session.opened(openSource);
   for (const ev of hookQueue ?? []) (session as ClaudeSession).emitHook(ev);
@@ -319,7 +324,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
 
   // ---- 디스패치 (UDS 연결마다 — CLI 동사, serve 의 중계 연결과 제어 연결)
   type Web = { host: string; port: number; url: string; version: string };
-  /** parent — 자식 세션의 부모 core 가 core.own {parent} 으로 붙은 소유 연결 */
+  /** parent — link 팀원의 리더 core 가 core.own {parent} 으로 붙은 소유 연결 */
   type Conn = { detach: (() => void) | null; send: (o: unknown) => void; ownerPid: number | null; web: Web | null; follows: boolean; parent: boolean };
   const conns = new Set<Conn>();
   let owner: Conn | null = null;
@@ -344,11 +349,11 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       return { ok: true, pid: process.pid, protocol: PROTOCOL_VERSION, session: sid };
     },
     'core.own': (conn, p) => {
-      if (p?.parent && !parentId) throw new CoreError(ERR.badRequest, `session ${sid} is not a child session`);
+      if (p?.parent && !parentId) throw new CoreError(ERR.badRequest, `session ${sid} is not a linked teammate`);
       if (owner && owner !== conn) {
-        // 부모가 소유한 자식은 다른 연결이 가져가지 못한다(카드 핸드오프는 붙기만 한다), 부모 쪽은 사람이 따로 소유한 자식을 가져가지 못한다 (ticket slcode-subagent-sessions)
-        if (owner.parent && !p?.parent) throw new CoreError(ERR.parentOwned, `session ${sid} is a child session owned by its parent ${parentId}`);
-        if (!owner.parent && p?.parent) throw new CoreError(ERR.owned, `session ${sid} is owned by pid ${owner.ownerPid ?? '?'}, not by its parent`);
+        // 리더가 소유한 팀원은 다른 연결이 가져가지 못한다(카드 핸드오프는 붙기만 한다), 리더 쪽은 사람이 따로 소유한 팀원을 가져가지 못한다 (ticket slcode-team-agent)
+        if (owner.parent && !p?.parent) throw new CoreError(ERR.parentOwned, `session ${sid} is a teammate owned by its leader ${parentId}`);
+        if (!owner.parent && p?.parent) throw new CoreError(ERR.owned, `session ${sid} is owned by pid ${owner.ownerPid ?? '?'}, not by its leader`);
         if (!p?.takeover) throw new CoreError(ERR.owned, `session ${sid} is owned by pid ${owner.ownerPid ?? '?'}`);
         owner.send({ event: 'core.owner', params: { pid: p.pid ?? null } });
       }
@@ -544,10 +549,8 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       mine(p?.id);
       const m = p.mail;
       if (typeof m?.from !== 'string' || !m.from) throw new CoreError(ERR.badRequest, 'mail.from required');
-      // 잠긴 자식은 부모의 메시지만, 넘겨받은 자식은 부모의 메시지를 거절한다 (사용자 결정 2026-11-07)
-      if (parentId && locked() && m.from !== parentId) throw new CoreError(ERR.locked, lockedWhy());
-      if (parentId && logFile.meta.unlocked && m.from === parentId) throw new CoreError(ERR.unlocked, unlockedWhy());
-      const mail = newMail({ id: typeof m.id === 'string' && /^[\w-]{1,40}$/.test(m.id) ? m.id : undefined, ts: Number(m.ts) || undefined, from: m.from, to: sid, kind: typeof m.kind === 'string' && m.kind ? m.kind : 'message', body: m.body ?? '', ...(m.re ? { re: String(m.re) } : {}), ...(m.via ? { via: String(m.via) } : {}) });
+      // 팀원도 누구의 메시지든 받는다 — 잠김(입력 제어)은 지시만 막는다 (사용자 2026-11-07)
+      const mail = newMail({ id: typeof m.id === 'string' && /^[\w-]{1,40}$/.test(m.id) ? m.id : undefined, ts: Number(m.ts) || undefined, from: m.from, to: sid, kind: typeof m.kind === 'string' && m.kind ? m.kind : 'message', body: m.body ?? '', ...(m.re ? { re: String(m.re) } : {}), ...(m.via ? { via: String(m.via) } : {}), ...(m.lazy === true ? { lazy: true } : {}) });
       take(mail);
       return { mailId: mail.id };
     },
@@ -574,30 +577,34 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       if (!to) throw new CoreError(ERR.badRequest, `unknown mail ${p.re} — this session did not receive it (use: slcode mail <to> <text>)`);
       return sendMail(P.sessionsDir, to, { from: sid, kind: 'reply', body: String(p.text ?? ''), re: String(p.re) });
     },
-    // ---- 자식 세션 (ticket slcode-subagent-sessions, 사용자 결정 2026-11-07)
+    // ---- 팀원 세션 (ticket slcode-team-agent, 사용자 결정 2026-11-07~08)
     'session.spawnChild': async (_c, p) => {
       const s = mine(p?.id);
-      if (parentId) throw new CoreError(ERR.badRequest, 'a child session cannot start child sessions (one level only)');
-      if (!subagents) throw new CoreError(ERR.subagentsDisabled, 'child sessions are off in this session (experimental: start it with SLCODE_EXPERIMENTAL_SUBAGENTS=1)');
+      if (!canTeam) throw new CoreError(ERR.teamDisabled, `session ${sid} cannot start teammates (the new-session teammate setting was off, or it is a teammate started with noTeam)`);
       if (typeof p.cwd !== 'string' || !path.isAbsolute(p.cwd)) throw new CoreError(ERR.badRequest, 'cwd must be an absolute folder');
       if (p.vendor !== undefined && p.vendor !== 'claude' && p.vendor !== 'codex') throw new CoreError(ERR.badRequest, 'vendor claude|codex');
-      // 주지 않은 벤더·모델·effort·권한 모드는 부모를 따른다 — 모델·effort 는 벤더가 같을 때만 (사용자 결정 5-1·3)
+      // 빠진 옵션은 teammate 템플릿 값 (사용자 2026-11-08: 모든 옵션은 선택, 없으면 teammate 템플릿)
+      const { cut: _cut, ...given } = p.team ?? {};
+      const options: TeamOptions = { ...TEAM_TEMPLATES.teammate, ...given };
+      { const why = teamOptionsError(options); if (why) throw new CoreError(ERR.badRequest, why); }
+      // 주지 않은 벤더·모델·effort·권한 모드는 리더를 따른다 — 모델·effort 는 벤더가 같을 때만 (사용자 결정 5-1·3)
       const vendor = p.vendor ?? logFile.meta.vendor;
       const same = vendor === logFile.meta.vendor;
       const id = await children.spawn({
         cwd: p.cwd, vendor, title: p.title, model: p.model ?? (same ? s.model ?? undefined : undefined), effort: p.effort ?? (same ? s.effort ?? undefined : undefined),
-        permissionMode: p.mode ?? logFile.meta.permissionMode ?? undefined, profile: p.profile, env: p.env, params: p.params, prompt: p.prompt, raw: opts.raw,
+        permissionMode: p.mode ?? logFile.meta.permissionMode ?? undefined, profile: p.profile, env: p.env, params: p.params, prompt: p.prompt, raw: opts.raw, team: options,
         ...(logFile.meta.inspect ? { inspect: true } : {}),
       });
       return { id };
     },
     'session.childCall': async (_c, p) => {
       mine(p?.id);
-      if (!['session.send', 'session.interrupt', 'session.approve', 'session.close'].includes(p.method)) throw new CoreError(ERR.badRequest, `${p.method} is not a child instruction`);
-      // 부모 모델은 질문에만 답한다 — 도구 승인은 사람이 화면에서 (사용자 결정 3)
+      if (!['session.send', 'session.interrupt', 'session.approve', 'session.close'].includes(p.method)) throw new CoreError(ERR.badRequest, `${p.method} is not a teammate instruction`);
+      // 리더 모델은 질문 수신 팀원의 질문에만 답한다 — 도구 승인은 사람이 화면에서 (사용자 결정 3)
       if (p.method === 'session.approve') {
         const req = children.pendingOf(p.child, p.params?.requestId);
-        if (req && req.name !== 'AskUserQuestion') throw new CoreError(ERR.badRequest, `${req.requestId} is a tool approval (${req.name}) — the user answers it in the screen, not the parent session`);
+        if (req && req.name !== 'AskUserQuestion') throw new CoreError(ERR.badRequest, `${req.requestId} is a tool approval (${req.name}) — the user answers it in the screen, not the leader session`);
+        if (req && !teamOf(sessionMeta(P.sessionsDir, String(p.child)))?.askToLeader) throw new CoreError(ERR.badRequest, `teammate ${p.child} does not pass its questions to the leader (askToLeader off) — the user answers ${req.requestId} in its screen`);
       }
       return children.call(p.child, p.method, p.params ?? {});
     },
@@ -607,40 +614,39 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       return children.call(p.child, 'session.approve', { requestId: p.requestId, decision: p.decision, ...(p.updatedInput ? { updatedInput: p.updatedInput } : {}) }) as Promise<{ ok: boolean }>;
     },
     'session.children': (_c, p) => { mine(p?.id); return { children: children.list() }; },
-    'session.unlock': (_c, p) => { mine(p?.id); setUnlocked(true); return { ok: true }; },
-    'session.lock': (_c, p) => { mine(p?.id); setUnlocked(false); return { ok: true }; },
+    'session.unlock': (_c, p) => { mine(p?.id); cut(); return { ok: true }; },
   };
-  // ---- 자식 세션의 잠김 (ticket slcode-subagent-sessions, 사용자 결정 2026-11-07) — 부모가 소유하는 동안(소유자 유예 중 포함) 화면·CLI 의 지시를 받지 않는다.
-  // 사람이 따로 소유하면(부모 없이 resume) 잠기지 않는다. "강제로 풀기"(meta.unlocked) 뒤에는 반대로 부모의 지시를 거절한다. 도구 승인과 닫기는 잠김과 상관없다
-  const locked = () => !!parentId && !logFile.meta.unlocked && (!owner || owner.parent);
-  const lockedWhy = () => `session ${sid} is a child session controlled by its parent ${parentId} — unlock it in its screen (강제로 풀기) to give it instructions yourself`;
-  const unlockedWhy = () => `the user took over child session ${sid} (unlocked it) — instructions from the parent are refused until the user locks it again`;
-  session.extraInfo = () => ({ ...(parentId ? { locked: locked() } : {}), subagents });
-  function setUnlocked(on: boolean) {
-    if (!parentId) throw new CoreError(ERR.badRequest, `session ${sid} is not a child session`);
-    if (on === !!logFile.meta.unlocked) return;
-    logFile.updateMeta({ unlocked: on ? true : undefined });
+  // ---- 팀원의 잠김 (ticket slcode-team-agent) — 입력 제어가 켜진 팀원은 리더가 소유하는 동안(소유자 유예 중 포함) 화면·CLI 의 지시를 받지 않는다.
+  // 사람이 따로 소유하면(리더 없이 resume) 잠기지 않는다. 끊은 뒤(team.cut)에는 반대로 리더의 지시를 거절한다. 도구 승인과 닫기는 잠김과 상관없다
+  const locked = () => !!parentId && !!team()?.inputControl && (!owner || owner.parent);
+  const lockedWhy = () => `session ${sid} is a teammate whose input its leader ${parentId} controls — cut it loose in its screen (the lock icon) to give it instructions yourself`;
+  const unlockedWhy = () => `the user cut teammate ${sid} loose from its leader — instructions from the leader are refused (send it a message instead: slcode mail ${sid} <text>)`;
+  session.extraInfo = () => (parentId ? { locked: locked() } : {});
+  /** 끊기 (사용자 2026-11-08) — 입력 제어·출력 수신·질문 수신을 끈다. 일방향이라 되돌리는 길이 없다. 관계(메시지·가족 메뉴)와 수명 연동은 그대로 */
+  function cut() {
+    const t = team();
+    if (!parentId || !t) throw new CoreError(ERR.badRequest, `session ${sid} is not a teammate`);
+    if (t.cut) return;
+    logFile.updateMeta({ team: { ...t, inputControl: false, outputToLeader: false, askToLeader: false, cut: true } });
     broadcast('session.changed', session.info());
-    tellParent(on ? 'unlocked' : 'locked', on
-      ? 'The user unlocked this child session and took it over. Your instructions to it are refused, and its turns are not reported to you, until the user locks it again.'
-      : 'The user locked this child session again. It takes your instructions again.');
+    tellParent('unlocked', 'The user cut this teammate loose. It no longer takes your instructions, reports its turns or passes its questions to you. You can still exchange messages with it (slcode mail).');
   }
-  /** 부모에게 메시지 — 부모가 꺼졌으면 그만 */
+  /** 리더에게 메시지 — 리더가 꺼졌으면 그만 */
   function tellParent(kind: string, body: string) {
     if (!parentId) return;
-    sendMail(P.sessionsDir, parentId, { from: sid, kind, body }).catch((e) => log(`could not tell the parent (${kind}): ${(e as Error).message}`));
+    sendMail(P.sessionsDir, parentId, { from: sid, kind, body }).catch((e) => log(`could not tell the leader (${kind}): ${(e as Error).message}`));
   }
-  /** 부모가 지시하는 메서드 — 잠긴 동안 부모 밖의 연결은 거절, 넘겨받은 동안 부모는 거절 */
+  /** 리더가 지시하는 메서드 — 잠긴 동안 리더 밖의 연결은 거절, 끊은 뒤에는 리더를 거절 */
   const LOCKED_METHODS = new Set(['session.send', 'session.interrupt', 'session.setModel', 'session.setEffort', 'session.setVendor', 'session.setProfile', 'session.setMode', 'session.rewind']);
   function gate(conn: Conn, method: string) {
     if (!parentId) return;
     if (LOCKED_METHODS.has(method) && locked() && !conn.parent) throw new CoreError(ERR.locked, lockedWhy());
-    if (conn.parent && logFile.meta.unlocked && (LOCKED_METHODS.has(method) || method === 'session.approve')) throw new CoreError(ERR.unlocked, unlockedWhy());
+    if (conn.parent && team()?.cut && (LOCKED_METHODS.has(method) || method === 'session.approve')) throw new CoreError(ERR.unlocked, unlockedWhy());
   }
   const children = new Children({
     dir: P.dir, sessionsDir: P.sessionsDir, parent: sid, log,
     changed: () => broadcast('session.children', { id: sid, children: children.list() }),
-    exited: (id, reason) => take(newMail({ from: id, to: sid, kind: 'closed', body: `Child session ${id} ended (${reason}) without this session closing it.` })),
+    exited: (id, reason) => take(newMail({ from: id, to: sid, kind: 'closed', body: `Teammate ${id} ended (${reason}) without this session closing it.` })),
   });
   function broadcast(event: string, params: unknown) { for (const c of conns) c.send({ event, params }); }
 
@@ -699,26 +705,28 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     if (retire) setImmediate(maybeRetire); // idle 에서 밀린 메시지가 턴으로 들어갔는지 본 뒤에
   });
 
-  // ---- 자식의 보고 (사용자 결정 2026-11-07) — 잠긴 동안(부모가 소유) 턴이 끝나면 마지막 답 전체를 kind=result 로, 질문(AskUserQuestion)은 kind=question 으로 부모에게.
-  // 넘겨받은 동안의 턴은 보고하지 않는다. 도구 승인은 부모 화면이 소유 연결로 본다
+  // ---- 팀원의 보고 (사용자 결정 2026-11-07) — 출력 수신이면 턴이 끝날 때 마지막 답 전체를 kind=result 로, 질문 수신이면 질문(AskUserQuestion)을 kind=question 으로 리더에게.
+  // 끊은 뒤에는 둘 다 꺼져 있다. 도구 승인은 리더 화면이 소유 연결로 본다
   function reportToParent(e: LoggedEvent) {
-    if (!locked()) return; // 부모가 소유하기 전(첫 프롬프트가 곧 끝난 턴)도 잠긴 것으로 — 부모는 그 사이에 소유한다
-    const ev = e.ev;
-    if (ev.kind === 'turn.end') {
+    const t = team(), ev = e.ev;
+    if (!t) return;
+    if (ev.kind === 'turn.end' && t.outputToLeader) {
       const answer = lastAnswer(logFile.all);
       const head = ev.ok ? '' : ev.interrupted ? '(the turn was interrupted)\n' : `(the turn failed: ${ev.error ?? 'unknown error'})\n`;
       tellParent('result', `${head}${answer || '(no answer text)'}`);
-    } else if (ev.kind === 'approval.requested' && ev.name === 'AskUserQuestion') {
+    } else if (ev.kind === 'approval.requested' && ev.name === 'AskUserQuestion' && t.askToLeader) {
       tellParent('question', `Request ${ev.requestId}: ${JSON.stringify(ev.input)}\nAnswer with: slcode respond ${sid} ${ev.requestId} --answer <text>`);
     }
   }
 
   // ---- 소유권 — 소유자가 없는 동안은 유예 시계가 돈다 (기동 직후, 소유자가 close 없이 끊긴 뒤)
   let ownerGrace: NodeJS.Timeout | null = null;
-  /** 자식의 부모 core 가 교체 중이다 — 새 부모 core 가 다시 소유할 때까지 유예를 늘린다 (교체는 소유자 유예보다 길 수 있다) */
+  /** 팀원의 리더 core 가 교체 중이다 — 새 리더 core 가 다시 소유할 때까지 유예를 늘린다 (교체는 소유자 유예보다 길 수 있다) */
   const parentReplacing = () => { const m = parentId ? sessionMeta(P.sessionsDir, parentId) : null; return !!m && replacing(new EventLog(P.sessionsDir, m).sockPath); };
+  /** 수명 연동이 꺼진 팀원(link·detached 템플릿)은 소유자 없이도 산다 — slcode close·화면의 종료로만 닫힌다 (ticket slcode-team-agent) */
+  const ownerless = () => { const t = team(); return !!t && !t.endWithLeader; };
   function armOwnerGrace() {
-    if (ownerGrace || closed) return;
+    if (ownerGrace || closed || ownerless()) return;
     ownerGrace = setTimeout(() => { ownerGrace = null; if (owner) return; if (parentReplacing()) armOwnerGrace(); else void close('owner gone'); }, OWNER_GRACE_MS);
   }
   function disarmOwnerGrace() { if (ownerGrace) { clearTimeout(ownerGrace); ownerGrace = null; } }
@@ -761,6 +769,9 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     // 대기 중인 ask 의 답장은 턴이 아니라 그 요청의 응답으로
     const waiter = m.kind === 'reply' && m.re ? asks.get(m.re) : undefined;
     if (waiter) { asks.delete(m.re!); waiter.resolve(m); return; }
+    // fast(기본, ticket slcode-team-agent 사용자 2026-11-07) — 턴 중이어도 바로 넣는다. Claude 는 다음 도구 결과와 함께 같은 턴에, Codex 는 지금 턴 뒤에 줄 선다.
+    // lazy 는 밀려 있다가 idle 에 한 턴으로
+    if (!m.lazy && !mailCalm()) { deliverMail([m]); return; }
     pending.push(m);
     flushMail();
   }
@@ -785,15 +796,18 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       } finally { draining = false; }
     })();
   }
-  // claude 의 메시지처럼: idle(첫 프롬프트 전 starting 포함)이면 즉시, 아니면 다음 idle 에. 여러 통은 한 턴으로 (사용자 결정 2026-09-27)
+  const mailCalm = () => session.state === 'idle' || session.state === 'starting';
+  // 밀린 것(lazy): idle(첫 프롬프트 전 starting 포함)이면 즉시, 아니면 다음 idle 에. 여러 통은 한 턴으로 (사용자 결정 2026-09-27)
   function flushMail() {
-    if (closed || !pending.length || (session.state !== 'idle' && session.state !== 'starting')) return;
-    const batch = pending.splice(0);
+    if (closed || !pending.length || !mailCalm()) return;
+    deliverMail(pending.splice(0));
+  }
+  function deliverMail(batch: Mail[]) {
     for (const m of batch) received.set(m.id, m.from);
     session.send(batch.map(renderMail).join('\n\n'), 'mail');
   }
   logFile.updateMeta({ pid: process.pid });
-  if (!parentId) void children.adoptLive(); // 교체 전의 core 가 띄운 켜진 자식
+  void children.adoptLive(); // 교체 전의 core 가 띄운 켜진 link 팀원
 
   // ---- 수명
   let resolveDone!: () => void;
@@ -808,7 +822,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     // 꺼진 시각은 먼저 — 벤더 종료가 길어 SIGKILL 을 맞아도 남는다
     try { logFile.updateMeta({ closedAt: Date.now() }); } catch { /* delete 가 세션 폴더를 먼저 지웠다 */ }
     for (const [id, w] of asks) { asks.delete(id); w.reject(new CoreError('closed', `session closed: ${reason}`)); }
-    children.closeAll(); // 부모가 닫히면 자식도 (사용자 결정 4-1)
+    children.closeAll(); // 리더가 닫히면 수명 연동 팀원도 닫는다 (사용자 결정 4-1), 나머지는 놓는다
     let deadline: NodeJS.Timeout | undefined;
     await Promise.race([session.close(reason), new Promise<void>((r) => { deadline = setTimeout(() => { log(`vendor did not close in ${CLOSE_DEADLINE_MS / 1000}s — leaving it`); r(); }, CLOSE_DEADLINE_MS); })]);
     clearTimeout(deadline);
@@ -878,7 +892,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   return { sock: sockPath, session: session.info(), close, done };
 }
 
-/** 마지막 턴의 답 — 본문(서브에이전트 밖)의 마지막 도구 뒤 글, 없으면 그 턴의 본문 글 전부 (자식 세션의 보고, ticket slcode-subagent-sessions) */
+/** 마지막 턴의 답 — 본문(서브에이전트 밖)의 마지막 도구 뒤 글, 없으면 그 턴의 본문 글 전부 (팀원의 보고, ticket slcode-team-agent) */
 function lastAnswer(events: readonly LoggedEvent[]): string {
   let start = -1;
   for (let i = events.length - 1; i >= 0; i--) if (events[i].ev.kind === 'turn.start') { start = i; break; }

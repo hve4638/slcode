@@ -61,15 +61,40 @@ export type SessionInfo = {
   inspect?: boolean;
   /** 시작 화면(동사 없는 slcode)에서 연 새 세션 — 첫 메시지 전엔 대화 화면에서 시작 화면으로 돌아갈 수 있다(그 빈 세션은 지운다, ticket slcode-session-profile) */
   fromStart?: boolean;
-  /** 이 세션을 낳은 세션 (SessionMeta.parent) — child 는 자체 서브에이전트 (ticket slcode-subagent-sessions) */
+  /** 이 세션을 낳은 세션 (SessionMeta.parent) — child 는 link 팀원 (ticket slcode-team-agent), fork 는 복제 */
   parent?: { id: string; kind: 'child' | 'fork'; seq?: number };
-  /** 사용자가 "강제로 풀기" 로 부모에게서 넘겨받은 자식 세션 — meta 에 남는다 */
-  unlocked?: boolean;
-  /** 부모가 제어하는 자식 세션이라 화면 입력을 받지 않는다 — 부모가 소유하고(또는 소유자 유예 중이고) 풀지 않았을 때 */
+  /** `slcode team new` 로 띄운 팀원의 관여 옵션 (ticket slcode-team-agent) — meta 에 남는다. 끊으면(cut) 입력 제어·출력 수신·질문 수신이 꺼진다 */
+  team?: TeamOptions;
+  /** 이 세션은 팀원을 만들지 못한다 — 설정의 "새 세션 팀원" 을 끄고 열었거나 noTeam 팀원 */
+  noTeam?: boolean;
+  /** 리더가 입력을 쥔 팀원이라 화면 입력을 받지 않는다 — 입력 제어가 켜져 있고 끊지 않았고 리더가 소유할(또는 소유자 유예 중일) 때 */
   locked?: boolean;
-  /** 이 세션의 모델이 자식 세션을 만들 수 있다 — 자식이 아니고 SLCODE_EXPERIMENTAL_SUBAGENTS=1 로 떴을 때 */
-  subagents?: boolean;
 };
+
+/** 팀원의 관여 옵션 (ticket slcode-team-agent, 사용자 2026-11-07~08) — 템플릿 subagent 는 모두 켬, teammate 는 link 만, detached 는 모두 끔.
+ *  link 가 꺼져 있으면 리더 옵션(inputControl·outputToLeader·askToLeader·endWithLeader)을 켤 수 없다 */
+export type TeamOptions = {
+  /** 관계 — meta.parent 에 리더를 적고 리더 core 가 소유 연결을 붙인다. `slcode mail leader`, 가족 메뉴 */
+  link: boolean;
+  /** 입력 제어 — 리더가 입력 파이프라인을 가져간다. 화면·다른 세션의 지시를 거절한다 */
+  inputControl: boolean;
+  /** 출력 수신 — 턴이 끝날 때마다 마지막 답을 kind=result 로 리더에게 */
+  outputToLeader: boolean;
+  /** 질문 수신 — AskUserQuestion 을 kind=question 으로 리더에게, 리더 모델이 답한다 */
+  askToLeader: boolean;
+  /** 수명 연동 — 리더가 닫히면 같이 닫힌다. 끄면 소유자 없이도 산다 */
+  endWithLeader: boolean;
+  /** 팀 생성 제한 — 이 팀원은 slcode team new 를 쓰지 못한다 */
+  noTeam: boolean;
+  /** 사용자가 화면에서 끊었다 (일방향) — 입력 제어·출력 수신·질문 수신이 꺼진 뒤다 */
+  cut?: boolean;
+};
+/** 관여 옵션의 템플릿 — `slcode team new --subagent|--teammate|--detached`. 정해진 모드가 아니라 옵션 기본값이다 (사용자 2026-11-07) */
+export const TEAM_TEMPLATES = {
+  subagent: { link: true, inputControl: true, outputToLeader: true, askToLeader: true, endWithLeader: true, noTeam: true },
+  teammate: { link: true, inputControl: false, outputToLeader: false, askToLeader: false, endWithLeader: false, noTeam: false },
+  detached: { link: false, inputControl: false, outputToLeader: false, askToLeader: false, endWithLeader: false, noTeam: false },
+} as const satisfies Record<string, TeamOptions>;
 
 /** inspect 기록의 호출 하나 요약 (inspect/inspect.db 의 calls 한 행). at 은 요청이 들어온 시각, ms 는 응답이 끝날 때까지 */
 export type InspectCall = {
@@ -212,7 +237,7 @@ export type LoggedEvent = { seq: number; at: number; ev: CoreEvent };
  *  theme 은 id 이고 목록은 웹(web/settings.js)이 정한다 — 모르는 id 는 웹이 'system' 으로 읽는다.
  *  context: warn 이면 ctx % 를 yellow 미만 초록, red 미만 노랑, 그 이상 빨강. 끄면 색 없이. 0 ≤ yellow ≤ red ≤ 100.
  *  inspect: 이 입구에서 여는 새 Claude 세션이 inspect 로 시작한다 (ticket slcode-inspect-default-on, 기본 끔) — 떠 있는 세션은 사이드바 토글로 */
-export type Settings = { theme: string; context: { warn: boolean; yellow: number; red: number }; inspect: boolean };
+export type Settings = { theme: string; context: { warn: boolean; yellow: number; red: number }; inspect: boolean; /** 새 세션이 팀원을 만들 수 있다 (ticket slcode-team-agent) — 끄고 연 세션은 meta.noTeam */ team: boolean };
 /** 설정 묶음 — 화면이 들어온 입구로 serve 가 정한다. web 은 slcode 가 연 웹(브라우저), superlite 는 superlite 안의 slcode 탭
  *  (서비스 웹 SUPERLITE_SERVICE_WEB·stdio). 두 벌은 완전히 따로다 — 한쪽에서 바꿔도 다른 쪽은 그대로 (사용자 결정 2026-10-16) */
 export type SettingsKind = 'web' | 'superlite';
@@ -325,21 +350,20 @@ export type Methods = {
   'session.ask': { params: { id: string; to: string; text: string; timeoutMs?: number }; result: { mailId: string; reply: Mail; text: string } };
   /** 받은 메시지 id 로 그 보낸 이에게 kind=reply. 모르는 id(이 세션이 받은 적 없음)면 bad_request, 보낸 이가 켜진 세션이 아니면 no_session */
   'session.reply': { params: { id: string; re: string; text: string }; result: { id: string; to: string } };
-  // ---- 자식 세션 (ticket slcode-subagent-sessions, 사용자 결정 2026-11-07) — 부모 core 가 자식 core 를 띄우고 소유한다
-  /** 부모 세션 안의 `slcode new` 가 부른다 — 자식을 띄우고 소유한 뒤 id 를 돌려준다. vendor·model·effort·mode 는 주지 않으면 부모를 따른다(모델·effort 는 벤더가 같을 때만).
-   *  자식이 부르면 bad_request (한 단계만), SLCODE_EXPERIMENTAL_SUBAGENTS=1 로 뜨지 않은 세션이면 subagents_disabled */
-  'session.spawnChild': { params: { id: string; cwd: string; title?: string; vendor?: Vendor; model?: string; effort?: string; mode?: string; profile?: string; env?: Record<string, string>; params?: Record<string, string>; prompt?: string }; result: { id: string } };
-  /** 부모 모델의 지시를 소유 연결로 자식에게 (`slcode prompt·interrupt·respond·close <자식>`). approve 는 질문(AskUserQuestion)만 — 도구 승인은 사람이 답한다 */
+  // ---- 팀원 세션 (ticket slcode-team-agent, 사용자 결정 2026-11-07~08) — 리더 core 가 팀원 core 를 띄우고, link 팀원은 소유한다
+  /** 리더 세션 안의 `slcode team new` 가 부른다 — 팀원을 띄우고(link 면 소유하고) id 를 돌려준다. vendor·model·effort·mode 는 주지 않으면 리더를 따른다(모델·effort 는 벤더가 같을 때만).
+   *  team 은 관여 옵션 — 빠진 키는 teammate 템플릿 값. 이 세션이 팀원을 만들지 못하면(meta.noTeam) team_disabled */
+  'session.spawnChild': { params: { id: string; cwd: string; title?: string; vendor?: Vendor; model?: string; effort?: string; mode?: string; profile?: string; env?: Record<string, string>; params?: Record<string, string>; prompt?: string; team?: Partial<TeamOptions> }; result: { id: string } };
+  /** 리더 모델의 지시를 소유 연결로 팀원에게 (`slcode prompt·interrupt·respond·close <팀원>`). approve 는 질문 수신 팀원의 질문(AskUserQuestion)만 — 도구 승인은 사람이 답한다 */
   'session.childCall': { params: { id: string; child: string; method: 'session.send' | 'session.interrupt' | 'session.approve' | 'session.close'; params?: Record<string, unknown> }; result: unknown };
-  /** 부모 화면의 "서브" 승인 줄 — 사람이 자식의 도구 승인·질문에 답한다 */
+  /** 리더 화면의 팀원 승인 줄 — 사람이 팀원의 도구 승인·질문에 답한다 */
   'session.childApprove': { params: { id: string; child: string; requestId: string; decision: ApprovalDecision; updatedInput?: Record<string, unknown> }; result: { ok: boolean } };
-  /** 이 세션이 소유한 켜진 자식과 대기 승인 — 바뀔 때마다 session.children 방송 */
+  /** 이 세션이 소유한 켜진 팀원과 대기 승인 — 바뀔 때마다 session.children 방송 */
   'session.children': { params: { id: string }; result: { children: ChildView[] } };
-  /** 자식 화면의 "강제로 풀기"·"다시 잠그기" — meta.unlocked 를 바꾸고 부모에게 메시지로 알린다 */
+  /** 팀원 화면의 자물쇠 → 확인 — 입력 제어·출력 수신·질문 수신을 끊는다 (일방향, 되돌리는 메서드는 없다). 리더에게 kind=unlocked 로 알린다 */
   'session.unlock': { params: { id: string }; result: { ok: true } };
-  'session.lock': { params: { id: string }; result: { ok: true } };
 };
-/** 부모 화면에 보이는 자식 하나 (children.ts) */
+/** 리더 화면에 보이는 팀원 하나 (children.ts) */
 export type ChildView = { id: string; title: string | null; pending: ApprovalRequest[] };
 
 export type MethodName = keyof Methods;
@@ -403,7 +427,7 @@ export type Broadcasts = {
 export type EventName = keyof Broadcasts;
 
 /** 봉투 — body 는 문자열 또는 JSON. kind 는 message·ask·reply. via 는 실제로 넘긴 쪽 (보내는 CLI 가 자동으로: from 과 다른 세션 id 또는 outside) */
-export type Mail = { id: string; from: string; to: string; ts: number; kind: string; body: unknown; /** 답장이 가리키는 원 메시지 id (kind=reply) */ re?: string; via?: string };
+export type Mail = { id: string; from: string; to: string; ts: number; kind: string; body: unknown; /** 답장이 가리키는 원 메시지 id (kind=reply) */ re?: string; via?: string; /** 받는 세션이 idle 이 된 뒤에 넣는다 — 없으면 받는 즉시 (ticket slcode-team-agent) */ lazy?: boolean };
 
 export type RequestFrame = { id: number | string; method: string; params?: unknown };
 export type ResponseFrame = { id: number | string; result?: unknown; error?: { code?: string; message: string } };
@@ -418,14 +442,14 @@ export const ERR = {
   owned: 'owned',
   /** 내려가기로 정한 core 가 그 뒤 온 요청에 — 새 core 에 다시 보내면 된다 (3단계) */
   retiring: 'retiring',
-  /** 부모가 제어하는 자식 세션 — 화면에서 "강제로 풀기" 전에는 부모만 지시한다 (ticket slcode-subagent-sessions) */
+  /** 리더가 입력을 쥔 팀원 (입력 제어, ticket slcode-team-agent) — 화면에서 끊기 전에는 리더만 지시한다 */
   locked: 'locked',
-  /** 사용자가 넘겨받은 자식 세션 — 다시 잠그기 전에는 부모의 지시를 거절한다 */
+  /** 사용자가 끊은 팀원 — 리더의 지시를 거절한다 */
   unlocked: 'unlocked',
-  /** 부모가 소유한 자식 — 다른 연결이 소유권을 가져가지 못한다 (카드 핸드오프는 붙기만 한다) */
+  /** 리더가 소유한 팀원 — 다른 연결이 소유권을 가져가지 못한다 (카드 핸드오프는 붙기만 한다) */
   parentOwned: 'parent_owned',
-  /** SLCODE_EXPERIMENTAL_SUBAGENTS=1 로 뜨지 않은 세션 — 세션 안의 slcode new 는 독립 세션으로 */
-  subagentsDisabled: 'subagents_disabled',
+  /** 팀원을 만들지 못하는 세션 (설정의 "새 세션 팀원" 을 끄고 열었거나 noTeam 팀원) */
+  teamDisabled: 'team_disabled',
 } as const;
 
 export class CoreError extends Error {

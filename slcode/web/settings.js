@@ -15,7 +15,7 @@ export const THEMES = [
 ];
 const CATS = [['light', '라이트'], ['dark', '다크'], ['other', '기타']];
 /** serve 의 DEFAULT_SETTINGS 와 같다 — 옛 serve(settings.get 이 없다)에 붙었을 때 이것으로 그린다 */
-export const DEFAULTS = { theme: 'system', context: { warn: true, yellow: 30, red: 50 }, inspect: false };
+export const DEFAULTS = { theme: 'system', context: { warn: true, yellow: 30, red: 50 }, inspect: false, team: true };
 
 /** 바깥(배경)을 누르면 닫는다 — 누른 곳과 뗀 곳이 둘 다 배경일 때만. click 은 둘의 공통 조상에서 나므로, 창 안에서 끌다가 밖에서 떼도 target 이 dialog 라 닫혔다 (사용자 2026-10-20) */
 export function closeOnBackdrop(dlg) {
@@ -97,6 +97,10 @@ export function settingsDialog(h, set, end, rpc) {
   const inspNote = h('p', { class: 'note' }, '새로 여는 세션이 API 요청·응답을 세션 폴더에 기록합니다. 지금 세션은 사이드바에서 켜고 끕니다.');
   let inspBlocked = null;
 
+  // 새 세션 팀원 (ticket slcode-team-agent, 사용자 2026-11-07) — 이 입구에서 여는 새 세션의 모델이 slcode team new 로 팀원을 띄울 수 있는지. 기본 켜짐, 떠 있는 세션은 바뀌지 않는다
+  const team = h('input', { type: 'checkbox', role: 'switch', onchange: () => save({ team: team.checked }) });
+  const teamNote = h('p', { class: 'note' }, '새로 여는 세션의 에이전트가 팀원 세션을 띄워 일을 나눌 수 있습니다. 지금 세션은 바뀌지 않습니다.');
+
   // inspect 캐시 정리 (사용자 확정 2026-10-20) — 전체 용량, 줄마다 이름 아래 지울 양을 늘 보이고 누르면 확인 창을 한 번 더. inspect 창을 열 때마다 serve 에 묻는다 (inspect.usage).
   // 대상은 상태 폴더의 모든 세션이고, 떠 있는 세션(이 창의 세션·다른 창·카드)은 뺀다
   const total = h('span', { class: 'total' });
@@ -162,6 +166,7 @@ export function settingsDialog(h, set, end, rpc) {
   const mainBody = h('div', { class: 'body' },
     sec('테마', cats, themes),
     h('section', {}, h('label', { class: 'switch' }, h('h3', {}, 'context 경고'), warn), ctxBody),
+    h('section', {}, h('label', { class: 'switch' }, h('h3', {}, '새 세션 팀원'), team), teamNote),
     h('section', { class: 'nav' }, h('button', { class: 'nav', onclick: () => show('inspect') }, h('h3', {}, 'inspect'), h('span', { class: 'go' }, inspState, h('span', { class: 'chev', 'aria-hidden': 'true' }, '›')))),
     endRow,
     err,
@@ -185,6 +190,7 @@ export function settingsDialog(h, set, end, rpc) {
     cur = known(s.theme); mark();
     warn.checked = s.context.warn; ctxBody.classList.toggle('off', !s.context.warn); lo.disabled = hi.disabled = !s.context.warn;
     insp.checked = !!s.inspect && !inspBlocked;
+    team.checked = s.team !== false; // 옛 serve 의 설정엔 없다 — 기본 켜짐
     inspState.textContent = insp.checked ? '켜짐' : '꺼짐';
     // 손잡이를 잡고 끌고 있으면 그 값을 그대로 둔다
     if (!range.matches(':active')) { lo.value = s.context.yellow; hi.value = s.context.red; paintRange(); }
