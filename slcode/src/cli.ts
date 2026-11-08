@@ -30,7 +30,7 @@ import { addProfile, getProfile, listProfiles, removeProfile, setProfile, type P
 import { summarize } from './activity.js';
 import { FILES, PERMISSION_MODES, TEAM_TEMPLATES, type ApprovalRequest, type LoggedEvent, type Methods, type SessionInfo } from './protocol.js';
 
-type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; model?: string; effort?: string; profile?: string; env?: string[]; param?: string[]; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; 'no-inspect'?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; re?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; takeover?: boolean; version?: boolean; help?: boolean; 'from-start'?: boolean; to?: string[]; remove?: boolean; name?: string; options?: string; subagent?: boolean; teammate?: boolean; detached?: boolean; lazy?: boolean };
+type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; model?: string; effort?: string; profile?: string; env?: string[]; param?: string[]; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; 'no-inspect'?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; re?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; takeover?: boolean; version?: boolean; help?: boolean; 'from-start'?: boolean; to?: string[]; remove?: boolean; name?: string; options?: string; subagent?: boolean; teammate?: boolean; detached?: boolean; lazy?: boolean; wait?: boolean };
 
 const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세션 id 또는 유일한 제목. * 는 세션 안(SLCODE_SESSION_ID)에서만)
 
@@ -93,13 +93,14 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
 * ask <to> <text> [--timeout S]  묻고 답장을 기다린다
 * reply <id> <text>              받은 메시지에 답장
 팀원 (세션 안의 에이전트가 친다 — 사람이 새 세션을 열 때는 new)
-* team new [folder] [--subagent|-s | --teammate|-t | --detached|-d] [-n name] [-m model] [-e effort] [--mode M] [-o '<JSON>'] [-- <지시>]
+* team new [folder] [--subagent|-s | --teammate|-t | --detached|-d] [--wait] [-n name] [-m model] [-e effort] [--mode M] [-o '<JSON>'] [-- <지시>]
                                  이 세션(리더)이 팀원 세션을 띄우고 id 를 출력한다. 폴더는 생략하면 지금 폴더, 지시는 -- 뒤나 stdin(heredoc).
-                                 --subagent: 리더가 입력을 쥐고 턴마다 답을 받는다, 질문도 리더에게, 리더가 닫히면 같이 닫힌다, 팀원을 만들지 못한다.
+                                 --subagent: 리더가 입력을 쥐고 답을 받는다, 답하면 닫히고 다시 시키면 다시 뜬다, 리더가 닫히면 같이 닫힌다, 질문 도구·팀원 만들기는 못 한다.
+                                 --wait: 첫 지시의 답을 기다려 id 대신 그 답을 출력한다 (답을 받는 팀원만).
                                  --teammate(기본): 첫 지시 뒤에는 메시지로만 주고받고 리더가 닫혀도 산다. --detached: 리더와 상관없는 세션.
-                                 -o 는 템플릿 위에 얹는 옵션 (true|false): link inputControl outputToLeader askToLeader endWithLeader noTeam.
+                                 -o 는 템플릿 위에 얹는 옵션 (true|false): link inputControl outputToLeader askToLeader endWithLeader endWithAnswer noTeam.
                                  -m 은 모델 이름 또는 anthropic:<모델>·openai:<모델>. 주지 않은 모델·effort·권한 모드는 리더를 따른다.
-                                 팀원에게 지시는 prompt·interrupt·respond·close <팀원> 이 리더 core 를 거쳐 간다
+                                 팀원에게 지시는 prompt·interrupt·respond·close <팀원> 이 리더 core 를 거쳐 간다. prompt <팀원> --wait 는 답을 기다려 출력한다
 에이전트 플러그인 (Claude·Codex 세션에 싣는다. 바꾼 설정은 새 세션부터, 떠 있는 세션은 사이드바의 다시 싣기로 — Codex 는 skill 만)
   plugin add <folder>            slcode-plugin.json(애드온은 slcode-addon.json)이 있는 원본 폴더를 설치한다. 같은 내용이면 아무것도 하지 않는다
   plugin remove <name> [--cascade]
@@ -146,7 +147,7 @@ try {
       remember: { type: 'boolean' }, from: { type: 'string' }, re: { type: 'string' }, timeout: { type: 'string' }, answer: { type: 'string' },
       'no-web': { type: 'boolean' }, web: { type: 'boolean' }, takeover: { type: 'boolean' }, 'from-start': { type: 'boolean' }, version: { type: 'boolean' }, dir: { type: 'string' }, help: { type: 'boolean', short: 'h' }, to: { type: 'string', multiple: true }, remove: { type: 'boolean' }, cascade: { type: 'boolean' },
       // team new (ticket slcode-team-agent) 와 mail --lazy
-      name: { type: 'string', short: 'n' }, options: { type: 'string', short: 'o' }, subagent: { type: 'boolean', short: 's' }, teammate: { type: 'boolean', short: 't' }, detached: { type: 'boolean', short: 'd' }, lazy: { type: 'boolean' },
+      name: { type: 'string', short: 'n' }, options: { type: 'string', short: 'o' }, subagent: { type: 'boolean', short: 's' }, teammate: { type: 'boolean', short: 't' }, detached: { type: 'boolean', short: 'd' }, lazy: { type: 'boolean' }, wait: { type: 'boolean' },
     },
   });
 } catch (e) { usage((e as Error).message); }
@@ -249,6 +250,9 @@ async function teamNew(args: string[]): Promise<void> {
   const team = { ...TEAM_TEMPLATES[tpl[0] ?? 'teammate'], ...given };
   const cwd = folderArg(args[0]);
   const prompt = firstPrompt ?? (await stdinPrompt());
+  // --wait — 첫 지시의 답을 기다려 출력한다. 리더 core 가 그 답을 메시지 대신 이 명령에 넘긴다 (사용자 2026-11-08, MCP 도구 Subagent 가 이 길을 쓴다)
+  if (flags.wait && !prompt) usage('team new --wait needs instructions (after -- or on stdin)');
+  if (flags.wait && !team.outputToLeader) usage('team new --wait needs a teammate that reports its answers (outputToLeader) — use --subagent');
   const pm = sessionMeta(P.sessionsDir, me);
   if (!pm) { err(`no session ${me} (SLCODE_SESSION_ID)`); process.exit(1); }
   let client: RpcClient<Methods>;
@@ -257,17 +261,25 @@ async function teamNew(args: string[]): Promise<void> {
   try {
     ({ id } = await client.request('session.spawnChild', {
       id: me, cwd, title: flags.name, vendor: flags.vendor as 'claude' | 'codex' | undefined, model: flags.model, effort: flags.effort, mode: flags.mode, profile: flags.profile,
-      env: newEnv(), params: newParams(), prompt, team: team as never,
+      env: newEnv(), params: newParams(), prompt: flags.wait ? undefined : prompt, team: team as never,
     }));
-  } catch (e) { err((e as Error).message); process.exit(1); }
-  finally { client.close(); }
-  console.log(id);
+  } catch (e) { client.close(); err((e as Error).message); process.exit(1); }
   if (process.env.SUPERLITE_SOCK) spawnSync('superlite', ['slcode.resume', '--id', id], { encoding: 'utf8' });
+  if (flags.wait) {
+    // id 는 기다리기 전에 stderr 로 — MCP 도구가 멈출 때(Esc) 팀원의 턴도 멈추려고 읽는다
+    err(`teammate ${id} started in ${cwd} — waiting for its answer`);
+    try { console.log(((await client.request('session.childCall', { id: me, child: id, method: 'session.send', params: { text: prompt! }, wait: true })) as { answer: string }).answer); }
+    catch (e) { err((e as Error).message); process.exit(1); }
+    finally { client.close(); }
+    return;
+  }
+  client.close();
+  console.log(id);
   const how = team.outputToLeader ? 'its answers come back to this session as messages' : team.link ? `it messages you when it has something (slcode mail ${flags.name ?? id} <text> to reach it)` : 'it is an independent session';
   err(`teammate ${id} started in ${cwd} — ${how} (slcode close ${id} to stop it)`);
 }
 /** 이 세션(SLCODE_SESSION_ID)의 link 팀원이면 리더 core 를 거쳐 지시한다 — 입력 제어 중인 팀원은 리더의 소유 연결로 온 지시만 받는다. 팀원이 아니면 null */
-async function viaParent(s: string | undefined, method: 'session.send' | 'session.interrupt' | 'session.approve' | 'session.close', params: Record<string, unknown> = {}): Promise<{ result: unknown } | null> {
+async function viaParent(s: string | undefined, method: 'session.send' | 'session.interrupt' | 'session.approve' | 'session.close', params: Record<string, unknown> = {}, wait = false): Promise<{ result: unknown } | null> {
   const me = process.env.SLCODE_SESSION_ID;
   if (!me) return null;
   const child = resolve(s);
@@ -276,7 +288,7 @@ async function viaParent(s: string | undefined, method: 'session.send' | 'sessio
   if (m?.parent?.kind !== 'child' || m.parent.id !== me || !pm) return null;
   let client: RpcClient<Methods>;
   try { client = await connectSession(new EventLog(P.sessionsDir, pm).sockPath); } catch { return null; }
-  try { return { result: await client.request('session.childCall', { id: me, child, method, params }) }; }
+  try { return { result: await client.request('session.childCall', { id: me, child, method, params, ...(wait ? { wait: true } : {}) }) }; }
   catch (e) { err((e as Error).message); process.exit(1); }
   finally { client.close(); }
 }
@@ -696,7 +708,14 @@ try {
       print({ ok: true }); break;
     }
     // ---- 대화
-    case 'prompt': { if (!rest[1]) usage('prompt <s> <text>'); const child = await viaParent(rest[0], 'session.send', { text: rest.slice(1).join(' ') }); if (child) { print(child.result); break; } const { client, id } = await liveClient(rest[0]); print(await client.request('session.send', { id, text: rest.slice(1).join(' ') })); client.close(); break; }
+    case 'prompt': {
+      if (!rest[1]) usage('prompt <s> [--wait] <text>');
+      // --wait — 이 세션의 subagent 팀원에게만: 답을 기다려 출력한다. 답하고 닫힌 팀원은 리더 core 가 다시 띄운다 (사용자 2026-11-08)
+      const child = await viaParent(rest[0], 'session.send', { text: rest.slice(1).join(' ') }, !!flags.wait);
+      if (child) { if (flags.wait) console.log((child.result as { answer: string }).answer); else print(child.result); break; }
+      if (flags.wait) { err('prompt --wait works only inside a slcode session for its own subagent teammate'); process.exit(2); }
+      const { client, id } = await liveClient(rest[0]); print(await client.request('session.send', { id, text: rest.slice(1).join(' ') })); client.close(); break;
+    }
     case 'interrupt': { const child = await viaParent(rest[0], 'session.interrupt'); if (child) { print(child.result); break; } const { client, id } = await liveClient(rest[0]); print(await client.request('session.interrupt', { id })); client.close(); break; }
     // ---- 조회 — 평문 기본, --json 이면 같은 내용을 JSON 으로. 꺼진 세션은 로그 파일에서
     case 'status': {

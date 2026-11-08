@@ -1,0 +1,26 @@
+import { createSdkMcpServer, tool, McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk'
+import { z } from 'zod'
+
+role: 팀원 도구 (ticket slcode-team-agent, 사용자 2026-11-08) — 팀원을 만들 수 있는 Claude 세션에 넣는 in-process MCP 서버 slcode. Claude 의 Agent·SendMessage 처럼 subagent 팀원을 띄우고 이어 시킨다. 도구는 CLI 를 부른다(MCP 가 CLI 를 호출 — 같은 일을 Bash 로도 하게 CLI 가 원본): Subagent {description(이름), prompt, model?, folder?, run_in_background?} → `slcode team new <folder> --subagent -n <description> [-m] --wait`, ContinueSubagent {to, prompt, run_in_background?} → `slcode prompt <to> --wait -- <prompt>`. 지시는 임시 파일로 stdin 에 넘긴다(CLI 는 소켓 stdin 을 읽지 않고, 인자는 길이 상한이 있다). 기다리면 답 + "닫혔다, 이어 시키려면 ContinueSubagent" 안내가 도구 결과, run_in_background 면 id 만 바로 돌려주고 답은 kind=result 메시지로 온다. 리더가 멈추면(abort) CLI 를 끝내고 팀원에 slcode interrupt. Bash 도구는 최대 10분에 끊기지만 MCP 도구는 서버 timeout 까지 기다린다 — timeout 은 setTimeout 상한, alwaysLoad 로 도구 검색 뒤로 미루지 않는다
+
+val NO_LIMIT_MS
+export val TEAM_TOOL_NAMES
+type Run
+export type TeamToolsOptions
+fn runCli(o, args, input, signal, onErr) -> Run {
+  role: dist/cli.js 를 리더 env(SLCODE_SESSION_ID)·리더 폴더로 돌려 stdout·stderr·종료 코드를 모은다. input 은 임시 파일 fd 로 stdin 에, 자식이 물려받은 뒤 지운다. signal 이면 SIGTERM
+}
+val text
+val signalOf
+fn interrupt(o, id) {
+  role: 기다리던 도구를 리더가 멈췄다 — 팀원의 턴도 멈춘다(slcode interrupt, 기다리지 않는다)
+}
+fn answered(id, r) {
+  role: 기다린 결과 — 답과 이어 시키는 법, CLI 가 실패했으면 isError
+}
+export fn teamTools(o) {
+  role: 도구 정의 [Subagent, ContinueSubagent] — 시험은 handler 를 바로 부른다
+}
+export fn teamMcp(o) -> McpSdkServerConfigWithInstance {
+  role: teamTools 를 createSdkMcpServer {name slcode, alwaysLoad, timeout NO_LIMIT_MS} 로 묶는다
+}

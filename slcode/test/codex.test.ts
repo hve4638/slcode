@@ -12,7 +12,7 @@ import { corePaths } from '../src/paths.ts';
 import { estimateCostUsd } from '../src/codex.ts';
 import { SLCODE_PROMPT, familyPrompt } from '../src/prompt.ts';
 /** 새 세션의 고정 지시 — 팀원 기능은 기본 켜짐이라 만드는 법이 붙는다 (ticket slcode-team-agent) */
-const LEAD_PROMPT = `${SLCODE_PROMPT}\n\n${familyPrompt({ team: true, leader: null, options: null })}`;
+const LEAD_PROMPT = `${SLCODE_PROMPT}\n\n${familyPrompt({ team: true, leader: null, options: null, tools: false })}`;
 import { addPlugin, setPlugin } from 'slcode-plugin/agentPlugins';
 
 const FAKE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-codex.mjs');

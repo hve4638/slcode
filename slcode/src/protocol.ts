@@ -71,29 +71,32 @@ export type SessionInfo = {
   locked?: boolean;
 };
 
-/** 팀원의 관여 옵션 (ticket slcode-team-agent, 사용자 2026-11-07~08) — 템플릿 subagent 는 모두 켬, teammate 는 link 만, detached 는 모두 끔.
- *  link 가 꺼져 있으면 리더 옵션(inputControl·outputToLeader·askToLeader·endWithLeader)을 켤 수 없다 */
+/** 팀원의 관여 옵션 (ticket slcode-team-agent, 사용자 2026-11-07~08) — 템플릿 subagent 는 Claude 서브에이전트처럼(질문 수신만 끔), teammate 는 link 만, detached 는 모두 끔.
+ *  link 가 꺼져 있으면 리더 옵션(inputControl·outputToLeader·askToLeader·endWithLeader·endWithAnswer)을 켤 수 없다 */
 export type TeamOptions = {
   /** 관계 — meta.parent 에 리더를 적고 리더 core 가 소유 연결을 붙인다. `slcode mail leader`, 가족 메뉴 */
   link: boolean;
   /** 입력 제어 — 리더가 입력 파이프라인을 가져간다. 화면·다른 세션의 지시를 거절한다 */
   inputControl: boolean;
-  /** 출력 수신 — 턴이 끝날 때마다 마지막 답을 kind=result 로 리더에게 */
+  /** 출력 수신 — 턴이 끝날 때마다 마지막 답을 kind=result 로 리더에게. 리더가 --wait 로 기다리면 리더 core 가 메시지 대신 그 명령의 출력으로 넘긴다 */
   outputToLeader: boolean;
   /** 질문 수신 — AskUserQuestion 을 kind=question 으로 리더에게, 리더 모델이 답한다 */
   askToLeader: boolean;
   /** 수명 연동 — 리더가 닫히면 같이 닫힌다. 끄면 소유자 없이도 산다 */
   endWithLeader: boolean;
+  /** 답하면 닫힘 (사용자 2026-11-08) — 할 일을 다 하고 쉬게 되면 닫힌다. 리더가 다시 시키면 리더 core 가 다시 띄운다. 오래 켜 둔 세션의 메모리를 막으려고.
+   *  사람을 기다리지 않는 세션이라 질문 도구(AskUserQuestion)를 쓰지 못한다 — Claude 서브에이전트와 같다 */
+  endWithAnswer: boolean;
   /** 팀 생성 제한 — 이 팀원은 slcode team new 를 쓰지 못한다 */
   noTeam: boolean;
-  /** 사용자가 화면에서 끊었다 (일방향) — 입력 제어·출력 수신·질문 수신이 꺼진 뒤다 */
+  /** 사용자가 화면에서 끊었다 (일방향) — 입력 제어·출력 수신·질문 수신·답하면 닫힘이 꺼진 뒤다 */
   cut?: boolean;
 };
 /** 관여 옵션의 템플릿 — `slcode team new --subagent|--teammate|--detached`. 정해진 모드가 아니라 옵션 기본값이다 (사용자 2026-11-07) */
 export const TEAM_TEMPLATES = {
-  subagent: { link: true, inputControl: true, outputToLeader: true, askToLeader: true, endWithLeader: true, noTeam: true },
-  teammate: { link: true, inputControl: false, outputToLeader: false, askToLeader: false, endWithLeader: false, noTeam: false },
-  detached: { link: false, inputControl: false, outputToLeader: false, askToLeader: false, endWithLeader: false, noTeam: false },
+  subagent: { link: true, inputControl: true, outputToLeader: true, askToLeader: false, endWithLeader: true, endWithAnswer: true, noTeam: true },
+  teammate: { link: true, inputControl: false, outputToLeader: false, askToLeader: false, endWithLeader: false, endWithAnswer: false, noTeam: false },
+  detached: { link: false, inputControl: false, outputToLeader: false, askToLeader: false, endWithLeader: false, endWithAnswer: false, noTeam: false },
 } as const satisfies Record<string, TeamOptions>;
 
 /** inspect 기록의 호출 하나 요약 (inspect/inspect.db 의 calls 한 행). at 은 요청이 들어온 시각, ms 는 응답이 끝날 때까지 */
@@ -352,10 +355,11 @@ export type Methods = {
   'session.reply': { params: { id: string; re: string; text: string }; result: { id: string; to: string } };
   // ---- 팀원 세션 (ticket slcode-team-agent, 사용자 결정 2026-11-07~08) — 리더 core 가 팀원 core 를 띄우고, link 팀원은 소유한다
   /** 리더 세션 안의 `slcode team new` 가 부른다 — 팀원을 띄우고(link 면 소유하고) id 를 돌려준다. vendor·model·effort·mode 는 주지 않으면 리더를 따른다(모델·effort 는 벤더가 같을 때만).
-   *  team 은 관여 옵션 — 빠진 키는 teammate 템플릿 값. 이 세션이 팀원을 만들지 못하면(meta.noTeam) team_disabled */
+   *  team 은 관여 옵션 — 빠진 키는 teammate 템플릿 값. 이 세션이 팀원을 만들지 못하면(meta.noTeam) team_disabled. */
   'session.spawnChild': { params: { id: string; cwd: string; title?: string; vendor?: Vendor; model?: string; effort?: string; mode?: string; profile?: string; env?: Record<string, string>; params?: Record<string, string>; prompt?: string; team?: Partial<TeamOptions> }; result: { id: string } };
-  /** 리더 모델의 지시를 소유 연결로 팀원에게 (`slcode prompt·interrupt·respond·close <팀원>`). approve 는 질문 수신 팀원의 질문(AskUserQuestion)만 — 도구 승인은 사람이 답한다 */
-  'session.childCall': { params: { id: string; child: string; method: 'session.send' | 'session.interrupt' | 'session.approve' | 'session.close'; params?: Record<string, unknown> }; result: unknown };
+  /** 리더 모델의 지시를 소유 연결로 팀원에게 (`slcode prompt·interrupt·respond·close <팀원>`). approve 는 질문 수신 팀원의 질문(AskUserQuestion)만 — 도구 승인은 사람이 답한다.
+   *  답하면 닫힘 팀원이 닫혀 있으면 session.send 가 다시 띄운다. wait 는 session.send 만 — 결과는 { answer }, 요청 연결이 끊기면 그 답은 메시지로 간다 (`slcode team new --wait`·`slcode prompt --wait`, MCP 도구) */
+  'session.childCall': { params: { id: string; child: string; method: 'session.send' | 'session.interrupt' | 'session.approve' | 'session.close'; params?: Record<string, unknown>; wait?: boolean }; result: unknown };
   /** 리더 화면의 팀원 승인 줄 — 사람이 팀원의 도구 승인·질문에 답한다 */
   'session.childApprove': { params: { id: string; child: string; requestId: string; decision: ApprovalDecision; updatedInput?: Record<string, unknown> }; result: { ok: boolean } };
   /** 이 세션이 소유한 켜진 팀원과 대기 승인 — 바뀔 때마다 session.children 방송 */

@@ -20,8 +20,9 @@ import { isLoopback, reachable, sockAlive, spawnCore } from './live.js';
 import { BUILD, PKG, VERSION, replacing, replacingMark } from './client.js';
 import { corePaths, ensureDir, readOrCreateToken, sessionDir } from './paths.js';
 import { formatMail, newMail, parseMails, sendMail, sessionMeta } from './mail.js';
-import { Children, teamOf, teamOptionsError } from './children.js';
+import { ANSWERED, Children, teamOf, teamOptionsError } from './children.js';
 import { familyPrompt } from './prompt.js';
+import { TEAM_TOOL_NAMES, teamMcp } from './teamTools.js';
 import { blockInspect, CODEX_ROUTE, codexArgs, codexUpstream, inspectBlocked, inspectEnv, keepsFirstParty, sdkVersion, startInspect, turnCalls, upstreamOf, type InspectProxy } from './inspect.js';
 import { InspectStore, maybeSweep } from './inspectDb.js';
 import { Activity } from './activity.js';
@@ -248,8 +249,14 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   try { firstEnv = await vendorEnv(); firstArgs = await vendorArgs(); } catch (e) { logFile.updateMeta({ inspect: false }); inspectFailed = (e as Error).message; }
   if (inspectFailed && codex) firstArgs = codexBaseArgs();
   const session: AgentSession = codex
-    ? new CodexSession({ log: logFile, env: codexEnv(), permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, args: firstArgs, onConfig: (base) => gotBase(base), skillRoots: agent?.codex.roots ?? [], instructions: agent?.append ?? '', family: familyPrompt({ team: canTeam, leader: parentId, options: team() }) })
-    : new ClaudeSession({ log: logFile, env: firstEnv, resume: logFile.meta.vendorSessionId, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, ...(agent ? { agent } : {}), ...(load ? { load } : {}), ...(hooks ? { hooks: hooks.sdkHooks() } : {}), family: familyPrompt({ team: canTeam, leader: parentId, options: team() }) });
+    ? new CodexSession({ log: logFile, env: codexEnv(), permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, args: firstArgs, onConfig: (base) => gotBase(base), skillRoots: agent?.codex.roots ?? [], instructions: agent?.append ?? '', family: familyPrompt({ team: canTeam, leader: parentId, options: team(), tools: false }) })
+    : new ClaudeSession({
+      log: logFile, env: firstEnv, resume: logFile.meta.vendorSessionId, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, ...(agent ? { agent } : {}), ...(load ? { load } : {}), ...(hooks ? { hooks: hooks.sdkHooks() } : {}),
+      family: familyPrompt({ team: canTeam, leader: parentId, options: team(), tools: canTeam }),
+      // 팀원 도구(Subagent·ContinueSubagent)는 팀원을 만들 수 있는 Claude 세션에만 — 도구는 이 판의 CLI 를 부른다. Agent 도구처럼 승인을 묻지 않는다 (사용자 2026-11-08)
+      ...(canTeam ? { mcpServers: () => ({ slcode: teamMcp({ cli: path.join(PKG, 'dist', 'cli.js'), env, cwd }) }), allowedTools: [...TEAM_TOOL_NAMES] } : {}),
+      ...(parentId && team()?.endWithAnswer ? { noAsk: true } : {}),
+    });
   // 연 표지를 열 때의 훅 기록보다 먼저 — 화면은 이것을 만나면 마지막 턴 뒤의 앞선 열 때 알림(바꾸기 전 프로필·벤더의 것 등)을 지운다
   session.opened(openSource);
   for (const ev of hookQueue ?? []) (session as ClaudeSession).emitHook(ev);
@@ -420,6 +427,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
         }
       }
       if (typeof p.text !== 'string' || (!p.text.trim() && !att.length)) throw new CoreError(ERR.badRequest, 'text or attachments required');
+      if (closed) throw new CoreError(ERR.notLive, `session ${sid} is closing`); // 답하고 닫히는 팀원 — 리더 core 가 닫힌 뒤 다시 띄워 다시 보낸다
       for (const a of att) if (typeof a?.name !== 'string' || typeof a.mediaType !== 'string' || typeof a.data !== 'string') throw new CoreError(ERR.badRequest, 'attachment {name, mediaType, data}');
       if (!p.origin && (waiting.length || draining)) { waiting.push({ text: p.text, att }); queueChanged(); activity.sent(); return { ok: true, state: s.state }; } // 기다리는 명령 뒤에 선다
       s.send(p.text, p.origin ?? null, att);
@@ -600,13 +608,24 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     'session.childCall': async (_c, p) => {
       mine(p?.id);
       if (!['session.send', 'session.interrupt', 'session.approve', 'session.close'].includes(p.method)) throw new CoreError(ERR.badRequest, `${p.method} is not a teammate instruction`);
+      if (p.wait && p.method !== 'session.send') throw new CoreError(ERR.badRequest, 'wait works only with session.send');
       // 리더 모델은 질문 수신 팀원의 질문에만 답한다 — 도구 승인은 사람이 화면에서 (사용자 결정 3)
       if (p.method === 'session.approve') {
         const req = children.pendingOf(p.child, p.params?.requestId);
         if (req && req.name !== 'AskUserQuestion') throw new CoreError(ERR.badRequest, `${req.requestId} is a tool approval (${req.name}) — the user answers it in the screen, not the leader session`);
         if (req && !teamOf(sessionMeta(P.sessionsDir, String(p.child)))?.askToLeader) throw new CoreError(ERR.badRequest, `teammate ${p.child} does not pass its questions to the leader (askToLeader off) — the user answers ${req.requestId} in its screen`);
       }
-      return children.call(p.child, p.method, p.params ?? {});
+      if (p.method !== 'session.send' || typeof p.child !== 'string') return children.call(p.child, p.method, p.params ?? {});
+      const child = p.child;
+      if (p.wait && !teamOf(sessionMeta(P.sessionsDir, child))?.outputToLeader) throw new CoreError(ERR.badRequest, `teammate ${child} does not report its answers (outputToLeader off) — wait works only for a teammate that does (a subagent)`);
+      // 답하고 닫힌 팀원(답하면 닫힘)은 다시 시키면 다시 띄운다 (사용자 2026-11-08). 닫히는 중에 보냈으면(not_live) 다 닫힌 뒤 다시 띄워 한 번 더
+      const send = async () => { await children.reopen(child); return children.call(child, 'session.send', p.params ?? {}); };
+      let r: unknown;
+      try { r = await send(); }
+      catch (e) { if ((e as CoreError).code !== ERR.notLive) throw e; r = await send(); }
+      if (!p.wait) return r;
+      // 기다림은 보낸 뒤에 건다 — 응답은 팀원이 턴을 돌기 전에 오고, 답 메시지는 턴이 끝난 뒤에 다른 연결로 온다
+      return { answer: await waitAnswer(_c, child) };
     },
     'session.childApprove': async (_c, p) => {
       mine(p?.id);
@@ -627,14 +646,14 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     const t = team();
     if (!parentId || !t) throw new CoreError(ERR.badRequest, `session ${sid} is not a teammate`);
     if (t.cut) return;
-    logFile.updateMeta({ team: { ...t, inputControl: false, outputToLeader: false, askToLeader: false, cut: true } });
+    logFile.updateMeta({ team: { ...t, inputControl: false, outputToLeader: false, askToLeader: false, endWithAnswer: false, cut: true } });
     broadcast('session.changed', session.info());
     tellParent('unlocked', 'The user cut this teammate loose. It no longer takes your instructions, reports its turns or passes its questions to you. You can still exchange messages with it (slcode mail).');
   }
   /** 리더에게 메시지 — 리더가 꺼졌으면 그만 */
-  function tellParent(kind: string, body: string) {
-    if (!parentId) return;
-    sendMail(P.sessionsDir, parentId, { from: sid, kind, body }).catch((e) => log(`could not tell the leader (${kind}): ${(e as Error).message}`));
+  function tellParent(kind: string, body: string): Promise<void> {
+    if (!parentId) return Promise.resolve();
+    return sendMail(P.sessionsDir, parentId, { from: sid, kind, body }).then(() => {}, (e) => log(`could not tell the leader (${kind}): ${(e as Error).message}`));
   }
   /** 리더가 지시하는 메서드 — 잠긴 동안 리더 밖의 연결은 거절, 끊은 뒤에는 리더를 거절 */
   const LOCKED_METHODS = new Set(['session.send', 'session.interrupt', 'session.setModel', 'session.setEffort', 'session.setVendor', 'session.setProfile', 'session.setMode', 'session.rewind']);
@@ -647,6 +666,8 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     dir: P.dir, sessionsDir: P.sessionsDir, parent: sid, log,
     changed: () => broadcast('session.children', { id: sid, children: children.list() }),
     exited: (id, reason) => take(newMail({ from: id, to: sid, kind: 'closed', body: `Teammate ${id} ended (${reason}) without this session closing it.` })),
+    // 답 없이 끝난 팀원을 기다리던 요청 — 답이 오면 그 전에 풀린다 (답 메시지는 팀원이 닫기 전에 보낸다)
+    gone: (id, reason) => { const l = answerWaits.get(id); if (!l) return; answerWaits.delete(id); for (const w of l) w.resolve(`(teammate ${id} ended before answering: ${reason})`); },
   });
   function broadcast(event: string, params: unknown) { for (const c of conns) c.send({ event, params }); }
 
@@ -700,6 +721,8 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     if (e.ev.kind === 'session.state') broadcast('session.changed', session.info());
     if (e.ev.kind === 'session.state' && (e.ev.state === 'idle' || e.ev.state === 'starting')) { drainWaiting(); flushMail(); }
     if (parentId) reportToParent(e);
+    if (parentId && e.ev.kind === 'turn.end') answered = true;
+    if (e.ev.kind === 'session.state' && e.ev.state === 'idle') maybeEndWithAnswer();
     if (e.ev.kind === 'session.exit') { broadcast('session.closed', { id: sid, reason: e.ev.reason }); const r = `session exited: ${e.ev.reason}`; if (closeFn) void closeFn(r); else earlyExit = r; }
     if (e.ev.kind === 'task') { if (e.ev.phase === 'ended') bg.delete(e.ev.taskId); else if (e.ev.background) bg.add(e.ev.taskId); }
     if (retire) setImmediate(maybeRetire); // idle 에서 밀린 메시지가 턴으로 들어갔는지 본 뒤에
@@ -709,14 +732,27 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   // 끊은 뒤에는 둘 다 꺼져 있다. 도구 승인은 리더 화면이 소유 연결로 본다
   function reportToParent(e: LoggedEvent) {
     const t = team(), ev = e.ev;
-    if (!t) return;
+    if (!t || closed) return; // 닫히는 중의 턴 끝(Codex 는 닫을 때 끝난 턴에도 interrupt 를 보내 turn.end 가 한 번 더 온다)은 보고하지 않는다
     if (ev.kind === 'turn.end' && t.outputToLeader) {
       const answer = lastAnswer(logFile.all);
       const head = ev.ok ? '' : ev.interrupted ? '(the turn was interrupted)\n' : `(the turn failed: ${ev.error ?? 'unknown error'})\n`;
-      tellParent('result', `${head}${answer || '(no answer text)'}`);
+      reported = tellParent('result', `${head}${answer || '(no answer text)'}`);
     } else if (ev.kind === 'approval.requested' && ev.name === 'AskUserQuestion' && t.askToLeader) {
       tellParent('question', `Request ${ev.requestId}: ${JSON.stringify(ev.input)}\nAnswer with: slcode respond ${sid} ${ev.requestId} --answer <text>`);
     }
+  }
+
+  // ---- 답하면 닫힘 (사용자 2026-11-08) — 턴을 마치고 할 일 없이 쉬게 되면 답(kind=result)을 리더에게 보낸 뒤 닫는다. 오래 켜 둔 세션의 메모리를 막으려고.
+  // 기동 직후의 idle(다시 띄운 직후 포함)에는 닫지 않는다 — 턴이 끝난 뒤의 idle 만. 리더가 다시 시키면 리더 core 가 다시 띄운다(Children.reopen)
+  let answered = false;
+  let reported: Promise<void> = Promise.resolve();
+  function maybeEndWithAnswer() {
+    if (!answered || closed || !team()?.endWithAnswer) return;
+    answered = false;
+    void reported.then(() => setImmediate(() => {
+      const calm = session.state === 'idle' && !pending.length && !waiting.length && !draining && !session.pendingApprovals().length;
+      if (calm && team()?.endWithAnswer) void close(ANSWERED);
+    }));
   }
 
   // ---- 소유권 — 소유자가 없는 동안은 유예 시계가 돈다 (기동 직후, 소유자가 close 없이 끊긴 뒤)
@@ -744,7 +780,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     sock.setEncoding('utf8'); // 청크 경계에 걸린 한글이 깨지지 않게 — 웹·stdio 프레임이 모두 이 스트림을 거친다
     sock.on('data', (d: string) => { buf += d; let i; while ((i = buf.indexOf('\n')) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 1); if (l.trim()) void onLine(conn, l); } });
     sock.on('close', () => {
-      socks.delete(sock); conn.detach?.(); conns.delete(conn);
+      socks.delete(sock); conn.detach?.(); conns.delete(conn); dropWait(conn);
       if (owner === conn) { owner = null; armOwnerGrace(); }
       if (retire?.conn === conn && !retiring) { retire = null; log('replacement cancelled: the requester is gone'); }
     });
@@ -755,6 +791,17 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
 
   // ---- 받은 메시지 → 다음 idle 에 한 턴
   const pending: Mail[] = [];
+  /** 팀원의 답을 기다리는 요청 (`slcode team new·prompt --wait`, MCP 도구) — 팀원 id → 먼저 온 요청부터. 요청 연결이 끊기면 빠지고, 그 뒤의 답은 메시지로 온다 */
+  const answerWaits = new Map<string, { conn: Conn; resolve: (answer: string) => void }[]>();
+  function waitAnswer(conn: Conn, child: string): Promise<string> {
+    return new Promise((resolve) => { const l = answerWaits.get(child) ?? []; l.push({ conn, resolve }); answerWaits.set(child, l); });
+  }
+  function dropWait(conn: Conn) {
+    for (const [k, l] of answerWaits) {
+      const rest = l.filter((w) => w.conn !== conn);
+      if (rest.length) answerWaits.set(k, rest); else answerWaits.delete(k);
+    }
+  }
   const seen = new Set<string>();
   /** 받은 메시지 id → 보낸 이 (session.reply 의 대상). 재기동 뒤에는 로그의 mail 턴 머리표에서 복원 */
   const received = new Map<string, string>();
@@ -769,6 +816,9 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     // 대기 중인 ask 의 답장은 턴이 아니라 그 요청의 응답으로
     const waiter = m.kind === 'reply' && m.re ? asks.get(m.re) : undefined;
     if (waiter) { asks.delete(m.re!); waiter.resolve(m); return; }
+    // --wait 로 기다리는 팀원의 답(과 끝남)은 턴이 아니라 그 요청의 응답으로 — 한 답은 한 길로만 (사용자 2026-11-08)
+    const want = m.kind === 'result' || m.kind === 'closed' ? answerWaits.get(m.from)?.shift() : undefined;
+    if (want) { const body = typeof m.body === 'string' ? m.body : JSON.stringify(m.body); want.resolve(m.kind === 'closed' ? `(${body})` : body); return; }
     // fast(기본, ticket slcode-team-agent 사용자 2026-11-07) — 턴 중이어도 바로 넣는다. Claude 는 다음 도구 결과와 함께 같은 턴에, Codex 는 지금 턴 뒤에 줄 선다.
     // lazy 는 밀려 있다가 idle 에 한 턴으로
     if (!m.lazy && !mailCalm()) { deliverMail([m]); return; }

@@ -2,6 +2,7 @@
 // link 팀원은 소유 연결 하나를 붙인다: 같은 연결로 팀원의 대기 승인을 들고(리더 화면의 승인 줄) 지시를 중계한다 — 입력 제어 중인 팀원은 이 연결의 요청만 받는다.
 // 수명: 리더가 닫히면 수명 연동(endWithLeader) 팀원은 닫고 나머지는 연결만 놓는다. 리더 프로세스가 죽어 연결이 끊기면 수명 연동 팀원은 소유자 유예 뒤 닫히고
 // 나머지는 소유자 없이 산다(팀원 core 가 정한다). link 가 꺼진 팀원은 띄우기만 한다 — 리더와 상관없는 보통 세션이다.
+// 답하면 닫힘(endWithAnswer) 팀원은 스스로 닫히고(사유 ANSWERED — 끝남 알림을 보내지 않는다), 리더가 다시 시키면 reopen 이 다시 띄워 소유한다.
 import { connectSession, BUILD, PKG, type RpcClient } from './client.js';
 import { spawnCore, sockAlive } from './live.js';
 import { EventLog } from './eventLog.js';
@@ -10,6 +11,9 @@ import { CoreError, ERR, TEAM_TEMPLATES, type ApprovalRequest, type ChildView, t
 import type { SessionMeta } from './eventLog.js';
 import type { CoreOptions } from './core.js';
 
+
+/** 답하면 닫힘 팀원이 스스로 닫힐 때의 사유 — 리더는 끝남 알림(kind=closed)을 보내지 않는다 */
+export const ANSWERED = 'answered';
 
 type Kid = { id: string; sock: string; conn: RpcClient; pending: Map<string, ApprovalRequest>; closing: boolean };
 
@@ -24,7 +28,7 @@ export function teamOptionsError(o: Record<string, unknown>): string | null {
     if (!TEAM_KEYS.includes(k)) return `unknown team option ${k} (${TEAM_KEYS.join('|')})`;
     if (typeof v !== 'boolean') return `team option ${k} must be true or false`;
   }
-  const leader = ['inputControl', 'outputToLeader', 'askToLeader', 'endWithLeader'].filter((k) => o[k]);
+  const leader = ['inputControl', 'outputToLeader', 'askToLeader', 'endWithLeader', 'endWithAnswer'].filter((k) => o[k]);
   if (!o.link && leader.length) return `${leader.join(', ')} need${leader.length > 1 ? '' : 's'} link (a teammate without link has no leader)`;
   return null;
 }
@@ -43,6 +47,8 @@ export class Children {
     changed: () => void;
     /** 부모가 닫지 않은 자식이 끝났다 */
     exited: (id: string, reason: string) => void;
+    /** 자식과의 연결이 끝났다(이유와 상관없이, 교체로 다시 붙는 것은 빼고) — 그 자식의 답을 기다리던 요청을 푼다 */
+    gone: (id: string, reason: string) => void;
   }) {}
 
   /** 새 팀원 — 띄우고, link 면 소유한다. 소유하지 못하면 띄운 팀원을 닫고 던진다 */
@@ -56,6 +62,20 @@ export class Children {
       throw e;
     }
     return hello.id;
+  }
+
+  /** 답하고 닫힌 팀원을 다시 띄워 소유한다 (session.childCall 의 session.send). 이 리더의 link 팀원이 아니거나 이미 켜져 있으면 그대로 */
+  async reopen(id: string): Promise<void> {
+    if (this.gone) throw new CoreError(ERR.badRequest, 'this session is closing');
+    const k = this.kids.get(id);
+    if (k) {
+      if (await sockAlive(k.sock)) return;
+      await k.conn.done; // 닫히는 중 — 표에서 빠진 뒤에 다시 띄운다 (hook 의 done 처리가 먼저 돈다)
+    }
+    const m = sessionMeta(this.o.sessionsDir, id);
+    if (m?.parent?.kind !== 'child' || m.parent.id !== this.o.parent) return;
+    const hello = await spawnCore({ dir: this.o.dir, cwd: m.cwd, resume: id });
+    await this.adopt(hello.id, hello.sock, false);
   }
 
   /** 기동 때 — 이 세션의 켜진 link 팀원(교체 전의 core 나 닫히기 전의 리더가 띄운 것)을 다시 소유한다. 사람이 따로 소유한 팀원은 팀원 core 가 거절한다 */
@@ -108,7 +128,8 @@ export class Children {
       }
       this.kids.delete(kid.id);
       this.o.changed();
-      if (!this.gone && !kid.closing && !lost) this.o.exited(kid.id, reason);
+      this.o.gone(kid.id, reason);
+      if (!this.gone && !kid.closing && !lost && reason !== ANSWERED) this.o.exited(kid.id, reason);
     });
   }
 

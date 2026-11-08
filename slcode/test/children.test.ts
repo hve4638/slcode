@@ -1,5 +1,5 @@
 // 팀원 세션 (ticket slcode-team-agent, 사용자 결정 2026-11-07~08) — 세션 안의 `slcode team new` 로 리더 core 가 팀원 core 를 띄운다.
-// 관여 옵션(템플릿 subagent·link·detached + -o JSON)에 따라 잠김·자동 보고·질문·수명이 갈린다. 메시지는 fast(기본)·lazy.
+// 관여 옵션(템플릿 subagent·teammate·detached + -o JSON)에 따라 잠김·자동 보고·질문·수명이 갈린다. 메시지는 fast(기본)·lazy.
 // 실제 cli.ts 를 자식 프로세스로 띄우고 벤더는 가짜 codex 를 쓴다 (dist 를 빌드한 뒤에 돈다 — core 는 dist/coreMain.js).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,6 +12,7 @@ import { sockAlive } from '../src/live.ts';
 import { EventLog } from '../src/eventLog.ts';
 import { corePaths } from '../src/paths.ts';
 import { TEAM_TEMPLATES } from '../src/protocol.ts';
+import { teamTools } from '../src/teamTools.ts';
 
 const CLI = path.resolve(import.meta.dirname, '..', 'src', 'cli.ts');
 const TSX = import.meta.resolve('tsx');
@@ -47,25 +48,33 @@ const turnEnds = (dir: string, id: string) => log(dir, id).filter((e) => e.ev.ki
 async function expectCode(p: Promise<unknown>, code: string) {
   await assert.rejects(p, (e: { code?: string }) => { assert.equal(e.code, code); return true; });
 }
-async function start(t: { after: (f: () => void) => void }, extra: Record<string, string | undefined> = {}, args: string[] = []) {
+/** 테스트 폴더의 켜진 세션을 모두 닫는다 — 수명 연동이 꺼진 팀원(teammate·detached)은 리더가 닫혀도 소유자 없이 살아 남는다 */
+async function closeAll(dir: string) {
+  for (const m of EventLog.list(corePaths(dir).sessionsDir)) {
+    const sock = new EventLog(corePaths(dir).sessionsDir, m).sockPath;
+    if (!(await sockAlive(sock))) continue;
+    try { const c = await connectSession(sock); await c.request('session.close', { id: m.id }).catch(() => {}); c.close(); } catch {}
+  }
+}
+async function start(t: { after: (f: () => void | Promise<void>) => void }, extra: Record<string, string | undefined> = {}, args: string[] = []) {
   const dir = tmp('slcode-team-'), work = tmp('slcode-work-');
   const p = leader(dir, work, extra, args);
-  t.after(() => { if (p.child.exitCode === null) p.child.kill('SIGKILL'); });
+  t.after(async () => { if (p.child.exitCode === null) p.child.kill('SIGKILL'); await closeAll(dir); });
   const psock = await p.sock;
   const [pm] = EventLog.list(corePaths(dir).sessionsDir);
   return { dir, work, psock, lid: pm.id };
 }
 
-test('team new --subagent: 리더가 입력을 쥐고, 턴이 끝나면 마지막 답이 리더에 간다. 끊기는 일방향이고, 리더가 닫히면 같이 닫힌다', async (t) => {
+test('team new --subagent (답하면 닫힘 끔): 리더가 입력을 쥐고, 턴이 끝나면 마지막 답이 리더에 간다. 끊기는 일방향이고, 리더가 닫히면 같이 닫힌다', async (t) => {
   const { dir, work, psock, lid } = await start(t);
 
   // 모델이 친 slcode team new — id 를 출력하고 바로 끝난다. 폴더를 빼면 지금 폴더
-  const made = await cli(dir, lid, ['team', 'new', work, '--subagent', '-n', 'sub1', '--', 'no-call']);
+  const made = await cli(dir, lid, ['team', 'new', work, '--subagent', '-o', '{"endWithAnswer":false}', '-n', 'sub1', '--', 'no-call']);
   assert.equal(made.code, 0, made.err);
   const kid = made.out.trim();
   assert.match(kid, /^[0-9a-f]{8}$/);
   assert.deepEqual(meta(dir, kid).parent, { id: lid, kind: 'child' });
-  assert.deepEqual(meta(dir, kid).team, TEAM_TEMPLATES.subagent);
+  assert.deepEqual(meta(dir, kid).team, { ...TEAM_TEMPLATES.subagent, endWithAnswer: false });
   assert.equal(meta(dir, kid).noTeam, true);
   assert.equal(meta(dir, kid).title, 'sub1');
   assert.equal(meta(dir, kid).permissionMode, 'default', '권한 모드는 리더를 따른다');
@@ -104,7 +113,7 @@ test('team new --subagent: 리더가 입력을 쥐고, 턴이 끝나면 마지�
 
   // 끊기 — 화면이 지시하고, 리더의 지시는 거절되고, 리더는 알림을 한 번 받는다. 되돌리는 메서드는 없다
   await c.request('session.unlock', { id: kid });
-  assert.deepEqual(meta(dir, kid).team, { ...TEAM_TEMPLATES.subagent, inputControl: false, outputToLeader: false, askToLeader: false, cut: true });
+  assert.deepEqual(meta(dir, kid).team, { ...TEAM_TEMPLATES.subagent, inputControl: false, outputToLeader: false, askToLeader: false, endWithAnswer: false, cut: true });
   await until(() => mailTurns(dir, lid, 'unlocked').length);
   await expectCode(c.request('session.lock' as never, { id: kid } as never), 'bad_request');
   const refused = await cli(dir, lid, ['prompt', kid, 'no-call']);
@@ -125,6 +134,80 @@ test('team new --subagent: 리더가 입력을 쥐고, 턴이 끝나면 마지�
   assert.ok(await until(async () => !(await sockAlive(sockOf(dir, kid)))), '팀원도 닫혔다');
 });
 
+test('subagent 는 Claude 서브에이전트처럼: --wait 면 답이 메시지 대신 명령 출력으로 오고, 답하면 닫히고, 다시 시키면 다시 뜬다. 기다리던 명령이 끊기면 답은 메시지로 간다', async (t) => {
+  const { dir, work, psock, lid } = await start(t);
+  const closedMails = () => mailTurns(dir, lid, 'closed').length;
+
+  // --wait — 첫 지시의 답을 출력한다. id 는 stderr 로
+  const made = await cli(dir, lid, ['team', 'new', work, '-s', '--wait', '-n', 'sub1', '--', 'no-call']);
+  assert.equal(made.code, 0, made.err);
+  assert.equal(made.out.trim(), 'done');
+  const kid = /teammate ([0-9a-f]{8}) started/.exec(made.err)![1];
+  assert.deepEqual(meta(dir, kid).team, TEAM_TEMPLATES.subagent);
+  assert.ok(await until(async () => !(await sockAlive(sockOf(dir, kid)))), '답하고 닫혔다');
+  await sleep(500);
+  assert.equal(mailTurns(dir, lid, 'result').length, 0, '기다린 답은 메시지로 오지 않는다');
+  assert.equal(closedMails(), 0, '답하고 닫힌 것은 끝남 알림이 없다');
+
+  // 다시 시키면 다시 뜬다 — 같은 세션(맥락 유지), 답을 출력하고 다시 닫힌다
+  const again = await cli(dir, lid, ['prompt', kid, '--wait', '--', 'no-call']);
+  assert.equal(again.code, 0, again.err);
+  assert.equal(again.out.trim(), 'done');
+  assert.equal(log(dir, kid).filter((e) => e.ev.kind === 'turn.start').length, 2, '같은 세션의 두 번째 턴');
+  // 답을 받자마자(팀원이 닫히는 중에) 다시 시켜도 — 다 닫힌 뒤 다시 띄워 보낸다
+  const quick = await cli(dir, lid, ['prompt', kid, '--wait', '--', 'no-call']);
+  assert.equal(quick.code, 0, quick.err);
+  assert.equal(quick.out.trim(), 'done');
+  assert.equal(log(dir, kid).filter((e) => e.ev.kind === 'turn.start').length, 3);
+  assert.ok(await until(async () => !(await sockAlive(sockOf(dir, kid)))), '다시 닫혔다');
+
+  // --wait 없이 — 답은 메시지로 오고 닫힌다
+  const bg = await cli(dir, lid, ['team', 'new', work, '-s', '--', 'no-call']);
+  assert.equal(bg.code, 0, bg.err);
+  const kid2 = bg.out.trim();
+  await until(() => mailTurns(dir, lid, 'result').length === 1);
+  assert.ok(await until(async () => !(await sockAlive(sockOf(dir, kid2)))));
+
+  // 기다리던 명령이 끊기면 그 답은 메시지로 — 가짜 codex 의 보통 턴은 명령 승인에서 멈춘다
+  const pc = await connectSession(psock);
+  t.after(() => pc.close());
+  const waiting = spawn(process.execPath, ['--import', TSX, CLI, 'team', 'new', work, '-s', '--wait', '--', 'touch it'], { env: baseEnv(dir, { SLCODE_SESSION_ID: lid }), stdio: ['ignore', 'ignore', 'pipe'] });
+  let werr = '';
+  waiting.stderr!.setEncoding('utf8').on('data', (d: string) => { werr += d; });
+  const kid3 = (await until(() => /teammate ([0-9a-f]{8}) started/.exec(werr)))[1];
+  const req = (await until(async () => (await pc.request('session.children', { id: lid })).children.find((k) => k.id === kid3 && k.pending.length))).pending[0];
+  waiting.kill('SIGKILL');
+  await sleep(300);
+  await pc.request('session.childApprove', { id: lid, child: kid3, requestId: req.requestId, decision: 'deny' });
+  await until(() => mailTurns(dir, lid, 'result').length === 2);
+  assert.match((mailTurns(dir, lid, 'result')[1].ev as { text: string }).text, new RegExp(`from="${kid3}"`));
+  assert.equal(closedMails(), 0);
+
+  // --wait 는 답을 받는 팀원만
+  const noWait = await cli(dir, lid, ['team', 'new', work, '-t', '--wait', '--', 'no-call']);
+  assert.equal(noWait.code, 2);
+});
+
+test('MCP 도구 Subagent·ContinueSubagent 는 CLI 를 불러 답을 도구 결과로 돌려준다 (백그라운드면 id 만)', async (t) => {
+  const { dir, work, lid } = await start(t);
+  const [sub, cont] = teamTools({ cli: path.resolve(import.meta.dirname, '..', 'dist', 'cli.js'), env: baseEnv(dir, { SLCODE_SESSION_ID: lid }) as NodeJS.ProcessEnv, cwd: work });
+  const textOf = (r: { content: { type: string; text?: string }[] }) => r.content.map((c) => c.text ?? '').join('');
+  const r = await sub.handler({ description: 'count files', prompt: 'no-call' }, {});
+  assert.equal(r.isError, undefined, textOf(r));
+  const id = /subagent ([0-9a-f]{8}) finished and closed/.exec(textOf(r))![1];
+  assert.match(textOf(r), /^done\n/);
+  assert.equal(meta(dir, id).title, 'count files');
+  assert.equal(meta(dir, id).cwd, work);
+  await until(async () => !(await sockAlive(sockOf(dir, id))));
+  const r2 = await cont.handler({ to: id, prompt: 'no-call' }, {});
+  assert.match(textOf(r2), /^done\n/);
+  const r3 = await sub.handler({ description: 'in background', prompt: 'no-call', run_in_background: true }, {});
+  assert.match(textOf(r3), /started in the background/);
+  await until(() => mailTurns(dir, lid, 'result').length === 1);
+  const bad = await cont.handler({ to: 'nope', prompt: 'no-call' }, {});
+  assert.equal(bad.isError, true);
+});
+
 test('subagent 팀원의 도구 승인은 리더 화면(session.children·childApprove)에서 사람이 답하고, 리더 모델(childCall)은 답하지 못한다', async (t) => {
   const { dir, work, psock, lid } = await start(t);
   const pc: RpcClient = await connectSession(psock);
@@ -134,7 +217,7 @@ test('subagent 팀원의 도구 승인은 리더 화면(session.children·childA
   pc.onEvent((m) => { if (m.event === 'session.children') events.push(JSON.stringify(m.params)); });
 
   // 가짜 codex 는 보통 턴에서 명령 승인을 묻는다
-  const made = await cli(dir, lid, ['team', 'new', work, '-s', '--', 'touch it']);
+  const made = await cli(dir, lid, ['team', 'new', work, '-s', '-o', '{"endWithAnswer":false}', '--', 'touch it']);
   assert.equal(made.code, 0, made.err);
   const kid = made.out.trim();
   const view = await until(async () => (await pc.request('session.children', { id: lid })).children.find((k) => k.id === kid && k.pending.length));
@@ -225,7 +308,7 @@ test('detached·-o 옵션: detached 는 리더 기록이 없는 세션이고, li
   const dir3 = tmp('slcode-team-');
   fs.writeFileSync(path.join(dir3, 'settings-web.json'), JSON.stringify({ team: false }));
   const p3 = leader(dir3, work, {}, []);
-  t.after(() => { if (p3.child.exitCode === null) p3.child.kill('SIGKILL'); });
+  t.after(async () => { if (p3.child.exitCode === null) p3.child.kill('SIGKILL'); await closeAll(dir3); });
   const s3 = await p3.sock;
   const [m3] = EventLog.list(corePaths(dir3).sessionsDir);
   assert.equal(m3.noTeam, true);
@@ -236,7 +319,7 @@ test('detached·-o 옵션: detached 는 리더 기록이 없는 세션이고, li
 
 test('리더 core 가 죽으면 subagent 팀원은 소유자 유예 뒤 닫히고, 리더 core 가 교체되면 새 리더 core 가 켜진 팀원을 다시 소유한다', async (t) => {
   const a = await start(t);
-  const made = await cli(a.dir, a.lid, ['team', 'new', a.work, '-s', '--', 'no-call']);
+  const made = await cli(a.dir, a.lid, ['team', 'new', a.work, '-s', '-o', '{"endWithAnswer":false}', '--', 'no-call']);
   assert.equal(made.code, 0, made.err);
   const kid = made.out.trim();
   await until(() => sockAlive(sockOf(a.dir, kid)));
@@ -244,7 +327,7 @@ test('리더 core 가 죽으면 subagent 팀원은 소유자 유예 뒤 닫히�
   assert.ok(await until(async () => !(await sockAlive(sockOf(a.dir, kid)))), '팀원이 닫혔다');
 
   const { dir, work, psock, lid } = await start(t);
-  const m2 = await cli(dir, lid, ['team', 'new', work, '-s', '--', 'no-call']);
+  const m2 = await cli(dir, lid, ['team', 'new', work, '-s', '-o', '{"endWithAnswer":false}', '--', 'no-call']);
   assert.equal(m2.code, 0, m2.err);
   const kid2 = m2.out.trim();
   await until(() => mailTurns(dir, lid, 'result').length);

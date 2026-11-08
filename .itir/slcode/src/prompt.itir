@@ -2,5 +2,5 @@ role: slcode 가 모든 세션에 덧붙이는 고정 지시 (ticket slcode-appe
 
 export val SLCODE_PROMPT
 export fn familyPrompt(o) -> Text {
-  role: 팀 지시 (ticket slcode-team-agent) — SLCODE_PROMPT 뒤. 팀원(link)이면 리더 id 와 켜진 옵션만 알린다: 입력 제어면 리더가 지시한다, 출력 수신이면 턴마다 완결된 답이 리더에게 자동으로 간다, 질문 수신이면 질문이 리더에게 간다, 어느 쪽이든 `slcode mail leader <text>` 로 리더에게 보낸다. 팀원을 만들 수 있으면(o.team) `slcode team new` 로 만드는 법 — 템플릿 셋(subagent: 지시하고 답을 받는다, teammate: 첫 지시 뒤에는 메시지로만, detached: 따로 사는 세션)·--options·이름·모델·stdin 으로 긴 지시·리더를 따르는 값·요금(세션 하나만큼)·내장 서브에이전트 도구가 있으면 짧은 조사는 그쪽·kind=result·question·unlocked·closed 메시지·prompt·interrupt·last·respond·close·이름이나 id 로 mail. 둘 다 아니면 빈 문자열
+  role: 팀 지시 (ticket slcode-team-agent) — SLCODE_PROMPT 뒤. 팀원(link)이면 리더 id 와 켜진 옵션만 알린다: 입력 제어면 리더가 지시한다, 출력 수신이면 턴마다 완결되고 간결한 답이 리더에게 자동으로 간다, 답하면 닫힘이면 답한 뒤 닫히고 다시 불릴 수 있으며 사용자에게 묻지 못한다, 질문 수신이면 질문이 리더에게 간다, 어느 쪽이든 `slcode mail leader <text>` 로 리더에게 보낸다. 팀원을 만들 수 있으면(o.team) subagent 는 tools 면(Claude) MCP 도구 Subagent·ContinueSubagent(답이 도구 결과, run_in_background 면 메시지), 아니면(Codex) `slcode team new --subagent --wait`·`slcode prompt --wait` 로. teammate·detached 는 `slcode team new` — 템플릿 셋·--options(키 일곱)·이름·모델·stdin 으로 긴 지시·리더를 따르는 값·요금(세션 하나만큼)·내장 서브에이전트 도구가 있으면 짧은 조사는 그쪽·kind=result(기다리지 않은 답)·question·unlocked·closed 메시지·interrupt·last·respond·close·이름이나 id 로 mail. 둘 다 아니면 빈 문자열
 }

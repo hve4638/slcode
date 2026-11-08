@@ -53,6 +53,12 @@ export type SessionOptions = {
   hooks?: Options['hooks'];
   /** 팀 지시 (prompt.familyPrompt, ticket slcode-team-agent) — SLCODE_PROMPT 바로 뒤에. 없으면 빈 문자열 */
   family?: string;
+  /** 팀원 도구 (teamTools.teamMcp, ticket slcode-team-agent) — 팀원을 만들 수 있는 세션의 in-process MCP 서버. 벤더를 다시 띄울 때(rewind)마다 새 인스턴스로 */
+  mcpServers?: () => Options['mcpServers'];
+  /** 질문 도구(AskUserQuestion)를 끈다 — 답하면 닫히는 팀원은 사람을 기다리지 않는다 (Claude 서브에이전트와 같다) */
+  noAsk?: boolean;
+  /** 승인 없이 쓰는 도구 — 팀원 도구는 Claude 의 Agent 도구처럼 묻지 않는다 (사용자 2026-11-08) */
+  allowedTools?: string[];
 };
 
 export function summarize(content: unknown): string {
@@ -352,6 +358,9 @@ export class ClaudeSession extends AgentSession {
         ...(opts.agent?.plugins.length ? { plugins: opts.agent.plugins } : {}),
         settings: settings as any,
         ...(opts.hooks ? { hooks: opts.hooks } : {}),
+        ...(opts.mcpServers ? { mcpServers: opts.mcpServers() } : {}),
+        ...(opts.noAsk ? { disallowedTools: ['AskUserQuestion'] } : {}),
+        ...(opts.allowedTools?.length ? { allowedTools: opts.allowedTools } : {}),
         // 기본은 CLI 와 같은 로드 — user/project/local (스파이크 (a) 실측: 플러그인·스킬·훅·MCP 가 CLI 와 같다). 프로필이 줄이고 skill 을 거른다 (ticket slcode-session-profile)
         settingSources: opts.load?.settingSources ?? ['user', 'project', 'local'],
         ...(opts.load?.skills ? { skills: opts.load.skills } : {}),
