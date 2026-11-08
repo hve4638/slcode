@@ -22,6 +22,7 @@ import { corePaths, ensureDir, readOrCreateToken, sessionDir } from './paths.js'
 import { formatMail, newMail, parseMails, sendMail, sessionMeta } from './mail.js';
 import { ANSWERED, Children, teamOf, teamOptionsError } from './children.js';
 import { familyPrompt } from './prompt.js';
+import { listAgents } from './teamAgents.js';
 import { TEAM_TOOL_NAMES, teamMcp } from './teamTools.js';
 import { blockInspect, CODEX_ROUTE, codexArgs, codexUpstream, inspectBlocked, inspectEnv, keepsFirstParty, sdkVersion, startInspect, turnCalls, upstreamOf, type InspectProxy } from './inspect.js';
 import { InspectStore, maybeSweep } from './inspectDb.js';
@@ -31,7 +32,7 @@ import { claudeSessionExists } from './vendor.js';
 import { agentPaths, currentBuilds, loadSessionPlugins, reloadSessionPlugins, unlinkSessionPlugins, type Loaded, type SessionPlugins } from 'slcode-plugin/agentPlugins';
 import { HookRunner, type LoadedCommand } from 'slcode-plugin/hookRunner';
 import { commandTable, completeInput, fullName, resolveCommand } from './pluginCommands.js';
-import { CoreError, ERR, FILES, PERMISSION_MODES, PROTOCOL_VERSION, TEAM_TEMPLATES, type AgentCommandEvent, type AgentHookEvent, type ApprovalRequest, type Attachment, type LoggedEvent, type Mail, type QueueItem, type MethodName, type TeamOptions, type Methods, type RequestFrame, type SessionInfo } from './protocol.js';
+import { CoreError, ERR, FILES, PERMISSION_MODES, PROTOCOL_VERSION, TEAM_PRESETS, type AgentCommandEvent, type AgentHookEvent, type ApprovalRequest, type Attachment, type LoggedEvent, type Mail, type QueueItem, type MethodName, type TeamOptions, type TeamAgent, type Methods, type RequestFrame, type SessionInfo } from './protocol.js';
 
 /** 벤더 자식(claude CLI·codex)에 넘기지 않을 env — 워커 Claude 세션 안에서 띄우면 그 세션의 표식(CLAUDECODE·CLAUDE_CODE_SESSION_ID·
  *  CLAUDE_CODE_CHILD_SESSION·CLAUDE_CODE_ENTRYPOINT·CLAUDE_CODE_MESSAGING_* 등, claude 2.1.282·2.1.300 실측)이 딸려 가 자식이 남의 세션 안이라 여긴다.
@@ -107,6 +108,8 @@ export type CoreOptions = {
   noTeam?: boolean;
   /** 리더가 띄우는 팀원의 관여 옵션 (Children.spawn) — meta.team 으로 남기고, noTeam 이면 meta.noTeam 도 */
   team?: TeamOptions;
+  /** 팀원의 에이전트 정의 (teamAgents.ts) — meta.agent 로 남긴다 */
+  agent?: TeamAgent;
   log?: (msg: string) => void;
 };
 
@@ -152,7 +155,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       ...(opts.env && Object.keys(opts.env).length ? { env: opts.env } : {}),
       ...(opts.params && Object.keys(opts.params).length ? { params: opts.params } : {}),
       ...(opts.parent ? { parent: opts.parent } : {}),
-      ...(opts.team ? { team: opts.team } : {}), ...(opts.noTeam || opts.team?.noTeam ? { noTeam: true } : {}),
+      ...(opts.team ? { team: opts.team } : {}), ...(opts.agent ? { agent: opts.agent } : {}), ...(opts.noTeam || opts.team?.noTeam ? { noTeam: true } : {}),
     };
     // 새 세션의 권한 모드는 생략하면 auto (사용자 2026-10-24) — 이미 있는 세션의 null(벤더 기본 = 승인 요청)은 건드리지 않는다
     logFile = EventLog.create(P.sessionsDir, meta);
@@ -257,10 +260,10 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   try { firstEnv = await vendorEnv(); firstArgs = await vendorArgs(); } catch (e) { logFile.updateMeta({ inspect: false }); inspectFailed = (e as Error).message; }
   if (inspectFailed && codex) firstArgs = codexBaseArgs();
   const session: AgentSession = codex
-    ? new CodexSession({ log: logFile, env: codexEnv(), permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, args: firstArgs, onConfig: (base) => gotBase(base), skillRoots: agent?.codex.roots ?? [], instructions: agent?.append ?? '', family: familyPrompt({ team: canTeam, leader: parentId, options: team(), tools: false }) })
+    ? new CodexSession({ log: logFile, env: codexEnv(), permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, args: firstArgs, onConfig: (base) => gotBase(base), skillRoots: agent?.codex.roots ?? [], instructions: agent?.append ?? '', family: familyPrompt({ team: canTeam, leader: parentId, options: team(), tools: false, agent: logFile.meta.agent, agents: canTeam ? listAgents(cwd, P.dir) : [] }) })
     : new ClaudeSession({
       log: logFile, env: firstEnv, resume: logFile.meta.vendorSessionId, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, ...(agent ? { agent } : {}), ...(load ? { load } : {}), ...(hooks ? { hooks: hooks.sdkHooks() } : {}),
-      family: familyPrompt({ team: canTeam, leader: parentId, options: team(), tools: canTeam }),
+      family: familyPrompt({ team: canTeam, leader: parentId, options: team(), tools: canTeam, agent: logFile.meta.agent, agents: canTeam ? listAgents(cwd, P.dir) : [] }),
       // 팀원 도구(Subagent·ContinueSubagent)는 팀원을 만들 수 있는 Claude 세션에만 — 도구는 이 판의 CLI 를 부른다. Agent 도구처럼 승인을 묻지 않는다 (사용자 2026-11-08)
       ...(canTeam ? { mcpServers: () => ({ slcode: teamMcp({ cli: path.join(PKG, 'dist', 'cli.js'), env, cwd }) }), allowedTools: [...TEAM_TOOL_NAMES] } : {}),
       ...(parentId && team()?.endWithAnswer ? { noAsk: true } : {}),
@@ -620,16 +623,16 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       if (!canTeam) throw new CoreError(ERR.teamDisabled, `session ${sid} cannot start teammates (the new-session teammate setting was off, or it is a teammate started with noTeam)`);
       if (typeof p.cwd !== 'string' || !path.isAbsolute(p.cwd)) throw new CoreError(ERR.badRequest, 'cwd must be an absolute folder');
       if (p.vendor !== undefined && p.vendor !== 'claude' && p.vendor !== 'codex') throw new CoreError(ERR.badRequest, 'vendor claude|codex');
-      // 빠진 옵션은 teammate 템플릿 값 (사용자 2026-11-08: 모든 옵션은 선택, 없으면 teammate 템플릿)
+      // 빠진 옵션은 teammate 프리셋 값 (사용자 2026-11-08: 모든 옵션은 선택, 없으면 teammate 프리셋)
       const { cut: _cut, ...given } = p.team ?? {};
-      const options: TeamOptions = { ...TEAM_TEMPLATES.teammate, ...given };
+      const options: TeamOptions = { ...TEAM_PRESETS.teammate, ...given };
       { const why = teamOptionsError(options); if (why) throw new CoreError(ERR.badRequest, why); }
       // 주지 않은 벤더·모델·effort·권한 모드는 리더를 따른다 — 모델·effort 는 벤더가 같을 때만 (사용자 결정 5-1·3)
       const vendor = p.vendor ?? logFile.meta.vendor;
       const same = vendor === logFile.meta.vendor;
       const id = await children.spawn({
         cwd: p.cwd, vendor, title: p.title, model: p.model ?? (same ? s.model ?? undefined : undefined), effort: p.effort ?? (same ? s.effort ?? undefined : undefined),
-        permissionMode: p.mode ?? logFile.meta.permissionMode ?? undefined, profile: p.profile, env: p.env, params: p.params, prompt: p.prompt, raw: opts.raw, team: options,
+        permissionMode: p.mode ?? logFile.meta.permissionMode ?? undefined, profile: p.profile, env: p.env, params: p.params, prompt: p.prompt, raw: opts.raw, team: options, ...(p.agent ? { agent: p.agent } : {}),
         ...(logFile.meta.inspect ? { inspect: true } : {}),
       });
       return { id };
@@ -800,7 +803,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   let ownerGrace: NodeJS.Timeout | null = null;
   /** 팀원의 리더 core 가 교체 중이다 — 새 리더 core 가 다시 소유할 때까지 유예를 늘린다 (교체는 소유자 유예보다 길 수 있다) */
   const parentReplacing = () => { const m = parentId ? sessionMeta(P.sessionsDir, parentId) : null; return !!m && replacing(new EventLog(P.sessionsDir, m).sockPath); };
-  /** 수명 연동이 꺼진 팀원(link·detached 템플릿)은 소유자 없이도 산다 — slcode close·화면의 종료로만 닫힌다 (ticket slcode-team-agent) */
+  /** 수명 연동이 꺼진 팀원(link·detached 프리셋)은 소유자 없이도 산다 — slcode close·화면의 종료로만 닫힌다 (ticket slcode-team-agent) */
   const ownerless = () => { const t = team(); return !!t && !t.endWithLeader; };
   function armOwnerGrace() {
     if (ownerGrace || closed || ownerless()) return;

@@ -47,9 +47,9 @@ function cli(dir: string, args: string[], stdin: 'ignore' | 'pipe' = 'ignore', p
 }
 const alive = (c: ChildProcess) => c.exitCode === null && c.signalCode === null;
 
-/** 웹 화면 연결 하나 — 요청·이벤트·닫힘 */
-async function screen(url: string) {
-  const u = new URL(url); u.protocol = 'ws:'; u.pathname = '/ws'; u.search = '';
+/** 웹 화면 연결 하나 — 요청·이벤트·닫힘. id 면 그 가족 세션(팀원)의 화면 */
+async function screen(url: string, id?: string) {
+  const u = new URL(url); u.protocol = 'ws:'; u.pathname = '/ws'; u.search = id ? `?id=${id}` : '';
   const ws = new WebSocket(u.toString());
   let n = 0;
   const pend = new Map<number, (m: any) => void>(), events: any[] = [];
@@ -251,6 +251,61 @@ test('카드: --takeover 로 붙은 새 serve 가 core 교체를 청하고, stdi
   b.child.kill('SIGTERM');
   await b.exit;
   await waitFor(async () => !(await sockAlive(hello.sock)));
+});
+
+// ---- 판이 섞인 팀 (ticket slcode-team-agent C 단계) — serve 는 교체를 리더 core 에만 청하고, 새 리더 core 가 옛 빌드의 팀원 core 를 이 판으로 바꾼다
+test('팀: 새 빌드로 serve 를 바꾸면 리더 core 에 이어 팀원 core 도 바뀐다 — 승인 대기 중인 팀원은 그 턴이 끝난 뒤, 새 리더 core 가 다시 소유하고 팀원 화면은 이어진다', async (t) => {
+  const dir = tmp('slcode-swap-'), pkg = pkgCopy(), work = tmp('slcode-work-');
+  const MAIL = { FAKE_CODEX_MAIL_DONE: '1' }; // 팀원의 답(메시지 턴)이 리더를 승인 대기로 세우지 않게
+  const e = cli(dir, ['new', work, '--vendor', 'codex'], 'ignore', pkg, MAIL);
+  let restore = () => {};
+  const kids: string[] = [];
+  t.after(async () => { restore(); for (const id of kids) await cli(dir, ['close', id], 'ignore', pkg).exit; if (alive(e.child)) e.child.kill('SIGKILL'); });
+  const url = await e.first;
+  const a = await screen(url);
+  const lid = (await a.call('server.info')).result.session;
+  const team = async (args: string[]) => {
+    const x = cli(dir, ['team', 'new', work, ...args], 'ignore', pkg, { ...MAIL, SLCODE_SESSION_ID: lid });
+    assert.equal(await x.exit, 0, x.stderr());
+    const id = (await x.first).trim(); kids.push(id); return id;
+  };
+  const sockOf = (id: string) => EventLog.open(corePaths(dir).sessionsDir, id)!.sockPath;
+  /** 그 세션 core 의 pid·소유자·빌드 — 교체 중이라 연결이 끊기면 null */
+  const info = async (id: string) => { try { const c = await connectSession(sockOf(id)); try { return { pid: (await c.request('core.auth', {})).pid as number, ...(await c.request('server.info')) }; } finally { c.close(); } } catch { return null; } };
+  const sub = await team(['-s', '-o', '{"endWithAnswer":false}', '--', 'no-call']);
+  const mate = await team(['-t', '--', 'touch it']); // 가짜 codex 의 보통 턴은 명령 승인에서 멈춘다
+  const req = await waitFor(async () => (await a.call('session.children', { id: lid })).result.children.find((k: any) => k.id === mate && k.pending.length)?.pending[0].requestId);
+  const old = { lead: (await info(lid))!.pid, sub: (await info(sub))!.pid, mate: (await info(mate))!.pid };
+
+  restore = bumpBuild(pkg);
+  await a.call('serve.restart');
+  await a.closed;
+  const b = await screen(url);
+  const k = await screen(url, sub);
+  await k.call('session.attach', { id: sub, since: 0 });
+  let kClosed = false;
+  void k.closed.then(() => (kClosed = true));
+  const lead2 = await waitFor(async () => { const p = (await info(lid))?.pid; return !!p && p !== old.lead && p; });
+  await waitFor(async () => { const p = (await info(sub))?.pid; return !!p && p !== old.sub && p; });
+  await k.until((m) => m.event === 'core.replaced');
+  assert.equal(kClosed, false, '팀원 화면은 끊기지 않는다');
+  await sleep(1000);
+  assert.equal((await info(mate))?.pid, old.mate, '승인 대기 중인 팀원은 바꾸지 않는다');
+  const pend = (await b.call('session.children', { id: lid })).result.children.find((x: any) => x.id === mate).pending;
+  assert.deepEqual(pend.map((p: any) => p.requestId), [req], '새 리더 core 도 팀원의 승인 대기를 본다');
+  await b.call('session.childApprove', { id: lid, child: mate, requestId: req, decision: 'allow' });
+  await waitFor(async () => { const p = (await info(mate))?.pid; return !!p && p !== old.mate && p; });
+  const build = (await b.call('server.info')).result.build;
+  for (const id of [sub, mate]) {
+    const owner = await waitFor(async () => { const o = (await info(id))?.owner; return o === lead2 && o; }, 5000).catch(() => null);
+    assert.equal(owner, lead2, `새 리더 core 가 ${id} 를 다시 소유한다`);
+    assert.equal((await info(id))?.build, build, '팀원도 리더와 같은 빌드');
+  }
+  const again = cli(dir, ['prompt', sub, '--wait', '--', 'no-call'], 'ignore', pkg, { ...MAIL, SLCODE_SESSION_ID: lid });
+  assert.equal(await again.exit, 0, again.stderr());
+  assert.equal((await again.first).trim(), 'done', '바뀐 뒤에도 리더가 팀원에게 시키고 답을 받는다');
+  restore(); restore = () => {};
+  k.close(); b.close();
 });
 
 // ---- 벤더 전환 (ticket slcode-vendor-model-picker) — 첫 메시지 전에만, core 교체와 같은 길로 같은 세션 id 의 core 를 새 벤더로

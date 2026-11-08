@@ -1,5 +1,5 @@
 // 팀원 세션 (ticket slcode-team-agent, 사용자 결정 2026-11-07~08) — 세션 안의 `slcode team new` 로 리더 core 가 팀원 core 를 띄운다.
-// 관여 옵션(템플릿 subagent·teammate·detached + -o JSON)에 따라 잠김·자동 보고·질문·수명이 갈린다. 메시지는 fast(기본)·lazy.
+// 관여 옵션(관계 프리셋 subagent·teammate·detached + -o JSON)에 따라 잠김·자동 보고·질문·수명이 갈린다. 메시지는 fast(기본)·lazy.
 // 실제 cli.ts 를 자식 프로세스로 띄우고 벤더는 가짜 codex 를 쓴다 (dist 를 빌드한 뒤에 돈다 — core 는 dist/coreMain.js).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,7 +11,7 @@ import { connectSession, type RpcClient } from '../src/client.ts';
 import { sockAlive } from '../src/live.ts';
 import { EventLog } from '../src/eventLog.ts';
 import { corePaths } from '../src/paths.ts';
-import { TEAM_TEMPLATES } from '../src/protocol.ts';
+import { TEAM_PRESETS } from '../src/protocol.ts';
 import { teamTools } from '../src/teamTools.ts';
 
 const CLI = path.resolve(import.meta.dirname, '..', 'src', 'cli.ts');
@@ -74,7 +74,7 @@ test('team new --subagent (답하면 닫힘 끔): 리더가 입력을 쥐고, �
   const kid = made.out.trim();
   assert.match(kid, /^[0-9a-f]{8}$/);
   assert.deepEqual(meta(dir, kid).parent, { id: lid, kind: 'child' });
-  assert.deepEqual(meta(dir, kid).team, { ...TEAM_TEMPLATES.subagent, endWithAnswer: false });
+  assert.deepEqual(meta(dir, kid).team, { ...TEAM_PRESETS.subagent, endWithAnswer: false });
   assert.equal(meta(dir, kid).noTeam, true);
   assert.equal(meta(dir, kid).title, 'sub1');
   assert.equal(meta(dir, kid).permissionMode, 'default', '권한 모드는 리더를 따른다');
@@ -113,7 +113,7 @@ test('team new --subagent (답하면 닫힘 끔): 리더가 입력을 쥐고, �
 
   // 끊기 — 화면이 지시하고, 리더의 지시는 거절되고, 리더는 알림을 한 번 받는다. 되돌리는 메서드는 없다
   await c.request('session.unlock', { id: kid });
-  assert.deepEqual(meta(dir, kid).team, { ...TEAM_TEMPLATES.subagent, inputControl: false, outputToLeader: false, askToLeader: false, endWithAnswer: false, cut: true });
+  assert.deepEqual(meta(dir, kid).team, { ...TEAM_PRESETS.subagent, inputControl: false, outputToLeader: false, askToLeader: false, endWithAnswer: false, cut: true });
   await until(() => mailTurns(dir, lid, 'unlocked').length);
   await expectCode(c.request('session.lock' as never, { id: kid } as never), 'bad_request');
   const refused = await cli(dir, lid, ['prompt', kid, 'no-call']);
@@ -143,7 +143,7 @@ test('subagent 는 Claude 서브에이전트처럼: --wait 면 답이 메시지 
   assert.equal(made.code, 0, made.err);
   assert.equal(made.out.trim(), 'done');
   const kid = /teammate ([0-9a-f]{8}) started/.exec(made.err)![1];
-  assert.deepEqual(meta(dir, kid).team, TEAM_TEMPLATES.subagent);
+  assert.deepEqual(meta(dir, kid).team, TEAM_PRESETS.subagent);
   assert.ok(await until(async () => !(await sockAlive(sockOf(dir, kid)))), '답하고 닫혔다');
   await sleep(500);
   assert.equal(mailTurns(dir, lid, 'result').length, 0, '기다린 답은 메시지로 오지 않는다');
@@ -220,6 +220,13 @@ test('MCP 도구 Subagent·ContinueSubagent 는 CLI 를 불러 답을 도구 결
   await until(() => mailTurns(dir, lid, 'result').length === 1);
   const bad = await cont.handler({ to: 'nope', prompt: 'no-call' }, {});
   assert.equal(bad.isError, true);
+  // agent 는 --agent 로 (정의의 relation 보다 Subagent 의 --subagent 가 이긴다)
+  fs.mkdirSync(path.join(work, '.slcode', 'agents'), { recursive: true });
+  fs.writeFileSync(path.join(work, '.slcode', 'agents', 'counter.md'), '---\nrelation: detached\n---\nCount things.\n');
+  const r4 = await sub.handler({ description: 'with agent', prompt: 'no-call', agent: 'counter' }, {});
+  const rid = /subagent ([0-9a-f]{8}) finished and closed/.exec(textOf(r4))![1];
+  assert.deepEqual(meta(dir, rid).agent, { name: 'counter', instructions: 'Count things.' });
+  assert.equal(meta(dir, rid).team!.inputControl, true);
 });
 
 test('subagent 팀원의 도구 승인은 리더 화면(session.children·childApprove)에서 사람이 답하고, 리더 모델(childCall)은 답하지 못한다', async (t) => {
@@ -253,7 +260,7 @@ test('team new (기본 link): 첫 지시 뒤에는 메시지로만 — 잠기지
   const made = await cli(dir, lid, ['team', 'new', '-n', 'w1'], {}, 'no-call', work);
   assert.equal(made.code, 0, made.err);
   const kid = made.out.trim();
-  assert.deepEqual(meta(dir, kid).team, TEAM_TEMPLATES.teammate);
+  assert.deepEqual(meta(dir, kid).team, TEAM_PRESETS.teammate);
   assert.equal(meta(dir, kid).noTeam, undefined, 'link 팀원은 팀원을 만들 수 있다');
   assert.equal(meta(dir, kid).cwd, work, '폴더를 빼면 지금 폴더');
   await until(() => turnEnds(dir, kid) >= 1);
@@ -294,7 +301,7 @@ test('detached·-o 옵션: detached 는 리더 기록이 없는 세션이고, li
   assert.equal(made.code, 0, made.err);
   const kid = made.out.trim();
   assert.equal(meta(dir, kid).parent, undefined);
-  assert.deepEqual(meta(dir, kid).team, TEAM_TEMPLATES.detached);
+  assert.deepEqual(meta(dir, kid).team, TEAM_PRESETS.detached);
   // 리더 core 가 죽어도 산다
   process.kill(meta(dir, lid).pid!, 'SIGKILL');
   await sleep(2500);
@@ -314,7 +321,7 @@ test('detached·-o 옵션: detached 는 리더 기록이 없는 세션이고, li
   assert.equal(two.code, 2);
   const outside = await cli(s2.dir, undefined, ['team', 'new', work]);
   assert.equal(outside.code, 2, '세션 밖에서는 쓰지 못한다');
-  // -o 로 템플릿을 고친다: subagent 인데 리더가 닫혀도 산다
+  // -o 로 프리셋을 고친다: subagent 인데 리더가 닫혀도 산다
   const mixed = await cli(s2.dir, s2.lid, ['team', 'new', work, '-s', '-o', '{"endWithLeader":false}', '--', 'no-call']);
   assert.equal(mixed.code, 0, mixed.err);
   assert.equal(meta(s2.dir, mixed.out.trim()).team!.endWithLeader, false);
@@ -376,4 +383,54 @@ test('메시지: fast(기본)는 받는 세션이 턴 중이어도 바로 넣고
   await until(() => has('later please'));
   const starts = log(dir, lid).filter((e) => e.ev.kind === 'turn.start').map((e) => (e.ev as { text: string }).text);
   assert.ok(starts.findIndex((s) => s.includes('right now')) < starts.findIndex((s) => s.includes('later please')));
+});
+
+test('에이전트 정의: --agent 는 .slcode/agents(리더 폴더에서 위로)·상태 폴더 agents 의 Markdown 파일 — 본문은 팀원 지시문, frontmatter 는 주지 않은 옵션의 기본값. 리더 지시문에 목록이 실린다', async (t) => {
+  const calls = path.join(tmp('slcode-calls-'), 'calls.jsonl');
+  const dir = tmp('slcode-team-'), root = tmp('slcode-work-'), work = path.join(root, 'sub');
+  fs.mkdirSync(path.join(root, '.slcode', 'agents'), { recursive: true });
+  fs.mkdirSync(work);
+  fs.mkdirSync(path.join(dir, 'agents'));
+  fs.writeFileSync(path.join(root, '.slcode', 'agents', 'reviewer.md'), '---\ndescription: Reviews code and reports problems\nrelation: subagent\nmode: auto\nmodel: gpt-agent\n---\nFind bugs only. Do not edit files.\n');
+  fs.writeFileSync(path.join(dir, 'agents', 'reviewer.md'), '---\ndescription: shadowed\n---\nshadowed\n');
+  fs.writeFileSync(path.join(dir, 'agents', 'tester.md'), '---\ndescription: Runs the tests\n---\nRun the tests.\n');
+  fs.writeFileSync(path.join(dir, 'agents', 'broken.md'), '---\nrelation: boss\n---\nx\n');
+  const p = leader(dir, work, { FAKE_CODEX_CALLS: calls });
+  t.after(async () => { if (p.child.exitCode === null) p.child.kill('SIGKILL'); await closeAll(dir); });
+  await p.sock;
+  const [pm] = EventLog.list(corePaths(dir).sessionsDir);
+  const lid = pm.id;
+  const instr = () => (fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8') : '').split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l).developerInstructions as string | null).filter(Boolean) as string[];
+  const lead = await until(() => instr()[0]);
+  assert.match(lead, /--agent <name>/);
+  assert.match(lead, /^- reviewer: Reviews code and reports problems$/m, '가까운 프로젝트 정의가 이긴다');
+  assert.match(lead, /^- tester: Runs the tests$/m);
+  assert.doesNotMatch(lead, /shadowed/);
+
+  const made = await cli(dir, lid, ['team', 'new', work, '--agent', 'reviewer', '-o', '{"endWithAnswer":false}', '--', 'no-call']);
+  assert.equal(made.code, 0, made.err);
+  const kid = made.out.trim();
+  const km = meta(dir, kid);
+  assert.deepEqual(km.agent, { name: 'reviewer', instructions: 'Find bugs only. Do not edit files.' });
+  assert.equal(km.team!.inputControl, true, '정의의 relation subagent');
+  assert.equal(km.permissionMode, 'auto', '정의의 mode');
+  assert.equal(km.model, 'gpt-agent', '정의의 model');
+  const kidInstr = await until(() => instr().find((s) => s.includes('# slcode agent: reviewer')));
+  assert.match(kidInstr, /# slcode agent: reviewer\nFind bugs only\. Do not edit files\./);
+  assert.match(kidInstr, /# slcode teammate/);
+
+  // 준 옵션이 정의의 값을 이긴다
+  const own = await cli(dir, lid, ['team', 'new', work, '--agent', 'reviewer', '-t', '-m', 'gpt-mine', '--mode', 'default', '--', 'no-call']);
+  assert.equal(own.code, 0, own.err);
+  const om = meta(dir, own.out.trim());
+  assert.equal(om.team!.inputControl, false);
+  assert.equal(om.model, 'gpt-mine');
+  assert.equal(om.permissionMode, 'default');
+
+  const none = await cli(dir, lid, ['team', 'new', work, '--agent', 'nobody']);
+  assert.equal(none.code, 2);
+  assert.match(none.err, /no agent 'nobody' \(broken\|reviewer\|tester\)/);
+  const broken = await cli(dir, lid, ['team', 'new', work, '--agent', 'broken']);
+  assert.equal(broken.code, 2);
+  assert.match(broken.err, /relation must be subagent\|teammate\|detached/);
 });

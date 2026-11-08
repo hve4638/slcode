@@ -57,4 +57,5 @@ type ActivityRecord
 type ActivityResult
 export type ChildView
 export type TeamOptions
-export val TEAM_TEMPLATES
+export type TeamAgent
+export val TEAM_PRESETS

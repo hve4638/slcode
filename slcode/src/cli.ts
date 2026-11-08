@@ -27,10 +27,11 @@ import { CLAUDE_EFFORTS, sessionEnv, sessionParams } from './base.js';
 import { randomUUID } from 'node:crypto';
 import { pluginCommand } from 'slcode-plugin/cli';
 import { addProfile, getProfile, listProfiles, removeProfile, setProfile, type Profile } from './profiles.js';
+import { findAgent, listAgents, type AgentDef } from './teamAgents.js';
 import { summarize } from './activity.js';
-import { FILES, PERMISSION_MODES, TEAM_TEMPLATES, type ApprovalRequest, type LoggedEvent, type Methods, type SessionInfo } from './protocol.js';
+import { FILES, PERMISSION_MODES, TEAM_PRESETS, type ApprovalRequest, type LoggedEvent, type Methods, type SessionInfo } from './protocol.js';
 
-type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; model?: string; effort?: string; profile?: string; env?: string[]; param?: string[]; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; 'no-inspect'?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; re?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; takeover?: boolean; version?: boolean; help?: boolean; 'from-start'?: boolean; to?: string[]; remove?: boolean; name?: string; options?: string; subagent?: boolean; teammate?: boolean; detached?: boolean; lazy?: boolean; wait?: boolean };
+type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; model?: string; effort?: string; profile?: string; env?: string[]; param?: string[]; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; 'no-inspect'?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; re?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; takeover?: boolean; version?: boolean; help?: boolean; 'from-start'?: boolean; to?: string[]; remove?: boolean; name?: string; options?: string; subagent?: boolean; teammate?: boolean; detached?: boolean; lazy?: boolean; wait?: boolean; agent?: string };
 
 const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세션 id 또는 유일한 제목. * 는 세션 안(SLCODE_SESSION_ID)에서만)
 
@@ -93,13 +94,14 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
 * ask <to> <text> [--timeout S]  묻고 답장을 기다린다
 * reply <id> <text>              받은 메시지에 답장
 팀원 (세션 안의 에이전트가 친다 — 사람이 새 세션을 열 때는 new)
-* team new [folder] [--subagent|-s | --teammate|-t | --detached|-d] [--wait] [-n name] [-m model] [-e effort] [--mode M] [-o '<JSON>'] [-- <지시>]
+* team new [folder] [--subagent|-s | --teammate|-t | --detached|-d] [--wait] [--agent A] [-n name] [-m model] [-e effort] [--mode M] [-o '<JSON>'] [-- <지시>]
                                  이 세션(리더)이 팀원 세션을 띄우고 id 를 출력한다. 폴더는 생략하면 지금 폴더, 지시는 -- 뒤나 stdin(heredoc).
                                  --subagent: 리더가 입력을 쥐고 답을 받는다, 답하면 닫히고 다시 시키면 다시 뜬다, 리더가 닫히면 같이 닫힌다, 질문 도구·팀원 만들기는 못 한다.
                                  --wait: 첫 지시의 답을 기다려 id 대신 그 답을 출력한다 (답을 받는 팀원만).
                                  --teammate(기본): 첫 지시 뒤에는 메시지로만 주고받고 리더가 닫혀도 산다. --detached: 리더와 상관없는 세션.
-                                 -o 는 템플릿 위에 얹는 옵션 (true|false): link inputControl outputToLeader askToLeader endWithLeader endWithAnswer noTeam.
+                                 -s·-t·-d 는 관계 프리셋, -o 는 그 위에 얹는 옵션 (true|false): link inputControl outputToLeader askToLeader endWithLeader endWithAnswer noTeam.
                                  -m 은 모델 이름 또는 anthropic:<모델>·openai:<모델>. 주지 않은 모델·effort·권한 모드는 리더를 따른다.
+                                 --agent 는 .slcode/agents/<A>.md(리더 폴더에서 위로)·<상태 폴더>/agents/<A>.md 의 에이전트 정의 — 본문은 팀원의 지시문, frontmatter 의 model·effort·mode·relation·profile 은 주지 않은 옵션의 기본값.
                                  팀원에게 지시는 prompt·interrupt·respond·close <팀원> 이 리더 core 를 거쳐 간다. prompt <팀원> --wait 는 답을 기다려 출력한다
 에이전트 플러그인 (Claude·Codex 세션에 싣는다. 바꾼 설정은 새 세션부터, 떠 있는 세션은 사이드바의 다시 싣기로 — Codex 는 skill 만)
   plugin add <folder>            slcode-plugin.json(애드온은 slcode-addon.json)이 있는 원본 폴더를 설치한다. 같은 내용이면 아무것도 하지 않는다
@@ -147,7 +149,7 @@ try {
       remember: { type: 'boolean' }, from: { type: 'string' }, re: { type: 'string' }, timeout: { type: 'string' }, answer: { type: 'string' },
       'no-web': { type: 'boolean' }, web: { type: 'boolean' }, takeover: { type: 'boolean' }, 'from-start': { type: 'boolean' }, version: { type: 'boolean' }, dir: { type: 'string' }, help: { type: 'boolean', short: 'h' }, to: { type: 'string', multiple: true }, remove: { type: 'boolean' }, cascade: { type: 'boolean' },
       // team new (ticket slcode-team-agent) 와 mail --lazy
-      name: { type: 'string', short: 'n' }, options: { type: 'string', short: 'o' }, subagent: { type: 'boolean', short: 's' }, teammate: { type: 'boolean', short: 't' }, detached: { type: 'boolean', short: 'd' }, lazy: { type: 'boolean' }, wait: { type: 'boolean' },
+      name: { type: 'string', short: 'n' }, options: { type: 'string', short: 'o' }, subagent: { type: 'boolean', short: 's' }, teammate: { type: 'boolean', short: 't' }, detached: { type: 'boolean', short: 'd' }, lazy: { type: 'boolean' }, wait: { type: 'boolean' }, agent: { type: 'string' },
     },
   });
 } catch (e) { usage((e as Error).message); }
@@ -166,6 +168,17 @@ const LIFE = new Set(['new', 'continue', 'resume', 'import', 'team']); // team n
 const life = bare || LIFE.has(words[0]);
 const positionals = life ? words.slice(0, nBefore) : words;
 const firstPrompt = life ? words.slice(nBefore).join(' ').trim() || undefined : undefined;
+// team new --agent — 에이전트 정의 파일(리더 세션 폴더에서 찾는다)의 값을 주지 않은 옵션의 기본값으로. 모델 앞머리 해석보다 먼저 (ticket slcode-team-agent, 사용자 2026-11-09)
+let def: AgentDef | null = null;
+if (words[0] === 'team' && flags.agent !== undefined) {
+  const dir = corePaths(flags.dir).dir, me = process.env.SLCODE_SESSION_ID;
+  const at = (me && sessionMeta(corePaths(flags.dir).sessionsDir, me)?.cwd) || process.cwd();
+  def = findAgent(at, dir, flags.agent);
+  if (!def) { const all = listAgents(at, dir).map((a) => a.name); usage(`no agent '${flags.agent}' (${all.length ? all.join('|') : `none — add .slcode/agents/${flags.agent}.md`})`); }
+  if (def.relation !== undefined && !Object.hasOwn(TEAM_PRESETS, def.relation)) usage(`agent ${def.name}: relation must be subagent|teammate|detached (${def.file})`);
+  if (def.relation && !flags.subagent && !flags.teammate && !flags.detached) flags[def.relation as 'subagent' | 'teammate' | 'detached'] = true;
+  flags.model ??= def.model; flags.effort ??= def.effort; flags.mode ??= def.mode; flags.profile ??= def.profile;
+}
 // --model <공급자>:<모델> 이면 공급자로 벤더를 고른다 (정식 형식, 사용자 2026-10-24 — slcode 에 모델 목록이 없어 모델 이름만으로는 벤더를 모른다).
 // 다른 앞머리·앞머리 없음은 이름 전체가 모델 (Bedrock id 의 ':0' 등). 플러그인 main.js 의 PROVIDERS 와 같다
 const PROVIDERS: Record<string, 'claude' | 'codex'> = { anthropic: 'claude', openai: 'codex' };
@@ -234,7 +247,7 @@ async function stdinPrompt(): Promise<string | undefined> {
   });
 }
 /** `slcode team new` (ticket slcode-team-agent, 사용자 결정 2026-11-07~08) — 세션 안의 모델이 Bash 로 친다. 그 세션(리더)의 core 에 팀원을 청하고 id 를 출력하고 바로 끝난다.
- *  템플릿(--subagent·--teammate·--detached, 생략하면 teammate)이 관여 옵션의 기본값을 채우고 -o 의 JSON 이 그 위에 얹힌다. 주지 않은 값은 리더를 따른다(core).
+ *  관계 프리셋(--subagent·--teammate·--detached, 생략하면 teammate)이 관여 옵션의 기본값을 채우고 -o 의 JSON 이 그 위에 얹힌다. 주지 않은 값은 리더를 따른다(core).
  *  지시는 `--` 뒤, 없으면 stdin 이 파이프·파일일 때만 (heredoc) — Claude Code Bash 도구의 stdin 은 닫히지 않는 소켓이라 그대로 읽으면 멈춘다.
  *  superlite 안이면 그 터미널의 deck 끝에 팀원 카드를 조용히 연다(보기만 하는 카드 — 못 열어도 팀원은 돈다) */
 async function teamNew(args: string[]): Promise<void> {
@@ -247,7 +260,7 @@ async function teamNew(args: string[]): Promise<void> {
   if (flags.options !== undefined) {
     try { given = JSON.parse(flags.options); if (!given || typeof given !== 'object' || Array.isArray(given)) throw 0; } catch { usage(`--options needs a JSON object, e.g. -o '{"endWithLeader":true}'`); }
   }
-  const team = { ...TEAM_TEMPLATES[tpl[0] ?? 'teammate'], ...given };
+  const team = { ...TEAM_PRESETS[tpl[0] ?? 'teammate'], ...given };
   const cwd = folderArg(args[0]);
   const prompt = firstPrompt ?? (await stdinPrompt());
   // --wait — 첫 지시의 답을 기다려 출력한다. 리더 core 가 그 답을 메시지 대신 이 명령에 넘긴다 (사용자 2026-11-08, MCP 도구 Subagent 가 이 길을 쓴다)
@@ -261,7 +274,7 @@ async function teamNew(args: string[]): Promise<void> {
   try {
     ({ id } = await client.request('session.spawnChild', {
       id: me, cwd, title: flags.name, vendor: flags.vendor as 'claude' | 'codex' | undefined, model: flags.model, effort: flags.effort, mode: flags.mode, profile: flags.profile,
-      env: newEnv(), params: newParams(), prompt: flags.wait ? undefined : prompt, team: team as never,
+      env: newEnv(), params: newParams(), prompt: flags.wait ? undefined : prompt, team: team as never, ...(def ? { agent: { name: def.name, instructions: def.instructions } } : {}),
     }));
   } catch (e) { client.close(); err((e as Error).message); process.exit(1); }
   if (process.env.SUPERLITE_SOCK) spawnSync('superlite', ['slcode.resume', '--id', id], { encoding: 'utf8' });
@@ -644,7 +657,7 @@ try {
       break;
     }
     case 'team': { // 팀원 (ticket slcode-team-agent) — 세션 안 전용
-      if (rest[0] !== 'new') usage('team new [folder] [--subagent|--teammate|--detached] [-n name] [-m model] [-e effort] [--mode M] [-o JSON] [-- <instructions>]');
+      if (rest[0] !== 'new') usage('team new [folder] [--subagent|--teammate|--detached] [--agent A] [-n name] [-m model] [-e effort] [--mode M] [-o JSON] [-- <instructions>]');
       checkNew();
       await teamNew(rest.slice(1));
       break;

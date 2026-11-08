@@ -4,7 +4,7 @@
 // 옛 평탄 구조 sessions/<id>/ 는 migrate 가 슬러그 아래로 옮긴다 (2026-09-27 이전 세션).
 import fs from 'node:fs';
 import path from 'node:path';
-import type { HistorySummary, LoggedEvent, OutlineItem, PromptTurn, SessionInfo, TeamOptions, Vendor } from './protocol.js';
+import type { HistorySummary, LoggedEvent, OutlineItem, PromptTurn, SessionInfo, TeamOptions, TeamAgent, Vendor } from './protocol.js';
 import { cwdSlug, sessionDir, sessionRoots } from './paths.js';
 
 /** seq 는 kind fork 의 복제 지점 — 원본 기록에서 복제본에 들어간 마지막 턴 끝(turn.end·session.imported)의 seq (ticket slcode-session-fork). 복제본 자신의 일은 제 기록의 session.imported(fork) 뒤다 */
@@ -49,6 +49,8 @@ export type SessionMeta = {
   parent?: SessionParent;
   /** `slcode team new` 로 띄운 팀원의 관여 옵션 (ticket slcode-team-agent) — 끊으면 cut 과 함께 입력 제어·출력 수신·질문 수신이 꺼진다 */
   team?: TeamOptions;
+  /** `slcode team new --agent` 로 띄운 팀원의 에이전트 정의 (ticket slcode-team-agent, 사용자 2026-11-09) — 띄운 때의 사본. 지시문 familyPrompt 가 본문을 싣는다 */
+  agent?: TeamAgent;
   /** 이 세션은 팀원을 만들지 못한다 — 설정의 "새 세션 팀원" 을 끄고 열었거나 noTeam 팀원 */
   noTeam?: boolean;
 };

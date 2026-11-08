@@ -7,7 +7,7 @@ import { connectSession, BUILD, PKG, type RpcClient } from './client.js';
 import { spawnCore, sockAlive } from './live.js';
 import { EventLog } from './eventLog.js';
 import { sessionMeta } from './mail.js';
-import { CoreError, ERR, TEAM_TEMPLATES, type ApprovalRequest, type ChildView, type LoggedEvent, type Methods, type TeamOptions } from './protocol.js';
+import { CoreError, ERR, TEAM_PRESETS, type ApprovalRequest, type ChildView, type LoggedEvent, type Methods, type TeamOptions } from './protocol.js';
 import type { SessionMeta } from './eventLog.js';
 import type { CoreOptions } from './core.js';
 
@@ -21,7 +21,7 @@ type Kid = { id: string; sock: string; conn: RpcClient; pending: Map<string, App
 export function teamOf(meta: Pick<SessionMeta, 'team'> | null | undefined): TeamOptions | null {
   return meta?.team ?? null;
 }
-const TEAM_KEYS = Object.keys(TEAM_TEMPLATES.teammate);
+const TEAM_KEYS = Object.keys(TEAM_PRESETS.teammate);
 /** 옵션 오류 사유 — 모르는 키, 불리언이 아닌 값, link 없이 켠 리더 옵션. 맞으면 null */
 export function teamOptionsError(o: Record<string, unknown>): string | null {
   for (const [k, v] of Object.entries(o)) {

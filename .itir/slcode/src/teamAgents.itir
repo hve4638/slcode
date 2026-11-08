@@ -1,0 +1,17 @@
+import { frontmatter } from '../slcode-plugin/src/agentFormat'
+
+role: 팀원 에이전트 정의 (ticket slcode-team-agent, 사용자 결정 2026-11-09) — 팀원을 띄울 때 쓰는 설정 묶음에 붙인 이름(`slcode team new --agent <이름>`, 이름은 사용자가 roles 대신 골랐다 — herdr 의 Agent templates, Claude·Codex·Pi 의 agents 와 같은 자리). Markdown 파일 하나에 하나(Claude Code `.claude/agents/*.md` 와 같은 꼴): 파일 이름(.md 를 뺀 것)이 에이전트 이름, frontmatter 는 description·model·effort·mode·relation(관계 프리셋 subagent|teammate|detached)·profile, 본문은 팀원에게 줄 지시문. 찾는 곳은 폴더에서 위로 올라가며 각 폴더의 .slcode/agents/, 그다음 상태 폴더($SLCODE_DIR 또는 ~/.local/state/slcode)의 agents/ — 같은 이름은 가까운 것이 이긴다. 이름 규칙(영숫자로 시작, 영숫자·.·_·-, 64자까지) 밖의 파일과 읽지 못하는 파일은 없는 것으로 본다. 값의 검사(relation·mode·모델)는 쓰는 쪽(cli team new·core)이 한다
+
+export type AgentDef
+fn agentDirs(cwd, dir) -> Text[] {
+  role: 찾을 폴더 순서 — cwd 부터 루트까지 각 .slcode/agents, 마지막에 <dir>/agents
+}
+fn readAgent(file, name) -> AgentDef? {
+  role: 파일 하나를 읽어 frontmatter 와 본문으로, 읽지 못하면 null
+}
+export fn listAgents(cwd, dir) -> AgentDef[] {
+  role: 가까운 것이 이긴 정의 목록, 이름순
+}
+export fn findAgent(cwd, dir, name) -> AgentDef? {
+  role: 그 이름의 가장 가까운 정의, 없으면 null
+}

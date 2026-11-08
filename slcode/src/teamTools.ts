@@ -75,13 +75,14 @@ export function teamTools(o: TeamToolsOptions) {
     {
       description: z.string().describe('A short (3-5 word) description of the task. It becomes the subagent name.'),
       prompt: z.string().describe('The task for the subagent to perform'),
-      model: z.string().optional().describe('A model name, or anthropic:<model> / openai:<model>. Defaults to your model'),
+      agent: z.string().optional().describe('An agent definition from the slcode agent list in your instructions. It gives the subagent that agent\'s instructions, and its model unless you set model'),
+      model: z.string().optional().describe('A model name, or anthropic:<model> / openai:<model>. Defaults to the agent definition\'s model, else your model'),
       folder: z.string().optional().describe('The folder it works in. Defaults to your current folder'),
       run_in_background: z.boolean().optional().describe('Return at once with its id. Its answer arrives later as a <slcode-message kind="result">. Do not poll for it'),
     },
     async (a, extra) => {
       const bg = !!a.run_in_background;
-      const args = ['team', 'new', a.folder ?? '.', '--subagent', '-n', a.description, ...(a.model ? ['-m', a.model] : []), ...(bg ? [] : ['--wait'])];
+      const args = ['team', 'new', a.folder ?? '.', '--subagent', '-n', a.description, ...(a.agent ? ['--agent', a.agent] : []), ...(a.model ? ['-m', a.model] : []), ...(bg ? [] : ['--wait'])];
       let id = '';
       const signal = signalOf(extra);
       const onAbort = () => { if (id) interrupt(o, id); };
