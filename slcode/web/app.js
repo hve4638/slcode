@@ -485,11 +485,11 @@ export function mountAgentFront(root, transport, opts = {}) {
     if (!opening) note();
   }
   // 에이전트 플러그인 명령 (ticket slcode-agent-plugin-command) — 친 명령은 보통 내 메시지와 같은 말풍선(사용자 2026-11-02), 그 아래 알림 줄과 보관한 컨텍스트(겹 +N, 펼치면 글).
-  // 보관분을 붙인 턴(attached)은 그 턴의 내 요청 아래 겹 +N 에 '/명령' 출처로 더한다. 실패·경고는 빨간 줄
+  // 보관분을 붙인 턴(attached)은 그 턴의 내 요청 아래 겹 +N 에 '/명령' 출처로 더한다. 실패·경고는 빨간 줄, 실패(outcome 이 ok 가 아닌 것)는 말풍선도 흐리게 (ticket slcode-command-failed-dimmed)
   function commandRun(ev) {
     if (ev.phase === 'attached') { if (main.turnEl?.isConnected) for (const x of ev.items) hookContext(main.turnEl, [x.text], `/${x.name}`, `${x.plugin} · /${x.name}`); return; }
     const who = `${ev.plugin} · /${ev.name} · ${ev.ms}ms`;
-    const line = push(h('div', { class: 'user' }, h('div', { class: 'bubble', title: who }, `/${ev.name}${ev.args ? ` ${ev.args}` : ''}`)));
+    const line = push(h('div', { class: `user${ev.outcome !== 'ok' ? ' failed' : ''}` }, h('div', { class: 'bubble', title: who }, `/${ev.name}${ev.args ? ` ${ev.args}` : ''}`)));
     if (ev.outcome !== 'ok') push(h('div', { class: 'meta err', title: who }, `/${ev.name} 실패: ${ev.outcome === 'timeout' ? '시간 초과' : (ev.error ?? '').split('\n')[0]}`));
     for (const w of ev.warnings) push(h('div', { class: 'meta err', title: who }, `/${ev.name}: ${w}`));
     for (const m of ev.messages ?? []) hookAfter(line, h('div', { class: `hk-note${m.tone ? ` t-${m.tone}` : ''}`, title: who }, h('span', { class: 'ic' }, icon(NOTE_ICONS[m.icon] ?? 'bell')), h('span', { class: 't' }, m.text)));

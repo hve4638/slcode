@@ -164,6 +164,8 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 
 .acf .user { align-self: flex-end; max-width: 85%; display: flex; flex-direction: column; align-items: flex-end; }
 .acf .user .bubble { background: var(--acf-user); border-radius: 14px 14px 4px 14px; padding: 9px 14px; white-space: pre-wrap; word-break: break-word; }
+/* 실패한 플러그인 명령의 말풍선 (ticket slcode-command-failed-dimmed, 사용자 2026-11-09 라이트·다크 같은 값) — 배경·글자를 피드 배경 쪽으로 섞어 흐리게 */
+.acf .user.failed .bubble { background: color-mix(in srgb, var(--acf-user) 45%, var(--acf-bg)); color: color-mix(in srgb, var(--acf-fg) 50%, var(--acf-bg)); }
 .acf .acts { display: flex; gap: 4px; align-items: center; margin: 2px 0 -8px; opacity: 0; transition: opacity .15s; font-size: 12px; }
 /* 응답 아래 아이콘 줄은 늘 보인다 (사용자 2026-11-08) — 내 말풍선 아래 줄은 지금처럼 올렸을 때만 */
 .acf .assistant .acts, .acf .user:hover .acts, .acf .acts:focus-within { opacity: 1; }
