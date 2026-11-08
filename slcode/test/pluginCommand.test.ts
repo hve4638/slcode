@@ -137,7 +137,7 @@ test('core: /roleas 는 턴 없이 돌아 state 를 바꾸고, 보관한 컨텍�
     const q = await c.request('session.send', { id, text: '/roleas worker' });
     assert.deepEqual(q.command, { plugin: 'orch', name: 'roleas', queued: true });
     await c.request('session.send', { id, text: 'USER-AFTER' });
-    assert.deepEqual(queues.at(-1), [{ kind: 'command', text: '/roleas worker' }, { kind: 'message', text: 'USER-AFTER' }], '큐 전체를 순서대로 알린다');
+    assert.deepEqual(queues.at(-1).map(({ id, ...x }: any) => (assert.ok(id), x)), [{ kind: 'command', text: '/roleas worker' }, { kind: 'message', text: 'USER-AFTER' }], '큐 전체를 순서대로 알린다');
     assert.deepEqual((await c.request('session.attach', { id })).queue, queues.at(-1), '다시 붙어도 큐를 받는다');
     assert.ok(!evs.some((e) => e.kind === 'turn.start' && e.text === 'USER-AFTER'), '기다리는 명령 뒤에 선 메시지는 아직 넣지 않는다');
     await until(() => ends() === 5);

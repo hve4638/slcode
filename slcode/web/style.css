@@ -379,6 +379,7 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .composer { padding: 8px 16px 14px; }
 .acf .composer .queue { max-width: 780px; max-height: 30vh; overflow-y: auto; margin: 0 auto 8px; display: flex; flex-direction: column; gap: 6px; }
 .acf .composer .queue[hidden] { display: none; }
+.acf .composer .queue .bubble { cursor: pointer; }
 .acf .composer > .busy { max-width: 780px; margin: 0 auto 8px; }
 .acf .composer .box { position: relative; max-width: 780px; margin: 0 auto; background: var(--acf-panel); border: 1px solid var(--acf-line); border-radius: 14px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
 /* 아래 줄: 왼쪽 첨부·권한 모드, 오른쪽 모델·effort·보내기 (사용자 2026-10-13). 좁으면 모델 이름만 잘린다 — 권한 모드·effort 는 짧아서 그대로 */

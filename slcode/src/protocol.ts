@@ -292,7 +292,10 @@ export type Methods = {
   /** 세션의 벤더를 바꾼다 — 첫 메시지(turn.start) 전에만, 아니면 bad_request. 같은 세션 id 로 core 를 새 벤더로 다시 띄운다(core.replaced 뒤 중계가 다시 붙는다).
    *  모델·effort 는 새 벤더 기본으로 비운다. codex 실행 파일이 뜨지 않으면 바꾸지 않고 bad_request (ticket slcode-vendor-model-picker, 사용자 결정 2026-10-23) */
   'session.setVendor': { params: { id: string; vendor: Vendor }; result: { ok: true } };
+  /** 진행 턴 중단 — 대기 항목(session.queue)도 거둬 session.restored 로 화면 입력창에 돌려준다 (ticket slcode-queued-message-bubble) */
   'session.interrupt': { params: { id: string }; result: { ok: true } };
+  /** 대기 항목 하나를 빼서 그 글·첨부를 돌려준다 — 화면이 입력창에 넣는다. 이미 처리되기 시작했으면 bad_request */
+  'session.unqueue': { params: { id: string; item: string }; result: { text: string; attachments: Attachment[] } };
   /** 권한 모드 전환 — 즉시 적용, meta 에 남아 --resume 뒤에도 유지. 현재 값은 SessionInfo.permissionMode (session.changed 로 갱신) */
   'session.setMode': { params: { id: string; mode: PermissionMode }; result: { ok: true } };
   /** 벤더 슬래시 명령 목록 — 입력창 `/` 자동완성. session.ready 전에도 답한다 */
@@ -409,7 +412,8 @@ export type ServeMethods = {
 export type UpdateCheck = { status: 'latest' | 'restart-required' | 'failed'; version?: string; build?: number; reason?: string };
 
 /** 턴 중에 친 명령과 그 뒤에 보낸 메시지 — idle 로 돌아오면 앞에서부터 하나씩 처리한다. text 는 화면에 보일 글(명령은 /<이름> <인자>), attachments 는 첨부 개수 */
-export type QueueItem = { kind: 'command' | 'message'; text: string; attachments?: number };
+/** id 는 session.unqueue 로 그 항목을 뺄 때 쓴다 (ticket slcode-queued-message-bubble) */
+export type QueueItem = { id: string; kind: 'command' | 'message'; text: string; attachments?: number };
 
 /** 세션 소켓·웹의 이벤트 — 붙은 세션의 이벤트와 세션 상태 */
 export type Broadcasts = {
@@ -418,6 +422,8 @@ export type Broadcasts = {
   'session.closed': { id: string; reason: string };
   /** 입력 큐가 바뀔 때마다 큐 전체 — 메모리에만 있으므로 이벤트 로그에 남기지 않는다 (ticket slcode-agent-plugin-command) */
   'session.queue': { id: string; items: QueueItem[] };
+  /** 중단으로 거둔 대기 항목 — 줄바꿈으로 이은 글과 첨부. 화면이 입력창 앞에 넣는다 (core 의 입력 초안에도 붙어 있다) */
+  'session.restored': { id: string; text: string; attachments: Attachment[] };
   /** 이 세션이 소유한 자식 목록·대기 승인이 바뀌었다 (ticket slcode-subagent-sessions) */
   'session.children': { id: string; children: ChildView[] };
   /** 소유권을 빼앗긴 연결에만 — 새 소유자의 pid (protocol 3) */

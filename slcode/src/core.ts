@@ -424,7 +424,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
         if (hit) {
           if (att.length) throw new CoreError(ERR.badRequest, `에이전트 플러그인 명령 /${hit.cmd.name} 은 첨부와 함께 보낼 수 없습니다`);
           if (waiting.length || draining || !calmForCommand()) {
-            waiting.push({ cmd: hit.cmd, args: hit.args });
+            waiting.push({ id: randomUUID(), cmd: hit.cmd, args: hit.args });
             queueChanged();
             return { ok: true, state: s.state, command: { plugin: hit.cmd.plugin, name: hit.cmd.name, queued: true as const } };
           }
@@ -438,7 +438,8 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       if (typeof p.text !== 'string' || (!p.text.trim() && !att.length)) throw new CoreError(ERR.badRequest, 'text or attachments required');
       if (closed) throw new CoreError(ERR.notLive, `session ${sid} is closing`); // 답하고 닫히는 팀원 — 리더 core 가 닫힌 뒤 다시 띄워 다시 보낸다
       for (const a of att) if (typeof a?.name !== 'string' || typeof a.mediaType !== 'string' || typeof a.data !== 'string') throw new CoreError(ERR.badRequest, 'attachment {name, mediaType, data}');
-      if (!p.origin && (waiting.length || draining)) { waiting.push({ text: p.text, att }); queueChanged(); activity.sent(); return { ok: true, state: s.state }; } // 기다리는 명령 뒤에 선다
+      // 기다리는 명령 뒤에, 턴 중이면 idle 까지 core 가 쥐고 있다가 하나씩 한 턴으로 (ticket slcode-queued-message-bubble, 사용자 결정 2026-11-08)
+      if (!p.origin && (waiting.length || draining || busy())) { waiting.push({ id: randomUUID(), text: p.text, att }); queueChanged(); activity.sent(); return { ok: true, state: s.state }; }
       s.send(p.text, p.origin ?? null, att);
       if (!p.origin) activity.sent(); // 메시지 턴(origin mail 등)은 사람이 보낸 것이 아니다
       return { ok: true, state: s.state };
@@ -478,7 +479,22 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       void replace(PKG);
       return { ok: true };
     },
-    'session.interrupt': async (_c, p) => { await mine(p?.id).interrupt(); return { ok: true }; },
+    // 대기 항목은 거둬 입력창으로 (사용자 결정 2026-11-08). 중단으로 idle 이 되면 drainWaiting 이 바로 보내므로 먼저 거둔다
+    'session.interrupt': async (_c, p) => {
+      const s = mine(p?.id);
+      const rest = waiting.splice(0);
+      await s.interrupt();
+      giveBack(rest);
+      return { ok: true };
+    },
+    'session.unqueue': (_c, p) => {
+      mine(p?.id);
+      const i = waiting.findIndex((w) => w.id === p.item);
+      if (i < 0) throw new CoreError(ERR.badRequest, 'this message is already being processed');
+      const { text, att } = waitingInput(waiting.splice(i, 1)[0]);
+      queueChanged();
+      return { text, attachments: att };
+    },
     'session.setMode': async (_c, p) => { const s = mine(p?.id); if (!isMode(p.mode)) throw new CoreError(ERR.badRequest, `mode ${PERMISSION_MODES.join('|')}`); await s.setMode(p.mode); broadcast('session.changed', s.info()); return { ok: true }; },
     'session.commands': async (_c, p) => {
       const s = mine(p?.id);
@@ -540,6 +556,8 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       const s = mine(p?.id);
       if (p.decision !== 'allow' && p.decision !== 'deny') throw new CoreError(ERR.badRequest, 'decision allow|deny');
       const ok = s.approve(p.requestId, p.decision, { remember: p.remember, updatedInput: p.updatedInput, message: p.message, interrupt: p.interrupt === true });
+      // 거절해 턴을 끝내면 Stop 처럼 대기 항목을 입력창으로 — 끝난 턴의 idle 은 벤더에서 나중에 오니 drainWaiting 보다 먼저다
+      if (ok && p.decision === 'deny' && p.interrupt === true) giveBack(waiting.splice(0));
       if (ok) activity.answered();
       return { ok };
     },
@@ -665,7 +683,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     return sendMail(P.sessionsDir, parentId, { from: sid, kind, body }).then(() => {}, (e) => log(`could not tell the leader (${kind}): ${(e as Error).message}`));
   }
   /** 리더가 지시하는 메서드 — 잠긴 동안 리더 밖의 연결은 거절, 끊은 뒤에는 리더를 거절 */
-  const LOCKED_METHODS = new Set(['session.send', 'session.interrupt', 'session.setModel', 'session.setEffort', 'session.setVendor', 'session.setProfile', 'session.setMode', 'session.rewind']);
+  const LOCKED_METHODS = new Set(['session.send', 'session.interrupt', 'session.unqueue', 'session.setModel', 'session.setEffort', 'session.setVendor', 'session.setProfile', 'session.setMode', 'session.rewind']);
   function gate(conn: Conn, method: string) {
     if (!parentId) return;
     if (LOCKED_METHODS.has(method) && locked() && !conn.parent) throw new CoreError(ERR.locked, lockedWhy());
@@ -836,17 +854,33 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   }
   // 턴 중에 친 에이전트 플러그인 명령 (사용자 결정 2026-11-02) — 바로 돌리지 않고 idle(첫 프롬프트 전 starting 포함)로 돌아온 뒤 친 순서대로 돌린다. 화면은 입력창 위 대기 영역(session.queue)으로 보인다.
   // 기다리는 명령이 있는 동안 사람이 보낸 메시지도 그 뒤에 선다 — '/roleas lead' 다음에 친 요청이 바뀐 역할로 돌게. 메시지 하나를 넣으면 턴이 시작되니 다음 idle 까지 멈춘다
-  const waiting: ({ cmd: LoadedCommand; args: string } | { text: string; att: Attachment[] })[] = [];
+  // 턴 중 메시지(ticket slcode-queued-message-bubble, 사용자 결정 2026-11-08): 벤더와 상관없이 여기서 idle 을 기다렸다가 하나씩 한 턴으로 — 도구 호출 중간에 끼우지 않는다.
+  // Claude SDK 에 바로 넣으면 다음 도구 결과에 끼고, 턴 끝에 줄 선 것은 한 턴으로 합쳐진다(priority later 도 같다, 2026-11-08 실측)
+  type Waiting = { id: string } & ({ cmd: LoadedCommand; args: string } | { text: string; att: Attachment[] });
+  const waiting: Waiting[] = [];
+  /** 입력창에 되돌릴 글 — 명령은 친 꼴 그대로 */
+  const waitingInput = (w: Waiting) => ('cmd' in w ? { text: `/${w.cmd.name}${w.args ? ` ${w.args}` : ''}`, att: [] as Attachment[] } : { text: w.text, att: w.att });
   let draining = false; // 명령 하나가 도는 중
   const calmForCommand = () => session.state === 'idle' || session.state === 'starting';
-  const queueItems = (): QueueItem[] => waiting.map((w) => ('cmd' in w ? { kind: 'command', text: `/${w.cmd.name}${w.args ? ` ${w.args}` : ''}` } : { kind: 'message', text: w.text, ...(w.att.length ? { attachments: w.att.length } : {}) }));
+  /** 턴이 돌거나 벤더에 넣은 메시지가 남았다 — 첫 프롬프트 전 starting 에 넣은 것은 state 를 바꾸지 않는다 */
+  const busy = () => !calmForCommand() || (session instanceof ClaudeSession && session.queued > 0);
+  const queueItems = (): QueueItem[] => waiting.map((w) => ('cmd' in w ? { id: w.id, kind: 'command', text: waitingInput(w).text } : { id: w.id, kind: 'message', text: w.text, ...(w.att.length ? { attachments: w.att.length } : {}) }));
   const queueChanged = () => broadcast('session.queue', { id: sid, items: queueItems() });
+  /** 거둔 대기 항목을 입력창으로 (사용자 결정 2026-11-08) — 줄바꿈으로 이어 초안 앞에 붙이고 session.restored 로 알린다 */
+  function giveBack(rest: Waiting[]) {
+    const items = rest.map(waitingInput);
+    if (!items.length) return;
+    queueChanged();
+    const text = items.map((i) => i.text).join('\n');
+    draft = draft ? `${text}\n${draft}` : text;
+    broadcast('session.restored', { id: sid, text, attachments: items.flatMap((i) => i.att) });
+  }
   function drainWaiting() {
-    if (draining || closed || !waiting.length || !calmForCommand()) return;
+    if (draining || closed || !waiting.length || busy()) return;
     draining = true;
     void (async () => {
       try {
-        while (waiting.length && !closed && calmForCommand()) {
+        while (waiting.length && !closed && !busy()) {
           const w = waiting.shift()!;
           queueChanged();
           if ('cmd' in w) await hooks!.runCommand(w.cmd.plugin, w.cmd.name, w.args, { cwd });
@@ -882,6 +916,9 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     try { logFile.updateMeta({ closedAt: Date.now() }); } catch { /* delete 가 세션 폴더를 먼저 지웠다 */ }
     for (const [id, w] of asks) { asks.delete(id); w.reject(new CoreError('closed', `session closed: ${reason}`)); }
     children.closeAll(); // 리더가 닫히면 수명 연동 팀원도 닫는다 (사용자 결정 4-1), 나머지는 놓는다
+    // 처리되지 않은 대기 항목은 입력 초안 앞에 붙여 파일로 — 다시 열면 입력창에 들어 있고 보내지 않는다 (사용자 결정 2026-11-08)
+    const left = waiting.map((w) => waitingInput(w).text);
+    if (left.length) try { fs.writeFileSync(draftFile, [...left, ...(draft ? [draft] : [])].join('\n')); } catch {}
     let deadline: NodeJS.Timeout | undefined;
     await Promise.race([session.close(reason), new Promise<void>((r) => { deadline = setTimeout(() => { log(`vendor did not close in ${CLOSE_DEADLINE_MS / 1000}s — leaving it`); r(); }, CLOSE_DEADLINE_MS); })]);
     clearTimeout(deadline);

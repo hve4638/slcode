@@ -126,12 +126,20 @@ export function mountAgentFront(root, transport, opts = {}) {
       const mediaType = f.type || 'text/plain';
       if (!/^image\/(png|jpeg|gif|webp)$|^application\/pdf$|^text\/|json$|xml$|javascript$/.test(mediaType)) { push(h('div', { class: 'meta err' }, `${f.name}: 이미지·PDF·텍스트만`)); continue; }
       const dataUrl = await new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(f); });
-      const att = { name: f.name || `clipboard.${mediaType.split('/')[1]}`, mediaType, data: dataUrl.split(',')[1], dataUrl };
-      pendingFiles.push(att);
-      const chip = h('span', { class: 'chip' }, mediaType.startsWith('image/') ? h('img', { src: dataUrl }) : null, att.name, h('a', { onclick: () => { pendingFiles.splice(pendingFiles.indexOf(att), 1); chip.remove(); canSend(); } }, '×'));
-      chips.append(chip);
+      addChip({ name: f.name || `clipboard.${mediaType.split('/')[1]}`, mediaType, data: dataUrl.split(',')[1], dataUrl });
     }
     canSend();
+  }
+  function addChip(att) {
+    pendingFiles.push(att);
+    const chip = h('span', { class: 'chip' }, att.mediaType.startsWith('image/') ? h('img', { src: att.dataUrl }) : null, att.name, h('a', { onclick: () => { pendingFiles.splice(pendingFiles.indexOf(att), 1); chip.remove(); canSend(); } }, '×'));
+    chips.append(chip);
+  }
+  // 대기에서 꺼낸 글·첨부를 입력창 앞에 (ticket slcode-queued-message-bubble, 사용자 결정 2026-11-08) — 말풍선을 눌렀을 때, 중단(Esc)으로 거둬졌을 때
+  function restoreInput(text, attachments = []) {
+    if (text) setInputText(input.value ? `${text}\n${input.value}` : text);
+    for (const a of attachments) addChip({ ...a, dataUrl: `data:${a.mediaType};base64,${a.data}` });
+    canSend(); saveDraft(true);
   }
   // 모델 선택 — 작성창의 알약 버튼 + popover 메뉴 (네이티브 popover 라 바깥 클릭·Esc 로 닫힌다). 목록은 session.models, 고르면 session.setModel (다음 턴부터).
   // 위쪽엔 계열마다 버전이 가장 높은 것만, 나머지는 '더 많은 모델' 아래. 계열 = 표시 이름에서 버전 숫자를 뗀 것 ("Fable 5.1"→Fable, "GPT-5.6 Sol"→GPT Sol),
@@ -299,13 +307,18 @@ export function mountAgentFront(root, transport, opts = {}) {
   // 작성창 = 입력칸 위, 아래 한 줄: 왼쪽 끝 첨부·권한 모드, 오른쪽 모델(effort 포함)·보내기 (Codex Desktop 꼴, 사용자 2026-10-13). 상자 밖 아래에 폴더·repo·리밋·context·비용 한 줄(stat)
   const stat = h('div', { class: 'stat' });
   // 입력 큐 (ticket slcode-agent-plugin-command, 사용자 2026-11-02) — 턴 중에 친 명령과 그 뒤 메시지는 피드에 섞지 않고 입력창 바로 위에 보통 내 메시지와 같은 말풍선으로 순서대로 붙여 둔다. 처리되면 여기서 빠지고 피드에 보통 줄로 들어간다
+  // 턴 중 보통 메시지도 여기 (ticket slcode-queued-message-bubble, 사용자 결정 2026-11-08) — 누르면 대기에서 빼서 입력창으로. 이미 읽히기 시작했으면 곧 피드로 옮겨 가므로 그대로 둔다
   const queueTray = h('div', { class: 'queue', hidden: '' });
   const paintQueue = (items) => {
     const stick = atBottom();
     queueTray.hidden = !items.length;
     placeBusy();
     if (stick) feed.scrollTop = feed.scrollHeight;
-    queueTray.replaceChildren(...items.map((q) => h('div', { class: 'user' }, h('div', { class: 'bubble' }, q.text || `첨부 ${q.attachments}개`))));
+    queueTray.replaceChildren(...items.map((q) => h('div', { class: 'user' }, h('div', { class: 'bubble', title: '눌러서 입력창으로 꺼내기', onclick: () => unqueue(q) }, q.text || `첨부 ${q.attachments}개`))));
+  };
+  const unqueue = (q) => {
+    if (!current || !q.id) return; // 옛 core 의 항목엔 id 가 없다
+    rpc('session.unqueue', { id: current, item: q.id }).then((r) => restoreInput(r.text, r.attachments), () => {});
   };
   // 입력 상자 위 테두리의 '기록 4/5' (Claude Code 실측과 같은 자리)
   const inputHint = h('div', { class: 'input-hint', hidden: '' });
@@ -1441,6 +1454,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     else if (m.event === 'session.changed' && m.params.id === current) { info = m.params; setTitle(info.title); syncInspect(); renderMode(); renderSide(); paintVendor(); paintLock(); }
     else if (m.event === 'session.children' && m.params.id === current) paintKids(m.params.children);
     else if (m.event === 'session.queue' && m.params.id === current) paintQueue(m.params.items);
+    else if (m.event === 'session.restored' && m.params.id === current) restoreInput(m.params.text, m.params.attachments);
     else if (m.event === 'core.replaced') loadCommands(); // 옛 core 에서 받은 명령 목록을 새 core 의 것으로 — serve 가 다시 붙은 뒤에 알린다
     else if (m.event === 'session.closed' && m.params.id === current) paintQueue([]); // 큐는 메모리에만 있어 함께 사라진다. 나머지는 session.exit 이벤트가 이미 그렸다
     else if (m.event === 'settings.changed') setSettings(m.params);
