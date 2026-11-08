@@ -282,7 +282,7 @@ export type Methods = {
   'session.detach': { params: { id: string }; result: { ok: true } };
   /** idle·running 가리지 않고 큐에 넣는다 — 한 호출. origin 은 발신자 표식 (메시지로 들어온 턴은 'mail') */
   /** 사람이 보낸 글(origin 없음)이 `/<명령>` 이고 에이전트 플러그인 명령이면 턴 없이 그 명령을 돌린다 — command 는 그 결과 (ticket slcode-agent-plugin-command) */
-  'session.send': { params: { id: string; text: string; origin?: string; attachments?: Attachment[] }; result: { ok: true; state: SessionState; command?: { plugin: string; name: string; outcome: 'ok' | 'error' | 'timeout'; error: string | null } | { plugin: string; name: string; queued: true } } };
+  'session.send': { params: { id: string; text: string; origin?: string; attachments?: Attachment[]; /** 리더의 기다림 표지 (childCall wait) — 이 지시가 연 턴의 답(kind=result)에 re 로 붙는다 */ ref?: string }; result: { ok: true; state: SessionState; command?: { plugin: string; name: string; outcome: 'ok' | 'error' | 'timeout'; error: string | null } | { plugin: string; name: string; queued: true } } };
   /** 벤더가 고를 수 있는 모델 목록과 지금 모델·effort */
   'session.models': { params: { id: string }; result: { current: string | null; effort: string | null; models: { value: string; resolvedModel?: string; displayName: string; description: string; efforts?: string[] }[] } };
   /** 다음 턴부터 쓸 모델 — meta 에 남아 --resume 뒤에도 유지 */

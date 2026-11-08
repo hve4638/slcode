@@ -180,7 +180,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   }
   function paintHero() {
     const back = !!info?.fromStart; // 시작 화면(동사 없는 slcode)에서 연 새 세션 — 첫 메시지 전엔 돌아갈 수 있다
-    hero.hidden = turned || (!profiles && !back);
+    hero.hidden = turned || !!info?.locked || (!profiles && !back); // 입력 제어 중인 팀원은 리더가 정한다 — core 도 setProfile 을 거절한다
     if (hero.hidden) return;
     const cur = profSwitching ?? profiles?.current;
     hero.replaceChildren(
@@ -331,10 +331,12 @@ export function mountAgentFront(root, transport, opts = {}) {
     if (!ok || input.value !== text) { input.value = text; input.oninput(); }
   };
   const hist = inputHistory(input, setInputText, (pos, total) => { inputHint.textContent = pos === null ? '' : `기록 ${pos}/${total}`; inputHint.hidden = pos === null; });
-  // 자식 세션 (ticket slcode-subagent-sessions, 사용자 결정 2026-11-07) — lockBar: 자식의 입력창 위 안내 줄, kidAsks: 부모의 입력창 위 "서브" 승인 줄 (paintLock·paintKids)
-  const lockBar = h('div', { class: 'lockbar', hidden: '' });
+  // 팀원 세션 (ticket slcode-team-agent, 사용자 2026-11-08) — kidAsks: 리더의 입력창 위 "팀원" 승인 줄, lockOver: 입력 제어 중인 팀원의 흐린 입력 상자 위 자물쇠 (paintLock·paintKids).
+  // kidAsks 는 composer 밖(dock 위)에 둔다 — 리더 자신의 승인 카드가 composer 를 가려도 남는다
   const kidAsks = h('div', { class: 'kid-asks', hidden: '' });
-  const composer = h('div', { class: 'composer' }, kidAsks, queueTray, lockBar, h('div', { class: 'box' }, inputHint, chips, input, h('div', { class: 'row' }, addBtn, modeBtn, modeMenu, h('span', { class: 'gap' }), modelBtn, modelMenu, stopBtn, sendBtn), slashMenu, filePick), stat);
+  const lockOver = h('div', { class: 'lockover', hidden: '' });
+  const box = h('div', { class: 'box' }, inputHint, chips, input, h('div', { class: 'row' }, addBtn, modeBtn, modeMenu, h('span', { class: 'gap' }), modelBtn, modelMenu, stopBtn, sendBtn), slashMenu, filePick, lockOver);
+  const composer = h('div', { class: 'composer' }, queueTray, box, stat);
   const side = h('aside', { class: 'side' });
   const dock = h('div', { class: 'dock' });
   // 실행 중 표시 — 피드 맨 끝(내 요청 바로 아래)에 한 줄: 맥동 점 · 지금 하는 일 · 경과. state 가 running 일 때만, 새 항목이 와도 늘 마지막 (사용자 2026-09-30)
@@ -373,7 +375,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   const famBtn = h('button', { class: 'fam-chip', hidden: '' });
   famBtn.popoverTargetElement = famMenu;
   famMenu.ontoggle = () => { if (famMenu.matches(':popover-open')) { const r = famBtn.getBoundingClientRect(); famMenu.style.left = `${r.left}px`; famMenu.style.top = `${r.bottom + 6}px`; opts.preload?.(family.sessions.filter((x) => x.live && x.id !== current).map((x) => x.id)); } };
-  const center = h('div', { class: 'main' }, feed, dock, composer);
+  const center = h('div', { class: 'main' }, feed, kidAsks, dock, composer);
   center.addEventListener('pointerdown', () => el.classList.remove('peek'));
   el.append(
     h('header', { class: 'hdr' }, nameRow, famBtn, famMenu, pill, bootEl, h('span', { class: 'gap' }), updBtn, gearBtn, sideBtn),
@@ -586,6 +588,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     coin: '<circle cx="12" cy="12" r="10"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><path d="M12 18V6"/>',
     mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
     check: '<path d="M5 12l5 5L20 7"/>',
+    lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>', // 입력 제어 중인 팀원의 자물쇠 (ticket slcode-team-agent)
     download: '<path d="M12 4v12"/><path d="M6 11l6 6 6-6"/><path d="M5 20h14"/>',
     x: '<path d="M6 6l12 12"/><path d="M18 6 6 18"/>',
     inspect: '<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/><path d="m16 16-1.9-1.9"/>',
@@ -1069,7 +1072,7 @@ export function mountAgentFront(root, transport, opts = {}) {
       return famGo(s, `fam-row${s.id === current ? ' cur' : ''}${s.live ? '' : ' off'}`,
         h('span', { class: 'fam-indent', style: `width:${d * 14}px` }),
         h('span', { class: 'fam-name' }, famName(s)),
-        s.id === family.main ? h('span', { class: 'fam-tag' }, '메인') : s.parent ? h('span', { class: 'fam-tag' }, s.parent.kind === 'fork' ? '복제' : '서브') : null,
+        s.id === family.main ? h('span', { class: 'fam-tag' }, '메인') : s.parent ? h('span', { class: 'fam-tag' }, s.parent.kind === 'fork' ? '복제' : '팀원') : null,
         s.live ? null : h('span', { class: 'fam-tag' }, '꺼짐'));
     });
   }
@@ -1095,30 +1098,32 @@ export function mountAgentFront(root, transport, opts = {}) {
     if (refused && r.sessions.some((s) => s.id === refused && s.live)) location.reload(); // 안내를 보던 세션이 다시 켜졌다
   }
   setInterval(() => { if (connected && !document.hidden && !behind()) void loadFamily(); }, 5000);
-  // ---- 자식 세션 (ticket slcode-subagent-sessions, 사용자 결정 2026-11-07)
-  // 잠긴 자식: 입력창 위에 "부모 세션이 제어 중입니다" 와 [부모로 가기] [강제로 풀기]. 입력·첨부·모드·모델·중단은 잠기고 승인 카드는 그대로 눌린다(입력창 자리에 뜬다).
-  // 넘겨받은 자식: 같은 자리에 [다시 잠그기]. 웹·카드·1단 카드가 이 화면을 같이 쓴다
+  // ---- 팀원 세션 (ticket slcode-team-agent, 사용자 2026-11-08) — 입력 제어 중인 팀원: 입력 상자는 흐리고 가운데 자물쇠만 눌린다. 어느 세션이 쥐었는지는 세션 메뉴에서 본다
+  //      (입력창 위의 리더 줄은 사용자가 뺐다 — "another session" 은 자물쇠에만).
+  // 자물쇠 → 확인 창 → 끊기(session.unlock, 일방향 — 되돌리는 버튼은 없다). 끊은 뒤와 입력 제어가 없는 팀원은 보통 세션처럼 보인다. 승인 카드는 잠금 중에도 눌린다(입력창 자리에 뜬다).
+  // 웹·카드·1단 카드가 이 화면을 같이 쓴다
+  const confirmCut = h('dialog', { class: 'confirm cut' },
+    h('h2', {}, 'Cut from another session?'),
+    h('p', {}, '이 세션을 직접 다루게 됩니다. 되돌릴 수 없습니다.'),
+    h('ul', {}, h('li', {}, 'another session 은 이 세션에 더 이상 지시하지 못합니다.'), h('li', {}, '이 세션의 답과 질문은 another session 에 가지 않습니다.'), h('li', {}, '메시지는 계속 주고받을 수 있습니다.')),
+    h('div', { class: 'btns' },
+      h('button', { onclick: () => confirmCut.close() }, '취소'),
+      h('button', { class: 'danger', onclick: () => {
+        confirmCut.close();
+        rpc('session.unlock', { id: current }).catch((e) => push(h('div', { class: 'meta err' }, e.message)));
+      } }, '끊기')));
+  closeOnBackdrop(confirmCut);
+  el.append(confirmCut);
+  lockOver.append(h('button', { title: 'Cut from another session', onclick: () => confirmCut.showModal() }, icon('lock'), h('span', {}, 'Controlled by another session')));
   function paintLock() {
-    const child = info?.parent?.kind === 'child', locked = !!info?.locked;
+    const locked = !!info?.locked;
     composer.classList.toggle('locked', locked);
     for (const b of [addBtn, modeBtn, modelBtn, stopBtn]) b.disabled = locked;
     input.disabled = info?.state === 'exited' || locked;
-    input.placeholder = locked ? '부모 세션이 제어하는 세션입니다' : '';
-    canSend();
-    // 끊기는 일방향이다 (ticket slcode-team-agent, 사용자 2026-11-08) — 다시 잠그는 버튼은 없다. 흐린 입력창·자물쇠·확인 창은 B 단계에서
-    lockBar.hidden = !child || !locked;
-    if (lockBar.hidden) return;
-    const pid = info.parent.id;
-    const parent = family?.sessions.find((s) => s.id === pid) ?? { id: pid, title: null };
-    const toggle = h('button', { class: 'danger', onclick: () => {
-      toggle.disabled = true;
-      rpc('session.unlock', { id: current }).catch((e) => { toggle.disabled = false; push(h('div', { class: 'meta err' }, e.message)); });
-    } }, '강제로 풀기');
-    lockBar.replaceChildren(
-      h('span', { class: 'what' }, '부모 세션이 제어 중입니다: ', h('b', {}, famName(parent))),
-      h('span', { class: 'gap' }), famGo(parent, 'lock-go', '부모로 가기'), toggle);
+    lockOver.hidden = !locked;
+    canSend(); paintHero();
   }
-  // 부모: 자식의 대기 승인 (사용자 결정 3) — 입력창 위에 "서브 <이름>" 한 줄씩. 도구 승인은 여기서 [허용]·[거부], 질문은 부모 모델이 답하므로 [열기] 만
+  // 리더: 팀원의 대기 승인 (사용자 결정 3) — 입력창 위에 "팀원 <이름>" 한 줄씩. 도구 승인은 여기서 [허용]·[거부], 질문은 부모 모델이 답하므로 [열기] 만
   function paintKids(list) {
     const rows = [];
     for (const k of list ?? []) for (const req of k.pending) {
@@ -1128,7 +1133,7 @@ export function mountAgentFront(root, transport, opts = {}) {
         for (const b of row.querySelectorAll('button')) b.disabled = true;
         rpc('session.childApprove', { id: current, child: k.id, requestId: req.requestId, decision }).catch((e) => { for (const b of row.querySelectorAll('button')) b.disabled = false; push(h('div', { class: 'meta err' }, e.message)); });
       };
-      row.append(h('span', { class: 'kind' }, isQ ? '질문' : '승인'), h('span', { class: 'who' }, `서브 ${famName(k)}`),
+      row.append(h('span', { class: 'kind' }, isQ ? '질문' : '승인'), h('span', { class: 'who' }, `팀원 ${famName(k)}`),
         h('span', { class: 'what' }, isQ ? '부모 모델이 답합니다' : `${req.name} ${toolArg(req.name, req.input)}`), h('span', { class: 'gap' }),
         ...(isQ ? [] : [h('button', { class: 'primary', onclick: decide('allow') }, '허용'), h('button', { onclick: decide('deny') }, '거부')]),
         famGo(k, 'kid-open', '열기'));

@@ -183,6 +183,20 @@ test('subagent 는 Claude 서브에이전트처럼: --wait 면 답이 메시지 
   assert.match((mailTurns(dir, lid, 'result')[1].ev as { text: string }).text, new RegExp(`from="${kid3}"`));
   assert.equal(closedMails(), 0);
 
+  // 턴 중인 팀원에게 기다리며 시키면 — 지시는 큐에서 기다리고, 지금 턴의 답이 아니라 그 지시가 연 턴의 답을 받는다
+  const busy = await cli(dir, lid, ['team', 'new', work, '-s', '--', 'touch it']);
+  const kid4 = busy.out.trim();
+  const req4 = (await until(async () => (await pc.request('session.children', { id: lid })).children.find((k) => k.id === kid4 && k.pending.length))).pending[0];
+  const next = cli(dir, lid, ['prompt', kid4, '--wait', '--', 'no-call']);
+  await sleep(500); // 지시가 팀원의 큐에 들어갈 때까지
+  await pc.request('session.childApprove', { id: lid, child: kid4, requestId: req4.requestId, decision: 'deny' });
+  const got = await next;
+  assert.equal(got.code, 0, got.err);
+  assert.equal(got.out.trim(), 'done', '지금 턴(touch it)의 답이 아니라 기다린 지시의 답');
+  await until(() => mailTurns(dir, lid, 'result').length === 3); // 앞 턴의 답은 메시지로
+  assert.match((mailTurns(dir, lid, 'result')[2].ev as { text: string }).text, new RegExp(`from="${kid4}"[^>]*>\\ndecision=decline`));
+  assert.ok(await until(async () => !(await sockAlive(sockOf(dir, kid4)))), '큐가 빈 뒤에 닫혔다');
+
   // --wait 는 답을 받는 팀원만
   const noWait = await cli(dir, lid, ['team', 'new', work, '-t', '--wait', '--', 'no-call']);
   assert.equal(noWait.code, 2);

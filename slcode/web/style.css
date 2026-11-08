@@ -931,15 +931,22 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .ppanel pre { margin: 4px 0 6px; padding: 8px; max-height: 320px; overflow: auto; border-radius: 6px; background: var(--acf-soft); font: 12px/1.4 var(--acf-mono, ui-monospace, monospace); }
 .ppanel code { font: 12px var(--acf-mono, ui-monospace, monospace); }
 
-/* 자식 세션 (ticket slcode-subagent-sessions) — 잠긴 자식의 안내 줄, 부모의 "서브" 승인 줄 */
-.acf .composer .lockbar, .acf .composer .kid-asks { max-width: 780px; margin: 0 auto 8px; }
-.acf .composer .lockbar[hidden], .acf .composer .kid-asks[hidden] { display: none; }
-.acf .composer .lockbar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--acf-line); border-radius: 10px; background: var(--acf-soft); font-size: 13px; }
-.acf .composer .lockbar .gap, .acf .composer .kid-ask .gap { flex: 1; }
-.acf .composer .lockbar .lock-go, .acf .composer .kid-ask .kid-open { color: var(--acf-accent); text-decoration: none; white-space: nowrap; }
-.acf .composer.locked .box { opacity: .6; }
-.acf .composer .kid-asks { display: flex; flex-direction: column; gap: 6px; }
-.acf .composer .kid-ask { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--acf-line); border-radius: 10px; background: var(--acf-panel); font-size: 13px; min-width: 0; }
-.acf .composer .kid-ask .kind { font-weight: 600; }
-.acf .composer .kid-ask .who { white-space: nowrap; }
-.acf .composer .kid-ask .what { color: var(--acf-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; font-family: var(--acf-mono, monospace); }
+/* 팀원 세션 (ticket slcode-team-agent, 사용자 2026-11-08) — 입력 제어 중인 팀원의 흐린 입력 상자와 자물쇠, 리더의 "팀원" 승인 줄(composer 밖, dock 위) */
+.acf .composer .lockover[hidden] { display: none; }
+.acf .kid-ask .kid-open { color: var(--acf-accent); text-decoration: none; white-space: nowrap; }
+.acf .main > .kid-asks { max-width: 780px; width: calc(100% - 32px); margin: 0 auto 8px; }
+.acf .main > .kid-asks[hidden] { display: none; }
+.acf .kid-ask .gap { flex: 1; }
+.acf .composer.locked .box > :not(.lockover) { filter: blur(2.5px); opacity: .55; pointer-events: none; user-select: none; }
+.acf .composer .lockover { position: absolute; inset: 0; display: grid; place-items: center; }
+.acf .composer .lockover button { display: inline-flex; align-items: center; gap: 7px; border-radius: 999px; padding: 6px 14px; background: var(--acf-panel); box-shadow: 0 1px 4px var(--acf-shadow); font-size: 13px; }
+.acf .composer .lockover svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.acf dialog.confirm.cut { max-width: min(420px, calc(100vw - 24px)); }
+.acf dialog.confirm.cut h2 { margin: 0 0 8px; font-size: 15px; }
+.acf dialog.confirm.cut p { margin: 0 0 8px; }
+.acf dialog.confirm.cut ul { margin: 0 0 14px; padding-left: 18px; font-size: 13px; color: var(--acf-muted); }
+.acf .main > .kid-asks { display: flex; flex-direction: column; gap: 6px; }
+.acf .kid-ask { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--acf-line); border-radius: 10px; background: var(--acf-panel); font-size: 13px; min-width: 0; }
+.acf .kid-ask .kind { font-weight: 600; }
+.acf .kid-ask .who { white-space: nowrap; }
+.acf .kid-ask .what { color: var(--acf-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; font-family: var(--acf-mono, monospace); }
