@@ -323,7 +323,7 @@ export type Methods = {
   /** 되돌리기 창 확인 단계 — 실제로 바꾸지 않는다 */
   'session.rewindPreview': { params: { id: string; seq: number }; result: RewindPreview };
   /** remember 는 벤더 제안 규칙을 세션 한정으로 기억 (영구 설정 파일에 쓰지 않는다). AskUserQuestion 은 updatedInput.answers */
-  'session.approve': { params: { id: string; requestId: string; decision: ApprovalDecision; remember?: boolean; updatedInput?: Record<string, unknown>; message?: string }; result: { ok: boolean } };
+  'session.approve': { params: { id: string; requestId: string; decision: ApprovalDecision; remember?: boolean; updatedInput?: Record<string, unknown>; message?: string; interrupt?: boolean }; result: { ok: boolean } };
   /** 대기 승인 cancel 뒤 벤더 프로세스 종료 — 프로세스도 내려간다 (Ctrl-C 와 같다). 로그는 남는다 */
   'session.close': { params: { id: string }; result: { ok: true } };
   'session.rename': { params: { id: string; title: string | null }; result: { ok: true } };

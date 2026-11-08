@@ -222,6 +222,26 @@ test('codex: auto 모드 = on-request + workspaceWrite + approvalsReviewer auto_
   await h.close('test');
 });
 
+test('codex: 승인 거절에 interrupt 면 cancel(거절 + 턴 중단)로 답하고 턴이 interrupted 로 끝난다 (ticket slcode-question-esc-chat)', async () => {
+  process.env.SLCODE_GRACE_SECS = '1';
+  process.env.SLCODE_CODEX_BIN = `${process.execPath} ${FAKE}`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-codex-'));
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
+  const h = await serveSession({ dir, cwd: work, vendor: 'codex', web: false });
+  const c = await connectSession(h.sock);
+  await c.request('session.attach', { id: h.session.id });
+  await untilReady(dir, h.session.id, 1);
+  await c.request('session.setMode', { id: h.session.id, mode: 'default' });
+  const deltas: string[] = [], ends: any[] = [];
+  c.onEvent((m) => { if (m.event !== 'session.event') return; const ev = (m.params as any).ev; if (ev.kind === 'text.delta') deltas.push(ev.text); if (ev.kind === 'turn.end') ends.push(ev); if (ev.kind === 'approval.requested') void c.request('session.approve', { id: h.session.id, requestId: ev.requestId, decision: 'deny', interrupt: true }); });
+  await c.request('session.send', { id: h.session.id, text: 'hi' });
+  for (let i = 0; i < 80 && !ends.some((e) => e.interrupted); i++) await sleep(100);
+  assert.ok(deltas.includes('decision=cancel'), deltas.join(' | '));
+  assert.ok(ends.some((e) => e.interrupted), JSON.stringify(ends));
+  c.close();
+  await h.close('test');
+});
+
 test('codex: 비용은 가격표로 추정한 누계 — 표에 없는 모델은 null (사용자 2026-10-09)', async () => {
   assert.equal(estimateCostUsd('fake-model', { inputTokens: 1000 }), null);
   assert.equal(estimateCostUsd(null, { inputTokens: 1000 }), null);

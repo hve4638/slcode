@@ -867,7 +867,8 @@ export function mountAgentFront(root, transport, opts = {}) {
     // 서브에이전트가 낸 요청이면 어느 에이전트인지 — SDK 승인 콜백엔 부모가 없어 앞선 tool.start 의 parent 로 맞춘다 (2026-09-30)
     const parentCard = req.toolUseId && toolParent.has(req.toolUseId) ? tools.get(toolParent.get(req.toolUseId)) : null;
     const from = parentCard ? h('span', { class: 'from' }, `${parentCard._agent ?? 'Agent'} 서브에이전트`) : null;
-    const card = h('div', { class: isQ ? 'card ask' : 'card' }, h('div', { class: 'head' }, h('span', { class: 'kind' }, isQ ? '질문' : '승인'), h('span', {}, isQ ? '' : req.name), from));
+    // 칩 줄 없이 — 승인은 도구 이름, 질문은 서브에이전트 출처가 있을 때만 머리 줄 (사용자 2026-11-08)
+    const card = h('div', { class: isQ ? 'card ask' : 'card' }, !isQ || from ? h('div', { class: 'head' }, isQ ? null : h('span', {}, req.name), from) : null);
     if (isQ) buildQuestion(card, req); else buildApproval(card, req);
     cards.set(req.requestId, card);
     const mark = push(h('div', { class: `mark pending${isQ ? ' ask' : ''}`, onclick: () => showDock(card) }, h('span', { class: 'kind' }, isQ ? '질문' : '승인'), h('span', { class: 'what' }, `${parentCard ? `${parentCard._agent ?? 'Agent'} · ` : ''}${isQ ? `${req.input?.questions?.length ?? 1}개` : `${req.name} ${toolArg(req.name, req.input)}`}`), h('span', { class: 'res' })));
@@ -882,6 +883,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   function showDock(card) {
     const next = card && !card.classList.contains('resolved') ? card : [...cards.values()].find((c) => !c.classList.contains('resolved'));
     const hadFocus = document.activeElement === input || document.activeElement === document.body || dock.contains(document.activeElement);
+    for (const c of cards.values()) c._mark?.classList.toggle('docked', c === next); // 떠 있는 카드의 피드 호출 표식은 숨긴다
     dock.replaceChildren(next ?? '');
     composer.hidden = !!next;
     if (next) { next.classList.add('live'); if (hadFocus) next.focus({ preventScroll: true }); }
@@ -891,7 +893,8 @@ export function mountAgentFront(root, transport, opts = {}) {
     const arg = toolArg(req.name, req.input);
     if (arg) card.append(h('pre', {}, arg));
     if (!(req.input && typeof req.input === 'object' && Object.keys(req.input).length === 1 && arg)) card.append(h('details', { class: 'chev in' }, h('summary', {}, '입력'), h('pre', {}, JSON.stringify(req.input, null, 2))));
-    const decide = (decision, remember) => rpc('session.approve', { id: current, requestId: req.requestId, decision, remember });
+    // 거절(Esc·버튼)은 Claude Code 처럼 턴도 끝낸다 (ticket slcode-question-esc-chat, 사용자 2026-11-08)
+    const decide = (decision, remember) => rpc('session.approve', { id: current, requestId: req.requestId, decision, remember, ...(decision === 'deny' ? { interrupt: true } : {}) });
     card.tabIndex = 0;
     card.onkeydown = (e) => { if (e.target !== card) return; if (e.key === 'Enter') { e.preventDefault(); decide('allow', e.shiftKey); } else if (e.key === 'Escape') { e.preventDefault(); decide('deny', false); } };
     card.append(h('div', { class: 'btns' },
@@ -900,11 +903,11 @@ export function mountAgentFront(root, transport, opts = {}) {
       h('button', { class: 'danger', title: 'Esc', onclick: () => decide('deny', false) }, '거절'),
     ));
   }
-  // 질문 카드 — Claude Code TUI 를 따른다 (사용자 2026-09-28): 질문마다 탭, 마지막 탭은 제출(답변 검토), '채팅으로 답하기' 는 아래 구분선 밑에 따로.
+  // 질문 카드 — Claude Code TUI 를 따른다 (사용자 2026-09-28): 질문마다 탭, 마지막 탭은 제출(답변 검토), 'Chat about this' 는 선택지 목록 맨 아래 구분선 밑 항목 (사용자 2026-11-08).
   // 질문이 하나면 탭 없이 헤더 칩만, 단일 선택은 고르는 즉시 제출.
   function buildQuestion(card, req) {
     const qs = req.input?.questions ?? [];
-    const state = qs.map(() => ({ picked: new Set(), other: '', cur: 0 }));
+    const state = qs.map(() => ({ picked: new Set(), other: '', otherSet: false, cur: 0 })); // otherSet — 단일 선택에서 직접 입력을 Enter 로 확정했다
     const answerOf = (qi) => { const a = [...state[qi].picked]; if (state[qi].other.trim()) a.push(state[qi].other.trim()); return a; };
     const multi = qs.length > 1;
     let tab = 0; // 0..qs.length-1 질문, qs.length = 제출
@@ -914,16 +917,21 @@ export function mountAgentFront(root, transport, opts = {}) {
       qs.forEach((q, qi) => { answers[q.question] = answerOf(qi).join(', '); });
       rpc('session.approve', { id: current, requestId: req.requestId, decision: 'allow', updatedInput: { ...req.input, answers } }); done();
     };
-    // 'Chat about this' — Claude Code 와 같은 피드백으로 deny 한다 (cli 2.1.283 nYe): 모델이 무엇을 명확히 할지 먼저 묻고 기다린다
-    const dismiss = () => {
-      const asked = qs.map((q, qi) => `- "${q.question}"\n  ${answerOf(qi).length ? `Answer: ${answerOf(qi).join(', ')}` : '(No answer provided)'}`).join('\n');
+    // Esc — Claude Code 의 cancel: 질문을 닫고 턴을 끝낸다. 대기는 cancelled('취소됨'), 모델이 받는 글은 각 벤더의 중단 기록과 같다 (ticket slcode-question-esc-chat, 실측 2026-11-08)
+    const cancel = () => { rpc('session.interrupt', { id: current }); done(); };
+    // 'Chat about this' — Claude Code 와 같은 피드백으로 deny 한다 (cli 2.1.319 Oht): 모델이 무엇을 명확히 할지 먼저 묻고 기다린다. 거절 앞말은 Claude 어댑터가 붙인다
+    const chat = () => {
+      if (card.classList.contains('resolved')) return;
+      // 원본의 답 (2.1.319 실측): 다중 선택은 고른 순서 + 직접 입력(Enter 전이어도), 단일 선택은 Enter 로 확정한 직접 입력, 아니면 고른 선택지
+      const told = (q, qi) => { const st = state[qi]; return q.multiSelect ? answerOf(qi).join(', ') : st.otherSet && st.other.trim() ? st.other.trim() : [...st.picked][0] ?? ''; };
+      const asked = qs.map((q, qi) => `- "${q.question}"\n  ${told(q, qi) ? `Answer: ${told(q, qi)}` : '(No answer provided)'}`).join('\n');
       const message = `The user wants to clarify these questions.\n    This means they may have additional information, context or questions for you.\n    Take their response into account and then reformulate the questions if appropriate.\n    Start by asking them what they would like to clarify.\n\n    Questions asked:\n${asked}`;
       rpc('session.approve', { id: current, requestId: req.requestId, decision: 'deny', message }); done();
     };
     const strip = h('div', { class: 'tabs' });
     const panel = h('div', { class: 'panel' });
     const show = (i) => { tab = Math.max(0, Math.min(i, multi ? qs.length : 0)); draw(); };
-    let items = []; // 현재 패널에서 ↑↓ 로 오가는 것들 — 선택지 label 들 + 직접 입력
+    let items = []; // 현재 패널에서 ↑↓ 로 오가는 것들 — 선택지 label 들 + 직접 입력 + Chat about this
     function draw() {
       strip.innerHTML = '';
       if (multi) {
@@ -938,23 +946,25 @@ export function mountAgentFront(root, transport, opts = {}) {
     function questionPane(qi) {
       const q = qs[qi], st = state[qi];
       const name = `q${req.requestId}-${qi}`;
-      const opts = (q.options ?? []).map((o) => {
+      const opts = (q.options ?? []).map((o, oi) => {
         const inp = h('input', { type: q.multiSelect ? 'checkbox' : 'radio', name, value: o.label, tabindex: -1, checked: st.picked.has(o.label) ? '' : null });
         inp.onchange = () => {
           if (q.multiSelect) { if (inp.checked) st.picked.add(o.label); else st.picked.delete(o.label); }
-          else { st.picked = new Set([o.label]); if (!multi) return send(); show(qi + 1); }
+          else { st.picked = new Set([o.label]); st.otherSet = false; if (!multi) return send(); show(qi + 1); }
         };
-        return h('label', {}, inp, h('span', {}, h('div', {}, o.label), o.description ? h('div', { class: 'd' }, o.description) : null));
+        return h('label', {}, inp, h('span', { class: 'n' }, `${oi + 1}.`), h('span', {}, h('div', {}, o.label), o.description ? h('div', { class: 'd' }, o.description) : null));
       });
       const other = h('input', { type: 'text', placeholder: '직접 입력', value: st.other });
       other.oninput = () => { st.other = other.value; };
       other.onkeydown = (e) => {
         if (e.key === 'Escape' || (e.key === 'ArrowUp' && !other.value)) { e.preventDefault(); card.focus(); }
-        else if (e.key === 'Enter' && other.value.trim()) { e.preventDefault(); if (!multi) send(); else show(qi + 1); }
+        else if (e.key === 'ArrowDown') { e.preventDefault(); st.cur = opts.length + 1; mark(qi); card.focus(); } // 아래의 Chat about this 로
+        else if (e.key === 'Enter' && other.value.trim()) { e.preventDefault(); st.otherSet = true; if (!multi) send(); else show(qi + 1); }
       };
       other.onfocus = () => { st.cur = opts.length; mark(qi); };
-      items = [...opts, other]; mark(qi);
-      const pane = h('div', { class: 'q' }, h('div', { class: 'qt' }, q.question), ...opts, other);
+      const talk = h('div', { class: 'talk', onclick: chat }, 'Chat about this');
+      items = [...opts, other, talk]; mark(qi);
+      const pane = h('div', { class: 'q' }, h('div', { class: 'qt' }, q.question), ...opts, other, h('div', { class: 'sep' }), talk);
       if (!multi && q.multiSelect) pane.append(h('div', { class: 'btns' }, h('button', { class: 'primary', onclick: () => { if (answerOf(0).length) send(); } }, '답변')));
       else if (!multi) pane.append(h('div', { class: 'btns' }, h('button', { class: 'primary', onclick: () => { if (other.value.trim()) send(); } }, '답변')));
       else if (q.multiSelect) pane.append(h('div', { class: 'btns' }, h('button', { onclick: () => show(qi + 1) }, '다음')));
@@ -969,22 +979,22 @@ export function mountAgentFront(root, transport, opts = {}) {
         h('div', { class: 'btns' }, h('button', { class: 'primary', onclick: send }, '제출'), h('button', { onclick: () => show(0) }, '처음')),
       );
     }
-    // 키보드 — 카드 자체에 포커스가 있을 때: ←→ 탭, ↑↓ 선택지, Enter 고르기·제출, Esc 채팅으로 (TUI 와 같게)
+    // 키보드 — 카드 자체에 포커스가 있을 때: ←→ 탭, ↑↓ 선택지, Enter 고르기·제출(Chat about this 면 채팅으로), Esc 질문 취소·턴 종료 (TUI 와 같게)
     card.tabIndex = 0; card.classList.add('live');
     card.onkeydown = (e) => {
       if (e.target !== card) return;
       const k = e.key;
       if (k === 'ArrowLeft' || k === 'ArrowRight') { if (multi) show(tab + (k === 'ArrowRight' ? 1 : -1)); }
       else if (k === 'ArrowUp' || k === 'ArrowDown') { if (tab < qs.length && items.length) { const st = state[tab]; st.cur = Math.max(0, Math.min(items.length - 1, st.cur + (k === 'ArrowDown' ? 1 : -1))); mark(tab); items[st.cur].scrollIntoView({ block: 'nearest' }); } }
-      else if (k === 'Enter') { if (tab >= qs.length) return void send(); const el = items[state[tab].cur]; if (!el) return; if (el.tagName === 'LABEL') { const inp = el.querySelector('input'); if (inp.type === 'checkbox') inp.checked = !inp.checked; else inp.checked = true; inp.dispatchEvent(new Event('change')); } else el.focus(); }
-      else if (k === 'Escape') dismiss();
+      else if (k === 'Enter') { if (tab >= qs.length) return void send(); const el = items[state[tab].cur]; if (!el) return; if (el.tagName === 'LABEL') { const inp = el.querySelector('input'); if (inp.type === 'checkbox') inp.checked = !inp.checked; else inp.checked = true; inp.dispatchEvent(new Event('change')); } else if (el.tagName === 'INPUT') el.focus(); else el.click(); }
+      else if (k === 'Escape') cancel();
       else if (k === 'Tab') return; // 브라우저 기본 포커스 이동
-      else if (k.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) { const el = items[items.length - 1]; if (el?.tagName === 'INPUT') { el.focus(); return; } } // 글자를 치면 직접 입력으로
+      else if (k.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) { const el = items.find((x) => x.tagName === 'INPUT'); if (el) { el.focus(); return; } } // 글자를 치면 직접 입력으로
       else return;
       e.preventDefault();
     };
     draw();
-    card.append(strip, panel, h('div', { class: 'chat' }, h('button', { class: 'ghost', tabindex: -1, onclick: dismiss }, '채팅으로 답하기')));
+    card.append(strip, panel);
   }
   function resolveCard(requestId, decision) {
     const card = cards.get(requestId);
@@ -1614,6 +1624,18 @@ export function mountAgentFront(root, transport, opts = {}) {
   const typingIn = (t) => t instanceof Element && t.closest('input, textarea, select, [contenteditable]:not([contenteditable=false]), dialog, [popover]');
   const canTake = () => !input.disabled && !composer.hidden && !el.querySelector('.menu:popover-open:not(.slash)');
   document.addEventListener('keydown', (e) => { if (!behind() && e.key !== 'Escape' && !['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) esc.reset(); }, true);
+  // 승인·질문 카드가 입력창 자리에 떠 있으면 키는 그 카드로 — 포커스가 카드 밖이어도 ↑↓·Enter·Esc·글자가 카드에 간다 (ticket slcode-question-esc-chat, 사용자 2026-11-08)
+  const liveCard = () => (composer.hidden ? dock.querySelector('.card.live') : null);
+  document.addEventListener('keydown', (e) => {
+    const card = liveCard();
+    if (behind() || e.defaultPrevented || e.isComposing || !card || dock.contains(e.target) || typingIn(e.target) || el.querySelector('.menu:popover-open')) return;
+    if (['Shift', 'Control', 'Alt', 'Meta', 'Tab'].includes(e.key) || ((e.ctrlKey || e.metaKey) && !e.getModifierState('AltGraph'))) return; // 복사 등 단축키는 그대로
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.closest?.('a, button, summary, [tabindex]')) return; // 누른 버튼·접기의 Enter 는 그 자리에서
+    card.focus({ preventScroll: true });
+    const fwd = new KeyboardEvent('keydown', { key: e.key, code: e.code, shiftKey: e.shiftKey, altKey: e.altKey, bubbles: true, cancelable: true });
+    card.dispatchEvent(fwd);
+    if (fwd.defaultPrevented) e.preventDefault(); // 글자는 막지 않는다 — 카드가 직접 입력으로 포커스를 옮겨 그 자리에 들어간다
+  });
   document.addEventListener('keydown', (e) => {
     if (behind() || e.defaultPrevented || e.isComposing || typingIn(e.target) || !canTake()) return;
     if (e.key === 'Escape') { onEscape(); return; }
@@ -1625,8 +1647,11 @@ export function mountAgentFront(root, transport, opts = {}) {
   // 빈 곳·글자 위를 누르면 입력창으로 — IME 가 첫 글자부터 켜진다 (chatgpt.com 과 같게, 사용자 2026-11-02). 누를 거리(버튼·링크·접기)와 끌어서 고른 글은 그대로.
   // 이렇게 옮긴 포커스는 치기 전까지 커서를 숨긴다(parked) — 입력창을 누르지 않았는데 커서가 깜빡이면 거기 포커스를 둔 것처럼 보인다 (사용자 2026-11-02)
   el.addEventListener('click', (e) => {
-    if (e.button !== 0 || e.defaultPrevented || !canTake() || !getSelection().isCollapsed) return;
+    if (e.button !== 0 || e.defaultPrevented || !getSelection().isCollapsed) return;
     if (typingIn(e.target) || e.target.closest('a, button, label, summary, [tabindex], [role=button]')) return;
+    const card = liveCard(); // 카드가 떠 있으면 빈 곳을 눌러도 카드로 (사용자 2026-11-08)
+    if (card) { card.focus({ preventScroll: true }); return; }
+    if (!canTake()) return;
     input.focus({ preventScroll: true });
     input.classList.add('parked');
   });

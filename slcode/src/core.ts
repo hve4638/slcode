@@ -530,7 +530,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     'session.approve': (_c, p) => {
       const s = mine(p?.id);
       if (p.decision !== 'allow' && p.decision !== 'deny') throw new CoreError(ERR.badRequest, 'decision allow|deny');
-      const ok = s.approve(p.requestId, p.decision, { remember: p.remember, updatedInput: p.updatedInput, message: p.message });
+      const ok = s.approve(p.requestId, p.decision, { remember: p.remember, updatedInput: p.updatedInput, message: p.message, interrupt: p.interrupt === true });
       if (ok) activity.answered();
       return { ok };
     },

@@ -165,7 +165,8 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .user { align-self: flex-end; max-width: 85%; display: flex; flex-direction: column; align-items: flex-end; }
 .acf .user .bubble { background: var(--acf-user); border-radius: 14px 14px 4px 14px; padding: 9px 14px; white-space: pre-wrap; word-break: break-word; }
 .acf .acts { display: flex; gap: 4px; align-items: center; margin: 2px 0 -8px; opacity: 0; transition: opacity .15s; font-size: 12px; }
-.acf .user:hover .acts, .acf .assistant:hover .acts, .acf .acts:focus-within { opacity: 1; }
+/* 응답 아래 아이콘 줄은 늘 보인다 (사용자 2026-11-08) — 내 말풍선 아래 줄은 지금처럼 올렸을 때만 */
+.acf .assistant .acts, .acf .user:hover .acts, .acf .acts:focus-within { opacity: 1; }
 .acf .acts button { padding: 1px 7px; font-size: 12px; }
 .acf .acts button.ico { width: 24px; height: 24px; padding: 0; border: 0; background: transparent; color: var(--acf-muted); border-radius: 6px; display: grid; place-items: center; }
 .acf .acts button.ico:hover { background: var(--acf-soft); color: var(--acf-fg); }
@@ -234,26 +235,26 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .tool .detail .lbl { font-size: 12px; font-weight: 600; color: var(--acf-muted); }
 
 /* 승인·질문 카드 */
-/* 카드 외곽 E안 (사용자 2026-09-28): 중립 테두리 + 왼쪽 3px 띠 — 질문은 파랑, 승인은 주황 */
-.acf .card { --acf-card: var(--acf-warn); border: 1px solid var(--acf-line); border-left: 3px solid var(--acf-card); border-radius: 12px; background: var(--acf-panel); padding: 12px 14px; display: grid; gap: 10px; min-width: 0; }
+/* 카드 외곽 E안 (사용자 2026-09-28): 중립 테두리 + 왼쪽 3px 띠 — 질문은 파랑, 승인은 주황.
+   크기는 Claude Code TUI 수준 (ticket slcode-question-esc-chat, 사용자 2026-11-08 B안): 칩 줄 없음, 상자 없는 번호 목록, 작은 탭·버튼, 떠 있는 카드의 호출 표식 숨김 */
+.acf .card { --acf-card: var(--acf-warn); border: 1px solid var(--acf-line); border-left: 3px solid var(--acf-card); border-radius: 12px; background: var(--acf-panel); padding: 8px 12px; display: grid; gap: 6px; min-width: 0; }
 .acf .card.ask { --acf-card: var(--acf-accent); }
 .acf .card.resolved { --acf-card: var(--acf-line); opacity: .75; }
-.acf .card .head { display: flex; align-items: center; gap: 8px; font-weight: 600; }
-.acf .card .head .kind { font-size: 11px; font-weight: 600; line-height: 18px; color: var(--acf-card); border: 1px solid currentColor; border-radius: 999px; padding: 0 7px; }
-.acf .card.resolved .head .kind { color: var(--acf-muted); }
+.acf .card .head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
 /* 서브에이전트가 낸 요청이면 헤더 끝에 출처 */
 .acf .card .head .from { margin-left: auto; font-size: 12px; font-weight: 400; color: var(--acf-muted); }
 .acf .card pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 200px; overflow: auto; background: var(--acf-soft); border-radius: 8px; padding: 8px 10px; }
 /* 명령 미리보기는 본문 크기로, 펼친 입력 원문은 한 단계 작게 */
-.acf .card > pre { border: 1px solid var(--acf-line); padding: 10px 12px; }
+.acf .card > pre { border: 1px solid var(--acf-line); padding: 6px 10px; }
 .acf .card details.in pre { font-size: 12px; color: var(--acf-muted); }
 .acf .card .btns { display: flex; gap: 8px; flex-wrap: wrap; }
-/* 질문 카드 — 탭 띠(질문마다 하나 + 제출), 패널, 구분선 아래 '채팅으로 답하기' */
-.acf .card .tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.acf .card .btns button { padding: 3px 10px; font-size: 13px; }
+/* 질문 카드 — 탭 띠(질문마다 하나 + 제출), 패널, 구분선 아래 'Chat about this' */
+.acf .card .tabs { display: flex; flex-wrap: wrap; gap: 4px; }
 .acf .card .tabs:empty { display: none; }
-.acf .card .tab { display: inline-flex; align-items: center; gap: 6px; padding: 3px 12px; border: 1px solid var(--acf-line); border-radius: 999px; background: transparent; color: var(--acf-muted); font-size: 13px; font-weight: 500; }
+.acf .card .tab { display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; line-height: 20px; border: 1px solid var(--acf-line); border-radius: 999px; background: transparent; color: var(--acf-muted); font-size: 12px; font-weight: 500; }
 .acf .card button.tab:hover { color: var(--acf-fg); }
-.acf .card .tab i { width: 11px; height: 11px; border: 1.5px solid currentColor; border-radius: 3px; display: inline-block; }
+.acf .card .tab i { width: 9px; height: 9px; border: 1.5px solid currentColor; border-radius: 3px; display: inline-block; }
 .acf .card .tab.done { color: var(--acf-fg); }
 .acf .card .tab.done i { border-color: var(--acf-ok); background: var(--acf-ok); box-shadow: inset 0 0 0 2px var(--acf-panel); }
 .acf .card .tab.on, .acf .card button.tab.on:hover { background: var(--acf-accent); border-color: var(--acf-accent); color: var(--acf-on-accent); font-weight: 600; }
@@ -263,18 +264,30 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .card .review li .a { color: var(--acf-ok); padding-left: 14px; }
 .acf .card .review li .a.none { color: var(--acf-muted); }
 .acf .card .review .warn { color: var(--acf-warn); font-size: 13px; }
-.acf .card .chat { border-top: 1px solid var(--acf-line); padding-top: 8px; margin-top: 2px; }
-.acf .card .q { display: grid; gap: 6px; }
+.acf .card .q .sep { border-top: 1px solid var(--acf-line); margin: 2px 0; }
+.acf .card .q .talk { padding: 3px 8px 3px 16px; border-radius: 6px; cursor: pointer; color: var(--acf-muted); }
+.acf .card .q .talk:hover { background: var(--acf-soft); color: inherit; }
+.acf .card.resolved .q .talk, .acf .card.resolved .q .sep { display: none; }
+.acf .card .q { display: grid; }
+.acf .card .q .qt { margin-bottom: 4px; }
 .acf .card .q .qt, .acf .card .review .qt { font-weight: 600; }
-.acf .card .q label { display: flex; gap: 10px; align-items: flex-start; padding: 7px 12px; border: 1px solid var(--acf-line); border-radius: 8px; cursor: pointer; }
-.acf .card .q label input { flex: none; margin: 5px 0 0; width: 14px; height: 14px; accent-color: var(--acf-accent); }
+/* 선택지 — TUI 처럼 번호 목록, 지금 줄은 ❯ 와 옅은 배경. 단일 선택은 번호만, 다중 선택은 체크 상자 */
+.acf .card .q label { position: relative; display: flex; gap: 6px; align-items: flex-start; padding: 3px 8px 3px 16px; border-radius: 6px; cursor: pointer; }
+.acf .card .q label + :is(label, input) { margin-top: 4px; }
+.acf .card .q label .n { flex: none; min-width: 1.2em; color: var(--acf-muted); }
+.acf .card .q label input { flex: none; margin: 4px 0 0; width: 14px; height: 14px; accent-color: var(--acf-accent); }
+.acf .card .q label input[type=radio] { display: none; }
 .acf .card .q label:hover { background: var(--acf-soft); }
-.acf .card .q label:has(input:checked) { border-color: var(--acf-accent); background: var(--acf-soft); }
+.acf .card .q label:has(input:checked), .acf .card .q label:has(input:checked) .n { color: var(--acf-accent); }
 .acf .card:focus { outline: none; }
-.acf .card.live:focus-visible .q .cur, .acf .card.live:focus .q .cur { box-shadow: 0 0 0 2px var(--acf-accent); }
-.acf .card .q label .d { color: var(--acf-muted); font-size: 13px; }
-.acf .card .q input[type=text] { font: inherit; padding: 7px 12px; border: 1px solid var(--acf-line); border-radius: 8px; background: transparent; color: inherit; }
+.acf .card.live:focus .q .cur { background: var(--acf-soft); }
+.acf .card.live:focus .q label.cur::before { content: '❯'; position: absolute; left: 3px; color: var(--acf-accent); }
+.acf .card .q label .d { color: var(--acf-muted); font-size: 12px; }
+.acf .card .q input[type=text] { font: inherit; padding: 3px 8px 3px 16px; margin: 0 0 2px; border: 0; border-bottom: 1px dashed var(--acf-line); background: transparent; color: inherit; }
+.acf .card .q .btns { margin-top: 4px; }
 .acf .card .result { color: var(--acf-muted); font-size: 13px; }
+/* 입력창 자리에 떠 있는 카드의 피드 호출 표식은 숨긴다 — 답하면 결과와 함께 다시 보인다 */
+.acf .mark.pending.docked { display: none; }
 
 .acf .meta { color: var(--acf-muted); font-size: 12px; text-align: center; }
 .acf .meta.err { color: var(--acf-err); }

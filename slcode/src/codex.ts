@@ -366,6 +366,8 @@ export class CodexSession extends AgentSession {
     this.pending.delete(requestId);
     this.emit({ kind: 'approval.resolved', requestId, decision });
     if (this.pending.size === 0 && this.state === 'requires_action') this.emit({ kind: 'session.state', state: 'running' });
+    // deny + interrupt — 취소로 답하고(명령·편집은 cancel: 거절 + 턴 중단) 턴을 끊는다 (ticket slcode-question-esc-chat)
+    if (decision === 'deny' && opts.interrupt) { this.respond(p, 'cancelled'); void this.interrupt(); return true; }
     this.respond(p, decision, opts);
     return true;
   }

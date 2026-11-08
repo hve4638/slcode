@@ -5,7 +5,7 @@ import { query, type Options, type Query, type SDKMessage, type SDKUserMessage, 
 import { randomUUID } from 'node:crypto';
 import type { AgentCommandEvent, AgentHookEvent, ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, RewindPreview, Usage, LimitWindow, McpStatus } from './protocol.js';
 import { EventLog, unrewound } from './eventLog.js';
-import { AgentSession, CLAUDE_EFFORTS, effortMisfit, type Command } from './base.js';
+import { AgentSession, CLAUDE_EFFORTS, effortMisfit, type ApproveOpts, type Command } from './base.js';
 import { SLCODE_PROMPT } from './prompt.js';
 import type { ClaudeLoad } from './profiles.js';
 
@@ -20,6 +20,9 @@ class AsyncQueue<T> implements AsyncIterable<T> {
 }
 
 type Pending = ApprovalRequest & { resolve: (r: PermissionResult) => void };
+
+/** Claude Code TUI 가 거절에 사용자 피드백을 붙일 때의 앞말 (cli 2.1.282·2.1.319 같은 문구) */
+const REJECT_WITH_FEEDBACK = "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\n";
 
 /** 텍스트 + 첨부 → Messages API content 블록. 이미지·PDF 는 벤더 블록, 그 밖은 UTF-8 로 풀어 본문에 인라인 (ponytail: 바이너리 판별 없음 — 프런트가 이미지·PDF·텍스트류만 보낸다) */
 export function buildContent(text: string, attachments: Attachment[] = []): string | unknown[] {
@@ -207,7 +210,7 @@ export class ClaudeSession extends AgentSession {
   }
 
   /** 승인 응답 — requestId 로 대기 중인 canUseTool 을 깨운다 */
-  approve(requestId: string, decision: ApprovalDecision, opts: { remember?: boolean; updatedInput?: Record<string, unknown>; message?: string } = {}): boolean {
+  approve(requestId: string, decision: ApprovalDecision, opts: ApproveOpts = {}): boolean {
     const p = this.pending.get(requestId);
     if (!p) return false;
     this.pending.delete(requestId);
@@ -217,8 +220,13 @@ export class ClaudeSession extends AgentSession {
       const result: PermissionResult = { behavior: 'allow', updatedInput: (opts.updatedInput ?? p.input) as Record<string, unknown> };
       if (opts.remember) result.updatedPermissions = sessionScoped(p.suggestions as PermissionUpdate[], p.name);
       p.resolve(result);
+    } else if (opts.interrupt) {
+      // Claude Code 의 Esc·거절 — SDK deny interrupt 는 TUI 와 같은 기록(거절 문구 + [Request interrupted by user for tool use])을 남기고 턴을 끝낸다. message 는 쓰이지 않는다 (2.1.282·2.1.319 실측 2026-11-08)
+      p.resolve({ behavior: 'deny', message: '', interrupt: true });
+      this.cancelPending('interrupted');
     } else {
-      p.resolve({ behavior: 'deny', message: opts.message ?? 'denied by user' });
+      // SDK 는 message 를 tool_result 에 그대로 쓴다 — TUI 가 피드백을 붙일 때의 앞말을 같이 넘긴다 (Chat about this 등, 2.1.319 실측)
+      p.resolve({ behavior: 'deny', message: opts.message ? `${REJECT_WITH_FEEDBACK}${opts.message}` : 'denied by user' });
     }
     return true;
   }

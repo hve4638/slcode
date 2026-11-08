@@ -11,7 +11,8 @@ export type Limits = { fiveHour: LimitWindow | null; sevenDay: LimitWindow | nul
 export type ContextUsage = { tokens: number; max: number; pct: number } | null;
 /** 슬래시 명령 하나 — builtin·aliases 는 Claude SDK 가 준 것(내장 명령 표시와 별칭), kind 'command' 는 에이전트 플러그인 명령(이름은 <플러그인>:<명령>, ticket slcode-agent-plugin-command) */
 export type Command = { name: string; description: string; argumentHint: string; builtin?: boolean; aliases?: string[]; kind?: 'command'; complete?: boolean };
-export type ApproveOpts = { remember?: boolean; updatedInput?: Record<string, unknown>; message?: string };
+/** interrupt — deny 와 함께 턴을 끝낸다 (Claude Code 의 Esc·거절, ticket slcode-question-esc-chat) */
+export type ApproveOpts = { remember?: boolean; updatedInput?: Record<string, unknown>; message?: string; interrupt?: boolean };
 
 /** 새 세션 env 이름이 받을 수 없으면 사유 (ticket slcode-new-session-env, 사용자 결정 2026-11-01) — SLCODE_* 는 slcode 가 넣는 값이라 덮지 못한다 */
 export function sessionEnvError(name: string): string | null {

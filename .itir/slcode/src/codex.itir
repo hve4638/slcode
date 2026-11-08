@@ -60,7 +60,7 @@ export class CodexSession {
     role: turn/interrupt(threadId, turnId) + 대기 승인 cancelled
   }
   export fn approve(requestId, decision, opts) -> Bool {
-    role: 대기 중인 서버 요청에 응답을 써 준다
+    role: 대기 중인 서버 요청에 응답을 써 준다. deny 에 interrupt 면 취소로 답하고(명령·편집은 cancel) 턴을 중단한다. deny 의 message 는 쓰지 않는다 — Codex 응답에 거절 사유 자리가 없다 (ticket slcode-question-esc-chat)
   }
   export fn rewind(seq, conversation, files) {
     role: 미지원 — 오류
