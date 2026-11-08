@@ -224,16 +224,24 @@ export class CodexSession extends AgentSession {
       if (this.threadId) {
         // rollout 이 지워졌으면(not found) 새 thread 로 — t3code 와 같은 대체 (codex-ref §2)
         try { r = await this.request('thread/resume', { threadId: this.threadId, ...base, excludeTurns: true }); }
-        catch (e) { if (!/not found|no rollout/i.test((e as Error).message)) throw e; this.emit({ kind: 'error', message: `codex thread ${this.threadId} not found — starting a new thread` }); }
+        // 지난 턴이 있던 세션만 알린다 — 턴 없는 thread 는 rollout 이 없어 늘 여기로 온다(0.5.8 까지 thread/start 의 id 를 바로 남겼다). 죽은 id 는 지운다 (ticket slcode-resume-empty-claude)
+        catch (e) {
+          if (!/not found|no rollout/i.test((e as Error).message)) throw e;
+          if (this.log.since(0).some((x) => x.ev.kind === 'turn.end')) this.notice(`이전 Codex 대화(thread ${this.threadId})를 찾지 못해 새 대화로 시작합니다 — 위의 지난 턴은 모델이 기억하지 못합니다`);
+          this.log.updateMeta({ vendorSessionId: null });
+        }
       }
       // slcode import --fork — 원본은 두고 갈라 낸 새 thread 로 (원본이 없으면 새 thread 로 대체하지 않고 실패)
       // slcode 고정 지시는 새 thread 에만 — developer 메시지로 덧붙는다, 기본 프롬프트(baseInstructions)는 그대로 (ticket slcode-append-system-prompt, 사용자 결정 2026-10-17: 새 세션부터).
       // 에이전트 플러그인의 지시문은 그 뒤에 (ticket slcode-agent-plugin-codex)
       // slcode fork 의 복제 지점(meta.forkAt)이 있으면 그 turn 까지만
       if (!r && this.log.meta.forkFrom) r = await this.request('thread/fork', { threadId: this.log.meta.forkFrom, ...base, developerInstructions, excludeTurns: true, ...(this.log.meta.forkAt ? { lastTurnId: this.log.meta.forkAt } : {}) });
+      const fresh = !r;
       r ??= await this.request('thread/start', { ...base, developerInstructions });
       this.threadId = r.thread.id;
-      this.log.updateMeta({ vendorSessionId: r.thread.id });
+      // thread/start 의 thread 는 첫 turn/start 전까지 rollout 이 없어 다시 띄우면 thread/resume 이 not found 다 — 첫 턴을 보낸 뒤에 남긴다.
+      // thread/fork 는 rollout 을 바로 쓴다 (codex-cli 0.165 실측 2026-11-08, ticket slcode-resume-empty-claude)
+      if (!fresh) this.log.updateMeta({ vendorSessionId: r.thread.id });
       this.model ??= r.model ?? null;
       this.effort ??= r.reasoningEffort ?? null;
       if (this.log.meta.effort) await this.fitEffort(r.reasoningEffort ?? null);
@@ -427,6 +435,7 @@ export class CodexSession extends AgentSession {
     try {
       const r = await this.request('turn/start', { threadId: this.threadId, input, ...pol, ...(this.model ? { model: this.model } : {}), ...(this.effort ? { effort: this.effort } : {}) });
       this.turnId = r?.turn?.id ?? this.turnId;
+      if (this.log.meta.vendorSessionId !== this.threadId) this.log.updateMeta({ vendorSessionId: this.threadId }); // rollout 은 turn/start 응답 때 이미 있다
     } catch (e) {
       this.emit({ kind: 'turn.end', ok: false, error: (e as Error).message, interrupted: false, costUsd: null, durationMs: null, usage: null });
       if (this.state !== 'exited') this.emit({ kind: 'session.state', state: 'idle' });

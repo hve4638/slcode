@@ -27,6 +27,7 @@ import { blockInspect, CODEX_ROUTE, codexArgs, codexUpstream, inspectBlocked, in
 import { InspectStore, maybeSweep } from './inspectDb.js';
 import { Activity } from './activity.js';
 import { claudeLoad, DEFAULT_PROFILE, getProfile, listProfiles, profileSummary, sessionProfile } from './profiles.js';
+import { claudeSessionExists } from './vendor.js';
 import { agentPaths, currentBuilds, loadSessionPlugins, reloadSessionPlugins, unlinkSessionPlugins, type Loaded, type SessionPlugins } from 'slcode-plugin/agentPlugins';
 import { HookRunner, type LoadedCommand } from 'slcode-plugin/hookRunner';
 import { commandTable, completeInput, fullName, resolveCommand } from './pluginCommands.js';
@@ -235,6 +236,13 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     ? new HookRunner({ sessionDir: logFile.dir, buildDir: agentPaths(P.dir).build, sessionId: logFile.meta.id, params, emit: (ev) => { if (hookQueue) hookQueue.push(ev); else (session as ClaudeSession).emitHook(ev); } })
     : null;
   hooks?.load(agentLoaded);
+  // 기록된 Claude 대화가 없으면 resume 하지 않고 새 대화로 (ticket slcode-resume-empty-claude, 사용자 결정 2026-11-08) — 0.5.8 까지는 첫 프롬프트 전의 id 를 남겼고(빈 세션),
+  // claude 가 오래된 기록을 지우기도 한다. --resume 하면 "No conversation found" 로 세션이 닫힌다. 지난 턴이 있던 세션이면 세션이 생긴 뒤 알린다
+  let lostVendor: string | null = null;
+  if (!codex && logFile.meta.vendorSessionId && !claudeSessionExists(logFile.meta.vendorSessionId, { ...env, ...agent?.env, ...load?.env })) {
+    if (logFile.since(0).some((e) => e.ev.kind === 'turn.end')) lostVendor = logFile.meta.vendorSessionId;
+    logFile.updateMeta({ vendorSessionId: null });
+  }
   // 세션을 열 때(core 기동마다) SessionStart 를 돌린다 — message 는 바로 화면에, context 는 첫 프롬프트에 (ticket slcode-session-open-notice, 사용자 2026-11-01)
   const openSource = logFile.meta.vendorSessionId ? 'resume' : 'startup';
   hooks?.openSession(openSource, { cwd, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode ?? null, vendorSessionId: logFile.meta.vendorSessionId ?? null });
@@ -266,6 +274,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   const activity = Activity.open(logFile.dir);
   activity.agent(session.state);
   session.onEvent((e) => { if (e.ev.kind === 'session.state') activity.agent(e.ev.state); });
+  if (lostVendor) session.notice(`이전 Claude 대화(${lostVendor})를 찾지 못해 새 대화로 시작합니다 — 위의 지난 턴은 모델이 기억하지 못합니다`);
   if (inspectFailed) session.notice(`inspect 를 켜지 않았습니다: ${inspectFailed}`);
   if (prof.missing) session.notice(`프로필 ${prof.missing} 이 없어 default 로 띄웠습니다`);
   if (codex && prof.name !== DEFAULT_PROFILE) session.notice(`Codex 세션은 프로필(${prof.name})의 플러그인 선택만 따릅니다 — 사용자 설정·AGENTS.md·skill 은 그대로 실립니다`);

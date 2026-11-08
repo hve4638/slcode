@@ -415,7 +415,9 @@ export class ClaudeSession extends AgentSession {
   }
 
   private onMessage(m: SDKMessage) {
-    if ('session_id' in m && typeof m.session_id === 'string' && m.session_id !== this.log.meta.vendorSessionId) {
+    // 벤더 세션 id 는 대화 기록이 생긴 뒤에만 남긴다 — 첫 프롬프트 전의 훅 알림(system hook_*)에도 session_id 가 실려 오지만 claude 는 아직 기록을 쓰지 않았고,
+    // init 때도 아직 없다 (2026-11-08 실측). 그 id 로 --resume 하면 "No conversation found" 로 세션이 닫힌다 (ticket slcode-resume-empty-claude)
+    if (m.type !== 'system' && 'session_id' in m && typeof m.session_id === 'string' && m.session_id !== this.log.meta.vendorSessionId) {
       this.log.updateMeta({ vendorSessionId: m.session_id });
     }
     const raw = this.rawOn ? m : undefined;

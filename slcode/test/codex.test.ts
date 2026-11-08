@@ -131,6 +131,47 @@ test('codex: meta.forkFrom(slcode import --fork) 이면 첫 기동이 thread/for
   try { assert.equal((await untilReady(dir, 'ffff0001', 2)).meta.vendorSessionId, 'fork-thr-orig', '두 번째 기동은 fork 가 아니라 resume'); } finally { await h2.close('test'); }
 });
 
+test('codex: thread/start 의 id 는 첫 turn/start 뒤에 남긴다, 없어진 thread 는 새 thread 로 — 지난 턴이 있던 세션만 알린다 (ticket slcode-resume-empty-claude)', async () => {
+  process.env.SLCODE_GRACE_SECS = '1';
+  process.env.SLCODE_CODEX_BIN = `${process.execPath} ${FAKE}`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-codex-'));
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
+  const notices = (log: EventLog) => log.all.filter((x) => x.ev.kind === 'error').map((x) => (x.ev as any).message as string);
+  // 턴 없이 내리면 남기지 않는다 — 다시 띄우면 thread/start
+  let h = await serveSession({ dir, cwd: work, vendor: 'codex', web: false });
+  const id = h.session.id;
+  try { assert.equal((await untilReady(dir, id, 1)).meta.vendorSessionId, null, '턴 전에는 rollout 이 없다'); } finally { await h.close('test'); }
+  // 첫 턴을 보내면 남긴다
+  h = await serveSession({ dir, cwd: work, resume: id, web: false });
+  try {
+    await untilReady(dir, id, 2);
+    const c = await connectSession(h.sock);
+    await c.request('session.attach', { id });
+    await c.request('session.send', { id, text: 'auth-fail' }); // 승인 없이 끝나는 턴
+    for (let i = 0; i < 100 && !EventLog.open(corePaths(dir).sessionsDir, id)!.all.some((x) => x.ev.kind === 'turn.end'); i++) await sleep(100);
+    c.close();
+    assert.equal(EventLog.open(corePaths(dir).sessionsDir, id)!.meta.vendorSessionId, 'thr-1');
+  } finally { await h.close('test'); }
+  // 없어진 thread — 지난 턴이 있던 세션이면 알리고 새 thread, 죽은 id 는 지운다
+  process.env.FAKE_CODEX_LOST = '1';
+  try {
+    h = await serveSession({ dir, cwd: work, resume: id, web: false });
+    try {
+      const log = await untilReady(dir, id, 3);
+      assert.match(notices(log).at(-1) ?? '', /이전 Codex 대화\(thread thr-1\)를 찾지 못해 새 대화로 시작합니다/);
+      assert.equal(log.meta.vendorSessionId, null);
+    } finally { await h.close('test'); }
+    // 턴 없는 세션(0.5.8 까지 thread/start 의 id 를 남긴 빈 세션)은 조용히
+    EventLog.create(corePaths(dir).sessionsDir, { id: 'ffff0003', vendor: 'codex', cwd: work, title: null, vendorSessionId: 'thr-old', createdAt: 1, permissionMode: null, raw: false }).close();
+    h = await serveSession({ dir, cwd: work, resume: 'ffff0003', web: false });
+    try {
+      const log = await untilReady(dir, 'ffff0003', 1);
+      assert.deepEqual(notices(log), []);
+      assert.equal(log.meta.vendorSessionId, null);
+    } finally { await h.close('test'); }
+  } finally { delete process.env.FAKE_CODEX_LOST; }
+});
+
 test('codex: slcode 고정 지시는 thread/start·thread/fork 의 developerInstructions 로, thread/resume 에는 넣지 않는다 (ticket slcode-append-system-prompt)', async () => {
   process.env.SLCODE_GRACE_SECS = '1';
   process.env.SLCODE_CODEX_BIN = `${process.execPath} ${FAKE}`;
@@ -141,7 +182,10 @@ test('codex: slcode 고정 지시는 thread/start·thread/fork 의 developerInst
   try {
     // n 은 그 세션의 몇 번째 기동인가 — 기동이 끝나야 thread 요청이 calls 에 남는다
     const launch = async (n: number, resume?: string) => { const h = await serveSession({ dir, cwd: work, vendor: 'codex', web: false, ...(resume ? { resume } : {}) }); try { await untilReady(dir, h.session.id, n); } finally { await h.close('test'); } return h.session.id; };
-    await launch(2, await launch(1));
+    // 턴을 보낸 thread 만 resume 한다 — 턴 없는 thread/start 의 id 는 남기지 않는다 (ticket slcode-resume-empty-claude). 턴을 보낸 것으로 친다
+    const first = await launch(1);
+    EventLog.open(corePaths(dir).sessionsDir, first)!.updateMeta({ vendorSessionId: 'thr-1' });
+    await launch(2, first);
     EventLog.create(corePaths(dir).sessionsDir, { id: 'ffff0002', vendor: 'codex', cwd: work, title: null, vendorSessionId: null, forkFrom: 'thr-orig', createdAt: 1, permissionMode: null, raw: false }).close();
     await launch(1, 'ffff0002');
   } finally { delete process.env.FAKE_CODEX_CALLS; }

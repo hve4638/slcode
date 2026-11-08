@@ -5,6 +5,9 @@ role: 벤더 하네스(Claude Code·Codex)가 직접 저장한 세션 찾기 (ti
 export fn findVendorSession(id, vendor) -> VendorSession? {
   role: 벤더 세션 id 로 기록 파일·폴더를 찾는다. vendor 를 주면 그쪽만, 없으면 claude 먼저. 영숫자·- 밖 글자가 든 id 는 거절(경로 조각 방지)
 }
+export fn claudeSessionExists(id, env) -> Bool {
+  role: 이 id 의 Claude 대화 기록(<설정 폴더>/projects/*/<id>.jsonl)이 있는지 — 설정 폴더는 넘긴 벤더 env 의 CLAUDE_CONFIG_DIR(없으면 그 HOME 의 .claude), 세션 env 가 바꿀 수 있어서다. claude 는 첫 프롬프트 전에는 기록을 쓰지 않는다 (ticket slcode-resume-empty-claude)
+}
 export fn forkClaude(id, cwd, upTo) -> String {
   role: Agent SDK forkSession({dir: cwd}) 으로 Claude 세션을 갈라 새 세션 id — 원본은 그대로, uuid 는 새로 매겨지고 file-history 는 따라오지 않는다 (사용자 2026-10-07: 기록 파일 복사 대신 벤더 복제 기능). upTo 면 그 메시지 uuid 까지만(upToMessageId — slcode fork 의 복제 지점)
 }

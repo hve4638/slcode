@@ -56,6 +56,12 @@ function findCodex(id: string): VendorSession | null {
   return null;
 }
 
+/** 이 id 의 Claude 대화 기록이 있는지 — env 는 벤더에 넘기는 env (세션 env 가 CLAUDE_CONFIG_DIR 을 바꿀 수 있다). claude 는 첫 프롬프트 전에는 기록을 쓰지 않는다 */
+export function claudeSessionExists(id: string, env: NodeJS.ProcessEnv): boolean {
+  const root = path.join(env.CLAUDE_CONFIG_DIR || path.join(env.HOME || os.homedir(), '.claude'), 'projects');
+  try { return fs.readdirSync(root).some((d) => fs.existsSync(path.join(root, d, `${id}.jsonl`))); } catch { return false; }
+}
+
 /** 벤더 세션 id 로 기록 파일을 찾는다. vendor 를 주면 그쪽만 */
 export function findVendorSession(id: string, vendor?: Vendor): VendorSession | null {
   if (!/^[A-Za-z0-9-]+$/.test(id)) return null; // 경로 조각이 될 수 없는 id

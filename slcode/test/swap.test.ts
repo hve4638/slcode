@@ -282,7 +282,7 @@ test('벤더 전환: 첫 메시지 전 claude → codex 는 같은 세션 id 로
   const meta = EventLog.open(corePaths(dir).sessionsDir, id)!.meta;
   assert.equal(meta.vendor, 'codex');
   assert.equal(meta.effort, undefined, '옛 벤더의 effort 는 비운다');
-  assert.notEqual(meta.vendorSessionId, null, '새 벤더 세션(가짜 codex thread)');
+  assert.equal(meta.vendorSessionId, null, '첫 턴 전의 codex thread 는 남기지 않는다 (ticket slcode-resume-empty-claude)');
   assert.equal((await a.call('session.attach', { id, limit: 50 })).result.draft, '쓰던 글', '초안이 새 core 로 넘어갔다');
   // 소유자(진입 프로세스의 serve)가 새 core 에 다시 붙었다
   await waitFor(async () => (await a.call('server.info')).result.owner === e.child.pid, 5000);

@@ -6,6 +6,7 @@
 // inspect (ticket slcode-inspect-codex): config/read 는 -c openai_base_url 을 sessionFlags 층, FAKE_CODEX_USER_BASE 를 user 층으로 답한다.
 // 본문이 ws 면 -c 로 받은 주소(없으면 FAKE_CODEX_USER_BASE)의 /responses 에 WebSocket 으로 response.create 둘(둘째는 previous_response_id 로 증분)을 보내고 끝난 뒤 턴을 마친다.
 // no-call 이면 API 를 부르지 않고 성공한 턴으로 마친다
+// FAKE_CODEX_LOST 면 thread/resume 이 rollout 없음으로 실패한다 (턴 없는 thread·지워진 기록, ticket slcode-resume-empty-claude)
 // FAKE_CODEX_ENV 면 기동 때 받은 PATH·SLCODE_SESSION_ID·CORE_X·인자를 그 파일에 JSON 으로 남긴다 (ticket slcode-session-bin-path, 에이전트 플러그인 env·MCP 인자는 slcode-agent-plugin-codex). SE_* 는 se 에 모은다 (세션 env, ticket slcode-new-session-env), SLCODE_PARAM_* 는 sp 에 (세션 인자, ticket slcode-agent-plugin-part-when)
 import fs from 'node:fs';
 import readline from 'node:readline';
@@ -48,7 +49,8 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     case 'initialized': return;
     case 'skills/extraRoots/set': return reply({});
     case 'config/read': return reply({ config: {}, origins: {}, layers: [...(argBase ? [{ name: { type: 'sessionFlags' }, config: { openai_base_url: argBase } }] : []), { name: { type: 'user', file: '/tmp/config.toml' }, config: process.env.FAKE_CODEX_USER_BASE ? { openai_base_url: process.env.FAKE_CODEX_USER_BASE } : {} }] });
-    case 'thread/start': case 'thread/resume': return reply({ thread: { id: m.method === 'thread/resume' ? m.params.threadId : thread.id, turns: [] }, model: m.params.model ?? 'fake-model', modelProvider: 'fake', cwd: m.params.cwd, approvalPolicy: m.params.approvalPolicy, sandbox: {}, reasoningEffort: 'medium' });
+    case 'thread/resume': if (process.env.FAKE_CODEX_LOST) return out({ jsonrpc: '2.0', id: m.id, error: { code: -32600, message: `no rollout found for thread id ${m.params.threadId}` } }); // fallthrough
+    case 'thread/start': return reply({ thread: { id: m.method === 'thread/resume' ? m.params.threadId : thread.id, turns: [] }, model: m.params.model ?? 'fake-model', modelProvider: 'fake', cwd: m.params.cwd, approvalPolicy: m.params.approvalPolicy, sandbox: {}, reasoningEffort: 'medium' });
     case 'thread/fork': return reply({ thread: { id: `fork-${m.params.threadId}`, turns: [] }, model: m.params.model ?? 'fake-model', modelProvider: 'fake', cwd: m.params.cwd, approvalPolicy: m.params.approvalPolicy, sandbox: {}, reasoningEffort: 'medium' });
     case 'thread/read': return reply({ thread: { id: m.params.threadId, turns: process.env.FAKE_CODEX_TURNS ? JSON.parse(fs.readFileSync(process.env.FAKE_CODEX_TURNS, 'utf8')) : [] } });
     case 'model/list': return reply({ data: [{ id: 'fake-model', model: 'fake-model', displayName: 'Fake 1.0', description: 'test', hidden: false, isDefault: true, supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }], defaultReasoningEffort: 'medium' }], nextCursor: null });

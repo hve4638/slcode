@@ -146,8 +146,14 @@ test('메시지 → 턴: 켜진 세션에만 보낸다(꺼진 세션·없는 이
 test('벤더가 첫 턴 전에 죽으면 오류 한 줄 + 종료 한 줄 (serve 의 close 가 종료를 다시 내지 않는다)', { timeout: 30000 }, async () => {
   const dir = isolated();
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
-  // 없는 벤더 세션 — CLI 가 resume 할 대화를 못 찾아 exit 1 (API 호출 없음). 없는 모드로 CLI 를 죽이던 길은 core 가 모드를 먼저 거절해 막혔다 (ticket slcode-permission-modes-three)
-  EventLog.create(corePaths(dir).sessionsDir, { id: 'gone0001', vendor: 'claude', cwd: work, title: null, vendorSessionId: '00000000-0000-4000-8000-000000000000', createdAt: 1, permissionMode: null, raw: false }).close();
+  // 빈 벤더 기록 — 파일은 있어 core 는 resume 하고, CLI 는 대화를 못 찾아 exit 1. 없는 모드로 CLI 를 죽이던 길은 core 가 모드를 먼저 거절해 막혔고 (ticket slcode-permission-modes-three),
+  // 파일이 없는 id 는 core 가 새 대화로 띄운다 (ticket slcode-resume-empty-claude). 로그인 없는 설정 폴더·닫힌 게이트웨이로 — 잘못돼도 실제 API 에 닿지 않게
+  const config = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-config-'));
+  const vsid = '00000000-0000-4000-8000-000000000000';
+  fs.mkdirSync(path.join(config, 'projects', 'x'), { recursive: true });
+  fs.writeFileSync(path.join(config, 'projects', 'x', `${vsid}.jsonl`), '');
+  EventLog.create(corePaths(dir).sessionsDir, { id: 'gone0001', vendor: 'claude', cwd: work, title: null, vendorSessionId: vsid, createdAt: 1, permissionMode: null, raw: false,
+    env: { CLAUDE_CONFIG_DIR: config, ANTHROPIC_BASE_URL: 'http://127.0.0.1:9', ANTHROPIC_API_KEY: 'sk-ant-api03-FAKEKEYFAKEKEY' } }).close();
   const h = await serveSession({ dir, cwd: work, resume: 'gone0001', web: false });
   const c = await connectSession(h.sock);
   await c.request('session.attach', { id: h.session.id });
