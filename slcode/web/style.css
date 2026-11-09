@@ -192,6 +192,7 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .assistant blockquote { margin: .7em 0; padding: 2px 0 2px 12px; border-left: 3px solid var(--acf-line); color: var(--acf-muted); }
 .acf .assistant a.img { display: block; width: fit-content; max-width: 100%; margin: .5em auto; } /* 답변 속 이미지 — 한 줄을 차지하고 가운데 (같은 줄에 글이 있어도 앞뒤 글은 다른 줄로), 누르면 보기 화면 */
 .acf .assistant a.img img { display: block; max-width: 100%; max-height: 320px; border-radius: 4px; }
+.acf .linktip { position: fixed; margin: 0; inset: auto; padding: 4px 8px; border: 1px solid var(--acf-line); border-radius: 6px; background: var(--acf-panel); color: var(--acf-fg); box-shadow: 0 4px 14px var(--acf-shadow); font: 12px/1.45 var(--acf-mono); max-width: min(640px, calc(100vw - 16px)); overflow-wrap: anywhere; pointer-events: none; } /* 링크 대상 팝오버 — 긴 경로도 줄여 쓰지 않고 줄바꿈 */
 .acf dialog.imgview { position: fixed; inset: 0; width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; background: rgba(0,0,0,.85); } /* 이미지 보기 — 화면에 맞춰, 작으면 원래 크기 */
 .acf dialog.imgview[open] { display: grid; place-items: center; }
 .acf dialog.imgview::backdrop { background: transparent; }

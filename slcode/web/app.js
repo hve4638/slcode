@@ -1594,6 +1594,28 @@ export function mountAgentFront(root, transport, opts = {}) {
     if (img) { e.preventDefault(); viewing = a; viewImg.src = img.src; viewImg.alt = img.alt; viewer.showModal(); return; }
     if (inCard) { e.preventDefault(); openLink(a); }
   });
+  // 링크 대상 팝오버 (ticket slcode-link-hover-target, 사용자 2026-11-09) — 0.3초 머물면 링크 위에 data-to(절대 경로·줄 번호, URL 전체)를 줄바꿈해 다 보인다, 위에 자리가 없으면 아래.
+  // 카드에는 주소가 없어 상태 표시줄에도 안 뜬다. 보기만 해서 마우스를 받지 않는다. 누르거나 스크롤하면(따라가기 포함) 닫는다
+  const tip = h('div', { class: 'linktip', popover: 'manual' });
+  el.append(tip);
+  let tipFor = null, tipTimer = 0;
+  const hideTip = () => { clearTimeout(tipTimer); tipFor = null; if (tip.matches(':popover-open')) tip.hidePopover(); };
+  const showTip = (a) => {
+    if (!a.isConnected) return;
+    tip.textContent = a.dataset.to; tip.showPopover();
+    const r = (a.querySelector('img') ?? a).getBoundingClientRect(), up = r.top - tip.offsetHeight - 6;
+    tip.style.left = `${Math.min(Math.max(8, r.left), innerWidth - tip.offsetWidth - 8)}px`;
+    tip.style.top = `${up >= 4 ? up : r.bottom + 6}px`;
+  };
+  el.addEventListener('mouseover', (e) => {
+    const a = e.target.closest?.('a[data-to]');
+    if (a === tipFor) return;
+    hideTip();
+    if (a) { tipFor = a; tipTimer = setTimeout(() => showTip(a), 300); }
+  });
+  el.addEventListener('mouseleave', hideTip);
+  el.addEventListener('mousedown', hideTip); // 누르면 열리거나(새 탭·에디터) 이미지 보기가 뜬다
+  el.addEventListener('scroll', hideTip, true);
   input.onpaste = (e) => { const fs = [...e.clipboardData.files]; if (fs.length) { e.preventDefault(); addFiles(fs); } };
   el.ondragover = (e) => e.preventDefault();
   el.ondrop = (e) => { e.preventDefault(); addFiles(e.dataTransfer.files); };

@@ -24,18 +24,19 @@ function resolve(rel) {
   }
   return out.length > 1 ? out.join(sep) : out[0] + sep;
 }
-/** 이스케이프된 주소 → { href, open } (둘 다 이스케이프된), 그릴 수 없으면(다른 scheme·앵커·cwd 모르는 상대 경로) null. href 는 브라우저가 여는 주소, open 은 superlite 카드가 open 동사에 넘길 대상
- *  (app.js 가 data-open 으로 가로챈다 — 웹 주소는 URL 탭, 파일은 에디터). 로컬 경로의 #L12 는 떼고, %20 같은 인코딩은 풀어 서버에 넘긴다 */
+/** 이스케이프된 주소 → { href, open, to } (모두 이스케이프된), 그릴 수 없으면(다른 scheme·앵커·cwd 모르는 상대 경로) null. href 는 브라우저가 여는 주소, open 은 superlite 카드가 open 동사에 넘길 대상
+ *  (app.js 가 data-open 으로 가로챈다 — 웹 주소는 URL 탭, 파일은 에디터). 로컬 경로의 #L12 는 떼고, %20 같은 인코딩은 풀어 서버에 넘긴다.
+ *  to 는 호버 팝오버에 보일 대상 — 풀린 절대 경로에 줄 번호(:12, #L12)를 남긴다 (ticket slcode-link-hover-target) */
 function target(raw) {
   const u = unesc(raw);
-  if (/^https?:\/\//.test(u)) return { href: raw, open: raw };
+  if (/^https?:\/\//.test(u)) return { href: raw, open: raw, to: raw };
   const abs = /^(\/|[A-Za-z]:[\\/])/.test(u);
   if (!abs && (/^[A-Za-z][\w+.-]*:|^#/.test(u) || !cwd)) return null;
-  let p = u.replace(/#.*$/, '');
+  let p = u.replace(/#.*$/, ''), line = u.match(/#L\d+(-L?\d+)?$/)?.[0] ?? '';
   try { p = decodeURI(p); } catch {}
   if (!abs) p = resolve(p);
   // open 동사는 줄 번호를 받지 않는다 — Codex 꼴 a.ts:12 는 떼고 연다 (serve 의 file 은 스스로 뗀다)
-  return { href: fileUrls ? esc(`file?path=${encodeURIComponent(p)}${fileToken ? `&token=${encodeURIComponent(fileToken)}` : ''}`) : '', open: esc(p.replace(/:\d+(:\d+)?$/, '')) };
+  return { href: fileUrls ? esc(`file?path=${encodeURIComponent(p)}${fileToken ? `&token=${encodeURIComponent(fileToken)}` : ''}`) : '', open: esc(p.replace(/:\d+(:\d+)?$/, '')), to: esc(p + line) };
 }
 const IMG = new RegExp(String.raw`!\[([^\]]*)\]\(${URL_RE}\)`, 'g');
 const LINK = new RegExp(String.raw`\[([^\]]+)\]\(${URL_RE}\)`, 'g');
@@ -48,8 +49,8 @@ function inline(s) {
     out += esc(part)
       .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
       .replace(/(^|[^*\w])\*([^*\n]+)\*/g, '$1<em>$2</em>')
-      .replace(IMG, (m, alt, a, b) => { const t = target(a ?? b); if (!t) return m; return `<a class="img" href="${t.href}" data-open="${t.open}" target="_blank" rel="noopener"><img${t.href ? ` src="${t.href}"` : ''} alt="${alt}"></a>`; })
-      .replace(LINK, (m, s, a, b) => { const t = target(a ?? b); if (!t) return m; return `<a href="${t.href}" data-open="${t.open}" target="_blank" rel="noopener">${s}</a>`; });
+      .replace(IMG, (m, alt, a, b) => { const t = target(a ?? b); if (!t) return m; return `<a class="img" href="${t.href}" data-open="${t.open}" data-to="${t.to}" target="_blank" rel="noopener"><img${t.href ? ` src="${t.href}"` : ''} alt="${alt}"></a>`; })
+      .replace(LINK, (m, s, a, b) => { const t = target(a ?? b); if (!t) return m; return `<a href="${t.href}" data-open="${t.open}" data-to="${t.to}" target="_blank" rel="noopener">${s}</a>`; });
   }
   return out;
 }
