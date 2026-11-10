@@ -28,10 +28,12 @@ import { randomUUID } from 'node:crypto';
 import { pluginCommand } from 'slcode-plugin/cli';
 import { addProfile, getProfile, listProfiles, removeProfile, setProfile, type Profile } from './profiles.js';
 import { findAgent, listAgents, type AgentDef } from './teamAgents.js';
+import { createWorktree, removeWorktree, worktreeLoss } from './worktree.js';
 import { summarize } from './activity.js';
+import type { Worktree } from './worktree.js';
 import { FILES, PERMISSION_MODES, TEAM_PRESETS, type ApprovalRequest, type LoggedEvent, type Methods, type SessionInfo } from './protocol.js';
 
-type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; model?: string; effort?: string; profile?: string; env?: string[]; param?: string[]; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; 'no-inspect'?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; re?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; takeover?: boolean; version?: boolean; help?: boolean; 'from-start'?: boolean; to?: string[]; remove?: boolean; name?: string; options?: string; subagent?: boolean; teammate?: boolean; detached?: boolean; lazy?: boolean; wait?: boolean; agent?: string };
+type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; model?: string; effort?: string; profile?: string; env?: string[]; param?: string[]; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; 'no-inspect'?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; re?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; takeover?: boolean; version?: boolean; help?: boolean; 'from-start'?: boolean; to?: string[]; remove?: boolean; name?: string; options?: string; subagent?: boolean; teammate?: boolean; detached?: boolean; lazy?: boolean; wait?: boolean; agent?: string; cwd?: string; worktree?: string };
 
 const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세션 id 또는 유일한 제목. * 는 세션 안(SLCODE_SESSION_ID)에서만)
 
@@ -94,15 +96,21 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
 * ask <to> <text> [--timeout S]  묻고 답장을 기다린다
 * reply <id> <text>              받은 메시지에 답장
 팀원 (세션 안의 에이전트가 친다 — 사람이 새 세션을 열 때는 new)
-* team new [folder] [--subagent|-s | --teammate|-t | --detached|-d] [--wait] [--agent A] [-n name] [-m model] [-e effort] [--mode M] [-o '<JSON>'] [-- <지시>]
-                                 이 세션(리더)이 팀원 세션을 띄우고 id 를 출력한다. 폴더는 생략하면 지금 폴더, 지시는 -- 뒤나 stdin(heredoc).
+* team new [--cwd <folder> | --worktree [name]] [--subagent|-s | --teammate|-t | --detached|-d] [--wait] [--agent A] [-n name] [-m model] [-e effort] [--mode M] [-o '<JSON>'] [-- <지시>]
+                                 이 세션(리더)이 팀원 세션을 띄우고 id 를 출력한다. 작업 폴더는 --cwd, 생략하면 지금 폴더. 지시는 -- 뒤나 stdin(heredoc).
+                                 --worktree: 지금 폴더가 속한 git checkout 의 HEAD 에서 새 브랜치 worktree-<name> 을 만들어 <repo>.worktrees/<name> 에서 띄운다.
+                                 name 을 빼면 -n 이름에서 짓는다. 추적하지 않는 파일은 .worktreeinclude 에 적은 것만 복사한다. --cwd 와 함께 쓰지 않는다.
                                  --subagent: 리더가 입력을 쥐고 답을 받는다, 답하면 닫히고 다시 시키면 다시 뜬다, 리더가 닫히면 같이 닫힌다, 질문 도구·팀원 만들기는 못 한다.
                                  --wait: 첫 지시의 답을 기다려 id 대신 그 답을 출력한다 (답을 받는 팀원만).
                                  --teammate(기본): 첫 지시 뒤에는 메시지로만 주고받고 리더가 닫혀도 산다. --detached: 리더와 상관없는 세션.
-                                 -s·-t·-d 는 관계 프리셋, -o 는 그 위에 얹는 옵션 (true|false): link inputControl outputToLeader askToLeader endWithLeader endWithAnswer noTeam.
+                                 -s·-t·-d 는 관계 프리셋, -o 는 그 위에 얹는 옵션 (true|false): link inputControl outputToLeader askToLeader endWithLeader endWithAnswer noTeam cleanWithLeader.
+                                 cleanWithLeader: 리더가 닫힐 때 worktree 를 잃을 작업이 없으면 지운다 (endWithLeader 가 있어야, --subagent 기본 켜짐).
                                  -m 은 모델 이름 또는 anthropic:<모델>·openai:<모델>. 주지 않은 모델·effort·권한 모드는 리더를 따른다.
                                  --agent 는 .slcode/agents/<A>.md(리더 폴더에서 위로)·<상태 폴더>/agents/<A>.md 의 에이전트 정의 — 본문은 팀원의 지시문, frontmatter 의 model·effort·mode·relation·profile 은 주지 않은 옵션의 기본값.
                                  팀원에게 지시는 prompt·interrupt·respond·close <팀원> 이 리더 core 를 거쳐 간다. prompt <팀원> --wait 는 답을 기다려 출력한다
+  team clean-worktree <팀원> [--force]
+                                 team new --worktree 로 띄운 팀원의 worktree 와 브랜치를 지운다. 켜져 있으면 먼저 닫는다. 세션 기록은 남는다.
+                                 커밋하지 않은 변경이 있거나 브랜치가 리더 HEAD 에 합쳐지지 않았으면 거절한다 (--force 면 버리고 지운다)
 에이전트 플러그인 (Claude·Codex 세션에 싣는다. 바꾼 설정은 새 세션부터, 떠 있는 세션은 사이드바의 다시 싣기로 — Codex 는 skill 만)
   plugin add <folder>            slcode-plugin.json(애드온은 slcode-addon.json)이 있는 원본 폴더를 설치한다. 같은 내용이면 아무것도 하지 않는다
   plugin remove <name> [--cascade]
@@ -139,10 +147,13 @@ function usage(msg?: string): never {
   if (msg) { lastError = msg; console.error(`[slcode] ${msg}\n(slcode --help)`); } else console.error(HELP);
   process.exit(2);
 }
+// 값이 선택인 --worktree (ticket slcode-team-worktree, Claude 의 --worktree [name] 과 같다) — parseArgs 에는 그런 옵션이 없어 뒤가 없거나 옵션이면 빈 값으로 바꿔 읽는다
+const ARGS = process.argv.slice(2);
+for (let i = 0, end = ARGS.includes('--') ? ARGS.indexOf('--') : ARGS.length; i < end; i++) if (ARGS[i] === '--worktree' && (i + 1 >= end || ARGS[i + 1].startsWith('-'))) ARGS[i] = '--worktree=';
 let parsed: ReturnType<typeof parseArgs>;
 try {
   parsed = parseArgs({
-    allowPositionals: true, tokens: true,
+    args: ARGS, allowPositionals: true, tokens: true,
     options: {
       port: { type: 'string' }, host: { type: 'string' }, stdio: { type: 'boolean' }, vendor: { type: 'string' }, mode: { type: 'string' }, title: { type: 'string' }, model: { type: 'string', short: 'm' }, effort: { type: 'string', short: 'e' }, profile: { type: 'string' }, env: { type: 'string', multiple: true }, param: { type: 'string', multiple: true, short: 'P' },
       since: { type: 'string' }, tail: { type: 'string' }, turn: { type: 'string' }, raw: { type: 'boolean' }, 'no-inspect': { type: 'boolean' }, all: { type: 'boolean' }, force: { type: 'boolean' }, json: { type: 'boolean' },
@@ -150,6 +161,8 @@ try {
       'no-web': { type: 'boolean' }, web: { type: 'boolean' }, takeover: { type: 'boolean' }, 'from-start': { type: 'boolean' }, version: { type: 'boolean' }, dir: { type: 'string' }, help: { type: 'boolean', short: 'h' }, to: { type: 'string', multiple: true }, remove: { type: 'boolean' }, cascade: { type: 'boolean' },
       // team new (ticket slcode-team-agent) 와 mail --lazy
       name: { type: 'string', short: 'n' }, options: { type: 'string', short: 'o' }, subagent: { type: 'boolean', short: 's' }, teammate: { type: 'boolean', short: 't' }, detached: { type: 'boolean', short: 'd' }, lazy: { type: 'boolean' }, wait: { type: 'boolean' }, agent: { type: 'string' },
+      // team new 의 작업 폴더·worktree (ticket slcode-team-worktree)
+      cwd: { type: 'string' }, worktree: { type: 'string' },
     },
   });
 } catch (e) { usage((e as Error).message); }
@@ -253,7 +266,8 @@ async function stdinPrompt(): Promise<string | undefined> {
 async function teamNew(args: string[]): Promise<void> {
   const me = process.env.SLCODE_SESSION_ID;
   if (!me) { err('team works only inside a slcode session (SLCODE_SESSION_ID) — the agent of a session runs it; to open a session yourself use slcode new <folder>'); process.exit(2); }
-  if (args.length > 1) usage(`team new takes one folder: ${args.join(' ')} (put instructions after --)`);
+  if (args.length) usage(`team new takes no folder argument: ${args.join(' ')} — use --cwd <folder> (put instructions after --)`);
+  if (flags.cwd !== undefined && flags.worktree !== undefined) usage('team new takes --cwd or --worktree, not both (a worktree teammate works at the top of its worktree)');
   const tpl = (['subagent', 'teammate', 'detached'] as const).filter((k) => flags[k]);
   if (tpl.length > 1) usage(`pick one of --subagent, --teammate, --detached (got ${tpl.map((k) => `--${k}`).join(' ')})`);
   let given: Record<string, unknown> = {};
@@ -261,7 +275,9 @@ async function teamNew(args: string[]): Promise<void> {
     try { given = JSON.parse(flags.options); if (!given || typeof given !== 'object' || Array.isArray(given)) throw 0; } catch { usage(`--options needs a JSON object, e.g. -o '{"endWithLeader":true}'`); }
   }
   const team = { ...TEAM_PRESETS[tpl[0] ?? 'teammate'], ...given };
-  const cwd = folderArg(args[0]);
+  // 리더 닫힘 정리는 수명 연동이 있어야 한다 — 프리셋의 값이면 -o 로 수명 연동만 꺼도 같이 끈다 (따로 켰으면 core 가 거절한다)
+  if (given.cleanWithLeader === undefined && !team.endWithLeader) team.cleanWithLeader = false;
+  let cwd = folderArg(flags.cwd);
   const prompt = firstPrompt ?? (await stdinPrompt());
   // --wait — 첫 지시의 답을 기다려 출력한다. 리더 core 가 그 답을 메시지 대신 이 명령에 넘긴다 (사용자 2026-11-08, MCP 도구 Subagent 가 이 길을 쓴다)
   if (flags.wait && !prompt) usage('team new --wait needs instructions (after -- or on stdin)');
@@ -270,17 +286,25 @@ async function teamNew(args: string[]): Promise<void> {
   if (!pm) { err(`no session ${me} (SLCODE_SESSION_ID)`); process.exit(1); }
   let client: RpcClient<Methods>;
   try { client = await connectSession(new EventLog(P.sessionsDir, pm).sockPath); } catch { err(`session ${me} is not live`); process.exit(1); }
+  // --worktree — 지금 폴더가 속한 checkout 의 HEAD 에서 (ticket slcode-team-worktree). 띄우지 못하면 만든 것을 지운다
+  let wt: Worktree | undefined;
+  if (flags.worktree !== undefined) {
+    try { wt = createWorktree(cwd, flags.worktree || undefined, flags.name); } catch (e) { client.close(); err((e as Error).message); process.exit(1); }
+    cwd = wt.path;
+  }
   let id: string;
   try {
     ({ id } = await client.request('session.spawnChild', {
       id: me, cwd, title: flags.name, vendor: flags.vendor as 'claude' | 'codex' | undefined, model: flags.model, effort: flags.effort, mode: flags.mode, profile: flags.profile,
       env: newEnv(), params: newParams(), prompt: flags.wait ? undefined : prompt, team: team as never, ...(def ? { agent: { name: def.name, instructions: def.instructions } } : {}),
+      ...(wt ? { worktree: wt } : {}),
     }));
-  } catch (e) { client.close(); err((e as Error).message); process.exit(1); }
+  } catch (e) { client.close(); if (wt) try { removeWorktree(wt, true); } catch {} err((e as Error).message); process.exit(1); }
+  const where = `${cwd}${wt ? ` on branch ${wt.branch}` : ''}`;
   if (process.env.SUPERLITE_SOCK) spawnSync('superlite', ['slcode.resume', '--id', id], { encoding: 'utf8' });
   if (flags.wait) {
     // id 는 기다리기 전에 stderr 로 — MCP 도구가 멈출 때(Esc) 팀원의 턴도 멈추려고 읽는다
-    err(`teammate ${id} started in ${cwd} — waiting for its answer`);
+    err(`teammate ${id} started in ${where} — waiting for its answer`);
     try { console.log(((await client.request('session.childCall', { id: me, child: id, method: 'session.send', params: { text: prompt! }, wait: true })) as { answer: string }).answer); }
     catch (e) { err((e as Error).message); process.exit(1); }
     finally { client.close(); }
@@ -289,7 +313,27 @@ async function teamNew(args: string[]): Promise<void> {
   client.close();
   console.log(id);
   const how = team.outputToLeader ? 'its answers come back to this session as messages' : team.link ? `it messages you when it has something (slcode mail ${flags.name ?? id} <text> to reach it)` : 'it is an independent session';
-  err(`teammate ${id} started in ${cwd} — ${how} (slcode close ${id} to stop it)`);
+  err(`teammate ${id} started in ${where} — ${how} (slcode close ${id} to stop it)`);
+}
+/** `slcode team clean-worktree <팀원> [--force]` (ticket slcode-team-worktree, 사용자 2026-11-11) — team new --worktree 로 띄운 팀원의 worktree 와 브랜치를 지운다.
+ *  세션 밖에서도 된다(리더가 죽은 뒤 사람이 정리). 켜진 팀원은 먼저 닫는다. 잃을 작업이 있으면 --force 없이는 거절. 세션 기록은 남기고 meta 에 지운 시각을 적는다 */
+async function teamCleanWorktree(args: string[]): Promise<void> {
+  if (args.length !== 1) usage('team clean-worktree <teammate> [--force]');
+  const log = openLog(args[0]);
+  const { id, worktree: wt } = log.meta;
+  if (!wt) { err(`session ${id} has no worktree made by slcode team new --worktree`); process.exit(1); }
+  if (wt.removedAt) { err(`the worktree of ${id} was already removed (${wt.path})`); return; }
+  if (await sockAlive(log.sockPath)) {
+    try {
+      if (!(await viaParent(id, 'session.close'))) { const c = await connectSession(log.sockPath); await c.request('session.close', { id }); c.close(); }
+    } catch (e) { err(`could not close ${id}: ${(e as Error).message}`); process.exit(1); }
+    for (const t0 = Date.now(); await sockAlive(log.sockPath); await sleep(100)) if (Date.now() - t0 > 10000) { err(`session ${id} did not close — slcode close ${id} --force, then run this again`); process.exit(1); }
+  }
+  const loss = flags.force ? null : worktreeLoss(wt);
+  if (loss) { err(`kept the worktree of ${id}: ${loss} — merge it first, or pass --force to discard it`); process.exit(1); }
+  try { removeWorktree(wt, !!flags.force); } catch (e) { err((e as Error).message); process.exit(1); }
+  EventLog.open(P.sessionsDir, id)?.updateMeta({ worktree: { ...wt, removedAt: Date.now() } });
+  console.log(`removed worktree ${wt.path} and branch ${wt.branch}`);
 }
 /** 이 세션(SLCODE_SESSION_ID)의 link 팀원이면 리더 core 를 거쳐 지시한다 — 입력 제어 중인 팀원은 리더의 소유 연결로 온 지시만 받는다. 팀원이 아니면 null */
 async function viaParent(s: string | undefined, method: 'session.send' | 'session.interrupt' | 'session.approve' | 'session.close', params: Record<string, unknown> = {}, wait = false): Promise<{ result: unknown } | null> {
@@ -657,7 +701,8 @@ try {
       break;
     }
     case 'team': { // 팀원 (ticket slcode-team-agent) — 세션 안 전용
-      if (rest[0] !== 'new') usage('team new [folder] [--subagent|--teammate|--detached] [--agent A] [-n name] [-m model] [-e effort] [--mode M] [-o JSON] [-- <instructions>]');
+      if (rest[0] === 'clean-worktree') { await teamCleanWorktree(rest.slice(1)); break; }
+      if (rest[0] !== 'new') usage('team new [--cwd <folder> | --worktree [name]] [--subagent|--teammate|--detached] [--agent A] [-n name] [-m model] [-e effort] [--mode M] [-o JSON] [-- <instructions>] | team clean-worktree <teammate> [--force]');
       checkNew();
       await teamNew(rest.slice(1));
       break;
@@ -691,7 +736,7 @@ try {
       const me = process.env.SLCODE_SESSION_ID ?? null;
       // 살아 있는 세션은 활동 기록의 지금 상태(state·stateSince·seen)도 — superlite 사이드바의 상태 점 (ticket slcode-sidebar-orca). 기록이 없으면 null
       const now = (m: (typeof stored)[number]) => { const a = summarize(new EventLog(P.sessionsDir, m).dir); return { state: a?.state ?? null, stateSince: a?.stateSince ?? null, seen: a?.seen ?? true }; };
-      const rows = stored.map((m) => ({ id: m.id, vendor: m.vendor, cwd: m.cwd, title: m.title, createdAt: m.createdAt, updatedAt: m.updatedAt ?? m.createdAt, closedAt: m.closedAt ?? null, parent: m.parent ?? null, live: live.has(m.id), pid: live.get(m.id) ?? null, ...(live.has(m.id) ? now(m) : {}), ...(m.id === me ? { me: true } : {}) }))
+      const rows = stored.map((m) => ({ id: m.id, vendor: m.vendor, cwd: m.cwd, title: m.title, createdAt: m.createdAt, updatedAt: m.updatedAt ?? m.createdAt, closedAt: m.closedAt ?? null, parent: m.parent ?? null, ...(m.worktree ? { worktree: m.worktree } : {}), live: live.has(m.id), pid: live.get(m.id) ?? null, ...(live.has(m.id) ? now(m) : {}), ...(m.id === me ? { me: true } : {}) }))
         .sort((a, b) => a.updatedAt - b.updatedAt);
       print(flags.all ? rows : rows.filter((r) => r.live));
       break;

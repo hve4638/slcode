@@ -10,7 +10,11 @@ import { sessionMeta } from './mail.js';
 import { CoreError, ERR, TEAM_PRESETS, type ApprovalRequest, type ChildView, type LoggedEvent, type Methods, type TeamOptions } from './protocol.js';
 import type { SessionMeta } from './eventLog.js';
 import type { CoreOptions } from './core.js';
+import { removeWorktree, worktreeLoss } from './worktree.js';
 
+
+/** 리더 닫힘 정리가 켜진 팀원이 닫히기를 기다리는 시간 — 넘으면 worktree 를 남긴다 */
+const CLEAN_WAIT_MS = 5000;
 
 /** 답하면 닫힘 팀원이 스스로 닫힐 때의 사유 — 리더는 끝남 알림(kind=closed)을 보내지 않는다 */
 export const ANSWERED = 'answered';
@@ -28,8 +32,9 @@ export function teamOptionsError(o: Record<string, unknown>): string | null {
     if (!TEAM_KEYS.includes(k)) return `unknown team option ${k} (${TEAM_KEYS.join('|')})`;
     if (typeof v !== 'boolean') return `team option ${k} must be true or false`;
   }
-  const leader = ['inputControl', 'outputToLeader', 'askToLeader', 'endWithLeader', 'endWithAnswer'].filter((k) => o[k]);
+  const leader = ['inputControl', 'outputToLeader', 'askToLeader', 'endWithLeader', 'endWithAnswer', 'cleanWithLeader'].filter((k) => o[k]);
   if (!o.link && leader.length) return `${leader.join(', ')} need${leader.length > 1 ? '' : 's'} link (a teammate without link has no leader)`;
+  if (o.cleanWithLeader && !o.endWithLeader) return 'cleanWithLeader needs endWithLeader (its worktree is removed when the leader closes, so the teammate must close with it)';
   return null;
 }
 type ChildMethod = 'session.send' | 'session.interrupt' | 'session.approve' | 'session.close';
@@ -74,6 +79,7 @@ export class Children {
     }
     const m = sessionMeta(this.o.sessionsDir, id);
     if (m?.parent?.kind !== 'child' || m.parent.id !== this.o.parent) return;
+    if (m.worktree?.removedAt) throw new CoreError(ERR.badRequest, `the worktree of teammate ${id} was removed (${m.worktree.path}) — start a new teammate`);
     const hello = await spawnCore({ dir: this.o.dir, cwd: m.cwd, resume: id });
     await this.adopt(hello.id, hello.sock, false);
   }
@@ -162,6 +168,22 @@ export class Children {
     for (const k of this.kids.values()) {
       if (teamOf(sessionMeta(this.o.sessionsDir, k.id))?.endWithLeader === false) { k.conn.close(); continue; }
       k.closing = true; k.conn.request('session.close', { id: k.id }).catch(() => {});
+    }
+  }
+
+  /** 리더가 닫힌다 (ticket slcode-team-worktree) — 이 리더의 cleanWithLeader 팀원 worktree 를 잃을 작업이 없으면 지운다. 켜진 팀원은 closeAll 이 보낸 닫기를 잠시 기다린다.
+   *  잃을 작업이 있거나 아직 켜져 있으면 남긴다(로그만). 리더 프로세스가 죽으면 여기를 지나지 않는다 */
+  async cleanWorktrees(): Promise<void> {
+    for (const m of EventLog.list(this.o.sessionsDir)) {
+      const wt = m.worktree;
+      if (m.parent?.kind !== 'child' || m.parent.id !== this.o.parent || !wt || wt.removedAt || !teamOf(m)?.cleanWithLeader) continue;
+      const k = this.kids.get(m.id);
+      if (k) await Promise.race([k.conn.done, new Promise((r) => setTimeout(r, CLEAN_WAIT_MS))]);
+      if (await sockAlive(new EventLog(this.o.sessionsDir, m).sockPath)) { this.o.log(`kept worktree ${wt.path}: teammate ${m.id} did not close`); continue; }
+      const loss = worktreeLoss(wt);
+      if (loss) { this.o.log(`kept worktree ${wt.path}: ${loss}`); continue; }
+      try { removeWorktree(wt, false); EventLog.open(this.o.sessionsDir, m.id)?.updateMeta({ worktree: { ...wt, removedAt: Date.now() } }); this.o.log(`removed worktree ${wt.path} of teammate ${m.id}`); }
+      catch (e) { this.o.log(`kept worktree ${wt.path}: ${(e as Error).message}`); }
     }
   }
 

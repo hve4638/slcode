@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { HistorySummary, LoggedEvent, OutlineItem, PromptTurn, SessionInfo, TeamOptions, TeamAgent, Vendor } from './protocol.js';
+import type { Worktree } from './worktree.js';
 import { cwdSlug, sessionDir, sessionRoots } from './paths.js';
 
 /** seq 는 kind fork 의 복제 지점 — 원본 기록에서 복제본에 들어간 마지막 턴 끝(turn.end·session.imported)의 seq (ticket slcode-session-fork). 복제본 자신의 일은 제 기록의 session.imported(fork) 뒤다 */
@@ -51,6 +52,8 @@ export type SessionMeta = {
   team?: TeamOptions;
   /** `slcode team new --agent` 로 띄운 팀원의 에이전트 정의 (ticket slcode-team-agent, 사용자 2026-11-09) — 띄운 때의 사본. 지시문 familyPrompt 가 본문을 싣는다 */
   agent?: TeamAgent;
+  /** `slcode team new --worktree` 로 띄운 팀원의 git worktree (ticket slcode-team-worktree, 사용자 2026-11-11) — cwd 가 그 폴더다. removedAt 은 clean-worktree·리더 닫힘 정리가 지운 시각 */
+  worktree?: Worktree;
   /** 이 세션은 팀원을 만들지 못한다 — 설정의 "새 세션 팀원" 을 끄고 열었거나 noTeam 팀원 */
   noTeam?: boolean;
 };

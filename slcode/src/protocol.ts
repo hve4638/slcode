@@ -10,6 +10,7 @@
 // 이벤트 어휘는 벤더 중립 15종. 각 이벤트는 선택 필드 raw 에 벤더 원문(SDK 메시지)을 같은 봉투로 싣는다 (raw:true 일 때만).
 
 import type { AgentCommandEvent, AgentHookEvent } from 'slcode-plugin/hookRunner';
+import type { Worktree } from './worktree.js';
 
 export const PROTOCOL_VERSION = 3;
 
@@ -89,6 +90,9 @@ export type TeamOptions = {
   endWithAnswer: boolean;
   /** 팀 생성 제한 — 이 팀원은 slcode team new 를 쓰지 못한다 */
   noTeam: boolean;
+  /** 리더 닫힘 정리 (ticket slcode-team-worktree, 사용자 2026-11-11) — 리더가 닫힐 때 이 팀원의 worktree(`team new --worktree`)를 잃을 작업이 없으면 지운다.
+   *  endWithLeader 가 있어야 켤 수 있다. worktree 가 없는 팀원에게는 아무 일도 없다. 없는 옛 meta 는 꺼짐 */
+  cleanWithLeader: boolean;
   /** 사용자가 화면에서 끊었다 (일방향) — 입력 제어·출력 수신·질문 수신·답하면 닫힘이 꺼진 뒤다 */
   cut?: boolean;
 };
@@ -96,9 +100,9 @@ export type TeamOptions = {
 export type TeamAgent = { name: string; instructions: string };
 /** 관계 프리셋 — `slcode team new --subagent|--teammate|--detached`. 정해진 모드가 아니라 옵션 기본값이다 (사용자 2026-11-07) */
 export const TEAM_PRESETS = {
-  subagent: { link: true, inputControl: true, outputToLeader: true, askToLeader: false, endWithLeader: true, endWithAnswer: true, noTeam: true },
-  teammate: { link: true, inputControl: false, outputToLeader: false, askToLeader: false, endWithLeader: false, endWithAnswer: false, noTeam: false },
-  detached: { link: false, inputControl: false, outputToLeader: false, askToLeader: false, endWithLeader: false, endWithAnswer: false, noTeam: false },
+  subagent: { link: true, inputControl: true, outputToLeader: true, askToLeader: false, endWithLeader: true, endWithAnswer: true, noTeam: true, cleanWithLeader: true },
+  teammate: { link: true, inputControl: false, outputToLeader: false, askToLeader: false, endWithLeader: false, endWithAnswer: false, noTeam: false, cleanWithLeader: false },
+  detached: { link: false, inputControl: false, outputToLeader: false, askToLeader: false, endWithLeader: false, endWithAnswer: false, noTeam: false, cleanWithLeader: false },
 } as const satisfies Record<string, TeamOptions>;
 
 /** inspect 기록의 호출 하나 요약 (inspect/inspect.db 의 calls 한 행). at 은 요청이 들어온 시각, ms 는 응답이 끝날 때까지 */
@@ -361,7 +365,7 @@ export type Methods = {
   // ---- 팀원 세션 (ticket slcode-team-agent, 사용자 결정 2026-11-07~08) — 리더 core 가 팀원 core 를 띄우고, link 팀원은 소유한다
   /** 리더 세션 안의 `slcode team new` 가 부른다 — 팀원을 띄우고(link 면 소유하고) id 를 돌려준다. vendor·model·effort·mode 는 주지 않으면 리더를 따른다(모델·effort 는 벤더가 같을 때만).
    *  team 은 관여 옵션 — 빠진 키는 teammate 프리셋 값. 이 세션이 팀원을 만들지 못하면(meta.noTeam) team_disabled. */
-  'session.spawnChild': { params: { id: string; cwd: string; title?: string; vendor?: Vendor; model?: string; effort?: string; mode?: string; profile?: string; env?: Record<string, string>; params?: Record<string, string>; prompt?: string; team?: Partial<TeamOptions>; agent?: TeamAgent }; result: { id: string } };
+  'session.spawnChild': { params: { id: string; cwd: string; title?: string; vendor?: Vendor; model?: string; effort?: string; mode?: string; profile?: string; env?: Record<string, string>; params?: Record<string, string>; prompt?: string; team?: Partial<TeamOptions>; agent?: TeamAgent; worktree?: Worktree }; result: { id: string } };
   /** 리더 모델의 지시를 소유 연결로 팀원에게 (`slcode prompt·interrupt·respond·close <팀원>`). approve 는 질문 수신 팀원의 질문(AskUserQuestion)만 — 도구 승인은 사람이 답한다.
    *  답하면 닫힘 팀원이 닫혀 있으면 session.send 가 다시 띄운다. wait 는 session.send 만 — 결과는 { answer }, 요청 연결이 끊기면 그 답은 메시지로 간다 (`slcode team new --wait`·`slcode prompt --wait`, MCP 도구) */
   'session.childCall': { params: { id: string; child: string; method: 'session.send' | 'session.interrupt' | 'session.approve' | 'session.close'; params?: Record<string, unknown>; wait?: boolean }; result: unknown };

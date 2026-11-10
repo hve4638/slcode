@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn, execFile, type ChildProcess } from 'node:child_process';
+import { spawn, execFile, execFileSync, type ChildProcess } from 'node:child_process';
 import { connectSession, type RpcClient } from '../src/client.ts';
 import { sockAlive } from '../src/live.ts';
 import { EventLog } from '../src/eventLog.ts';
@@ -69,7 +69,7 @@ test('team new --subagent (답하면 닫힘 끔): 리더가 입력을 쥐고, �
   const { dir, work, psock, lid } = await start(t);
 
   // 모델이 친 slcode team new — id 를 출력하고 바로 끝난다. 폴더를 빼면 지금 폴더
-  const made = await cli(dir, lid, ['team', 'new', work, '--subagent', '-o', '{"endWithAnswer":false}', '-n', 'sub1', '--', 'no-call']);
+  const made = await cli(dir, lid, ['team', 'new', '--cwd', work, '--subagent', '-o', '{"endWithAnswer":false}', '-n', 'sub1', '--', 'no-call']);
   assert.equal(made.code, 0, made.err);
   const kid = made.out.trim();
   assert.match(kid, /^[0-9a-f]{8}$/);
@@ -107,7 +107,7 @@ test('team new --subagent (답하면 닫힘 끔): 리더가 입력을 쥐고, �
   await until(() => mailTurns(dir, lid, 'result').length > before);
 
   // 팀원은 팀원을 만들지 못한다 (noTeam)
-  const grand = await cli(dir, kid, ['team', 'new', work, '--', 'no-call']);
+  const grand = await cli(dir, kid, ['team', 'new', '--cwd', work, '--', 'no-call']);
   assert.notEqual(grand.code, 0);
   assert.match(grand.err, /cannot start teammates/);
 
@@ -139,7 +139,7 @@ test('subagent 는 Claude 서브에이전트처럼: --wait 면 답이 메시지 
   const closedMails = () => mailTurns(dir, lid, 'closed').length;
 
   // --wait — 첫 지시의 답을 출력한다. id 는 stderr 로
-  const made = await cli(dir, lid, ['team', 'new', work, '-s', '--wait', '-n', 'sub1', '--', 'no-call']);
+  const made = await cli(dir, lid, ['team', 'new', '--cwd', work, '-s', '--wait', '-n', 'sub1', '--', 'no-call']);
   assert.equal(made.code, 0, made.err);
   assert.equal(made.out.trim(), 'done');
   const kid = /teammate ([0-9a-f]{8}) started/.exec(made.err)![1];
@@ -162,7 +162,7 @@ test('subagent 는 Claude 서브에이전트처럼: --wait 면 답이 메시지 
   assert.ok(await until(async () => !(await sockAlive(sockOf(dir, kid)))), '다시 닫혔다');
 
   // --wait 없이 — 답은 메시지로 오고 닫힌다
-  const bg = await cli(dir, lid, ['team', 'new', work, '-s', '--', 'no-call']);
+  const bg = await cli(dir, lid, ['team', 'new', '--cwd', work, '-s', '--', 'no-call']);
   assert.equal(bg.code, 0, bg.err);
   const kid2 = bg.out.trim();
   await until(() => mailTurns(dir, lid, 'result').length === 1);
@@ -171,7 +171,7 @@ test('subagent 는 Claude 서브에이전트처럼: --wait 면 답이 메시지 
   // 기다리던 명령이 끊기면 그 답은 메시지로 — 가짜 codex 의 보통 턴은 명령 승인에서 멈춘다
   const pc = await connectSession(psock);
   t.after(() => pc.close());
-  const waiting = spawn(process.execPath, ['--import', TSX, CLI, 'team', 'new', work, '-s', '--wait', '--', 'touch it'], { env: baseEnv(dir, { SLCODE_SESSION_ID: lid }), stdio: ['ignore', 'ignore', 'pipe'] });
+  const waiting = spawn(process.execPath, ['--import', TSX, CLI, 'team', 'new', '--cwd', work, '-s', '--wait', '--', 'touch it'], { env: baseEnv(dir, { SLCODE_SESSION_ID: lid }), stdio: ['ignore', 'ignore', 'pipe'] });
   let werr = '';
   waiting.stderr!.setEncoding('utf8').on('data', (d: string) => { werr += d; });
   const kid3 = (await until(() => /teammate ([0-9a-f]{8}) started/.exec(werr)))[1];
@@ -184,7 +184,7 @@ test('subagent 는 Claude 서브에이전트처럼: --wait 면 답이 메시지 
   assert.equal(closedMails(), 0);
 
   // 턴 중인 팀원에게 기다리며 시키면 — 지시는 큐에서 기다리고, 지금 턴의 답이 아니라 그 지시가 연 턴의 답을 받는다
-  const busy = await cli(dir, lid, ['team', 'new', work, '-s', '--', 'touch it']);
+  const busy = await cli(dir, lid, ['team', 'new', '--cwd', work, '-s', '--', 'touch it']);
   const kid4 = busy.out.trim();
   const req4 = (await until(async () => (await pc.request('session.children', { id: lid })).children.find((k) => k.id === kid4 && k.pending.length))).pending[0];
   const next = cli(dir, lid, ['prompt', kid4, '--wait', '--', 'no-call']);
@@ -198,7 +198,7 @@ test('subagent 는 Claude 서브에이전트처럼: --wait 면 답이 메시지 
   assert.ok(await until(async () => !(await sockAlive(sockOf(dir, kid4)))), '큐가 빈 뒤에 닫혔다');
 
   // --wait 는 답을 받는 팀원만
-  const noWait = await cli(dir, lid, ['team', 'new', work, '-t', '--wait', '--', 'no-call']);
+  const noWait = await cli(dir, lid, ['team', 'new', '--cwd', work, '-t', '--wait', '--', 'no-call']);
   assert.equal(noWait.code, 2);
 });
 
@@ -238,7 +238,7 @@ test('subagent 팀원의 도구 승인은 리더 화면(session.children·childA
   pc.onEvent((m) => { if (m.event === 'session.children') events.push(JSON.stringify(m.params)); });
 
   // 가짜 codex 는 보통 턴에서 명령 승인을 묻는다
-  const made = await cli(dir, lid, ['team', 'new', work, '-s', '-o', '{"endWithAnswer":false}', '--', 'touch it']);
+  const made = await cli(dir, lid, ['team', 'new', '--cwd', work, '-s', '-o', '{"endWithAnswer":false}', '--', 'touch it']);
   assert.equal(made.code, 0, made.err);
   const kid = made.out.trim();
   const view = await until(async () => (await pc.request('session.children', { id: lid })).children.find((k) => k.id === kid && k.pending.length));
@@ -278,7 +278,7 @@ test('team new (기본 link): 첫 지시 뒤에는 메시지로만 — 잠기지
   assert.equal(up.code, 0, up.err);
   await until(() => log(dir, lid).some((e) => e.ev.kind === 'turn.start' && e.ev.origin === 'mail' && e.ev.text.includes('hello leader')));
   // 리더 → 팀원: 이름으로. 팀 밖에 같은 이름의 켜진 세션이 있어도 자기 팀의 것
-  const dup = await cli(dir, lid, ['team', 'new', work, '-d', '-n', 'w1', '--', 'no-call']); // detached 는 팀이 아니다
+  const dup = await cli(dir, lid, ['team', 'new', '--cwd', work, '-d', '-n', 'w1', '--', 'no-call']); // detached 는 팀이 아니다
   assert.equal(dup.code, 0, dup.err);
   const down = await cli(dir, lid, ['mail', 'w1', 'hello w1']);
   assert.equal(down.code, 0, down.err);
@@ -297,7 +297,7 @@ test('team new (기본 link): 첫 지시 뒤에는 메시지로만 — 잠기지
 
 test('detached·-o 옵션: detached 는 리더 기록이 없는 세션이고, link 없이 리더 옵션은 거절, 모르는 키도 거절. 설정의 "새 세션 팀원" 을 끄고 연 세션은 팀원을 만들지 못한다', async (t) => {
   const { dir, work, lid } = await start(t);
-  const made = await cli(dir, lid, ['team', 'new', work, '--detached', '--', 'no-call']);
+  const made = await cli(dir, lid, ['team', 'new', '--cwd', work, '--detached', '--', 'no-call']);
   assert.equal(made.code, 0, made.err);
   const kid = made.out.trim();
   assert.equal(meta(dir, kid).parent, undefined);
@@ -311,20 +311,24 @@ test('detached·-o 옵션: detached 는 리더 기록이 없는 세션이고, li
   kc.close();
 
   const s2 = await start(t);
-  const bad = await cli(s2.dir, s2.lid, ['team', 'new', work, '-d', '-o', '{"endWithLeader":true}', '--', 'no-call']);
+  const bad = await cli(s2.dir, s2.lid, ['team', 'new', '--cwd', work, '-d', '-o', '{"endWithLeader":true}', '--', 'no-call']);
   assert.notEqual(bad.code, 0);
   assert.match(bad.err, /endWithLeader needs link/);
-  const unknown = await cli(s2.dir, s2.lid, ['team', 'new', work, '-o', '{"foo":true}', '--', 'no-call']);
+  const unknown = await cli(s2.dir, s2.lid, ['team', 'new', '--cwd', work, '-o', '{"foo":true}', '--', 'no-call']);
   assert.notEqual(unknown.code, 0);
   assert.match(unknown.err, /unknown team option foo/);
-  const two = await cli(s2.dir, s2.lid, ['team', 'new', work, '-s', '-t']);
+  const two = await cli(s2.dir, s2.lid, ['team', 'new', '--cwd', work, '-s', '-t']);
   assert.equal(two.code, 2);
-  const outside = await cli(s2.dir, undefined, ['team', 'new', work]);
+  const outside = await cli(s2.dir, undefined, ['team', 'new', '--cwd', work]);
   assert.equal(outside.code, 2, '세션 밖에서는 쓰지 못한다');
   // -o 로 프리셋을 고친다: subagent 인데 리더가 닫혀도 산다
-  const mixed = await cli(s2.dir, s2.lid, ['team', 'new', work, '-s', '-o', '{"endWithLeader":false}', '--', 'no-call']);
+  const mixed = await cli(s2.dir, s2.lid, ['team', 'new', '--cwd', work, '-s', '-o', '{"endWithLeader":false}', '--', 'no-call']);
   assert.equal(mixed.code, 0, mixed.err);
   assert.equal(meta(s2.dir, mixed.out.trim()).team!.endWithLeader, false);
+  assert.equal(meta(s2.dir, mixed.out.trim()).team!.cleanWithLeader, false, '프리셋의 리더 닫힘 정리는 수명 연동을 끄면 같이 꺼진다');
+  const cleanAlone = await cli(s2.dir, s2.lid, ['team', 'new', '--cwd', work, '-t', '-o', '{"cleanWithLeader":true}', '--', 'no-call']);
+  assert.equal(cleanAlone.code, 1);
+  assert.match(cleanAlone.err, /cleanWithLeader needs endWithLeader/);
 
   const dir3 = tmp('slcode-team-');
   fs.writeFileSync(path.join(dir3, 'settings-web.json'), JSON.stringify({ team: false }));
@@ -340,7 +344,7 @@ test('detached·-o 옵션: detached 는 리더 기록이 없는 세션이고, li
 
 test('리더 core 가 죽으면 subagent 팀원은 소유자 유예 뒤 닫히고, 리더 core 가 교체되면 새 리더 core 가 켜진 팀원을 다시 소유한다', async (t) => {
   const a = await start(t);
-  const made = await cli(a.dir, a.lid, ['team', 'new', a.work, '-s', '-o', '{"endWithAnswer":false}', '--', 'no-call']);
+  const made = await cli(a.dir, a.lid, ['team', 'new', '--cwd', a.work, '-s', '-o', '{"endWithAnswer":false}', '--', 'no-call']);
   assert.equal(made.code, 0, made.err);
   const kid = made.out.trim();
   await until(() => sockAlive(sockOf(a.dir, kid)));
@@ -348,7 +352,7 @@ test('리더 core 가 죽으면 subagent 팀원은 소유자 유예 뒤 닫히�
   assert.ok(await until(async () => !(await sockAlive(sockOf(a.dir, kid)))), '팀원이 닫혔다');
 
   const { dir, work, psock, lid } = await start(t);
-  const m2 = await cli(dir, lid, ['team', 'new', work, '-s', '-o', '{"endWithAnswer":false}', '--', 'no-call']);
+  const m2 = await cli(dir, lid, ['team', 'new', '--cwd', work, '-s', '-o', '{"endWithAnswer":false}', '--', 'no-call']);
   assert.equal(m2.code, 0, m2.err);
   const kid2 = m2.out.trim();
   await until(() => mailTurns(dir, lid, 'result').length);
@@ -407,7 +411,7 @@ test('에이전트 정의: --agent 는 .slcode/agents(리더 폴더에서 위로
   assert.match(lead, /^- tester: Runs the tests$/m);
   assert.doesNotMatch(lead, /shadowed/);
 
-  const made = await cli(dir, lid, ['team', 'new', work, '--agent', 'reviewer', '-o', '{"endWithAnswer":false}', '--', 'no-call']);
+  const made = await cli(dir, lid, ['team', 'new', '--cwd', work, '--agent', 'reviewer', '-o', '{"endWithAnswer":false}', '--', 'no-call']);
   assert.equal(made.code, 0, made.err);
   const kid = made.out.trim();
   const km = meta(dir, kid);
@@ -420,17 +424,164 @@ test('에이전트 정의: --agent 는 .slcode/agents(리더 폴더에서 위로
   assert.match(kidInstr, /# slcode teammate/);
 
   // 준 옵션이 정의의 값을 이긴다
-  const own = await cli(dir, lid, ['team', 'new', work, '--agent', 'reviewer', '-t', '-m', 'gpt-mine', '--mode', 'default', '--', 'no-call']);
+  const own = await cli(dir, lid, ['team', 'new', '--cwd', work, '--agent', 'reviewer', '-t', '-m', 'gpt-mine', '--mode', 'default', '--', 'no-call']);
   assert.equal(own.code, 0, own.err);
   const om = meta(dir, own.out.trim());
   assert.equal(om.team!.inputControl, false);
   assert.equal(om.model, 'gpt-mine');
   assert.equal(om.permissionMode, 'default');
 
-  const none = await cli(dir, lid, ['team', 'new', work, '--agent', 'nobody']);
+  const none = await cli(dir, lid, ['team', 'new', '--cwd', work, '--agent', 'nobody']);
   assert.equal(none.code, 2);
   assert.match(none.err, /no agent 'nobody' \(broken\|reviewer\|tester\)/);
-  const broken = await cli(dir, lid, ['team', 'new', work, '--agent', 'broken']);
+  const broken = await cli(dir, lid, ['team', 'new', '--cwd', work, '--agent', 'broken']);
   assert.equal(broken.code, 2);
   assert.match(broken.err, /relation must be subagent\|teammate\|detached/);
+});
+
+// ---- worktree 팀원 (ticket slcode-team-worktree, 사용자 결정 2026-11-11)
+const GIT_ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { env: GIT_ENV, encoding: 'utf8' }).trim();
+/** 시험용 repo — 추적하는 README·.gitignore·.worktreeinclude 를 커밋하고, 추적하지 않는 파일 셋을 둔다 */
+function repo(work: string) {
+  git(work, 'init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(work, 'README.md'), 'hi\n');
+  fs.writeFileSync(path.join(work, '.gitignore'), '.env\nnode_modules/\n');
+  fs.writeFileSync(path.join(work, '.worktreeinclude'), '.env\nnotes.txt\n');
+  git(work, 'add', '.');
+  git(work, 'commit', '-q', '-m', 'init');
+  fs.writeFileSync(path.join(work, '.env'), 'SECRET=1\n'); // gitignore 되고 .worktreeinclude 에 있다 — 복사한다
+  fs.writeFileSync(path.join(work, 'notes.txt'), 'x\n'); // .worktreeinclude 에 있지만 gitignore 되지 않았다 — 복사하지 않는다
+  fs.mkdirSync(path.join(work, 'node_modules'));
+  fs.writeFileSync(path.join(work, 'node_modules', 'm.js'), ''); // gitignore 됐지만 .worktreeinclude 에 없다
+}
+const hasBranch = (work: string, b: string) => { try { git(work, 'rev-parse', '--verify', '--quiet', `refs/heads/${b}`); return true; } catch { return false; } };
+
+test('worktree: team new --worktree [이름] 은 리더 HEAD 에서 worktree-<이름> 브랜치를 <repo>.worktrees/<이름> 에 만들고 거기서 팀원을 띄운다. clean-worktree 는 잃을 작업이 있으면 거절하고, 합친 뒤에는 지운다', async (t) => {
+  const calls = path.join(tmp('slcode-calls-'), 'calls.jsonl');
+  const { dir, work, lid } = await start(t, { FAKE_CODEX_CALLS: calls });
+  repo(work);
+  t.after(() => fs.rmSync(`${work}.worktrees`, { recursive: true, force: true }));
+  const head = git(work, 'rev-parse', 'HEAD');
+
+  const both = await cli(dir, lid, ['team', 'new', '--cwd', work, '--worktree', 'x', '--', 'no-call'], {}, undefined, work);
+  assert.equal(both.code, 2);
+  assert.match(both.err, /--cwd or --worktree, not both/);
+  const positional = await cli(dir, lid, ['team', 'new', work, '--', 'no-call'], {}, undefined, work);
+  assert.equal(positional.code, 2);
+  assert.match(positional.err, /use --cwd <folder>/);
+  const outside = await cli(dir, lid, ['team', 'new', '--worktree', 'x', '-t', '--', 'no-call'], {}, undefined, tmp('slcode-nogit-'));
+  assert.equal(outside.code, 1);
+  assert.match(outside.err, /not a git repository/);
+
+  const a = await cli(dir, lid, ['team', 'new', '--worktree', 'feat-a', '-t', '-n', 'alpha', '--', 'no-call'], {}, undefined, work);
+  assert.equal(a.code, 0, a.err);
+  const aid = a.out.trim();
+  const wa = path.join(`${work}.worktrees`, 'feat-a');
+  assert.match(a.err, new RegExp(`started in ${wa} on branch worktree-feat-a`));
+  assert.deepEqual(meta(dir, aid).worktree, { name: 'feat-a', branch: 'worktree-feat-a', path: wa, repo: work, from: work, base: head });
+  assert.equal(meta(dir, aid).cwd, wa);
+  assert.equal(git(wa, 'rev-parse', '--abbrev-ref', 'HEAD'), 'worktree-feat-a');
+  assert.equal(fs.readFileSync(path.join(wa, '.env'), 'utf8'), 'SECRET=1\n', '.worktreeinclude 에 맞고 gitignore 된 파일은 복사한다');
+  assert.equal(fs.existsSync(path.join(wa, 'notes.txt')), false, 'gitignore 되지 않은 파일은 복사하지 않는다');
+  assert.equal(fs.existsSync(path.join(wa, 'node_modules')), false, '.worktreeinclude 에 없는 파일은 복사하지 않는다');
+  // 지시문 — 팀원은 자기 worktree·브랜치를, 리더는 만드는 법과 정리하는 법을 안다
+  const instr = () => (fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8') : '').split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l).developerInstructions as string | null).filter(Boolean) as string[];
+  const kidInstr = await until(() => instr().find((s) => s.includes('# slcode worktree')));
+  assert.match(kidInstr, new RegExp(`git worktree of your own: ${wa}, on branch worktree-feat-a, made from commit ${head.slice(0, 12)}`));
+  assert.match(kidInstr, /Your leader merges the branch/);
+  assert.match(instr()[0], /--worktree \[name\]/);
+  assert.match(instr()[0], /slcode team clean-worktree <name or id>/);
+
+  const again = await cli(dir, lid, ['team', 'new', '--worktree', 'feat-a', '-t', '--', 'no-call'], {}, undefined, work);
+  assert.equal(again.code, 1);
+  assert.match(again.err, /worktree feat-a already exists/);
+  // 이름을 빼면 -n 이름에서 짓고, 겹치면 -2. 값 없는 --worktree 가 끝에 와도 된다
+  const b = await cli(dir, lid, ['team', 'new', '-t', '-n', 'Beta Task', '--worktree', '--', 'no-call'], {}, undefined, work);
+  assert.equal(b.code, 0, b.err);
+  const bid = b.out.trim();
+  assert.equal(meta(dir, bid).worktree!.name, 'beta-task');
+  const b2 = await cli(dir, lid, ['team', 'new', '-t', '-n', 'Beta Task', '--worktree', '--', 'no-call'], {}, undefined, work);
+  assert.equal(meta(dir, b2.out.trim()).worktree!.name, 'beta-task-2');
+  // 리더가 worktree 안에 있어도 원래 repo 옆에, 그 worktree 의 HEAD 에서
+  fs.writeFileSync(path.join(wa, 'a.txt'), 'a\n');
+  git(wa, 'add', 'a.txt'); git(wa, 'commit', '-q', '-m', 'a');
+  const nested = await cli(dir, lid, ['team', 'new', '--worktree', 'nested', '-t', '--', 'no-call'], {}, undefined, wa);
+  assert.equal(nested.code, 0, nested.err);
+  const nm = meta(dir, nested.out.trim()).worktree!;
+  assert.equal(nm.path, path.join(`${work}.worktrees`, 'nested'));
+  assert.equal(nm.base, git(wa, 'rev-parse', 'HEAD'));
+  assert.equal(nm.from, wa);
+
+  // clean-worktree — 켜진 팀원은 닫고, 커밋하지 않은 변경·합치지 않은 커밋이 있으면 거절한다
+  git(wa, 'reset', '-q', '--hard', head);
+  fs.writeFileSync(path.join(wa, 'b.txt'), 'b\n');
+  const dirty = await cli(dir, lid, ['team', 'clean-worktree', aid]);
+  assert.equal(dirty.code, 1);
+  assert.match(dirty.err, /uncommitted changes/);
+  assert.equal(await sockAlive(sockOf(dir, aid)), false, '팀원은 먼저 닫는다');
+  git(wa, 'add', 'b.txt'); git(wa, 'commit', '-q', '-m', 'b');
+  const unmerged = await cli(dir, lid, ['team', 'clean-worktree', aid]);
+  assert.equal(unmerged.code, 1);
+  assert.match(unmerged.err, /not merged into the HEAD of/);
+  git(work, 'merge', '-q', '--ff-only', 'worktree-feat-a');
+  const cleaned = await cli(dir, lid, ['team', 'clean-worktree', aid]);
+  assert.equal(cleaned.code, 0, cleaned.err);
+  assert.equal(fs.existsSync(wa), false);
+  assert.equal(hasBranch(work, 'worktree-feat-a'), false);
+  assert.ok(meta(dir, aid).worktree!.removedAt);
+  assert.ok(EventLog.open(corePaths(dir).sessionsDir, aid), '세션 기록은 남는다');
+  const twice = await cli(dir, lid, ['team', 'clean-worktree', aid]);
+  assert.equal(twice.code, 0);
+  assert.match(twice.err, /already removed/);
+  // --force 는 버리고 지운다. slcode 가 만들지 않은 worktree 는 지우지 않는다
+  fs.writeFileSync(path.join(meta(dir, bid).worktree!.path, 'c.txt'), 'c\n');
+  const forced = await cli(dir, lid, ['team', 'clean-worktree', bid, '--force']);
+  assert.equal(forced.code, 0, forced.err);
+  assert.equal(hasBranch(work, 'worktree-beta-task'), false);
+  const plain = await cli(dir, lid, ['team', 'clean-worktree', lid]);
+  assert.equal(plain.code, 1);
+  assert.match(plain.err, /has no worktree made by slcode team new --worktree/);
+});
+
+test('worktree subagent: Subagent 도구의 isolation "worktree" 는 이름 없는 --worktree, 결과에 브랜치와 정리법. 지운 worktree 의 subagent 는 다시 열지 않는다. 리더가 닫히면 잃을 것이 없는 worktree 만 지운다', async (t) => {
+  const { dir, work, psock, lid } = await start(t);
+  repo(work);
+  t.after(() => fs.rmSync(`${work}.worktrees`, { recursive: true, force: true }));
+  const [sub, cont] = teamTools({ cli: path.resolve(import.meta.dirname, '..', 'dist', 'cli.js'), env: baseEnv(dir, { SLCODE_SESSION_ID: lid }) as NodeJS.ProcessEnv, cwd: work });
+  const textOf = (r: { content: { type: string; text?: string }[] }) => r.content.map((c) => c.text ?? '').join('');
+  const idOf = (r: { content: { type: string; text?: string }[] }) => /subagent ([0-9a-f]{8}) finished and closed/.exec(textOf(r))![1];
+
+  const bad = await sub.handler({ description: 'both', prompt: 'no-call', cwd: work, isolation: 'worktree' }, {});
+  assert.equal(bad.isError, true);
+  const r1 = await sub.handler({ description: 'clean one', prompt: 'no-call', isolation: 'worktree' }, {});
+  assert.equal(r1.isError, undefined, textOf(r1));
+  const id1 = idOf(r1), w1 = path.join(`${work}.worktrees`, 'clean-one');
+  assert.match(textOf(r1), new RegExp(`git worktree ${w1} on branch worktree-clean-one.*slcode team clean-worktree ${id1}`));
+  assert.equal(meta(dir, id1).team!.cleanWithLeader, true, 'subagent 프리셋은 리더 닫힘 정리가 켜져 있다');
+  const id2 = idOf(await sub.handler({ description: 'dirty one', prompt: 'no-call', isolation: 'worktree' }, {}));
+  const w2 = meta(dir, id2).worktree!.path;
+  fs.writeFileSync(path.join(w2, 'wip.txt'), 'wip\n');
+  const id3 = idOf(await sub.handler({ description: 'gone one', prompt: 'no-call', isolation: 'worktree' }, {}));
+  const id4 = idOf(await sub.handler({ description: 'plain', prompt: 'no-call', cwd: work }, {}));
+  assert.equal(meta(dir, id4).cwd, work);
+  assert.equal(meta(dir, id4).worktree, undefined);
+
+  await until(async () => !(await sockAlive(sockOf(dir, id3))));
+  const rm = await cli(dir, lid, ['team', 'clean-worktree', id3]);
+  assert.equal(rm.code, 0, rm.err);
+  const again = await cont.handler({ to: id3, prompt: 'no-call' }, {});
+  assert.equal(again.isError, true);
+  assert.match(textOf(again), /the worktree of teammate .* was removed .* start a new teammate/);
+
+  // 리더가 닫힌다 — 잃을 것이 없는 worktree 는 지우고, 커밋하지 않은 변경이 있는 것은 남긴다
+  const c = await connectSession(psock);
+  await c.request('session.close', { id: lid }).catch(() => {});
+  c.close();
+  await until(async () => !(await sockAlive(psock)));
+  assert.equal(fs.existsSync(w1), false);
+  assert.equal(hasBranch(work, 'worktree-clean-one'), false);
+  assert.ok(meta(dir, id1).worktree!.removedAt);
+  assert.equal(fs.existsSync(path.join(w2, 'wip.txt')), true, '잃을 작업이 있는 worktree 는 남는다');
+  assert.equal(meta(dir, id2).worktree!.removedAt, undefined);
 });

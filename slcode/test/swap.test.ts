@@ -265,7 +265,7 @@ test('팀: 새 빌드로 serve 를 바꾸면 리더 core 에 이어 팀원 core 
   const a = await screen(url);
   const lid = (await a.call('server.info')).result.session;
   const team = async (args: string[]) => {
-    const x = cli(dir, ['team', 'new', work, ...args], 'ignore', pkg, { ...MAIL, SLCODE_SESSION_ID: lid });
+    const x = cli(dir, ['team', 'new', '--cwd', work, ...args], 'ignore', pkg, { ...MAIL, SLCODE_SESSION_ID: lid });
     assert.equal(await x.exit, 0, x.stderr());
     const id = (await x.first).trim(); kids.push(id); return id;
   };

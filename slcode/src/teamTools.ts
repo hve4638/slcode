@@ -58,10 +58,18 @@ function interrupt(o: TeamToolsOptions, id: string) {
   c.unref();
 }
 
+/** CLI 의 시작 줄 (cli teamNew 의 stderr) — `teammate <id> started in <폴더>[ on branch <브랜치>] — …` */
+const STARTED = /teammate ([0-9a-f]{8}) started in (.+?)(?: on branch (\S+))? — /;
+/** worktree 팀원이면 그 폴더·브랜치와 정리하는 법 (ticket slcode-team-worktree) */
+function worktreeNote(id: string, err: string): string {
+  const m = STARTED.exec(err);
+  return m?.[3] ? ` It works in the git worktree ${m[2]} on branch ${m[3]}: merge the branch with git when its work is done, then run \`slcode team clean-worktree ${id}\`.` : '';
+}
+
 /** 기다린 끝의 결과 — 답과 이어 시키는 법 (Claude Agent 도구의 agentId 안내와 같은 자리) */
 function answered(id: string, r: Run) {
   if (r.code !== 0) return text(r.err || `slcode exited with ${r.code}`, true);
-  return text(`${r.out || '(no answer text)'}\n\n[subagent ${id} finished and closed. To give it more work with its context, call ContinueSubagent with to: "${id}".]`);
+  return text(`${r.out || '(no answer text)'}\n\n[subagent ${id} finished and closed. To give it more work with its context, call ContinueSubagent with to: "${id}".${worktreeNote(id, r.err)}]`);
 }
 
 /** 도구 정의 — teamMcp 가 서버로 묶는다 (시험은 handler 를 바로 부른다) */
@@ -77,20 +85,22 @@ export function teamTools(o: TeamToolsOptions) {
       prompt: z.string().describe('The task for the subagent to perform'),
       agent: z.string().optional().describe('An agent definition from the slcode agent list in your instructions. It gives the subagent that agent\'s instructions, and its model unless you set model'),
       model: z.string().optional().describe('A model name, or anthropic:<model> / openai:<model>. Defaults to the agent definition\'s model, else your model'),
-      folder: z.string().optional().describe('The folder it works in. Defaults to your current folder'),
+      cwd: z.string().optional().describe('The folder it works in. Defaults to your current folder'),
+      isolation: z.enum(['worktree']).optional().describe('"worktree" runs it in a git worktree of its own, a copy of the repository on a new branch from your HEAD, so its edits do not collide with yours. Commit what it needs first. Do not combine with cwd'),
       run_in_background: z.boolean().optional().describe('Return at once with its id. Its answer arrives later as a <slcode-message kind="result">. Do not poll for it'),
     },
     async (a, extra) => {
       const bg = !!a.run_in_background;
-      const args = ['team', 'new', a.folder ?? '.', '--subagent', '-n', a.description, ...(a.agent ? ['--agent', a.agent] : []), ...(a.model ? ['-m', a.model] : []), ...(bg ? [] : ['--wait'])];
+      const args = ['team', 'new', ...(a.cwd !== undefined ? ['--cwd', a.cwd] : []), ...(a.isolation === 'worktree' ? ['--worktree'] : []), '--subagent', '-n', a.description,
+        ...(a.agent ? ['--agent', a.agent] : []), ...(a.model ? ['-m', a.model] : []), ...(bg ? [] : ['--wait'])];
       let id = '';
       const signal = signalOf(extra);
       const onAbort = () => { if (id) interrupt(o, id); };
       signal?.addEventListener('abort', onAbort, { once: true });
       try {
-        const r = await runCli(o, args, a.prompt, signal, (err) => { id ||= /teammate ([0-9a-f]{8}) started/.exec(err)?.[1] ?? ''; });
+        const r = await runCli(o, args, a.prompt, signal, (err) => { id ||= STARTED.exec(err)?.[1] ?? ''; });
         if (bg) return r.code === 0
-          ? text(`Subagent ${r.out} started in the background. Its answer will arrive as a <slcode-message from="${r.out}" kind="result">. Do not poll for it; continue with other work.`)
+          ? text(`Subagent ${r.out} started in the background. Its answer will arrive as a <slcode-message from="${r.out}" kind="result">. Do not poll for it; continue with other work.${worktreeNote(r.out, r.err)}`)
           : text(r.err || `slcode exited with ${r.code}`, true);
         return answered(id || '?', r);
       } finally { signal?.removeEventListener('abort', onAbort); }
