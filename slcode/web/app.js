@@ -334,9 +334,11 @@ export function mountAgentFront(root, transport, opts = {}) {
   // 팀원 세션 (ticket slcode-team-agent, 사용자 2026-11-08) — kidAsks: 리더의 입력창 위 "팀원" 승인 줄, lockOver: 입력 제어 중인 팀원의 흐린 입력 상자 위 자물쇠 (paintLock·paintKids).
   // kidAsks 는 composer 밖(dock 위)에 둔다 — 리더 자신의 승인 카드가 composer 를 가려도 남는다
   const kidAsks = h('div', { class: 'kid-asks', hidden: '' });
+  // 실행 중 줄 (ticket slcode-running-agents-above-input, 사용자 2026-11-11) — 사이드바 "에이전트 N" 절의 요약. 사이드바를 닫아도 입력 상자 바로 위(큐 아래)에 남는다. 승인 카드가 입력창 자리에 뜨면 같이 가려진다
+  const runLine = h('div', { class: 'runline', hidden: '' });
   const lockOver = h('div', { class: 'lockover', hidden: '' });
   const box = h('div', { class: 'box' }, inputHint, chips, input, h('div', { class: 'row' }, addBtn, modeBtn, modeMenu, h('span', { class: 'gap' }), modelBtn, modelMenu, stopBtn, sendBtn), slashMenu, filePick, lockOver);
-  const composer = h('div', { class: 'composer' }, queueTray, box, stat);
+  const composer = h('div', { class: 'composer' }, queueTray, runLine, box, stat);
   const side = h('aside', { class: 'side' });
   const dock = h('div', { class: 'dock' });
   // 실행 중 표시 — 피드 맨 끝(내 요청 바로 아래)에 한 줄: 맥동 점 · 지금 하는 일 · 경과. state 가 running 일 때만, 새 항목이 와도 늘 마지막 (사용자 2026-09-30)
@@ -878,7 +880,8 @@ export function mountAgentFront(root, transport, opts = {}) {
         break;
       }
       // 종료 줄은 꺼진 동안만 — 기록을 다시 그릴 땐 빼고, 세션이 다시 살아나면(setState) 지운다 (사용자 2026-10-11)
-      case 'session.exit': endText(); if (live) exitNote = push(h('div', { class: 'meta' }, `세션 종료: ${ev.reason}`)); break;
+      // 벤더가 끝나면 서브에이전트도 같이 끝난다 — ended 가 오지 않으므로 여기서 비운다 (서버 historyPage 와 같은 규칙)
+      case 'session.exit': endText(); tasks.clear(); if (!replaying) renderSide(); if (live) exitNote = push(h('div', { class: 'meta' }, `세션 종료: ${ev.reason}`)); break;
       case 'turn.rewound': {
         endText();
         if (ev.conversation) { // 코드만 되돌리면 대화는 그대로다 — 벤더 쪽 대화도 남아 있다 (Claude Code 실측 2026-11-03)
@@ -1144,7 +1147,9 @@ export function mountAgentFront(root, transport, opts = {}) {
     canSend(); paintHero();
   }
   // 리더: 팀원의 대기 승인 (사용자 결정 3) — 입력창 위에 "팀원 <이름>" 한 줄씩. 도구 승인은 여기서 [허용]·[거부], 질문은 부모 모델이 답하므로 [열기] 만
+  let kids = []; // session.children — 실행 중 줄·사이드바가 작업 중인 팀원을 센다 (옛 core 의 ChildView 엔 state 가 없다)
   function paintKids(list) {
+    kids = list ?? []; renderSide();
     const rows = [];
     for (const k of list ?? []) for (const req of k.pending) {
       const isQ = req.name === 'AskUserQuestion';
@@ -1174,8 +1179,24 @@ export function mountAgentFront(root, transport, opts = {}) {
     push(h('div', { class: 'meta err fam-refused' }, me ? `꺼진 세션입니다: ${famName(me)}` : `이 화면에서 열 수 없는 세션입니다: ${id}`, ' ', main ? famGo(main, 'fam-back', `메인 세션 열기 (${famName(main)})`) : null));
   }
 
+  // ---- 실행 중 줄 (ticket slcode-running-agents-above-input) — 벤더 서브에이전트(tasks)와 작업 중인 팀원(session.children 의 state)을 센다
+  const workingKids = () => kids.filter((k) => k.state && k.state !== 'idle' && k.state !== 'exited');
+  const goTask = (card) => { card.open = true; card.scrollIntoView({ block: 'center' }); };
+  // 한 줄 요약 — 누르면 그 위로 항목 목록이 펼쳐지고, 항목은 피드의 그 카드나 팀원 세션으로 간다 (사용자 2026-11-11, 후보 A). 사이드바가 열려 있어도 보인다
+  let runOpen = false;
+  function paintRunning() {
+    const mates = workingKids(), n = tasks.size + mates.length;
+    runLine.hidden = !n;
+    if (!n) { runOpen = false; runLine.replaceChildren(); return; }
+    const sumText = `${[tasks.size ? `에이전트 ${tasks.size}` : null, mates.length ? `팀원 ${mates.length}` : null].filter(Boolean).join(' · ')} 실행 중`;
+    const rows = runOpen ? [h('div', { class: 'list' },
+      ...[...tasks.values()].map(({ card, ev }) => h('a', { class: 'it', onclick: () => goTask(card) }, h('span', { class: 'dot' }), h('span', { class: 'name' }, ev.agentType ?? 'task'), h('span', { class: 'desc' }, ev.description))),
+      ...mates.map((k) => famGo(k, 'it', h('span', { class: 'dot' }), h('span', { class: 'name' }, '팀원'), h('span', { class: 'desc' }, famName(k)))))] : [];
+    runLine.replaceChildren(...rows, h('button', { class: `sum${runOpen ? ' open' : ''}`, onclick: () => { runOpen = !runOpen; paintRunning(); } }, h('span', { class: 'dot' }), h('span', {}, sumText), icon('chevron')));
+  }
+
   function renderSide() {
-    renderStat(); // 남은 시간도 사이드바를 다시 그릴 때 같이 다시 잰다
+    renderStat(); paintRunning(); // 남은 시간도 사이드바를 다시 그릴 때 같이 다시 잰다
     side.innerHTML = '';
     // claude 상태줄과 같은 줄거리 중 💻모델 (폴더·repo·리밋·context·비용은 작성창 아래). 값은 SDK 가 주는 때(attach·turn.end)만 갱신 (사용자 2026-09-30)
     const row = (name, ...kids) => h('div', { class: 'row' }, icon(name), ...kids);
@@ -1190,13 +1211,15 @@ export function mountAgentFront(root, transport, opts = {}) {
     };
     // 활동 기록 — 모델 줄 아래, 기본으로 펼친다 (ticket slcode-activity-state). 칸 안은 activity.js 가 따로 다시 그린다
     side.append(sec('activity', '활동 기록', act.body, act.more));
-    if (tasks.size) side.append(h('div', { class: 'tasks' }, h('h4', {}, `에이전트 ${tasks.size}`), ...[...tasks.values()].map(({ card, ev }) => {
+    const mates = workingKids();
+    if (tasks.size || mates.length) side.append(h('div', { class: 'tasks' }, h('h4', {}, `에이전트 ${tasks.size + mates.length}`), ...[...tasks.values()].map(({ card, ev }) => {
       const u = ev.usage;
-      return h('a', { onclick: () => { card.open = true; card.scrollIntoView({ block: 'center' }); } },
+      return h('a', { onclick: () => goTask(card) },
         h('span', { class: 'dot' }), h('span', { class: 'name' }, ev.agentType ?? 'task'), h('span', { class: 'desc' }, ev.description),
         h('span', { class: 'dim' }, [u ? `${(u.durationMs / 1000).toFixed(0)}s · ${fmtTok(u.tokens)}` : null, ev.lastTool].filter(Boolean).join(' · ')),
         ev.summary ? h('span', { class: 'sum' }, ev.summary) : null);
-    })));
+    }), ...mates.map((k) => famGo(k, '', h('span', { class: 'dot' }), h('span', { class: 'name' }, '팀원'), h('span', { class: 'desc' }, famName(k)),
+      k.pending.length ? h('span', { class: 'dim' }, '승인 대기') : null))));
     side.append(sec('session', '세션', kv([
       ['상태', STATE_LABEL[info?.state] ?? ''], ['id', current ? h('span', { class: 'idv' }, current, iconBtn('copy', '세션 id 복사', copyOf(current))) : null],['벤더 세션', info?.vendorSessionId ?? ready?.vendorSessionId], ['권한 모드', modeName(info?.permissionMode ?? ready?.permissionMode)],
       ['연결', connected ? '연결됨' : '끊김'], ['raw', info?.raw ? '켬' : '끔'],

@@ -376,8 +376,8 @@ export type Methods = {
   /** 팀원 화면의 자물쇠 → 확인 — 입력 제어·출력 수신·질문 수신을 끊는다 (일방향, 되돌리는 메서드는 없다). 리더에게 kind=unlocked 로 알린다 */
   'session.unlock': { params: { id: string }; result: { ok: true } };
 };
-/** 리더 화면에 보이는 팀원 하나 (children.ts) */
-export type ChildView = { id: string; title: string | null; pending: ApprovalRequest[] };
+/** 리더 화면에 보이는 팀원 하나 (children.ts). state 는 팀원 세션의 지금 상태 — 리더 입력창 위 "실행 중" 줄이 센다 */
+export type ChildView = { id: string; title: string | null; state: SessionState; pending: ApprovalRequest[] };
 
 export type MethodName = keyof Methods;
 

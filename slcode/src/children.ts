@@ -7,7 +7,7 @@ import { connectSession, BUILD, PKG, type RpcClient } from './client.js';
 import { spawnCore, sockAlive } from './live.js';
 import { EventLog } from './eventLog.js';
 import { sessionMeta } from './mail.js';
-import { CoreError, ERR, TEAM_PRESETS, type ApprovalRequest, type ChildView, type LoggedEvent, type Methods, type TeamOptions } from './protocol.js';
+import { CoreError, ERR, TEAM_PRESETS, type ApprovalRequest, type ChildView, type LoggedEvent, type Methods, type SessionState, type TeamOptions } from './protocol.js';
 import type { SessionMeta } from './eventLog.js';
 import type { CoreOptions } from './core.js';
 import { removeWorktree, worktreeLoss } from './worktree.js';
@@ -19,7 +19,7 @@ const CLEAN_WAIT_MS = 5000;
 /** 답하면 닫힘 팀원이 스스로 닫힐 때의 사유 — 리더는 끝남 알림(kind=closed)을 보내지 않는다 */
 export const ANSWERED = 'answered';
 
-type Kid = { id: string; sock: string; conn: RpcClient; pending: Map<string, ApprovalRequest>; closing: boolean };
+type Kid = { id: string; sock: string; conn: RpcClient; state: SessionState; pending: Map<string, ApprovalRequest>; closing: boolean };
 
 /** 세션의 관여 옵션 — 팀원이 아니면 null. meta.team 없는 옛 실험 자식(slcode-subagent-sessions, 기본 꺼짐이라 쓴 사람이 없다)은 보통 세션으로 본다 */
 export function teamOf(meta: Pick<SessionMeta, 'team'> | null | undefined): TeamOptions | null {
@@ -102,7 +102,7 @@ export class Children {
       r = await conn.request('session.attach', { id, since: Number.MAX_SAFE_INTEGER });
     } catch (e) { conn.close(); throw e; }
     const old = this.kids.get(id);
-    const kid: Kid = { id, sock, conn, pending: new Map(r.pending.map((p) => [p.requestId, p])), closing: old?.closing ?? false };
+    const kid: Kid = { id, sock, conn, state: r.info.state, pending: new Map(r.pending.map((p) => [p.requestId, p])), closing: old?.closing ?? false };
     this.kids.set(id, kid);
     this.hook(kid);
     this.o.changed();
@@ -122,7 +122,8 @@ export class Children {
       else if (m.event === 'session.closed') reason = String((m.params as { reason?: unknown }).reason ?? reason);
       else if (m.event === 'session.event') {
         const ev = (m.params as LoggedEvent).ev;
-        if (ev.kind === 'approval.requested') { const { kind: _k, ...req } = ev; kid.pending.set(ev.requestId, req); this.o.changed(); }
+        if (ev.kind === 'session.state') { if (kid.state !== ev.state) { kid.state = ev.state; this.o.changed(); } } // 리더 화면의 "실행 중" 줄 (ticket slcode-running-agents-above-input)
+        else if (ev.kind === 'approval.requested') { const { kind: _k, ...req } = ev; kid.pending.set(ev.requestId, req); this.o.changed(); }
         else if (ev.kind === 'approval.resolved' && kid.pending.delete(ev.requestId)) this.o.changed();
       } else if (m.event === 'session.changed') this.o.changed(); // 제목
     });
@@ -159,7 +160,7 @@ export class Children {
   has(id: unknown): boolean { return typeof id === 'string' && this.kids.has(id); }
 
   list(): ChildView[] {
-    return [...this.kids.values()].map((k) => ({ id: k.id, title: sessionMeta(this.o.sessionsDir, k.id)?.title ?? null, pending: [...k.pending.values()] }));
+    return [...this.kids.values()].map((k) => ({ id: k.id, title: sessionMeta(this.o.sessionsDir, k.id)?.title ?? null, state: k.state, pending: [...k.pending.values()] }));
   }
 
   /** 리더가 닫힌다 — 수명 연동 팀원은 닫고(사용자 결정 4-1, 닫기 요청만 보내고 기다리지 않는다) 나머지는 연결만 놓는다 */

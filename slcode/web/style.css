@@ -956,3 +956,16 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .kid-ask .kind { font-weight: 600; }
 .acf .kid-ask .who { white-space: nowrap; }
 .acf .kid-ask .what { color: var(--acf-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; font-family: var(--acf-mono, monospace); }
+/* 실행 중 줄 (ticket slcode-running-agents-above-input) — 입력 상자 바로 위, 사이드바 "에이전트 N" 절의 요약. 누르면 그 위로 목록이 펼쳐진다 */
+.acf .composer > .runline { max-width: 780px; margin: 0 auto 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--acf-muted); min-width: 0; }
+.acf .composer > .runline[hidden] { display: none; }
+.acf .runline .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--acf-accent); animation: acf-blink 1s steps(2) infinite; flex: none; }
+.acf .runline button.sum { display: inline-flex; align-items: center; gap: 7px; background: none; border: 0; padding: 3px 6px; border-radius: 8px; color: inherit; font: inherit; cursor: pointer; }
+.acf .runline button.sum:hover { background: var(--acf-soft); color: var(--acf-fg); }
+.acf .runline button.sum svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; transform: rotate(180deg); }
+.acf .runline button.sum.open svg { transform: none; }
+.acf .runline .list { flex-basis: 100%; display: flex; flex-direction: column; gap: 2px; padding: 4px; border: 1px solid var(--acf-line); border-radius: 10px; background: var(--acf-panel); }
+.acf .runline a.it { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 7px; color: var(--acf-fg); text-decoration: none; cursor: pointer; min-width: 0; }
+.acf .runline a.it:hover { background: var(--acf-soft); }
+.acf .runline a.it .name { font-weight: 600; white-space: nowrap; }
+.acf .runline a.it .desc { color: var(--acf-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }

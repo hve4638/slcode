@@ -245,8 +245,11 @@ test('subagent 팀원의 도구 승인은 리더 화면(session.children·childA
   const req = view.pending[0];
   assert.ok(events.length, 'session.children 방송');
   await expectCode(pc.request('session.childCall', { id: lid, child: kid, method: 'session.approve', params: { requestId: req.requestId, decision: 'allow' } }), 'bad_request');
+  assert.notEqual(view.state, 'idle', '승인을 기다리는 팀원은 실행 중으로 센다 (리더 입력창 위 줄)');
   assert.deepEqual(await pc.request('session.childApprove', { id: lid, child: kid, requestId: req.requestId, decision: 'deny' }), { ok: true });
   await until(async () => !(await pc.request('session.children', { id: lid })).children.find((k) => k.id === kid)?.pending.length);
+  // 턴이 끝나면 state 가 idle 로 바뀌고 방송된다
+  await until(() => events.some((e) => { const p = JSON.parse(e); return p.children.some((k: { id: string; state: string }) => k.id === kid && k.state === 'idle'); }));
   // 리더가 닫기를 청하지 않고 팀원이 끝나면 리더가 kind=closed 를 받는다
   const kc = await connectSession(sockOf(dir, kid));
   await kc.request('session.close', { id: kid });
