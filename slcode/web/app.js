@@ -467,10 +467,14 @@ export function mountAgentFront(root, transport, opts = {}) {
     if (rawMode) t.replaceChildren(h('pre', { class: 'rawtext' }, text)); else t.innerHTML = renderMarkdown(text, info?.cwd ?? ready?.cwd);
     if (t._acts) t.append(t._acts);
   }
-  function toggleRaw() {
+  // 누른 버튼은 다시 그린 뒤에도 화면의 같은 높이에 남는다 (사용자 2026-11-10) — 위아래 응답의 길이가 바뀐 만큼 스크롤을 옮긴다
+  function toggleRaw(e) {
+    const b0 = e.currentTarget, y0 = b0.getBoundingClientRect().top;
     rawMode = !rawMode; el.classList.toggle('rawmode', rawMode);
     for (const t of el.querySelectorAll('.assistant')) if (t._text != null) paintText(t, t._text);
     for (const b of el.querySelectorAll('.acts .rawbtn')) { b.title = rawTitle(); b.setAttribute('aria-label', rawTitle()); b.setAttribute('aria-pressed', rawMode); }
+    jump(feed.scrollTop + b0.getBoundingClientRect().top - y0);
+    follow = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 80; paintJump();
   }
   function rawBtn() { const b = iconBtn('raw', rawTitle(), toggleRaw); b.classList.add('rawbtn'); b.setAttribute('aria-pressed', rawMode); return b; }
   // 훅 실행 하나 — 아무 일도 안 했으면 흔적 없음. 알림(message)은 대상 아래 제 줄(응답처럼), 추가 컨텍스트는 대상 아래 '겹 +N'(누르면 펼침),
