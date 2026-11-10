@@ -122,6 +122,8 @@ export function mount(el, ctx) {
     if (flat.on && c.web) { location.reload(); return; }
     el.innerHTML = '';
     c.io?.disconnect(); c.frame = null;
+    // 머리줄은 renderFlat 이 다시 알린다. 다시 읽은 문서에도 superlite 는 옛 값을 들고 있어 그리기마다 먼저 지운다
+    c.inset?.disconnect(); c.inset = null; void ctx.setTopInset?.(0);
     const wrap = document.createElement('div');
     wrap.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;background:var(--vscode-editor-background,#1e1e1e);color:var(--vscode-foreground,#ccc)';
     if (c.pick && !c.id) renderPicker(wrap);
@@ -218,6 +220,12 @@ export function mount(el, ctx) {
       wrap.appendChild(root);
       mountCard(root, openPort(), ui, { host: flatHost, reload: () => location.reload() }); // serve 가 바뀌었다 — 새 문서가 새 화면 파일을 받는다
       if (c.conn) c.port.postMessage({ status: { connected: true } });
+      // 머리줄 높이를 superlite 에 알려 카드 알림·떠 있는 창이 그 아래에 뜨게 한다 (ticket slcode-card-top-inset). 0.21.0 이하 superlite 에는 setTopInset 이 없다
+      const hdr = root.querySelector('.acf > .hdr');
+      if (hdr) {
+        const report = () => void ctx.setTopInset?.(hdr.offsetHeight);
+        c.inset = new ResizeObserver(report); c.inset.observe(hdr, { box: 'border-box' }); report(); // 알리는 값(offsetHeight)이 padding·border 를 넣은 높이라 그 상자를 본다
+      }
       // 카드가 보이게 되면 입력창으로 — 숨은 뒤에 도는 예약은 건너뛴다
       const focusIn = () => requestAnimationFrame(() => { if (root.getClientRects().length) window.postMessage({ type: 'slcode.focus' }, '*'); });
       c.io = new IntersectionObserver((es) => { if (es[0].isIntersecting) focusIn(); });
