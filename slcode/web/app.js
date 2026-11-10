@@ -1587,18 +1587,25 @@ export function mountAgentFront(root, transport, opts = {}) {
   // 답변 속 링크·이미지(data-open, ticket slcode-append-system-prompt). superlite 카드면 링크는 superlite 가 연다 — 웹 주소는 URL 탭, 파일은 에디터
   // (main.js 의 open 동사). 브라우저로 연 웹은 그대로 새 탭. 이미지는 어디서든 보기 화면으로 (ChatGPT 꼴, 사용자 2026-10-17)
   const inCard = window.parent !== window;
-  const openLink = (a) => { if (inCard) hostPost({ type: 'slcode.open', target: a.dataset.open }); else window.open(a.href, '_blank', 'noopener'); };
+  // 로컬 파일은 serve 가 실제로 있는 경로를 고른다 — 이름에 든 # 과 줄 번호 꼬리 (file.resolve, ticket slcode-link-hash-in-filename). 웹의 file?path= 는 serve 가 스스로 고른다
+  const local = (t) => !/^https?:/.test(t);
+  const realPath = (p) => rpc('file.resolve', { path: p }).then((r) => r.path ?? p, () => p);
+  const openLink = async (a) => {
+    if (!inCard) { window.open(a.href, '_blank', 'noopener'); return; }
+    const t = a.dataset.open;
+    hostPost({ type: 'slcode.open', target: local(t) ? await realPath(t) : t });
+  };
   // 다운로드 — 카드의 로컬 파일은 superlite download 동사(Download 뷰 대기열, 앱 웹뷰에선 브라우저 다운로드가 안 될 수 있다). 그 밖은 브라우저 다운로드:
   // 로컬 파일은 같은 출처라 바로, 웹 이미지는 받아서 — 그 사이트가 막으면(CORS) 링크처럼 연다
   async function download(a) {
-    const target = a.dataset.open, local = !/^https?:/.test(target);
-    if (local && inCard) { hostPost({ type: 'slcode.download', target }); return; }
+    const target = a.dataset.open, real = local(target) ? await realPath(target) : null;
+    if (real && inCard) { hostPost({ type: 'slcode.download', target: real }); return; }
     let url = a.href, blob = null;
-    if (!local) {
+    if (!real) {
       try { const r = await fetch(url); if (r.ok) url = blob = URL.createObjectURL(await r.blob()); } catch {}
       if (!blob) { openLink(a); return; }
     }
-    const d = h('a', { href: url, download: target.split(/[\\/]/).pop().split(/[?#]/)[0] || 'image' });
+    const d = h('a', { href: url, download: (real ?? target.split(/[?#]/)[0]).split(/[\\/]/).pop() || 'image' });
     document.body.append(d); d.click(); d.remove();
     if (blob) setTimeout(() => URL.revokeObjectURL(blob), 1000);
   }
@@ -1614,7 +1621,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     if (img) { e.preventDefault(); viewing = a; viewImg.src = img.src; viewImg.alt = img.alt; viewer.showModal(); return; }
     if (inCard) { e.preventDefault(); openLink(a); }
   });
-  // 링크 대상 팝오버 (ticket slcode-link-hover-target, 사용자 2026-11-09) — 0.3초 머물면 링크 위에 data-to(절대 경로·줄 번호, URL 전체)를 줄바꿈해 다 보인다, 위에 자리가 없으면 아래.
+  // 링크 대상 팝오버 (ticket slcode-link-hover-target, 사용자 2026-11-09) — 0.3초 머물면 링크 위에 data-open(적힌 그대로 푼 절대 경로, URL 전체)를 줄바꿈해 다 보인다, 위에 자리가 없으면 아래.
   // 카드에는 주소가 없어 상태 표시줄에도 안 뜬다. 보기만 해서 마우스를 받지 않는다. 누르거나 스크롤하면(따라가기 포함) 닫는다
   const tip = h('div', { class: 'linktip', popover: 'manual' });
   el.append(tip);
@@ -1622,13 +1629,13 @@ export function mountAgentFront(root, transport, opts = {}) {
   const hideTip = () => { clearTimeout(tipTimer); tipFor = null; if (tip.matches(':popover-open')) tip.hidePopover(); };
   const showTip = (a) => {
     if (!a.isConnected) return;
-    tip.textContent = a.dataset.to; tip.showPopover();
+    tip.textContent = a.dataset.open; tip.showPopover();
     const r = (a.querySelector('img') ?? a).getBoundingClientRect(), up = r.top - tip.offsetHeight - 6;
     tip.style.left = `${Math.min(Math.max(8, r.left), innerWidth - tip.offsetWidth - 8)}px`;
     tip.style.top = `${up >= 4 ? up : r.bottom + 6}px`;
   };
   el.addEventListener('mouseover', (e) => {
-    const a = e.target.closest?.('a[data-to]');
+    const a = e.target.closest?.('a[data-open]');
     if (a === tipFor) return;
     hideTip();
     if (a) { tipFor = a; tipTimer = setTimeout(() => showTip(a), 300); }

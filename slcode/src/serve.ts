@@ -37,7 +37,7 @@ const TYPES: Record<string, string> = {
 /** 화면 연결(웹·stdio)에서는 부를 수 없는 제어 메서드 — 소유권·웹 주소 등록(토큰이 붙은 url 을 돌려준다)·core 교체는 serve 의 제어 연결만 */
 const CONTROL_ONLY = new Set(['core.own', 'serve.register', 'core.retire']);
 /** serve 가 답하는 메서드 (ServeMethods) — core 로 넘기지 않는다 */
-const SERVE_METHODS = new Set(['settings.get', 'settings.set', 'serve.info', 'serve.sessions', 'update.run', 'serve.restart', 'start.back', 'inspect.usage', 'inspect.clean', 'web.files', 'file.get', 'serve.fork']);
+const SERVE_METHODS = new Set(['settings.get', 'settings.set', 'serve.info', 'serve.sessions', 'update.run', 'serve.restart', 'start.back', 'inspect.usage', 'inspect.clean', 'web.files', 'file.get', 'file.resolve', 'serve.fork']);
 /** 프레임의 요청·응답 id — 앞머리만 본다 (첨부가 실린 큰 프레임을 해석하지 않게). 화면·core 는 id 를 맨 앞에 쓴다 ({id, method, params}·{id, result}). 아니면 null */
 const idOf = (line: string): string | null => /^\{"id":(-?\d+|"(?:[^"\\]|\\.)*")[,}]/.exec(line)?.[1] ?? null;
 /** 인증 전 줄 세워 둘 수 있는 요청 수 — 인증 안 된 원격 클라이언트가 serve 메모리를 키우지 못하게 */
@@ -138,9 +138,17 @@ export function webFiles(web: Map<string, Buffer>, dir: string, kind: SettingsKi
   return { html: withPageAttrs(web.get('card.html')?.toString('utf8') ?? '', dir, kind), files };
 }
 
-/** 답변 속 로컬 파일 경로 → 실제 파일과 content-type. Codex 꼴 줄 번호(a.ts:12)는 그 경로가 없으면 떼고. 없으면 null */
+/** 답변 속 링크에 적힌 경로 → 실제로 있는 파일, 없으면 null (ticket slcode-link-hash-in-filename, 사용자 2026-11-11). 링크 대상은 파일 경로라 # 도 이름일 수 있다:
+ *  적힌 그대로를 먼저, 없으면 꼬리 — # 뒤(a.ts#L12, a.md#install)와 끝의 :줄(:열)(Codex 꼴 a.ts:12) — 를 뗀 후보를 긴 것부터 */
+function existingFile(want: string): string | null {
+  const bases = [want, ...[...want.matchAll(/#/g)].map((m) => want.slice(0, m.index)).reverse()];
+  const all = [...new Set(bases.flatMap((b) => [b, b.replace(/:\d+(:\d+)?$/, '')]))].sort((a, b) => b.length - a.length);
+  return all.find((c) => { try { return fs.statSync(c).isFile(); } catch { return false; } }) ?? null;
+}
+
+/** 답변 속 로컬 파일 경로 → 실제 파일(existingFile)과 content-type. 없으면 null */
 function localFile(want: string): { path: string; type: string } | null {
-  const p = [want, want.replace(/:\d+(:\d+)?$/, '')].find((c) => { try { return fs.statSync(c).isFile(); } catch { return false; } });
+  const p = existingFile(want);
   if (!p) return null;
   let type = TYPES[path.extname(p).toLowerCase()];
   if (!type) { // 소스·로그 같은 글은 브라우저에 보이게, 나머지는 내려받기
@@ -148,6 +156,12 @@ function localFile(want: string): { path: string; type: string } | null {
     try { type = head.subarray(0, fs.readSync(fd, head, 0, head.length, 0)).includes(0) ? 'application/octet-stream' : 'text/plain; charset=utf-8'; } finally { fs.closeSync(fd); }
   }
   return { path: p, type };
+}
+
+/** 카드 모드에서 링크를 열기 전에 (file.resolve) — superlite 의 open·download 동사는 다시 찾지 않아서 화면이 실제 경로를 물어 넘긴다. 없으면 path null */
+export function fileResolve(want: unknown): { path: string | null } {
+  if (typeof want !== 'string' || !path.isAbsolute(want)) throw new CoreError(ERR.badRequest, 'absolute path required');
+  return { path: existingFile(want) };
 }
 
 /** 카드 모드의 file (file.get) — 화면이 포트로 받아 blob 주소로 그린다. 범위는 fileHandler 와 같다 */
@@ -172,7 +186,7 @@ export function fileHandler(req: http.IncomingMessage, res: http.ServerResponse,
   if (token !== null && u.searchParams.get('token') !== token) { end(401, 'unauthorized'); return true; }
   const want = u.searchParams.get('path') ?? '';
   if (!path.isAbsolute(want)) { end(400, 'absolute path required'); return true; }
-  // Codex 는 파일 링크에 줄 번호를 붙인다 ([a.ts:12](/abs/a.ts:12)) — 그 경로가 없으면 떼고 다시
+  // 에이전트는 줄 번호를 붙인다 ([a.ts:12](/abs/a.ts:12), [a.ts](/abs/a.ts#L12)) — 그 경로가 없으면 떼고 다시 (existingFile)
   const f = localFile(want);
   if (!f) { end(404, 'not found'); return true; }
   const { path: p, type } = f;
@@ -354,6 +368,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
         }
         case 'web.files': return webFiles(web, P.dir, kind);
         case 'file.get': return fileGet((m.params as { path?: unknown } | undefined)?.path);
+        case 'file.resolve': return fileResolve((m.params as { path?: unknown } | undefined)?.path);
         case 'serve.restart':
           if (!opts.onRestart) throw new CoreError(ERR.badRequest, 'this serve cannot restart itself');
           await opts.onRestart();

@@ -397,6 +397,9 @@ test('로컬 파일(file?path=): 읽을 수 있는 절대 경로를 형식·sand
   assert.deepEqual([...new Uint8Array(await r.arrayBuffer())], [0x89, 0x50, 0x4e, 0x47]);
   r = await get(path.join(root, 'a.ts') + ':12');
   assert.equal(r.status, 200, '줄 번호를 떼고 다시'); assert.equal(r.headers.get('content-type'), 'text/plain; charset=utf-8'); assert.equal(await r.text(), 'const x = 1;\n');
+  assert.equal(await (await get(path.join(root, 'a.ts') + '#L12')).text(), 'const x = 1;\n', '# 뒤를 떼고 다시 (ticket slcode-link-hash-in-filename)');
+  fs.writeFileSync(path.join(root, 'r #7.md'), 'seven');
+  assert.equal(await (await get(path.join(root, 'r #7.md'))).text(), 'seven', '이름에 든 # 은 그대로');
   assert.equal((await get(path.join(root, 'b.bin'))).headers.get('content-type'), 'application/octet-stream');
   assert.equal((await get(path.join(root, 'none.png'))).status, 404);
   assert.equal((await get(root)).status, 404, '폴더는 아니다');

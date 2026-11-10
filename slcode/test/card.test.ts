@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { fileGet, loadWeb, webFiles } from '../src/serve.ts';
+import { fileGet, fileResolve, loadWeb, webFiles } from '../src/serve.ts';
 import { startPageHtml } from '../src/startPage.ts';
 import { VERSION } from '../src/client.ts';
 
@@ -48,6 +48,21 @@ test('file.get: 절대 경로만, 줄 번호 꼬리는 없으면 떼고, 본문�
   assert.equal(fileGet(path.join(d, 'b.ts:12')).mediaType, 'text/plain; charset=utf-8', 'Codex 꼴 a.ts:12');
   assert.throws(() => fileGet('rel/a.png'), /absolute path required/);
   assert.throws(() => fileGet(path.join(d, 'none.png')), /not found/);
+});
+
+test('file.resolve: 적힌 그대로 먼저, 없으면 # 뒤·끝의 :줄(:열) 을 뗀 것을 긴 것부터, 없으면 null (ticket slcode-link-hash-in-filename)', () => {
+  const d = tmp('slcode-card-');
+  for (const f of ['Report #7.md', 'Report ', 'a.ts', 'b.md']) fs.writeFileSync(path.join(d, f), 'x');
+  const r = (p: string) => fileResolve(path.join(d, p)).path;
+  assert.equal(r('Report #7.md'), path.join(d, 'Report #7.md'), '이름에 # 이 든 파일 — 뗀 것(Report )도 있지만 적힌 그대로가 먼저');
+  assert.equal(r('Report #7.md#L3'), path.join(d, 'Report #7.md'), '마지막 # 뒤만 뗀 것이 더 길다');
+  assert.equal(r('Report #7.md:12'), path.join(d, 'Report #7.md'));
+  assert.equal(r('a.ts#L12-L30'), path.join(d, 'a.ts'));
+  assert.equal(r('a.ts:12:3'), path.join(d, 'a.ts'));
+  assert.equal(r('b.md#install'), path.join(d, 'b.md'), '문서 앵커');
+  assert.equal(r('none#x'), null);
+  assert.equal(fileResolve(d).path, null, '폴더는 아니다');
+  assert.throws(() => fileResolve('rel/a.ts'), /absolute path required/);
 });
 
 test('--stdio 카드 서비스: web.files·file.get 을 serve 가 답하고, 창 표가 붙은 문자열 id 를 그대로 돌려준다', async (t) => {

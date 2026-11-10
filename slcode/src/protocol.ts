@@ -406,8 +406,10 @@ export type ServeMethods = {
   /** 카드 모드 화면 파일 (ticket slcode-card-svc-token-dead) — superlite 플러그인이 받아 카드 문서에 그린다(card.js, 옛 플러그인은 card.html 을 sandbox iframe 에). html 은 card.html
    *  (index.html 처럼 data-theme·version·build·kind 를 넣은), files 는 web/ 의 .js·.css 전부 (상대 경로 → 내용) */
   'web.files': { params: Record<string, never>; result: { html: string; files: Record<string, string> } };
-  /** 카드 모드의 로컬 파일 — 웹의 file?path= 와 같은 범위(절대 경로, 줄 번호 꼬리는 없으면 뗀다). 본문은 base64, 32MB 까지 */
+  /** 카드 모드의 로컬 파일 — 웹의 file?path= 와 같은 범위(절대 경로, 적힌 그대로 없으면 # 뒤·줄 번호 꼬리를 뗀다). 본문은 base64, 32MB 까지 */
   'file.get': { params: { path: string }; result: { mediaType: string; size: number; data: string } };
+  /** 카드 모드에서 링크를 열기 전에 — file.get 과 같은 규칙으로 찾은 실제 파일 경로, 없으면 null. superlite 의 open·download 동사에 이 경로를 넘긴다 (ticket slcode-link-hash-in-filename) */
+  'file.resolve': { params: { path: string }; result: { path: string | null } };
 };
 
 /** 새 버전 확인 결과 — restart-required 면 새 것의 version·build, failed 면 reason */
