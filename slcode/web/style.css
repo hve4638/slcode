@@ -172,7 +172,7 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .acts button { padding: 1px 7px; font-size: 12px; }
 .acf .acts button.ico { width: 24px; height: 24px; padding: 0; border: 0; background: transparent; color: var(--acf-muted); border-radius: 6px; display: grid; place-items: center; }
 .acf .acts button.ico:hover { background: var(--acf-soft); color: var(--acf-fg); }
-.acf .acts button.ico.on { background: var(--acf-soft); color: var(--acf-fg); } /* 켠 원문 보기 */
+.acf.rawmode .acts button.rawbtn { background: var(--acf-soft); color: var(--acf-fg); } /* 켠 원문 보기 */
 .acf .acts button.ico svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .acf .acts .q { color: var(--acf-muted); margin-right: 4px; }
 .acf .user .acts { justify-content: flex-end; }
@@ -208,8 +208,8 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .assistant table { display: block; max-width: 100%; width: max-content; overflow-x: auto; border-collapse: collapse; margin: .7em 0; font-size: 14px; }
 .acf .assistant th, .acf .assistant td { border: 1px solid var(--acf-line); padding: 5px 10px; text-align: left; vertical-align: top; }
 .acf .assistant th { background: var(--acf-soft); font-weight: 600; }
-/* 원문 보기 — 모델이 보낸 글 그대로, 줄은 창 너비에서 접는다 */
-.acf .assistant pre.rawtext { margin: 0; padding: 0; background: none; border: 0; border-radius: 0; font: 13px/1.55 var(--acf-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+/* 원문 보기 — 모델이 보낸 글 그대로, 글꼴은 응답 본문 그대로 두고 줄은 창 너비에서 접는다 */
+.acf .assistant pre.rawtext { margin: 0; padding: 0; background: none; border: 0; border-radius: 0; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
 .acf .assistant.streaming::after { content: "▍"; color: var(--acf-muted); animation: acf-blink 1s steps(2) infinite; }
 @keyframes acf-blink { to { opacity: 0; } }
 

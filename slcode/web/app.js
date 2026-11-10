@@ -457,17 +457,22 @@ export function mountAgentFront(root, transport, opts = {}) {
   const toBottom = () => { follow = true; jump(feed.scrollHeight); paintJump(); };
   const atBottom = () => follow;
   function push(node, sc = main) { const stick = atBottom(); node.dataset.seq = curSeq; (sc.col ?? col).append(node); if (!busy.hidden && !replaying) placeBusy(); if (stick && !replaying) feed.scrollTop = feed.scrollHeight; return node; }
-  function endText(sc = main) { if (sc.textEl) { sc.textEl.classList.remove('streaming'); sc.textEl.append(sc.acts = acts(iconBtn('copy', '복사', copyOf(sc.textBuf)), rawBtn(sc.textEl, sc.textBuf))); } sc.textEl = null; sc.textBuf = ''; sc.thinkEl = null; sc.thinkBuf = ''; }
-  // 원문 보기 (ticket slcode-response-raw-toggle, 사용자 2026-11-09) — 그 글 덩어리만 마크다운으로 그리지 않은 모델의 글 그대로. 켠 상태는 다시 그리면(새로 고침·이어받기) 꺼진다
-  function rawBtn(el, text) {
-    const b = iconBtn('raw', '원문 보기', () => {
-      const row = b.parentNode, on = el.classList.toggle('raw');
-      if (on) el.replaceChildren(h('pre', { class: 'rawtext' }, text), row); else { el.innerHTML = renderMarkdown(text, info?.cwd ?? ready?.cwd); el.append(row); }
-      b.classList.toggle('on', on); b.title = on ? '마크다운으로 보기' : '원문 보기'; b.setAttribute('aria-pressed', on);
-    });
-    b.setAttribute('aria-pressed', false);
-    return b;
+  function endText(sc = main) { if (sc.textEl) { sc.textEl.classList.remove('streaming'); sc.textEl.append(sc.textEl._acts = sc.acts = acts(iconBtn('copy', '복사', copyOf(sc.textBuf)), rawBtn())); } sc.textEl = null; sc.textBuf = ''; sc.thinkEl = null; sc.thinkBuf = ''; }
+  // 원문 보기 (ticket slcode-response-raw-toggle, 사용자 2026-11-10) — 어느 응답의 버튼이든 이 채팅(화면 하나 = 세션 하나)의 모든 응답을 함께 바꾼다.
+  // 켜 둔 동안 새로 오는 응답도 원문으로 그린다. 글꼴은 그대로 두고 마크다운만 그리지 않는다. 다시 그리면(새로 고침·이어받기) 꺼진다
+  let rawMode = false;
+  const rawTitle = () => (rawMode ? '마크다운으로 보기' : '원문 보기');
+  function paintText(t, text) {
+    t._text = text;
+    if (rawMode) t.replaceChildren(h('pre', { class: 'rawtext' }, text)); else t.innerHTML = renderMarkdown(text, info?.cwd ?? ready?.cwd);
+    if (t._acts) t.append(t._acts);
   }
+  function toggleRaw() {
+    rawMode = !rawMode; el.classList.toggle('rawmode', rawMode);
+    for (const t of el.querySelectorAll('.assistant')) if (t._text != null) paintText(t, t._text);
+    for (const b of el.querySelectorAll('.acts .rawbtn')) { b.title = rawTitle(); b.setAttribute('aria-label', rawTitle()); b.setAttribute('aria-pressed', rawMode); }
+  }
+  function rawBtn() { const b = iconBtn('raw', rawTitle(), toggleRaw); b.classList.add('rawbtn'); b.setAttribute('aria-pressed', rawMode); return b; }
   // 훅 실행 하나 — 아무 일도 안 했으면 흔적 없음. 알림(message)은 대상 아래 제 줄(응답처럼), 추가 컨텍스트는 대상 아래 '겹 +N'(누르면 펼침),
   // 도구 훅의 block·ask·allow·updateInput 은 카드 표시 + 카드 안 사유, 실패·경고는 빨간 줄. 플러그인·이벤트·파일·시간은 title(호버)로만.
   // 대상: 도구 이벤트는 그 도구 카드, UserPromptSubmit·턴 안의 SessionStart(/clear) 는 이 턴의 내 요청, 나머지는 피드 끝 (Claude TUI 의 '⎿ … says:' 자리)
@@ -768,7 +773,7 @@ export function mountAgentFront(root, transport, opts = {}) {
         }
         sc.textBuf += ev.text;
         const stick = atBottom();
-        sc.textEl.innerHTML = renderMarkdown(sc.textBuf, info?.cwd ?? ready?.cwd);
+        paintText(sc.textEl, sc.textBuf);
         if (stick) feed.scrollTop = feed.scrollHeight;
         break;
       }
