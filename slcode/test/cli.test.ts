@@ -169,7 +169,6 @@ test('살아 있는 세션: new 는 동사 이름 폴더도 폴더로, resume �
   const b = start(dir, ['resume', meta.id, '--no-web']);
   assert.equal(await b.out, sock);
   b.child.kill('SIGINT'); assert.equal(await b.exit, 0);
-  await sleep(1500); // 우체국 grace
 });
 
 test('--stdio: 첫 줄은 hello JSON, 그 뒤 stdin 의 JSON 줄은 요청·stdout 은 응답 (UDS 와 같은 프레임)', async (t) => {
@@ -191,7 +190,6 @@ test('--stdio: 첫 줄은 hello JSON, 그 뒤 stdin 의 JSON 줄은 요청·stdo
   assert.equal(JSON.parse((await run(dir, ['status', 'stdio1', '--json'])).stdout).live, true);
   a.child.kill('SIGINT');
   assert.equal(await a.exit, 0);
-  await sleep(1500);
 });
 
 test('resume·continue (superlite 밖): 살아 있는 세션은 웹 주소, continue 는 살아 있는 세션을 빼고 최근 꺼진 세션, id 없는 resume 은 꺼진 순서 목록', async (t) => {
@@ -221,7 +219,6 @@ test('resume·continue (superlite 밖): 살아 있는 세션은 웹 주소, cont
   assert.match(await c.out, /aaaa0001/);
   c.child.kill('SIGINT'); assert.equal(await c.exit, 0);
   a.child.kill('SIGINT'); assert.equal(await a.exit, 0);
-  await sleep(1500); // 우체국 grace
 });
 
 test('close --force: 응답하는 세션은 정상 종료, 멈춘 세션(core 를 SIGSTOP)은 3초 뒤 core 를 kill 하고 closedAt 을 남긴다, 꺼진 세션은 exit 1', async (t) => {
@@ -248,7 +245,6 @@ test('close --force: 응답하는 세션은 정상 종료, 멈춘 세션(core �
   assert.ok(m.closedAt && Date.now() - m.closedAt < 10000, 'kill 한 세션도 꺼진 시각을 남긴다');
   const off = await run(dir, ['close', 'force2', '--force']);
   assert.equal(off.code, 1); assert.match(off.stderr, /is not live/);
-  await sleep(1500); // 우체국 grace
 });
 
 test('닫는 중에 온 두 번째 시그널은 같은 종료를 기다린다 — closedAt·session.exit 가 남는다 (superlite 서비스 중지는 SIGTERM 뒤 SIGHUP 이 한 번 더 온다)', async (t) => {
@@ -268,7 +264,6 @@ test('닫는 중에 온 두 번째 시그널은 같은 종료를 기다린다 �
   const log = EventLog.open(corePaths(dir).sessionsDir, m.id)!;
   assert.ok(log.meta.closedAt, '꺼진 시각');
   assert.ok(log.all.some((e) => e.ev.kind === 'session.exit'), '종료 이벤트');
-  await sleep(1500); // 우체국 grace
 });
 
 test('프로세스 그룹 SIGTERM 으로 닫힌 claude 세션은 종료만 남기고 오류(exit 143)를 남기지 않는다 — superlite 서비스 중지·터미널 Ctrl-C 의 꼴', async (t) => {
@@ -284,5 +279,4 @@ test('프로세스 그룹 SIGTERM 으로 닫힌 claude 세션은 종료만 남�
   const kinds = EventLog.open(corePaths(dir).sessionsDir, m.id)!.all.map((e) => e.ev.kind);
   assert.equal(kinds.filter((k) => k === 'session.exit').length, 1);
   assert.equal(kinds.filter((k) => k === 'error').length, 0);
-  await sleep(1500); // 우체국 grace
 });

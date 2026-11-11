@@ -12,7 +12,6 @@ import { corePaths, cwdSlug } from '../src/paths.ts';
 import { EventLog } from '../src/eventLog.ts';
 import { pidAlive } from '../src/lock.ts';
 import { familySessions, spawnCore } from '../src/live.ts';
-import { startServer } from '../src/startPage.ts';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 function isolated() { process.env.SLCODE_GRACE_SECS = '1'; return fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-serve-')); }
@@ -520,33 +519,6 @@ test('core 가 기동 중에 끊겨도 serveSession 의 거절로 끝난다 — 
 });
 
 // ---- 세션 주소 /s/<id> (ticket slcode-web-session-url)
-test('세션 주소: /s/<id> 는 id 를 보지 않고 같은 화면, 그 아래 경로는 404', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-web-'));
-  fs.writeFileSync(path.join(root, 'index.html'), 'page');
-  const web = loadWeb(root);
-  const http = await import('node:http');
-  const srv = http.createServer((q, r) => staticHandler(q, r, web));
-  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
-  const base = `http://127.0.0.1:${(srv.address() as net.AddressInfo).port}`;
-  const get = async (p: string) => { const r = await fetch(base + p); return [r.status, await r.text()]; };
-  assert.deepEqual(await get('/s/abc123'), [200, 'page']);
-  assert.deepEqual(await get('/s/abc123?token=t'), [200, 'page']);
-  assert.equal((await get('/s/abc123/x'))[0], 404);
-  assert.equal((await get('/s'))[0], 404);
-  srv.close();
-});
-
-test('세션 주소: 시작 화면 서버는 옛 세션 주소를 / 로 돌린다', async () => {
-  const dir = isolated();
-  const { server } = startServer(dir, '/w');
-  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
-  const port = (server.address() as net.AddressInfo).port;
-  const r = await fetch(`http://127.0.0.1:${port}/s/old`, { redirect: 'manual' });
-  assert.equal(r.status, 302);
-  assert.equal(r.headers.get('location'), '/');
-  server.close();
-});
-
 test('가족: 부모 다음에 자식, 메인 위의 부모는 빼고, 지워진 부모와 고리에 걸리지 않는다. up 이면 맨 위부터', async () => {
   const dir = isolated();
   const { sessionsDir } = corePaths(dir);

@@ -53,6 +53,8 @@ test('claude: 첫 프롬프트 전의 id 는 남기지 않는다, 기록이 없�
   const { connectSession, PKG } = await import('../src/client.ts');
   const stored = (id: string) => EventLog.open(corePaths(dir).sessionsDir, id)!;
   const since = (id: string, seq: number) => stored(id).since(seq).map((e) => e.ev);
+  /** SessionStart 훅이 돌고 그 응답까지 기록됐다 — 첫 프롬프트 전의 id 가 남을 수 있는 때가 지났다 */
+  const hooked = async (id: string) => { for (const t0 = Date.now(); !since(id, 0).some((e) => e.kind === 'hook' && e.phase === 'response'); await sleep(50)) if (Date.now() - t0 > 15000) throw new Error(`no SessionStart hook in ${id}`); };
   const failed = (id: string, seq: number) => since(id, seq).filter((e) => e.kind === 'error' || e.kind === 'session.exit');
   const turn = async (h: { sock: string }, id: string, text: string) => {
     const c = await connectSession(h.sock);
@@ -69,7 +71,7 @@ test('claude: 첫 프롬프트 전의 id 는 남기지 않는다, 기록이 없�
     // 빈 세션 — 훅이 돌아도 남기지 않고, 다시 띄우면 닫히지 않고 첫 턴이 돈다
     let h = await open();
     const a = h.session.id;
-    await sleep(4000); // SessionStart 훅이 돌 시간
+    await hooked(a);
     assert.ok(since(a, 0).some((e) => e.kind === 'hook'), '훅이 돌았다');
     assert.equal(stored(a).meta.vendorSessionId, null);
     await h.close('test');
@@ -91,7 +93,7 @@ test('claude: 첫 프롬프트 전의 id 는 남기지 않는다, 기록이 없�
     // 빈 세션의 inspect 토글 — 같은 대화로 다시 띄우는 길(reopen)
     h = await open();
     const b = h.session.id;
-    await sleep(4000);
+    await hooked(b);
     { const c = await connectSession(h.sock); await c.request('session.attach', { id: b }); await c.request('session.setInspect', { id: b, on: true }); c.close(); }
     assert.equal((await turn(h, b, 'after-inspect')).ok, true);
     assert.deepEqual(failed(b, 0), []);
@@ -100,7 +102,7 @@ test('claude: 첫 프롬프트 전의 id 는 남기지 않는다, 기록이 없�
     // 업데이트 handoff(core 교체) — 새 core(dist/coreMain.js, 이 격리 env 를 물려받는다)가 같은 세션을 이어 띄운다
     h = await open();
     const d = h.session.id;
-    await sleep(4000);
+    await hooked(d);
     {
       const c = await connectSession(h.sock);
       await c.request('core.own', { pid: process.pid, follows: true });

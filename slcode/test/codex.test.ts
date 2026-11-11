@@ -17,6 +17,8 @@ import { addPlugin, setPlugin } from 'slcode-plugin/agentPlugins';
 
 const FAKE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-codex.mjs');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** 제한 시간 — unref 라 기다리던 일이 먼저 끝나면 파일이 끝나는 것을 붙잡지 않는다 */
+const deadline = (ms: number, msg: string) => new Promise<never>((_, j) => setTimeout(() => j(new Error(msg)), ms).unref());
 /** 그 세션의 n 번째 codex 기동이 끝날 때까지(로그에 session.ready 가 n 개) 기다려 그때의 로그를 준다. vendorSessionId 는 ready 보다 먼저 쓰인다.
  *  고정 sleep(300) 은 전체 테스트를 병렬로 돌리는 부하에서 모자라 단언이 실패했고, 닫지 못한 세션 때문에 파일이 끝나지 않고 멈췄다 */
 async function untilReady(dir: string, id: string, n: number): Promise<EventLog> {
@@ -44,7 +46,7 @@ test('codex: initialize→thread/start→turn/start, 델타·도구·승인(acce
   const turnEnd = new Promise<void>((r) => c.onEvent((m) => { if (m.event !== 'session.event') return; const ev = (m.params as any).ev; evs.push(ev); if (ev.kind === 'approval.requested') void c.request('session.approve', { id: h.session.id, requestId: ev.requestId, decision: 'allow', remember: true }); if (ev.kind === 'turn.end') ended = true; if (ended && ev.kind === 'session.state') r(); }));
   const att = await c.request('session.attach', { id: h.session.id });
   await c.request('session.send', { id: h.session.id, text: 'hello codex' });
-  await Promise.race([turnEnd, sleep(8000).then(() => { throw new Error('turn timeout'); })]);
+  await Promise.race([turnEnd, deadline(8000, 'turn timeout')]);
   // turn.start 앞은 attach 뒤에 도착한 기동 이벤트(ready·idle)뿐이어야 한다
   const early = evs.splice(0, evs.findIndex((e) => e.kind === 'turn.start'));
   assert.ok(early.every((e) => e.kind === 'session.ready' || e.kind === 'session.state'), String(early.map((e) => e.kind)));
@@ -111,7 +113,7 @@ test('codex: 인증 실패 턴 — 재시도 알림은 오류 줄로 남기지 �
     const evs: any[] = [];
     const turnEnd = new Promise<void>((r) => c.onEvent((m) => { if (m.event !== 'session.event') return; const ev = (m.params as any).ev; evs.push(ev); if (ev.kind === 'turn.end') r(); }));
     await c.request('session.send', { id: h.session.id, text: 'auth-fail' });
-    await Promise.race([turnEnd, sleep(8000).then(() => { throw new Error('turn timeout'); })]);
+    await Promise.race([turnEnd, deadline(8000, 'turn timeout')]);
     assert.deepEqual(evs.filter((e) => e.kind === 'error'), []);
     const end = evs.find((e) => e.kind === 'turn.end');
     assert.equal(end.ok, false); assert.equal(end.interrupted, false);
@@ -231,7 +233,7 @@ test('codex: 에이전트 플러그인 — thread 전에 skills/extraRoots/set, 
     const st = await c.request('session.plugins', { id: h.session.id });
     assert.notEqual(st.plugins[0].current, st.plugins[0].build, '다시 실을 것이 있다');
     assert.deepEqual(await c.request('session.reloadPlugins', { id: h.session.id }), { deferred: false });
-    const ev = await Promise.race([reloaded, sleep(5000).then(() => { throw new Error('no plugins.reloaded'); })]);
+    const ev = await Promise.race([reloaded, deadline(5000, 'no plugins.reloaded')]);
     assert.deepEqual(ev.later, []);
     got = fs.readFileSync(calls, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
     const roots = got.at(-1).extraRoots;
@@ -253,7 +255,7 @@ test('codex: auto 모드 = on-request + workspaceWrite + approvalsReviewer auto_
   const deltas: string[] = [];
   let ended: (() => void) | null = null;
   c.onEvent((m) => { if (m.event !== 'session.event') return; const ev = (m.params as any).ev; if (ev.kind === 'text.delta') deltas.push(ev.text); if (ev.kind === 'approval.requested') void c.request('session.approve', { id: h.session.id, requestId: ev.requestId, decision: 'allow' }); if (ev.kind === 'turn.end') ended?.(); });
-  const turn = async (text: string) => { const done = new Promise<void>((r) => (ended = r)); await c.request('session.send', { id: h.session.id, text }); await Promise.race([done, sleep(8000).then(() => { throw new Error('turn timeout'); })]); };
+  const turn = async (text: string) => { const done = new Promise<void>((r) => (ended = r)); await c.request('session.send', { id: h.session.id, text }); await Promise.race([done, deadline(8000, 'turn timeout')]); };
   await c.request('session.setMode', { id: h.session.id, mode: 'auto' });
   await turn('a');
   assert.ok(deltas.includes('policy=on-request reviewer=auto_review sandbox=workspaceWrite'), deltas.join(' | '));
@@ -302,7 +304,7 @@ test('codex: 비용은 가격표로 추정한 누계 — 표에 없는 모델은
   await c.request('session.setModel', { id: h.session.id, model: 'gpt-5.6-luna' });
   const turnEnd = new Promise<any>((r) => c.onEvent((m) => { if (m.event !== 'session.event') return; const ev = (m.params as any).ev; if (ev.kind === 'approval.requested') void c.request('session.approve', { id: h.session.id, requestId: ev.requestId, decision: 'allow' }); if (ev.kind === 'turn.end') r(ev); }));
   await c.request('session.send', { id: h.session.id, text: 'hi' });
-  const end = await Promise.race([turnEnd, sleep(8000).then(() => { throw new Error('turn timeout'); })]);
+  const end = await Promise.race([turnEnd, deadline(8000, 'turn timeout')]);
   // 첫 tokenUsage 는 last 만 센다 (total 엔 resume 이전 사용량이 있을 수 있다): 새 입력 400 × 0.2 + 캐시 50 × 0.02 + 출력 50 × 1.2 = 141 (/1M)
   assert.ok(Math.abs(end.costUsd - 141e-6) < 1e-12, String(end.costUsd));
   c.close();

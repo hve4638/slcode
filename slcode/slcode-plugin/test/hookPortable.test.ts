@@ -147,7 +147,7 @@ test('훅 명령 → 중간 프로세스: 상태 파일·모듈 변수가 세션
     o = await hook('claude', root, 'PreToolUse', { session_id: sid, tool_name: 'Edit', tool_input: { file_path: 'a' }, tool_use_id: 't7' }, env);
     assert.deepEqual(o, { systemMessage: 'edit Edit', hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: 'sure?' } });
     assert.deepEqual(await hook('claude', root, 'SessionEnd', { session_id: sid, reason: 'other' }, env), {});
-    await new Promise((r) => setTimeout(r, 3500));
+    for (const t0 = Date.now(); fs.existsSync(sock) && Date.now() - t0 < 5000;) await new Promise((r) => setTimeout(r, 50));
     assert.ok(!fs.existsSync(sock), 'SessionEnd 뒤 중간 프로세스가 끝나고 소켓을 지웠다');
   } finally { if (fs.existsSync(sock)) await hook('claude', root, 'SessionEnd', { session_id: sid, reason: 'other' }, env); }
 

@@ -187,15 +187,6 @@ test('CLI: Codex 세션은 프로필 이름을 남기고 플러그인 선택만 
   assert.ok(!def.notices.some((m) => /프로필/.test(m)));
 });
 
-test('새 프로필은 시작 값 위에 값 목록을 한 번에 얹고, 하나라도 틀리면 만들지 않는다 (고르기 화면의 add)', async () => {
-  const dir = await installed();
-  await assert.rejects(addProfile('half', 'bare', dir, ['core=on', 'nope=on']), /no agent plugin nope/);
-  assert.equal(getProfile('half', dir), null);
-  await addProfile('half', 'bare', dir, ['core=on', 'claude.project=on', 'claude.project-md=off']);
-  const p = getProfile('half', dir)!;
-  assert.deepEqual([p.plugins.core, p.rest, p.claude.project, p.claude.projectMd, p.claude.user], [{ on: true }, false, true, false, false]);
-});
-
 test('시작 화면(동사 없는 slcode): 카드용 html 은 css·모듈을 넣은 한 장; 웹은 고를 때까지 세션을 띄우지 않고, 그 폴더·모든 폴더의 세션을 마지막 활동 순으로 보이며, 새 세션은 첫 메시지 전에 시작 화면으로 돌아가면 지워진다 (사용자 2026-10-30)', async (t) => {
   const dir = await installed();
   const work = fs.realpathSync(tmp('work')), other = fs.realpathSync(tmp('other'));

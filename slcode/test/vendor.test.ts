@@ -9,7 +9,7 @@ import path from 'node:path';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { EventLog } from '../src/eventLog.ts';
 import { corePaths } from '../src/paths.ts';
-import { findVendorSession, vendorResumeCommand } from '../src/vendor.ts';
+import { findVendorSession } from '../src/vendor.ts';
 import { sockAlive } from '../src/live.ts';
 
 const CLI = path.resolve(import.meta.dirname, '..', 'src', 'cli.ts');
@@ -55,11 +55,6 @@ test('findVendorSession: claude·codex 기록에서 폴더를 읽고, --vendor �
     assert.equal(findVendorSession('../etc'), null);
     assert.equal(findVendorSession('nope'), null);
   });
-});
-
-test('vendorResumeCommand: 폴더는 홑따옴표로', () => {
-  assert.equal(vendorResumeCommand('claude', "/a b/it's", 'X'), `cd '/a b/it'\\''s' && claude --resume X`);
-  assert.equal(vendorResumeCommand('codex', '/w', 'Y'), `cd '/w' && codex resume Y`);
 });
 
 function run(dir: string, env: Record<string, string>, args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {

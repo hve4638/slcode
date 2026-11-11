@@ -76,7 +76,6 @@ test('동사 없는 slcode = 시작 화면 — 세션은 고르기 전엔 없고
     const r = await run(dir, ['--mode', m]);
     assert.equal(r.code, 2); assert.match(r.stderr, new RegExp(`unknown mode '${m}' \\(default\\|auto\\|bypassPermissions\\)`));
   }
-  await sleep(1500); // 우체국 grace
 });
 
 test('superlite 안: slcode 는 slcode.start 로 시작 화면 카드, slcode new 는 slcode.new 동사로 카드를 열고 끝난다 — 옵션 전달, 카드가 쓰지 않는 옵션은 경고', async () => {
@@ -133,7 +132,6 @@ test('superlite 안 폴백: --web·--stdio·동사 없음·연결 불가는 웹 
   const f = fakeShim('fail');
   const r = await run(dir, ['new', '.', '--no-web'], { cwd: work, env: f.env });
   assert.equal(r.code, 1); assert.match(r.stderr, /card failed/);
-  await sleep(1500);
 });
 
 /** 꺼진 세션 하나를 지어낸다 — 꺼진 시각은 closedAt, 없으면 updatedAt */
@@ -163,7 +161,6 @@ test('superlite 안: resume·continue 는 slcode.resume 동사로 카드 — con
   const old = fakeShim('unknown');
   const f = await serveOnce(dir, ['resume', 'old11111', '--no-web'], { env: old.env });
   assert.ok(f.first.endsWith('/sock'), f.first + f.err); assert.deepEqual(old.calls(), ['slcode.resume --id old11111']);
-  await sleep(1500);
 });
 
 test('--host·--port: superlite 안에서 --web 없이 주면 아무것도 열지 않는다; --no-web 과 함께면 오류', async () => {
@@ -202,7 +199,6 @@ test('superlite 안의 살아 있는 세션: resume 은 slcode.resume 로 그 �
   assert.equal(ls.code, 0, ls.stderr); assert.match(ls.stdout, /^old11111  /); assert.doesNotMatch(ls.stdout, new RegExp(id), '살아 있는 세션은 목록에 없다');
   assert.deepEqual(old.calls(), [`slcode.resume --id ${id}`, `slcode.resume --cwd ${work}`]);
   live.kill('SIGINT'); await exited;
-  await sleep(1500);
 });
 
 // ---- 카드 서비스의 기동 오류 (ticket slcode-sidebar-new-stuck) — stderr 는 카드에 닿지 않아 hello 전 오류를 stdout 프레임 {fatal} 로도 낸다

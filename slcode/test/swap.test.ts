@@ -100,7 +100,6 @@ test('웹: 턴이 승인 대기 중일 때 serve 를 바꿔도 같은 포트로 
   e.child.kill('SIGINT');
   assert.equal(await e.exit, 0);
   assert.ok(EventLog.open(corePaths(dir).sessionsDir, id)!.meta.closedAt, 'Ctrl-C 는 세션을 닫는다');
-  await sleep(1500); // 우체국 grace
 });
 
 test('웹: 교체 중이 아닐 때 serve 가 죽으면 한 번 다시 띄우고, 다시 띄운 것도 곧 죽으면 세션을 닫는다', async (t) => {
@@ -120,7 +119,6 @@ test('웹: 교체 중이 아닐 때 serve 가 죽으면 한 번 다시 띄우고
   process.kill(p2, 'SIGKILL');
   assert.equal(await e.exit, 0, '두 번째면 진입 프로세스가 세션을 닫고 끝난다');
   await c.done;
-  await sleep(1500); // 우체국 grace
 });
 
 test('카드: resume --stdio --takeover 는 떠 있는 세션의 소유권을 빼앗는다 — 옛 serve 가 SIGTERM 으로 끝나도 세션은 산다; 새 serve 가 SIGTERM 이면 owner gone 유예 없이 바로 닫는다', async (t) => {
@@ -144,7 +142,6 @@ test('카드: resume --stdio --takeover 는 떠 있는 세션의 소유권을 �
   const closing = fs.readFileSync(corePaths(dir).coreLog, 'utf8').split('\n').filter((l) => l.includes(`${hello.id}] closing: `)).map((l) => l.replace(/.*closing: /, ''));
   assert.equal(closing[0], 'closed by client', 'core 는 owner gone 유예를 기다리지 않고 session.close 로 닫힌다');
   assert.match(b.stderr(), /closing: signal/, '새 serve 는 시그널로 닫는다');
-  await sleep(1500); // 우체국 grace
 });
 
 // ---- core 교체 (3단계) — 새 코드의 serve 가 core.retire 를 청하고, core 는 idle 에서 새 core 로 바뀐다. 화면 연결은 끊기지 않는다

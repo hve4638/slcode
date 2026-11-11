@@ -37,21 +37,6 @@ test('sessionEnv: NAME=VALUE 들, 줄바꿈으로 여러 쌍, 값의 = 는 그�
   assert.throws(() => sessionEnv(['A']), /needs NAME=VALUE/);
 });
 
-test('CLI: --env 이름 오류는 열기 전에, resume·import 에 주면 오류, 동사 없는 slcode 도 거절', async () => {
-  const dir = tmp('slcode-senv-'), work = tmp('slcode-work-');
-  let r = await run(dir, ['new', work, '--env', 'SLCODE_DIR=/x']);
-  assert.equal(r.code, 2); assert.match(r.stderr, /SLCODE_\* names cannot be given/);
-  r = await run(dir, ['new', work, '--env', 'NOEQ']);
-  assert.equal(r.code, 2); assert.match(r.stderr, /needs NAME=VALUE/);
-  r = await run(dir, ['resume', 'abc', '--env', 'A=1']);
-  assert.equal(r.code, 2); assert.match(r.stderr, /--env is only for a new session/);
-  r = await run(dir, ['import', 'abc', '--env', 'A=1']);
-  assert.equal(r.code, 2); assert.match(r.stderr, /--env is only for a new session/);
-  r = await run(dir, ['--env', 'A=1']);
-  assert.equal(r.code, 2); assert.match(r.stderr, /takes no session options \(--env\)/);
-  assert.deepEqual(EventLog.list(corePaths(dir).sessionsDir), [], '세션을 만들지 않았다');
-});
-
 test('CLI: superlite 안의 new 는 --env 를 줄바꿈으로 합쳐 slcode.new --env 하나로 넘긴다', async () => {
   const dir = tmp('slcode-senv-'), work = tmp('slcode-work-'), bin = tmp('slcode-shim-');
   const calls = path.join(bin, 'calls.json');

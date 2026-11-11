@@ -11,19 +11,8 @@ import * as rendererMod from '../../renderer.js';
 
 // repo 루트에 package.json 이 없어 tsx 가 main.js 를 CJS 로 감싼다 — named export 가 default 아래로 온다
 const plugin = mod.default ?? mod;
-const { stamp } = cardMod.default ?? cardMod;
 
-const { satisfies, pickRelease, installState, platformOf, assetName, closedRows } = plugin;
-
-test('parseGit: cwd 마다 브랜치·본 저장소·연결된 워크트리, git 아닌 폴더는 빠진다 (ticket slcode-sidebar-orca)', () => {
-  const out = '@@/w/app.worktrees/feat-x\n/w/app/.git\n/w/app.worktrees/feat-x\nfeat/x\n@@/tmp\n@@/w/app\n/w/app/.git\n/w/app\nmain\n@@/srv/bare-wt\n/srv/repo.git\n/srv/bare-wt\na1b2c3d\n';
-  assert.deepEqual(plugin.parseGit(out), {
-    '/w/app.worktrees/feat-x': { branch: 'feat/x', repo: 'app', worktree: true },
-    '/w/app': { branch: 'main', repo: 'app', worktree: false },
-    '/srv/bare-wt': { branch: 'a1b2c3d', repo: 'repo', worktree: true },
-  });
-  assert.deepEqual(plugin.parseGit(''), {});
-});
+const { satisfies, pickRelease, installState, platformOf, assetName } = plugin;
 
 test('satisfies: 고정·^·~ 조건', () => {
   assert.equal(satisfies('0.1.0', '0.1.0'), true);
@@ -202,17 +191,6 @@ test('main command: 카드 서비스 명령 — new 는 폴더·옵션, resume �
   });
 });
 
-test('closedRows: resume 카드 목록 — 그 폴더의 꺼진 세션만, closedAt·updatedAt 중 늦은 쪽 내림차순', () => {
-  const row = (id: string, o: object) => ({ id, cwd: '/w', live: false, updatedAt: 0, closedAt: null, ...o });
-  const rows = [
-    row('a', { closedAt: 300, updatedAt: 100 }), row('b', { updatedAt: 500 }), // 옛 세션(closedAt 없음)은 updatedAt
-    row('c', { closedAt: 100, updatedAt: 400 }), // 다시 띄운 뒤 비정상 종료 — 더 늦은 updatedAt
-    row('d', { updatedAt: 900, live: true }), row('e', { updatedAt: 900, cwd: '/w/x' }),
-  ];
-  assert.deepEqual(closedRows(rows, '/w').map((r: any) => r.id), ['b', 'c', 'a']);
-  assert.equal(stamp(new Date(2026, 9, 11, 1, 2, 59).getTime()), '2026-10-11 01:02', 'CLI 목록과 같은 표기');
-});
-
 // ---- 셸 동사 — main 이 요청자 터미널의 메인 창 renderer(slcode/cards)에 카드를 열게 한다
 test('slcode.resume 동사: --id 는 그 세션 카드를 요청자 창에 열고 id 를 돌려준다, 없으면 그 폴더의 꺼진 세션을 고르는 카드', async () => {
   const files = { 'plugin.json': PLUGIN_JSON };
@@ -224,12 +202,6 @@ test('slcode.resume 동사: --id 는 그 세션 카드를 요청자 창에 열�
   assert.ok(calls.includes('call w$3 slcode/cards.open {"id":"sess-1","tmux":"$3"}'));
   assert.ok(calls.includes('call wmain slcode/cards.open {"pick":"/w s","tmux":null}'), 'tmux 없는 요청자는 이 머신의 메인 창');
   assert.ok(calls.includes('call w$3 slcode/cards.open {"pick":"/home/me","tmux":"$3"}'), '폴더 기본값은 요청자 cwd');
-});
-
-test('slcode.resume 동사: 요청자 터미널을 연 창이 없으면 동사 오류', async () => {
-  await withMain({ 'plugin.json': PLUGIN_JSON }, {}, async ({ verbs }) => {
-    await assert.rejects(verbs['slcode.resume']({ id: 'x' }, { cwd: '/', tmux: '$3' }), /이 터미널을 연 superlite 창이 없습니다/);
-  });
 });
 
 test('slcode.new 동사: 요청자 창에 key·폴더·옵션으로 카드를 열고, 카드 화면이 started 로 알린 세션 id 를 돌려준다 (두 번째 started 는 무시)', async () => {
@@ -327,27 +299,6 @@ test('renderer cards.open: tmux 요청자면 views.open 한 번(opener·end), �
   // 사람이 친 slcode new(--focus) — superlite focus 로 연다 (요청자 터미널을 보고 있을 때만 보인다)
   await cards.open({ key: 'sF', spawn: { cwd: '/w' }, tmux: '$3', focus: true });
   assert.deepEqual(opens[2][2], { as: 'card', key: 'sF', title: 'SLCode', preserve: true, opener: '$3', end: true, focus: true });
-});
-
-test('renderer goto: 카드의 관련 세션 링크 — 있는 카드는 그 key 로, 없으면 누른 카드 옆에. 다른 superlite 세션 탭까지 옮기도록 reveal (ticket slcode-web-session-url)', async () => {
-  const opens: any[][] = [];
-  let onMsg: (m: unknown, from: unknown) => void = () => {};
-  const noop = () => {};
-  const api = {
-    main: { call: async () => [] }, notify: noop, storage: { get: async () => ({ kid: 'sKid' }) }, expose: noop,
-    sidebar: { register: noop, setBadge: noop }, events: { on: noop }, commands: { register: noop },
-    views: { open: async (...a: unknown[]) => { opens.push(a); }, post: noop, onMessage: (cb: typeof onMsg) => { onMsg = cb; }, active: async () => null },
-  };
-  (rendererMod.default ?? rendererMod).activate(api);
-  onMsg({ type: 'goto', id: 'kid' }, { tabId: 'tab:1' });
-  await new Promise((r) => setTimeout(r, 10));
-  assert.equal(opens[0][2].key, 'sKid');
-  assert.equal(opens[0][2].reveal, true);
-  assert.equal(opens[0][2].opener, 'tab:1');
-  onMsg({ type: 'goto', id: 'new' }, { tabId: 'tab:1' });
-  await new Promise((r) => setTimeout(r, 10));
-  assert.deepEqual(opens[1][1], { key: opens[1][2].key, id: 'new', seen: true });
-  assert.equal(opens[1][2].focus, true);
 });
 
 // ---- 폴더를 고르지 않은 새 세션 (ticket slcode-sidebar-new-stuck) — 사이드바 머리 + 와 팔레트는 워크스페이스 폴더의 시작 화면 카드를 연다

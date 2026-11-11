@@ -916,5 +916,5 @@ try {
 } catch (e) {
   lastError = (e as Error).message;
   console.error(`error: ${lastError}`);
-  process.exitCode = 1;
+  process.exit(1); // exitCode 만 두면 열린 core 연결이 프로세스를 붙잡아 거절된 명령(slcode prompt <잠긴 팀원>)이 끝나지 않았다
 }

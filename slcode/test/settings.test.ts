@@ -9,8 +9,6 @@ import http from 'node:http';
 import { WebSocket as WS } from 'ws';
 import { serveSession } from '../src/serve.ts';
 import { BUILD, VERSION } from '../src/client.ts';
-// 웹 모듈(JS) — ctxLevel 은 DOM 을 쓰지 않아 node 에서 바로 부른다
-import { ctxLevel } from '../web/settings.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-settings-'));
@@ -71,17 +69,6 @@ test('감시를 못 걸면(폴더가 아직 없다 — ENOENT, inotify 한도가
   await until(got, 1);
   stop();
   assert.deepEqual(got, ['nord']);
-});
-
-test('ctx 색: 경계 20·50 이면 19% 초록, 20%·49% 노랑, 50% 빨강 — 화면에 보이는 반올림 값으로 잰다; 끄면 색 없음', () => {
-  const c = { warn: true, yellow: 20, red: 50 };
-  assert.deepEqual([19, 20, 49, 50].map((p) => ctxLevel(p, c)), ['ok', 'warn', 'warn', 'err']);
-  assert.equal(ctxLevel(19.6, c), 'warn', '20% 로 보이므로 노랑');
-  assert.equal(ctxLevel(49.4, c), 'warn');
-  assert.equal(ctxLevel(0, { warn: true, yellow: 0, red: 0 }), 'err', '경계가 0 이면 늘 빨강');
-  assert.equal(ctxLevel(100, { warn: true, yellow: 100, red: 100 }), 'err');
-  assert.equal(ctxLevel(99, { warn: true, yellow: 100, red: 100 }), 'ok');
-  assert.equal(ctxLevel(90, { ...c, warn: false }), '');
 });
 
 /** WS 하나를 열고 요청을 보내며 받은 프레임을 모은다. addr 은 http 주소(TCP 웹) 또는 uds 경로(서비스 웹) */

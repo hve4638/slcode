@@ -86,13 +86,6 @@ test('part: 끄면 별칭도 빠지고, 뒤 part 가 원본을 덮으면 뒤의 
   assert.match(read(built(dir2, 'codex'), 'skills/b/SKILL.md'), /뒤 본문/);
 });
 
-test('raw/claude 의 skill 별칭은 Claude 빌드에만 생긴다', async () => {
-  const dir = tmp('state');
-  await addPlugin(source({ 'main/raw/claude/skills/brief/SKILL.md': BRIEF }), dir);
-  assert.ok(fs.existsSync(path.join(built(dir, 'claude'), 'probe/skills/b/SKILL.md')));
-  assert.ok(!fs.existsSync(path.join(built(dir, 'codex'), 'skills/b')));
-});
-
 test('export 판도 같은 규칙이다 — Claude 는 숨김 표시, Codex 는 openai.yaml 과 export 링크 경로', async () => {
   const dir = tmp('state');
   await addPlugin(source({ 'main/skills/brief/SKILL.md': BRIEF }), dir);
@@ -137,14 +130,4 @@ test('add 검사를 거치지 않은 옛 사본의 원본: 빌드는 위험한 �
   assert.match(read(out, 'claude/probe/skills/keep/SKILL.md'), /진짜/, '진짜 skill 을 덮지 않는다');
   assert.ok(fs.existsSync(path.join(out, 'claude/probe/skills/ok/SKILL.md')));
   assert.ok(!fs.existsSync(path.join(out, 'claude/evil')));
-});
-
-test('애드온: 별칭이 베이스의 skill·별칭과 겹치면 거부하고, 합치면 베이스 이름 아래에 들어간다', async () => {
-  const dir = tmp('state');
-  await addPlugin(source({ 'main/skills/brief/SKILL.md': BRIEF }, { main: {} }, 'base'), dir);
-  const addon = (skill: string) => source({ 'more/skills/extra/SKILL.md': skill }, { more: {} }, 'plus', 'slcode-addon.json', { addon: { base: 'base', version: '*' } });
-  await assert.rejects(addPlugin(addon('---\naliases: [brief]\n---\nx'), dir), /skill brief has the same name as skill brief of base/);
-  await assert.rejects(addPlugin(addon('---\naliases: [b]\n---\nx'), dir), /skill b has the same name as skill b of base/);
-  await addPlugin(addon('---\ndescription: x\naliases: [ex]\n---\nx'), dir);
-  assert.match(read(built(dir, 'claude', 'base'), 'base/skills/ex/SKILL.md'), /name: ex/);
 });

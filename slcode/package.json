@@ -8,7 +8,7 @@
   "scripts": {
     "build": "tsc -p slcode-plugin/tsconfig.json && tsc -p tsconfig.json",
     "typecheck": "tsc -p slcode-plugin/tsconfig.json --noEmit && tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test test/*.test.ts slcode-plugin/test/*.test.ts",
+    "test": "node --import tsx --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./scripts/test-times.mjs --test-reporter-destination=stdout test/*.test.ts slcode-plugin/test/*.test.ts",
     "serve": "node dist/cli.js serve"
   },
   "dependencies": {

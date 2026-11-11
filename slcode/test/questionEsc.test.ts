@@ -102,7 +102,7 @@ async function setup(apiUrl: string, web: boolean) {
     for (const w of [...waiters]) if (w[0](ev)) { waiters.splice(waiters.indexOf(w), 1); w[1](ev); }
   });
   await c.request('session.attach', { id });
-  const next = (pred: (e: any) => boolean, what: string) => new Promise<any>((r, j) => { waiters.push([pred, r]); setTimeout(() => j(new Error(`timed out: ${what}`)), 30000); });
+  const next = (pred: (e: any) => boolean, what: string) => new Promise<any>((r, j) => { waiters.push([pred, r]); setTimeout(() => j(new Error(`timed out: ${what}`)), 30000).unref(); });
   const restore = () => { for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k]; Object.assign(process.env, saved); };
   return { h, c, id, evs, next, work, restore };
 }

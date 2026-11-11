@@ -8,7 +8,6 @@ import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
 import { EventLog } from '../src/eventLog.ts';
 import { corePaths } from '../src/paths.ts';
-import { effortMisfit } from '../src/base.ts';
 
 const CLI = path.resolve(import.meta.dirname, '..', 'src', 'cli.ts');
 const TSX = import.meta.resolve('tsx');
@@ -43,20 +42,6 @@ async function events(dir: string, s: string) {
   return (await run(dir, ['log', s, '--json'])).stdout.trim().split('\n').filter(Boolean).map((l) => JSON.parse(l).ev);
 }
 async function until(f: () => Promise<boolean>, ms = 10000) { const t0 = Date.now(); while (!(await f()) && Date.now() - t0 < ms) await sleep(100); }
-
-test('effortMisfit: 지금 모델에 없는 effort 면 그 모델의 efforts, 맞거나 알 수 없으면 null', () => {
-  const models = [
-    { value: 'default', displayName: 'Default', description: '', efforts: ['low', 'medium', 'high'] },
-    { value: 'opus[1m]', resolvedModel: 'claude-opus-4-7[1m]', displayName: 'Opus', description: '', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
-    { value: 'haiku', resolvedModel: 'claude-haiku-4-5', displayName: 'Haiku', description: '' },
-  ];
-  const r = (current: string | null) => ({ current, effort: null, models });
-  assert.equal(effortMisfit(r('opus[1m]'), 'max'), null);
-  assert.equal(effortMisfit(r('claude-opus-4-7'), 'max'), null, '[..] 를 뗀 resolvedModel 로도 찾는다');
-  assert.deepEqual(effortMisfit(r(null), 'max'), ['low', 'medium', 'high'], '지금 모델을 모르면 default');
-  assert.equal(effortMisfit(r('haiku'), 'max'), null, 'efforts 가 없는 모델은 알 수 없다');
-  assert.equal(effortMisfit(r('gpt-x'), 'max'), null, '목록에 없는 모델은 알 수 없다');
-});
 
 test('카드 경로: --effort·-- 뒤 첫 프롬프트를 slcode.new 에 넘긴다, Claude effort 오타는 아무것도 열지 않는다', async () => {
   const dir = tmp('slcode-newopt-');

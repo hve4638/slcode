@@ -55,7 +55,6 @@ test('소유자가 close 없이 사라지면(SIGKILL) core 는 유예 동안 기
   assert.ok(log.all.some((e) => e.ev.kind === 'session.exit'), '종료 이벤트');
   await sleep(300);
   assert.ok(!pidAlive(pid), 'core 프로세스도 끝난다');
-  await sleep(1500); // 우체국 grace
 });
 
 test('takeover: 소유자가 있으면 core.own 은 owned, takeover 면 빼앗는다 — 빼앗긴 serve 가 끝나도 세션은 살고, 새 소유자가 끊기면 유예 뒤 닫힌다', async (t) => {
@@ -73,7 +72,6 @@ test('takeover: 소유자가 있으면 core.own 은 owned, takeover 면 빼앗�
   assert.ok(await sockAlive(sock), '빼앗긴 serve 는 세션을 닫지 않는다');
   c.close();
   assert.ok(await waitClosed(sock), '새 소유자가 close 없이 끊기면 유예 뒤 닫힌다');
-  await sleep(1500); // 우체국 grace
 });
 
 test('소유자가 사라진 뒤 유예 안에 새 소유자가 오면 세션은 산다', async (t) => {
@@ -93,5 +91,4 @@ test('소유자가 사라진 뒤 유예 안에 새 소유자가 오면 세션은
   await c.request('session.close', { id });
   c.close();
   assert.ok(await waitClosed(sock));
-  await sleep(1500); // 우체국 grace
 });
