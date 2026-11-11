@@ -182,7 +182,7 @@ export class Children {
       if (k) await Promise.race([k.conn.done, new Promise((r) => setTimeout(r, CLEAN_WAIT_MS))]);
       if (await sockAlive(new EventLog(this.o.sessionsDir, m).sockPath)) { this.o.log(`kept worktree ${wt.path}: teammate ${m.id} did not close`); continue; }
       const loss = worktreeLoss(wt);
-      if (loss) { this.o.log(`kept worktree ${wt.path}: ${loss}`); continue; }
+      if (loss) { this.o.log(`kept worktree ${wt.path}: ${loss.reasons}`); continue; }
       try { removeWorktree(wt, false); EventLog.open(this.o.sessionsDir, m.id)?.updateMeta({ worktree: { ...wt, removedAt: Date.now() } }); this.o.log(`removed worktree ${wt.path} of teammate ${m.id}`); }
       catch (e) { this.o.log(`kept worktree ${wt.path}: ${(e as Error).message}`); }
     }

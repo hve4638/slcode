@@ -60,10 +60,10 @@ function interrupt(o: TeamToolsOptions, id: string) {
 
 /** CLI 의 시작 줄 (cli teamNew 의 stderr) — `teammate <id> started in <폴더>[ on branch <브랜치>] — …` */
 const STARTED = /teammate ([0-9a-f]{8}) started in (.+?)(?: on branch (\S+))? — /;
-/** worktree 팀원이면 그 폴더·브랜치와 정리하는 법 (ticket slcode-team-worktree) */
+/** worktree 팀원이면 그 폴더·브랜치와 지우는 명령 (ticket slcode-team-worktree). 합치라는 지시는 넣지 않는다 (ticket slcode-team-worktree-self, 사용자 2026-11-11) */
 function worktreeNote(id: string, err: string): string {
   const m = STARTED.exec(err);
-  return m?.[3] ? ` It works in the git worktree ${m[2]} on branch ${m[3]}: merge the branch with git when its work is done, then run \`slcode team clean-worktree ${id}\`.` : '';
+  return m?.[3] ? ` It works in the git worktree ${m[2]} on branch ${m[3]}; \`slcode team clean-worktree ${id}\` removes them.` : '';
 }
 
 /** 기다린 끝의 결과 — 답과 이어 시키는 법 (Claude Agent 도구의 agentId 안내와 같은 자리) */

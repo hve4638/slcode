@@ -460,7 +460,7 @@ function repo(work: string) {
 }
 const hasBranch = (work: string, b: string) => { try { git(work, 'rev-parse', '--verify', '--quiet', `refs/heads/${b}`); return true; } catch { return false; } };
 
-test('worktree: team new --worktree [이름] 은 리더 HEAD 에서 worktree-<이름> 브랜치를 <repo>.worktrees/<이름> 에 만들고 거기서 팀원을 띄운다. clean-worktree 는 잃을 작업이 있으면 거절하고, 합친 뒤에는 지운다', async (t) => {
+test('worktree: team new --worktree [이름] 은 리더 HEAD 에서 <이름> 브랜치를 <repo>.worktrees/<이름의 / 를 -> 에 만들고 부모 브랜치를 slcodeparent 에 적는다. clean-worktree 는 잃을 작업(squash 는 반영으로 본다)이 있으면 키 없이 거절하고, --self 는 자기 세션을 닫지 않는다', async (t) => {
   const calls = path.join(tmp('slcode-calls-'), 'calls.jsonl');
   const { dir, work, lid } = await start(t, { FAKE_CODEX_CALLS: calls });
   repo(work);
@@ -481,20 +481,24 @@ test('worktree: team new --worktree [이름] 은 리더 HEAD 에서 worktree-<�
   assert.equal(a.code, 0, a.err);
   const aid = a.out.trim();
   const wa = path.join(`${work}.worktrees`, 'feat-a');
-  assert.match(a.err, new RegExp(`started in ${wa} on branch worktree-feat-a`));
-  assert.deepEqual(meta(dir, aid).worktree, { name: 'feat-a', branch: 'worktree-feat-a', path: wa, repo: work, from: work, base: head });
+  assert.match(a.err, new RegExp(`started in ${wa} on branch feat-a`));
+  assert.deepEqual(meta(dir, aid).worktree, { name: 'feat-a', branch: 'feat-a', path: wa, repo: work, from: work, base: head });
   assert.equal(meta(dir, aid).cwd, wa);
-  assert.equal(git(wa, 'rev-parse', '--abbrev-ref', 'HEAD'), 'worktree-feat-a');
+  assert.equal(git(wa, 'rev-parse', '--abbrev-ref', 'HEAD'), 'feat-a');
+  assert.equal(git(work, 'config', 'branch.feat-a.slcodeparent'), 'main', '가른 브랜치는 git config 에');
+  assert.equal(fs.readFileSync(path.join(`${work}.worktrees`, '.gitignore'), 'utf8'), '*\n');
   assert.equal(fs.readFileSync(path.join(wa, '.env'), 'utf8'), 'SECRET=1\n', '.worktreeinclude 에 맞고 gitignore 된 파일은 복사한다');
   assert.equal(fs.existsSync(path.join(wa, 'notes.txt')), false, 'gitignore 되지 않은 파일은 복사하지 않는다');
   assert.equal(fs.existsSync(path.join(wa, 'node_modules')), false, '.worktreeinclude 에 없는 파일은 복사하지 않는다');
   // 지시문 — 팀원은 자기 worktree·브랜치를, 리더는 만드는 법과 정리하는 법을 안다
   const instr = () => (fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8') : '').split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l).developerInstructions as string | null).filter(Boolean) as string[];
   const kidInstr = await until(() => instr().find((s) => s.includes('# slcode worktree')));
-  assert.match(kidInstr, new RegExp(`git worktree of your own: ${wa}, on branch worktree-feat-a, made from commit ${head.slice(0, 12)}`));
-  assert.match(kidInstr, /Your leader merges the branch/);
+  assert.match(kidInstr, new RegExp(`git worktree of your own: ${wa}, on branch feat-a, made from commit ${head.slice(0, 12)} of ${work} \\(branch main\\)`));
+  assert.match(kidInstr, /slcode team clean-worktree --self/);
+  assert.doesNotMatch(kidInstr, /merges the branch|do not merge/, '누가 합치는지는 지시하지 않는다');
   assert.match(instr()[0], /--worktree \[name\]/);
   assert.match(instr()[0], /slcode team clean-worktree <name or id>/);
+  assert.doesNotMatch(instr()[0], /merge the branch/);
 
   const again = await cli(dir, lid, ['team', 'new', '--worktree', 'feat-a', '-t', '--', 'no-call'], {}, undefined, work);
   assert.equal(again.code, 1);
@@ -506,6 +510,13 @@ test('worktree: team new --worktree [이름] 은 리더 HEAD 에서 worktree-<�
   assert.equal(meta(dir, bid).worktree!.name, 'beta-task');
   const b2 = await cli(dir, lid, ['team', 'new', '-t', '-n', 'Beta Task', '--worktree', '--', 'no-call'], {}, undefined, work);
   assert.equal(meta(dir, b2.out.trim()).worktree!.name, 'beta-task-2');
+  // 브랜치는 이름 그대로 — / 는 폴더에서만 - 로. 브랜치로 못 쓰는 이름은 거절
+  const slash = await cli(dir, lid, ['team', 'new', '--worktree', 'feat/login', '-t', '--', 'no-call'], {}, undefined, work);
+  assert.equal(slash.code, 0, slash.err);
+  assert.deepEqual([meta(dir, slash.out.trim()).worktree!.branch, meta(dir, slash.out.trim()).worktree!.path], ['feat/login', path.join(`${work}.worktrees`, 'feat-login')]);
+  const bad = await cli(dir, lid, ['team', 'new', '--worktree', 'a..b', '-t', '--', 'no-call'], {}, undefined, work);
+  assert.equal(bad.code, 1);
+  assert.match(bad.err, /valid git branch name/);
   // 리더가 worktree 안에 있어도 원래 repo 옆에, 그 worktree 의 HEAD 에서
   fs.writeFileSync(path.join(wa, 'a.txt'), 'a\n');
   git(wa, 'add', 'a.txt'); git(wa, 'commit', '-q', '-m', 'a');
@@ -515,33 +526,57 @@ test('worktree: team new --worktree [이름] 은 리더 HEAD 에서 worktree-<�
   assert.equal(nm.path, path.join(`${work}.worktrees`, 'nested'));
   assert.equal(nm.base, git(wa, 'rev-parse', 'HEAD'));
   assert.equal(nm.from, wa);
+  assert.equal(git(work, 'config', 'branch.nested.slcodeparent'), 'feat-a', 'worktree 안에서 가르면 그 브랜치가 부모');
 
-  // clean-worktree — 켜진 팀원은 닫고, 커밋하지 않은 변경·합치지 않은 커밋이 있으면 거절한다
-  git(wa, 'reset', '-q', '--hard', head);
+  // clean-worktree — 커밋하지 않은 변경·부모 브랜치에 없는 커밋이 있으면 키 없이 거절한다. 거절할 때는 팀원을 닫지 않는다
   fs.writeFileSync(path.join(wa, 'b.txt'), 'b\n');
   const dirty = await cli(dir, lid, ['team', 'clean-worktree', aid]);
   assert.equal(dirty.code, 1);
-  assert.match(dirty.err, /uncommitted changes/);
-  assert.equal(await sockAlive(sockOf(dir, aid)), false, '팀원은 먼저 닫는다');
+  assert.match(dirty.err, /uncommitted changes.*commits on feat-a not in main/s);
+  assert.match(dirty.err, new RegExp(`slcode team clean-worktree ${aid} --key [0-9a-f]{5}`));
+  assert.equal(await sockAlive(sockOf(dir, aid)), true, '거절하면 팀원을 닫지 않는다');
+  const force = await cli(dir, lid, ['team', 'clean-worktree', aid, '--force']);
+  assert.equal(force.code, 2);
+  assert.match(force.err, /takes no --force/);
   git(wa, 'add', 'b.txt'); git(wa, 'commit', '-q', '-m', 'b');
   const unmerged = await cli(dir, lid, ['team', 'clean-worktree', aid]);
   assert.equal(unmerged.code, 1);
-  assert.match(unmerged.err, /not merged into the HEAD of/);
-  git(work, 'merge', '-q', '--ff-only', 'worktree-feat-a');
+  assert.match(unmerged.err, /commits on feat-a not in main/);
+  assert.doesNotMatch(unmerged.err, /uncommitted/);
+  // squash 로 합치면 반영된 것으로 본다 (wtree 넷째 시험) — 켜진 팀원은 닫고 지운다
+  git(work, 'merge', '-q', '--squash', 'feat-a'); git(work, 'commit', '-q', '-m', 'squash feat-a');
   const cleaned = await cli(dir, lid, ['team', 'clean-worktree', aid]);
   assert.equal(cleaned.code, 0, cleaned.err);
+  assert.equal(await sockAlive(sockOf(dir, aid)), false, '켜진 팀원은 먼저 닫는다');
   assert.equal(fs.existsSync(wa), false);
-  assert.equal(hasBranch(work, 'worktree-feat-a'), false);
+  assert.equal(hasBranch(work, 'feat-a'), false);
+  assert.throws(() => git(work, 'config', 'branch.feat-a.slcodeparent'), '브랜치와 함께 부모 키도 지워진다');
   assert.ok(meta(dir, aid).worktree!.removedAt);
   assert.ok(EventLog.open(corePaths(dir).sessionsDir, aid), '세션 기록은 남는다');
   const twice = await cli(dir, lid, ['team', 'clean-worktree', aid]);
   assert.equal(twice.code, 0);
   assert.match(twice.err, /already removed/);
-  // --force 는 버리고 지운다. slcode 가 만들지 않은 worktree 는 지우지 않는다
-  fs.writeFileSync(path.join(meta(dir, bid).worktree!.path, 'c.txt'), 'c\n');
-  const forced = await cli(dir, lid, ['team', 'clean-worktree', bid, '--force']);
-  assert.equal(forced.code, 0, forced.err);
-  assert.equal(hasBranch(work, 'worktree-beta-task'), false);
+  // --self — 팀원이 자기 것을 닫지 않고 지운다. 키는 그사이 무엇이든 바뀌면 달라진다
+  const wb = meta(dir, bid).worktree!.path;
+  fs.writeFileSync(path.join(wb, 'c.txt'), 'c\n');
+  const selfRefused = await cli(dir, bid, ['team', 'clean-worktree', '--self']);
+  assert.equal(selfRefused.code, 1);
+  const key = /--self --key ([0-9a-f]{5})/.exec(selfRefused.err)![1];
+  fs.writeFileSync(path.join(wb, 'c.txt'), 'c2\n');
+  const stale = await cli(dir, bid, ['team', 'clean-worktree', '--self', '--key', key]);
+  assert.equal(stale.code, 1, '바뀐 뒤의 옛 키로는 지우지 않는다');
+  const key2 = /--key ([0-9a-f]{5})/.exec(stale.err)![1];
+  assert.notEqual(key2, key);
+  const selfOk = await cli(dir, bid, ['team', 'clean-worktree', '--self', '--key', key2]);
+  assert.equal(selfOk.code, 0, selfOk.err);
+  assert.equal(fs.existsSync(wb), false);
+  assert.equal(hasBranch(work, 'beta-task'), false);
+  assert.equal(await sockAlive(sockOf(dir, bid)), true, '--self 는 자기 세션을 닫지 않는다');
+  assert.ok(meta(dir, bid).worktree!.removedAt);
+  const selfByName = await cli(dir, bid, ['team', 'clean-worktree', bid]);
+  assert.equal(selfByName.code, 2);
+  assert.match(selfByName.err, /use --self/);
+  // slcode 가 만들지 않은 worktree 는 지우지 않는다
   const plain = await cli(dir, lid, ['team', 'clean-worktree', lid]);
   assert.equal(plain.code, 1);
   assert.match(plain.err, /has no worktree made by slcode team new --worktree/);
@@ -560,7 +595,7 @@ test('worktree subagent: Subagent 도구의 isolation "worktree" 는 이름 없�
   const r1 = await sub.handler({ description: 'clean one', prompt: 'no-call', isolation: 'worktree' }, {});
   assert.equal(r1.isError, undefined, textOf(r1));
   const id1 = idOf(r1), w1 = path.join(`${work}.worktrees`, 'clean-one');
-  assert.match(textOf(r1), new RegExp(`git worktree ${w1} on branch worktree-clean-one.*slcode team clean-worktree ${id1}`));
+  assert.match(textOf(r1), new RegExp(`git worktree ${w1} on branch clean-one; \`slcode team clean-worktree ${id1}\` removes them`));
   assert.equal(meta(dir, id1).team!.cleanWithLeader, true, 'subagent 프리셋은 리더 닫힘 정리가 켜져 있다');
   const id2 = idOf(await sub.handler({ description: 'dirty one', prompt: 'no-call', isolation: 'worktree' }, {}));
   const w2 = meta(dir, id2).worktree!.path;
@@ -583,7 +618,7 @@ test('worktree subagent: Subagent 도구의 isolation "worktree" 는 이름 없�
   c.close();
   await until(async () => !(await sockAlive(psock)));
   assert.equal(fs.existsSync(w1), false);
-  assert.equal(hasBranch(work, 'worktree-clean-one'), false);
+  assert.equal(hasBranch(work, 'clean-one'), false);
   assert.ok(meta(dir, id1).worktree!.removedAt);
   assert.equal(fs.existsSync(path.join(w2, 'wip.txt')), true, '잃을 작업이 있는 worktree 는 남는다');
   assert.equal(meta(dir, id2).worktree!.removedAt, undefined);

@@ -33,7 +33,7 @@ import { agentPaths, currentBuilds, loadSessionPlugins, reloadSessionPlugins, un
 import { HookRunner, type LoadedCommand } from 'slcode-plugin/hookRunner';
 import { commandTable, completeInput, fullName, resolveCommand } from './pluginCommands.js';
 import { CoreError, ERR, FILES, PERMISSION_MODES, PROTOCOL_VERSION, TEAM_PRESETS, type AgentCommandEvent, type AgentHookEvent, type ApprovalRequest, type Attachment, type LoggedEvent, type Mail, type QueueItem, type MethodName, type TeamOptions, type TeamAgent, type Methods, type RequestFrame, type SessionInfo } from './protocol.js';
-import type { Worktree } from './worktree.js';
+import { parentBranch, type Worktree } from './worktree.js';
 
 /** 벤더 자식(claude CLI·codex)에 넘기지 않을 env — 워커 Claude 세션 안에서 띄우면 그 세션의 표식(CLAUDECODE·CLAUDE_CODE_SESSION_ID·
  *  CLAUDE_CODE_CHILD_SESSION·CLAUDE_CODE_ENTRYPOINT·CLAUDE_CODE_MESSAGING_* 등, claude 2.1.282·2.1.300 실측)이 딸려 가 자식이 남의 세션 안이라 여긴다.
@@ -263,11 +263,13 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   let firstEnv = env, firstArgs: string[] = [], inspectFailed: string | null = null;
   try { firstEnv = await vendorEnv(); firstArgs = await vendorArgs(); } catch (e) { logFile.updateMeta({ inspect: false }); inspectFailed = (e as Error).message; }
   if (inspectFailed && codex) firstArgs = codexBaseArgs();
+  // worktree 의 가른 브랜치 (git config slcodeparent) — 지시문의 사실 (ticket slcode-team-worktree-self)
+  const wtNow = logFile.meta.worktree, wtParent = wtNow && !wtNow.removedAt ? parentBranch(wtNow) : null;
   const session: AgentSession = codex
-    ? new CodexSession({ log: logFile, env: codexEnv(), permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, args: firstArgs, onConfig: (base) => gotBase(base), skillRoots: agent?.codex.roots ?? [], instructions: agent?.append ?? '', family: familyPrompt({ team: canTeam, leader: parentId, options: team(), tools: false, agent: logFile.meta.agent, agents: canTeam ? listAgents(cwd, P.dir) : [], worktree: logFile.meta.worktree }) })
+    ? new CodexSession({ log: logFile, env: codexEnv(), permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, args: firstArgs, onConfig: (base) => gotBase(base), skillRoots: agent?.codex.roots ?? [], instructions: agent?.append ?? '', family: familyPrompt({ team: canTeam, leader: parentId, options: team(), tools: false, agent: logFile.meta.agent, agents: canTeam ? listAgents(cwd, P.dir) : [], worktree: logFile.meta.worktree, parentBranch: wtParent }) })
     : new ClaudeSession({
       log: logFile, env: firstEnv, resume: logFile.meta.vendorSessionId, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, ...(agent ? { agent } : {}), ...(load ? { load } : {}), ...(hooks ? { hooks: hooks.sdkHooks() } : {}),
-      family: familyPrompt({ team: canTeam, leader: parentId, options: team(), tools: canTeam, agent: logFile.meta.agent, agents: canTeam ? listAgents(cwd, P.dir) : [], worktree: logFile.meta.worktree }),
+      family: familyPrompt({ team: canTeam, leader: parentId, options: team(), tools: canTeam, agent: logFile.meta.agent, agents: canTeam ? listAgents(cwd, P.dir) : [], worktree: logFile.meta.worktree, parentBranch: wtParent }),
       // 팀원 도구(Subagent·ContinueSubagent)는 팀원을 만들 수 있는 Claude 세션에만 — 도구는 이 판의 CLI 를 부른다. Agent 도구처럼 승인을 묻지 않는다 (사용자 2026-11-08)
       ...(canTeam ? { mcpServers: () => ({ slcode: teamMcp({ cli: path.join(PKG, 'dist', 'cli.js'), env, cwd }) }), allowedTools: [...TEAM_TOOL_NAMES] } : {}),
       ...(parentId && team()?.endWithAnswer ? { noAsk: true } : {}),

@@ -22,7 +22,7 @@ To message another slcode session yourself, find its id or title with \`slcode l
 /** 팀 지시 (ticket slcode-team-agent, 사용자 결정 2026-11-07~08) — SLCODE_PROMPT 뒤에 붙인다. link 팀원은 리더와 켜진 옵션을, 팀원을 만들 수 있는 세션(team)은
  *  만드는 법과 돌아오는 메시지 꼴을 받는다. tools 면(Claude) subagent 는 MCP 도구(teamTools.ts)로, 아니면(Codex) CLI 로. 둘 다 아니면 빈 문자열. 메시지의 kind 는 core.ts 가 보내는 것과 같다.
  *  에이전트 정의(teamAgents.ts, 사용자 2026-11-09): agent 면 그 본문을 싣고, 만들 수 있는 세션에 agents 가 있으면 이름·설명을 늘어놓는다 */
-export function familyPrompt(o: { team: boolean; leader: string | null; options: TeamOptions | null; tools: boolean; agent?: TeamAgent | null; agents?: { name: string; description: string }[]; worktree?: Worktree | null }): string {
+export function familyPrompt(o: { team: boolean; leader: string | null; options: TeamOptions | null; tools: boolean; agent?: TeamAgent | null; agents?: { name: string; description: string }[]; worktree?: Worktree | null; parentBranch?: string | null }): string {
   const parts: string[] = [];
   const t = o.options;
   if (o.leader && t) parts.push([
@@ -36,13 +36,14 @@ export function familyPrompt(o: { team: boolean; leader: string | null; options:
     ...(t.askToLeader ? ['Questions you ask with AskUserQuestion go to your leader, and your leader answers them.'] : []),
     ...(o.team ? [] : ['You cannot start slcode teammates yourself.']),
   ].join('\n'));
-  // worktree (ticket slcode-team-worktree, 사용자 2026-11-11) — 리더 없이 띄운(detached) 것도
+  // worktree (ticket slcode-team-worktree, 사용자 2026-11-11) — 리더 없이 띄운(detached) 것도. 사실만 — 누가 언제 합치고 지우는지는 지시하지 않는다
+  // (ticket slcode-team-worktree-self, 사용자 2026-11-11: Claude Code 도 subagent·teammate 에 그런 지시를 넣지 않는다. 합치는 법은 리더의 지시나 orchestration 의 역할 지침이 준다)
   const w = o.worktree;
   if (w && !w.removedAt) parts.push([
     '# slcode worktree',
-    `You work in a git worktree of your own: ${w.path}, on branch ${w.branch}, made from commit ${w.base.slice(0, 12)} of ${w.from}. Other sessions edit their own copies, so your edits do not collide with theirs.`,
+    `You work in a git worktree of your own: ${w.path}, on branch ${w.branch}, made from commit ${w.base.slice(0, 12)} of ${w.from}${o.parentBranch ? ` (branch ${o.parentBranch})` : ''}. Other sessions edit their own copies, so your edits do not collide with theirs.`,
     `Uncommitted changes in ${w.from} and untracked files (dependencies, .env and the like) are not here, except files that .worktreeinclude lists. Set up what you need.`,
-    `Commit your work on ${w.branch}.${o.leader && t ? ' Your leader merges the branch; do not merge it or remove the worktree yourself.' : ''}`,
+    `\`slcode team clean-worktree --self\` removes this worktree and the branch ${w.branch} without closing this session. It refuses while they hold work that is not in ${o.parentBranch ?? `the HEAD of ${w.from}`} and prints a --key that discards it.`,
   ].join('\n'));
   if (o.agent?.instructions) parts.push(`# slcode agent: ${o.agent.name}\n${o.agent.instructions}`);
   if (!o.team) return parts.join('\n\n');
@@ -62,7 +63,7 @@ Pick how involved you stay with a relation preset:
 - --detached (-d): an independent session with no tie to you.
 - --subagent (-s): ${o.tools ? 'the shell form of the Subagent tool. ' : ''}You control its input, its answers come back to you, and it closes after it answers and when this session closes.
 Adjust a preset with -o '<JSON>', for example -o '{"endWithLeader":true}'. Keys (true or false): link, inputControl, outputToLeader, askToLeader, endWithLeader, endWithAnswer, noTeam, cleanWithLeader.
-To keep its file edits apart from yours and from other teammates', pass --worktree [name] instead of --cwd${o.tools ? ' (isolation: "worktree" in the Subagent tool)' : ''}: slcode makes a git worktree at <repo>.worktrees/<name> on a new branch worktree-<name> from your current HEAD, and it works there. Your uncommitted changes and untracked files are not in it, so commit what it needs first. The name defaults to the -n name. When its work is done, merge the branch with git, then run \`slcode team clean-worktree <name or id>\`: it closes the teammate and removes the worktree and the branch, and refuses while they hold work that is not merged into your HEAD (--force discards it). With cleanWithLeader (on for --subagent) the worktree is also removed when this session closes, if nothing in it would be lost.
+To keep its file edits apart from yours and from other teammates', pass --worktree [name] instead of --cwd${o.tools ? ' (isolation: "worktree" in the Subagent tool)' : ''}: slcode makes a git worktree at <repo>.worktrees/<name> (a / in the name becomes -) on a new branch <name> from your current HEAD, and it works there. Your uncommitted changes and untracked files are not in it, so commit what it needs first. The name defaults to the -n name. \`slcode team clean-worktree <name or id>\` closes the teammate and removes the worktree and the branch; it refuses while they hold work that is not in the branch you were on, and prints a --key that discards it. With cleanWithLeader (on for --subagent) the worktree is also removed when this session closes, if nothing in it would be lost.
 ${o.agents?.length ? `Agent definitions are ready-made setups. Pass --agent <name>${o.tools ? ' (agent in the Subagent tool)' : ''} to give it the agent's instructions, and the agent's model, effort, permission mode and relation preset unless you set them:\n${o.agents.map((r) => `- ${r.name}${r.description ? `: ${r.description}` : ''}`).join('\n')}\n` : ''}Name it with -n <name> and address it by that name. Its model, effort and permission mode follow yours unless you pass -m <model> (a model name, or anthropic:<model> / openai:<model>), -e <effort> or --mode <mode>.
 Messages from teammates arrive as <slcode-message from="<teammate id>">. kind="result" is the final answer of a subagent you did not wait for. kind="question" is a question of a teammate started with askToLeader: answer with \`slcode respond <teammate id> <request id> --answer <text>\`. Tool approvals of a teammate are answered by the user, never by you. kind="unlocked" means the user cut a teammate loose: it no longer takes your instructions or reports to you, but you can still message it. kind="closed" means a teammate ended without you closing it.
 Message a teammate with \`slcode mail <name or id> <text>\`. Stop a subagent's turn with \`slcode interrupt <id>\`, read its last answer with \`slcode last <id>\`, and close a teammate with \`slcode close <id>\` when it is no longer needed.`);

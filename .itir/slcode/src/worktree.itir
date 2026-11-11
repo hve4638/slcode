@@ -1,9 +1,10 @@
-role: 팀원 worktree (ticket slcode-team-worktree, 사용자 결정 2026-11-11 — 최대한 Claude Code 의 `claude --worktree`·Agent `isolation: "worktree"` 에 가깝게). slcode 가 git 을 직접 부른다(wtree 같은 도구에 맡기지 않는다). 리더 폴더가 속한 checkout 의 지금 HEAD 에서 새 브랜치 worktree-<이름> 을 만들어 <원래 repo>.worktrees/<이름> 에 꺼낸다 — 리더가 다른 worktree 안에 있어도 원래 repo(git common dir 의 부모) 옆이다(wtree 와 같은 꼴). 이름은 영숫자로 시작하는 영숫자·.·_·- 64자까지, 브랜치나 폴더가 이미 있으면 오류(Claude 처럼 다시 열지 않는다, 사용자 결정 3). 이름을 주지 않으면 팀원 이름에서 짓고(못 지으면 wt-<무작위>), 겹치면 -2·-3 을 붙인다. git repo 가 아니거나 커밋이 없으면 오류. Claude 의 .worktreeinclude(checkout 맨 위, .gitignore 문법)에 맞고 gitignore 된 파일만 새 worktree 에 복사한다 — 추적하는 파일은 복사하지 않는다. 잃을 작업의 검사는 커밋하지 않은 변경(추적하지 않는 파일 포함, gitignore 된 것은 빼고)과 리더 HEAD(만든 checkout 의 지금 HEAD, 없으면 원래 repo 의 HEAD)에 합쳐지지 않은 브랜치 커밋이다. 지우기는 git worktree remove 와 브랜치 삭제 — 폴더가 이미 없으면 git worktree prune 으로 기록만 정리한다
+role: 팀원 worktree (ticket slcode-team-worktree, 사용자 결정 2026-11-11 — 최대한 Claude Code 의 `claude --worktree`·Agent `isolation: "worktree"` 에 가깝게). slcode 가 git 을 직접 부른다(wtree 같은 도구에 맡기지 않는다). 리더 폴더가 속한 checkout 의 지금 HEAD 에서 새 브랜치 <이름>(이름 그대로, feat/x 도 — ticket slcode-team-worktree-self 사용자 2026-11-11 이 worktree- 앞머리를 없앴다)을 만들어 <원래 repo>.worktrees/<이름의 / 를 - 로> 에 꺼낸다 — 리더가 다른 worktree 안에 있어도 원래 repo(git common dir 의 부모) 옆이다(wtree 와 같은 꼴). 이름은 git 브랜치 이름으로 쓸 수 있어야 하고(git check-ref-format --branch, - 로 시작하지 않음) 그 밖의 규칙은 없다. 브랜치나 폴더가 이미 있으면 오류(Claude 처럼 다시 열지 않는다, 사용자 결정 3). 이름을 주지 않으면 팀원 이름에서 짓고(못 지으면 wt-<무작위>), 겹치면 -2·-3 을 붙인다. git repo 가 아니거나 커밋이 없으면 오류. <repo>.worktrees 에 `*` 한 줄의 .gitignore 를 둔다(없을 때만, 비면 함께 지운다). 리더 checkout 이 브랜치 위에 있으면 그 브랜치를 git config branch.<새 브랜치>.slcodeparent 에 적는다 — meta 가 아니라 git 에 두어 git branch -m 이면 따라가고 -D 면 함께 지워진다, orchestration 플러그인도 이 키를 읽는다(사용자 2026-11-11). detached HEAD 면 적지 않는다. Claude 의 .worktreeinclude(checkout 맨 위, .gitignore 문법)에 맞고 gitignore 된 파일만 새 worktree 에 복사한다 — 추적하는 파일은 복사하지 않는다. 잃을 작업의 검사는 wtree 기준(src/repo.rs reflected_in_parent·confirmation_key, 사용자 2026-11-11)이다: 커밋하지 않은 변경(추적하지 않는 파일 포함, gitignore 된 것은 빼고)과 부모 브랜치(slcodeparent, 없으면 만든 checkout 의 지금 HEAD)에 반영되지 않은 브랜치 커밋. 반영은 네 시험 가운데 하나 — 같은 커밋, 조상, 갈라진 뒤 바꾼 것 없음, merge-tree 로 합친 트리가 부모 트리와 같음(squash). 부모 브랜치가 사라졌으면 잃을 작업으로 본다. 잃을 작업이 있으면 확인 키(HEAD·HEAD 와의 diff·추적하지 않는 파일 이름과 내용의 해시 앞 5자리, 폴더가 없으면 브랜치 커밋)를 함께 낸다 — 무엇이든 바뀌면 키도 바뀐다. 지우기는 git worktree remove 와 브랜치 삭제 — 폴더가 이미 없으면 git worktree prune 으로 기록만 정리한다
 
 import { spawnSync } from 'node:child_process'
 
 export type Worktree
-export val WORKTREE_NAME
+export val PARENT_KEY
+export val folderOf
 fn git(cwd, args) -> Run {
   role: git -C <cwd> 를 돌려 종료 코드·stdout·stderr 를 모은다
 }
@@ -16,8 +17,21 @@ fn copyIncluded(from, to) {
 export fn createWorktree(cwd, name, hint) -> Worktree {
   role: cwd 가 속한 checkout 의 HEAD 에서 worktree 를 만들고 .worktreeinclude 파일을 복사한다. 실패 사유는 Error 의 메시지(사람이 읽는 문장)
 }
-export fn worktreeLoss(wt) -> Text? {
-  role: 지우면 잃는 것 — 커밋하지 않은 변경, 리더 HEAD 에 합쳐지지 않은 커밋. 없으면 null. 폴더가 이미 없으면 null
+export fn parentBranch(wt) -> Text? {
+  role: 가른 브랜치 — git config branch.<브랜치>.slcodeparent. 없으면 null
+}
+fn dropRoot(root) {
+  role: <repo>.worktrees 에 .gitignore 만 남았으면 폴더째 지운다
+}
+fn reflected(repo, parent, branch) -> Bool {
+  role: branch 의 작업이 parent 에 이미 있나 — wtree 의 네 시험
+}
+fn confirmationKey(wt) -> Text {
+  role: 확인 키 — HEAD·diff·추적하지 않는 파일 이름과 내용의 해시 앞 5자리
+}
+export type Loss
+export fn worktreeLoss(wt) -> Loss? {
+  role: 지우면 잃는 것 — 사유(커밋하지 않은 변경, 부모 브랜치에 반영되지 않은 커밋, 사라진 부모 브랜치)와 확인 키. 없으면 null. 브랜치가 이미 없으면 커밋은 보지 않는다
 }
 export fn removeWorktree(wt, force) {
   role: worktree 폴더와 브랜치를 지운다(force 면 커밋하지 않은 변경도). 폴더가 이미 없으면 prune 만. 비게 된 <repo>.worktrees 폴더도 지운다
