@@ -34,6 +34,28 @@
       ]
     },
     {
+      "name": "slcode.team",
+      "help": "Start a teammate of a live slcode session, like slcode team new run in it, and open its card in the deck of this terminal; prints the teammate id",
+      "args": [
+        { "name": "leader", "kind": "option", "value": "id", "help": "the leader session (required) — pass SLCODE_SESSION_ID of the shell that asked" },
+        { "name": "subagent", "kind": "flag", "help": "relation preset subagent" },
+        { "name": "teammate", "kind": "flag", "help": "relation preset teammate (the default)" },
+        { "name": "detached", "kind": "flag", "help": "relation preset detached" },
+        { "name": "cwd", "kind": "option", "value": "dir", "help": "folder it works in (default: this shell's cwd); not with --worktree" },
+        { "name": "worktree", "kind": "option", "value": "name", "help": "run it in a new git worktree <repo>.worktrees/<name> on a new branch <name> (a / becomes - in the folder) from the HEAD of this shell's cwd" },
+        { "name": "name", "kind": "option", "help": "its name (title)" },
+        { "name": "options", "kind": "option", "value": "JSON", "help": "team options over the preset, e.g. {\"notifyEnd\":false}" },
+        { "name": "agent", "kind": "option", "help": "agent definition" },
+        { "name": "model", "kind": "option", "help": "model name, or anthropic:<model> / openai:<model> (default: the leader's)" },
+        { "name": "effort", "kind": "option", "help": "effort (default: the leader's)" },
+        { "name": "mode", "kind": "option", "help": "permission mode (default: the leader's)" },
+        { "name": "profile", "kind": "option", "help": "start profile" },
+        { "name": "env", "kind": "option", "value": "NAME=VALUE", "help": "env of its Claude/Codex process; several pairs in one value, one per line" },
+        { "name": "param", "kind": "option", "value": "NAME=VALUE", "help": "session param; several pairs in one value, one per line" },
+        { "name": "prompt", "kind": "option", "help": "its first instructions" }
+      ]
+    },
+    {
       "name": "slcode.resume",
       "help": "Open a saved slcode session as a card in the deck of this terminal; without --id, pick a closed session of --cwd",
       "args": [

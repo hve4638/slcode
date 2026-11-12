@@ -16,6 +16,6 @@ export fn teamOf(meta) -> TeamOptions? {
   role: 세션의 관여 옵션(meta.team) — 팀원이 아니면 null. meta.team 없는 옛 실험 자식은 보통 세션
 }
 export fn teamOptionsError(o) -> String? {
-  role: 관여 옵션 오류 사유 — 모르는 키, 불리언이 아닌 값, link 없이 켠 리더 옵션(inputControl·outputToLeader·askToLeader·endWithLeader·endWithAnswer·cleanWithLeader), endWithLeader 없이 켠 cleanWithLeader. 맞으면 null
+  role: 관여 옵션 오류 사유 — 모르는 키, 불리언이 아닌 값, link 없이 켠 리더 옵션(inputControl·outputToLeader·askToLeader·endWithLeader·endWithAnswer·cleanWithLeader·notifyEnd), endWithLeader 없이 켠 cleanWithLeader. 맞으면 null
 }
 val TEAM_KEYS

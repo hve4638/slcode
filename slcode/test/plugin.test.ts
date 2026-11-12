@@ -204,6 +204,33 @@ test('slcode.resume 동사: --id 는 그 세션 카드를 요청자 창에 열�
   assert.ok(calls.includes('call w$3 slcode/cards.open {"pick":"/home/me","tmux":"$3"}'), '폴더 기본값은 요청자 cwd');
 });
 
+test('slcode.team 동사: --leader 를 SLCODE_SESSION_ID 로 slcode team new 를 요청자 cwd 에서 돌리고, 팀원 카드를 요청자 창에 열고 id 를 돌려준다 (ticket slcode-team-plugin-verb)', async () => {
+  const files = { 'plugin.json': PLUGIN_JSON };
+  const runs: { cmd: string; cwd?: string }[] = [];
+  const calls = await withMain(files, { tmuxWin: true, run: (cmd) => (cmd.includes(" 'team' 'new'") ? { code: 0, stdout: 'ab12cd34\n', stderr: 'teammate ab12cd34 started' } : undefined) }, async ({ verbs, api }) => {
+    const run = api.proc.run;
+    api.proc.run = async (cmd: string, o?: { cwd?: string }) => { runs.push({ cmd, cwd: o?.cwd }); return run(cmd); };
+    await assert.rejects(verbs['slcode.team']({ prompt: 'x' }, { cwd: '/w', tmux: '$3' }), /needs --leader/);
+    const id = await verbs['slcode.team']({ leader: 'L1', teammate: true, worktree: 'feat/x', name: 'w 1', options: '{"notifyEnd":false}', env: 'A=1\nB=2', param: 'P=v', prompt: "it's go" }, { cwd: '/w s', tmux: '$3' });
+    assert.equal(id, 'ab12cd34');
+    await assert.rejects(verbs['slcode.team']({ leader: 'L1', env: 'SLCODE_X=1' }, { cwd: '/w', tmux: '$3' }), /SLCODE_\* names cannot be given/);
+  });
+  const team = runs.find((r) => r.cmd.includes(" 'team' 'new'"))!;
+  assert.equal(team.cmd, "SLCODE_SESSION_ID='L1' SUPERLITE_SOCK= '/remote/cache/slcode/abc123/bin/slcode' 'team' 'new' '--teammate' '--worktree' 'feat/x' '--name' 'w 1' '--options' '{\"notifyEnd\":false}' '--env' 'A=1' '--env' 'B=2' '--param' 'P=v' -- 'it'\\''s go'");
+  assert.equal(team.cwd, '/w s', '요청자 cwd 에서 — --worktree 는 그 checkout 의 HEAD, 상대 --cwd 의 기준');
+  assert.ok(calls.includes('call w$3 slcode/cards.open {"id":"ab12cd34","tmux":"$3"}'), '카드는 요청자 deck 에');
+});
+
+test('slcode.team 동사: CLI 가 거절하면 그 사유로 throw 하고 카드를 열지 않는다. 카드를 못 열어도 id 를 돌려주고 알린다', async () => {
+  const files = { 'plugin.json': PLUGIN_JSON };
+  const calls = await withMain(files, { tmuxWin: false, run: (cmd) => (cmd.includes(" 'team' 'new'") ? (cmd.includes("'bad'") ? { code: 1, stdout: '', stderr: '[slcode] session bad is not live\n' } : { code: 0, stdout: 'ab12cd34\n', stderr: '' }) : undefined) }, async ({ verbs }) => {
+    await assert.rejects(verbs['slcode.team']({ leader: 'L1', name: 'bad' }, { cwd: '/w', tmux: '$3' }), /^Error: session bad is not live$/);
+    assert.equal(await verbs['slcode.team']({ leader: 'L1' }, { cwd: '/w', tmux: '$3' }), 'ab12cd34');
+  });
+  assert.ok(!calls.some((c) => c.includes('cards.open')));
+  assert.ok(calls.some((c) => c.startsWith('notify warning 팀원 ab12cd34 의 카드를 열지 못했습니다')));
+});
+
 test('slcode.new 동사: 요청자 창에 key·폴더·옵션으로 카드를 열고, 카드 화면이 started 로 알린 세션 id 를 돌려준다 (두 번째 started 는 무시)', async () => {
   await withMain({ 'plugin.json': PLUGIN_JSON }, { tmuxWin: true }, async ({ verbs, exposed, calls }) => {
     const out = verbs['slcode.new']({ cwd: '/w s', vendor: 'codex', title: 'T' }, { cwd: '/home', tmux: '$3' });

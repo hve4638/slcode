@@ -32,7 +32,7 @@ export function teamOptionsError(o: Record<string, unknown>): string | null {
     if (!TEAM_KEYS.includes(k)) return `unknown team option ${k} (${TEAM_KEYS.join('|')})`;
     if (typeof v !== 'boolean') return `team option ${k} must be true or false`;
   }
-  const leader = ['inputControl', 'outputToLeader', 'askToLeader', 'endWithLeader', 'endWithAnswer', 'cleanWithLeader'].filter((k) => o[k]);
+  const leader = ['inputControl', 'outputToLeader', 'askToLeader', 'endWithLeader', 'endWithAnswer', 'cleanWithLeader', 'notifyEnd'].filter((k) => o[k]);
   if (!o.link && leader.length) return `${leader.join(', ')} need${leader.length > 1 ? '' : 's'} link (a teammate without link has no leader)`;
   if (o.cleanWithLeader && !o.endWithLeader) return 'cleanWithLeader needs endWithLeader (its worktree is removed when the leader closes, so the teammate must close with it)';
   return null;

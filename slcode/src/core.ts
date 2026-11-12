@@ -712,7 +712,8 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   const children = new Children({
     dir: P.dir, sessionsDir: P.sessionsDir, parent: sid, log,
     changed: () => broadcast('session.children', { id: sid, children: children.list() }),
-    exited: (id, reason) => take(newMail({ from: id, to: sid, kind: 'closed', body: `Teammate ${id} ended (${reason}) without this session closing it.` })),
+    // 끝남 알림은 notifyEnd 팀원만 (ticket slcode-team-plugin-verb) — 키가 없는 옛 meta 는 전처럼 알린다
+    exited: (id, reason) => { if (teamOf(sessionMeta(P.sessionsDir, id))?.notifyEnd !== false) take(newMail({ from: id, to: sid, kind: 'closed', body: `Teammate ${id} ended (${reason}) without this session closing it.` })); },
     // 답 없이 끝난 팀원을 기다리던 요청 — 답이 오면 그 전에 풀린다 (답 메시지는 팀원이 닫기 전에 보낸다)
     gone: (id, reason) => { endWaits(id, `(teammate ${id} ended before answering: ${reason})`); },
   });

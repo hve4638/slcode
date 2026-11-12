@@ -93,6 +93,9 @@ export type TeamOptions = {
   /** 리더 닫힘 정리 (ticket slcode-team-worktree, 사용자 2026-11-11) — 리더가 닫힐 때 이 팀원의 worktree(`team new --worktree`)를 잃을 작업이 없으면 지운다.
    *  endWithLeader 가 있어야 켤 수 있다. worktree 가 없는 팀원에게는 아무 일도 없다. 없는 옛 meta 는 꺼짐 */
   cleanWithLeader: boolean;
+  /** 끝남 알림 (ticket slcode-team-plugin-verb, 사용자 2026-11-11) — 리더가 닫지 않았는데 이 팀원이 끝나면 리더에게 kind=closed 메시지. 답하고 닫힌 것에는 가지 않는다.
+   *  subagent 만 기본으로 켠다(답을 기다리는 리더가 알아야 한다). 없는 옛 meta 는 켜짐(전에는 모든 link 팀원에게 갔다) */
+  notifyEnd: boolean;
   /** 사용자가 화면에서 끊었다 (일방향) — 입력 제어·출력 수신·질문 수신·답하면 닫힘이 꺼진 뒤다 */
   cut?: boolean;
 };
@@ -100,9 +103,9 @@ export type TeamOptions = {
 export type TeamAgent = { name: string; instructions: string };
 /** 관계 프리셋 — `slcode team new --subagent|--teammate|--detached`. 정해진 모드가 아니라 옵션 기본값이다 (사용자 2026-11-07) */
 export const TEAM_PRESETS = {
-  subagent: { link: true, inputControl: true, outputToLeader: true, askToLeader: false, endWithLeader: true, endWithAnswer: true, noTeam: true, cleanWithLeader: true },
-  teammate: { link: true, inputControl: false, outputToLeader: false, askToLeader: false, endWithLeader: false, endWithAnswer: false, noTeam: false, cleanWithLeader: false },
-  detached: { link: false, inputControl: false, outputToLeader: false, askToLeader: false, endWithLeader: false, endWithAnswer: false, noTeam: false, cleanWithLeader: false },
+  subagent: { link: true, inputControl: true, outputToLeader: true, askToLeader: false, endWithLeader: true, endWithAnswer: true, noTeam: true, cleanWithLeader: true, notifyEnd: true },
+  teammate: { link: true, inputControl: false, outputToLeader: false, askToLeader: false, endWithLeader: false, endWithAnswer: false, noTeam: false, cleanWithLeader: false, notifyEnd: false },
+  detached: { link: false, inputControl: false, outputToLeader: false, askToLeader: false, endWithLeader: false, endWithAnswer: false, noTeam: false, cleanWithLeader: false, notifyEnd: false },
 } as const satisfies Record<string, TeamOptions>;
 
 /** inspect 기록의 호출 하나 요약 (inspect/inspect.db 의 calls 한 행). at 은 요청이 들어온 시각, ms 는 응답이 끝날 때까지 */

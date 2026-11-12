@@ -104,7 +104,8 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
                                  --subagent: 리더가 입력을 쥐고 답을 받는다, 답하면 닫히고 다시 시키면 다시 뜬다, 리더가 닫히면 같이 닫힌다, 질문 도구·팀원 만들기는 못 한다.
                                  --wait: 첫 지시의 답을 기다려 id 대신 그 답을 출력한다 (답을 받는 팀원만).
                                  --teammate(기본): 첫 지시 뒤에는 메시지로만 주고받고 리더가 닫혀도 산다. --detached: 리더와 상관없는 세션.
-                                 -s·-t·-d 는 관계 프리셋, -o 는 그 위에 얹는 옵션 (true|false): link inputControl outputToLeader askToLeader endWithLeader endWithAnswer noTeam cleanWithLeader.
+                                 -s·-t·-d 는 관계 프리셋, -o 는 그 위에 얹는 옵션 (true|false): link inputControl outputToLeader askToLeader endWithLeader endWithAnswer noTeam cleanWithLeader notifyEnd.
+                                 notifyEnd: 리더가 닫지 않았는데 팀원이 끝나면 리더에게 kind=closed 메시지 (--subagent 기본 켜짐).
                                  cleanWithLeader: 리더가 닫힐 때 worktree 를 잃을 작업이 없으면 지운다 (endWithLeader 가 있어야, --subagent 기본 켜짐).
                                  -m 은 모델 이름 또는 anthropic:<모델>·openai:<모델>. 주지 않은 모델·effort·권한 모드는 리더를 따른다.
                                  --agent 는 .slcode/agents/<A>.md(리더 폴더에서 위로)·<상태 폴더>/agents/<A>.md 의 에이전트 정의 — 본문은 팀원의 지시문, frontmatter 의 model·effort·mode·relation·profile 은 주지 않은 옵션의 기본값.

@@ -1,7 +1,7 @@
 // slcode 플러그인 main (새 방식 apiVersion 2, ticket slcode-plugin-v2) — 세션 머신의 node 에서 머신마다 한 번 돈다. 카드 하나 = slcode 세션 하나.
 //
 // 세 갈래 (사용자 확정 2026-10-21): main(이 파일) — 바이너리 받기·설치, `slcode list`·`close --force` 같은 명령, 셸 동사
-// slcode.new·slcode.resume, 다른 플러그인용 open·close·mail(activate 반환값). renderer.js — 창마다: 팔레트 명령, 액티비티바 사이드바·배지, 카드 열기(이 main 이
+// slcode.new·slcode.resume·slcode.team, 다른 플러그인용 open·close·mail(activate 반환값). renderer.js — 창마다: 팔레트 명령, 액티비티바 사이드바·배지, 카드 열기(이 main 이
 // 부른다). views/session.js — 카드마다: 서비스 기동·연결·배지·다시 붙기, slcode 화면 그리기·중계. views/sessions.js — 세션 목록 사이드바.
 // 카드 화면이 서비스를 띄우는 명령은 여기서 짓는다 (command) — 받은 바이너리의 경로가 이 머신의 것이라서다.
 // slcode.new: 이 main 이 key 를 정해 요청자 터미널의 메인 창 renderer 에 카드를 열게 하고, 카드 화면이 hello 로 세션 id 를 알면 started 로
@@ -324,6 +324,29 @@ export function activate(api) {
     const w = await windowFor(ctx.tmux);
     if (a.id) { await w.call(CARDS, 'open', { id: a.id, tmux: ctx.tmux }); return a.id; }
     await w.call(CARDS, 'open', { pick: a.cwd ?? ctx.cwd, tmux: ctx.tmux });
+  });
+
+  // 플러그인 동사 — 다른 플러그인(orchestration)이 api.verbs.run('slcode.team', argv, ctx) 로 부른다 (ticket slcode-team-plugin-verb, 사용자 2026-11-11).
+  // --leader 세션을 리더로 `slcode team new` 와 같게 팀원을 띄우고 카드를 요청자 deck 에 열고 팀원 id 를 돌려준다. 리더를 env 가 아니라 인자로 받는 것은
+  // superlite 가 verbs.run 으로 이어 부른 동사에 셸 env 를 넘기지 않아서다 — 부르는 쪽이 자기 동사의 ctx.env.SLCODE_SESSION_ID 를 넘긴다.
+  // 인자 검사는 CLI 가 한다(옵션 이름도 team new 의 긴 이름 그대로). --wait 는 받지 않는다 — 동사가 팀원의 답까지 막힌다
+  api.verbs.handle('slcode.team', async (a, ctx) => {
+    if (!a.leader) throw new Error('slcode.team needs --leader <session id> (the leader session, e.g. SLCODE_SESSION_ID of the shell that asked)');
+    if ((await api.platform()).os === 'windows') throw new Error('slcode.team is not available on Windows yet');
+    const env = sessionEnv(a.env), params = sessionParams(a.param);
+    const opt = (k) => (a[k] !== undefined ? [`--${k}`, a[k]] : []);
+    const argv = ['team', 'new', ...['subagent', 'teammate', 'detached'].filter((k) => a[k]).map((k) => `--${k}`),
+      ...['cwd', 'worktree', 'name', 'options', 'agent', 'model', 'effort', 'mode', 'profile'].flatMap(opt),
+      ...env.flatMap((p) => ['--env', p]), ...params.flatMap((p) => ['--param', p])];
+    const [bin, dir] = await Promise.all([resolveBin(), dirOpt()]);
+    // SUPERLITE_SOCK 를 비워 CLI 가 superlite slcode.resume 으로 카드를 따로 열지 않게 한다 — 카드는 아래에서 요청자 deck 에. 상대 --cwd 는 요청자 cwd 기준
+    const r = await api.proc.run(`SLCODE_SESSION_ID=${shq(a.leader)} SUPERLITE_SOCK= ${bin.cmd} ${argv.map(shq).join(' ')}${dir}${a.prompt !== undefined ? ` -- ${shq(a.prompt)}` : ''}`, { cwd: ctx.cwd });
+    if (r.code !== 0) throw new Error(r.stderr.trim().replace(/^\[slcode\] /, '') || `exit ${r.code}`);
+    const id = r.stdout.trim();
+    // 카드를 못 열어도 팀원은 돈다 — id 를 돌려주고 알린다
+    try { await (await windowFor(ctx.tmux)).call(CARDS, 'open', { id, tmux: ctx.tmux }); }
+    catch (e) { api.notify('warning', `팀원 ${id} 의 카드를 열지 못했습니다: ${e?.message ?? e}`, ctx.tmux ? { tmux: ctx.tmux } : undefined); }
+    return id;
   });
 
   shutdown = () => { for (const w of waits.values()) w.reject(new Error('slcode 플러그인이 내려갔습니다')); waits.clear(); };

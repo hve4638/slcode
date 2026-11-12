@@ -289,6 +289,28 @@ test('team new (기본 link): 첫 지시 뒤에는 메시지로만 — 잠기지
   const amb = await cli(dir, undefined, ['mail', 'w1', 'who']);
   assert.notEqual(amb.code, 0, '팀 밖에서는 모호하다');
 
+  // 끝남 알림 — teammate 는 기본 꺼짐, -o notifyEnd 면 리더가 kind=closed 를 받는다. link 없이는 켤 수 없다 (ticket slcode-team-plugin-verb)
+  const noLink = await cli(dir, lid, ['team', 'new', '--cwd', work, '-d', '-o', '{"notifyEnd":true}', '--', 'no-call']);
+  assert.equal(noLink.code, 1);
+  assert.match(noLink.err, /notifyEnd needs link/);
+  const ids: string[] = [];
+  for (const o of ['{}', '{"notifyEnd":true}']) {
+    const r = await cli(dir, lid, ['team', 'new', '--cwd', work, '-o', o, '--', 'no-call']);
+    assert.equal(r.code, 0, r.err);
+    ids.push(r.out.trim());
+  }
+  const [quiet, loud] = ids;
+  assert.deepEqual([meta(dir, quiet).team!.notifyEnd, meta(dir, loud).team!.notifyEnd], [false, true]);
+  for (const k of ids) {
+    const kc = await connectSession(sockOf(dir, k));
+    await kc.request('session.close', { id: k }).catch(() => {});
+    kc.close();
+    await until(async () => !(await sockAlive(sockOf(dir, k))));
+  }
+  const closedText = (await until(() => mailTurns(dir, lid, 'closed').map((e) => (e.ev.kind === 'turn.start' ? e.ev.text : '')).join('\n') || undefined))!;
+  assert.match(closedText, new RegExp(`Teammate ${loud} ended`));
+  assert.doesNotMatch(closedText, new RegExp(`Teammate ${quiet} ended`), '기본 teammate 는 알리지 않는다');
+
   // 리더가 닫혀도 산다 (수명 연동 꺼짐 — 소유자 없이)
   const pc = await connectSession(psock);
   await pc.request('session.close', { id: lid });
