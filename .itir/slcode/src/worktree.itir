@@ -31,7 +31,7 @@ fn confirmationKey(wt) -> Text {
 }
 export type Loss
 export fn worktreeLoss(wt) -> Loss? {
-  role: 지우면 잃는 것 — 사유(커밋하지 않은 변경, 부모 브랜치에 반영되지 않은 커밋, 사라진 부모 브랜치)와 확인 키. 없으면 null. 브랜치가 이미 없으면 커밋은 보지 않는다
+  role: 지우면 잃는 것 — 사유 목록(사유 하나가 원소 하나: 커밋하지 않은 변경, 부모 브랜치에 반영되지 않은 커밋, 사라진 부모 브랜치)과 확인 키. 없으면 null. 브랜치가 이미 없으면 커밋은 보지 않는다
 }
 export fn removeWorktree(wt, force) {
   role: worktree 폴더와 브랜치를 지운다(force 면 커밋하지 않은 변경도). 폴더가 이미 없으면 prune 만. 비게 된 <repo>.worktrees 폴더도 지운다

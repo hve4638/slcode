@@ -1,7 +1,7 @@
 // slcode 플러그인 main (새 방식 apiVersion 2, ticket slcode-plugin-v2) — 세션 머신의 node 에서 머신마다 한 번 돈다. 카드 하나 = slcode 세션 하나.
 //
 // 세 갈래 (사용자 확정 2026-10-21): main(이 파일) — 바이너리 받기·설치, `slcode list`·`close --force` 같은 명령, 셸 동사
-// slcode.new·slcode.resume·slcode.team, 다른 플러그인용 open·close·mail(activate 반환값). renderer.js — 창마다: 팔레트 명령, 액티비티바 사이드바·배지, 카드 열기(이 main 이
+// slcode.new·slcode.resume·slcode.team, 다른 플러그인용 open·close·mail·cleanWorktree(activate 반환값). renderer.js — 창마다: 팔레트 명령, 액티비티바 사이드바·배지, 카드 열기(이 main 이
 // 부른다). views/session.js — 카드마다: 서비스 기동·연결·배지·다시 붙기, slcode 화면 그리기·중계. views/sessions.js — 세션 목록 사이드바.
 // 카드 화면이 서비스를 띄우는 명령은 여기서 짓는다 (command) — 받은 바이너리의 경로가 이 머신의 것이라서다.
 // slcode.new: 이 main 이 key 를 정해 요청자 터미널의 메인 창 renderer 에 카드를 열게 하고, 카드 화면이 hello 로 세션 id 를 알면 started 로
@@ -262,6 +262,20 @@ export function activate(api) {
     if (r.code !== 0) throw new Error(r.stderr.trim() || `exit ${r.code}`);
     return JSON.parse(r.stdout);
   }
+  /** 다른 플러그인용 cleanWorktree (ticket slcode-plugin-clean-worktree-export, 사용자 2026-11-13) — 팀원 세션 self 의 worktree 와 브랜치를
+   *  `slcode team clean-worktree --self [--key K] --json` 으로 지운다(세션은 닫지 않는다). 지움 {removed: true, path, branch}, 이미 지움은 already: true 도,
+   *  잃을 작업 때문에 거절하면 {removed: false, reasons(문자열 배열), key} — 그 key 를 다시 주면 버리고 지운다. 그 밖(없는 세션, worktree 없는 세션, git 실패)은 throw.
+   *  세션은 slcode.team 처럼 셸 env 로 넘긴다 — Windows 는 아직 */
+  async function cleanWorktree({ self, key } = {}) {
+    if (typeof self !== 'string' || !self) throw new Error('cleanWorktree needs {self} (the teammate session id)');
+    if ((await api.platform()).os === 'windows') throw new Error('cleanWorktree is not available on Windows yet');
+    const [bin, dir] = await Promise.all([resolveBin(), dirOpt()]);
+    const r = await api.proc.run(`SLCODE_SESSION_ID=${shq(self)} ${bin.cmd} team clean-worktree --self${key ? ` --key ${shq(String(key))}` : ''} --json${dir}`);
+    let out = null;
+    try { out = JSON.parse(r.stdout); } catch {}
+    if (typeof out?.removed !== 'boolean') throw new Error(r.stderr.trim().replace(/^\[slcode\] /, '') || (r.code === 0 ? 'this slcode is too old for cleanWorktree (no clean-worktree --json)' : `exit ${r.code}`));
+    return out;
+  }
   /** [업데이트] — 지금 쓸 slcode(받기 포함)에 version·build 를 물어 카드 serve 의 것(화면이 보낸 값)과 견준다.
    *  deploy 경로는 내용 해시라 serve 가 자기 폴더를 봐서는 새 버전을 모른다 */
   async function checkUpdate(d) {
@@ -357,6 +371,8 @@ export function activate(api) {
     close,
     /** 켜진 세션에 메시지 → {id, to} */
     mail,
+    /** 팀원 세션의 worktree·브랜치 지우기 → {removed, path, branch, already?} | {removed: false, reasons, key} */
+    cleanWorktree,
   };
 }
 

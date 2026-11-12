@@ -126,8 +126,8 @@ function confirmationKey(wt: Worktree): string {
   return h.digest('hex').slice(0, 5);
 }
 
-/** 지우면 잃는 것 — reasons 와 그것을 버리고 지울 확인 키 */
-export type Loss = { reasons: string; key: string };
+/** 지우면 잃는 것 — reasons(사유 하나가 원소 하나)와 그것을 버리고 지울 확인 키 */
+export type Loss = { reasons: string[]; key: string };
 
 /** 잃을 작업 (wtree 기준) — 커밋하지 않은 변경(추적하지 않는 파일 포함)과 부모 브랜치에 반영되지 않은 브랜치 커밋. 부모 브랜치가 없으면 만든 checkout 의 지금 HEAD 가 기준.
  *  없으면 null. 브랜치가 이미 없으면 커밋은 보지 않는다 */
@@ -148,7 +148,7 @@ export function worktreeLoss(wt: Worktree): Loss | null {
       if (!reflected(at, 'HEAD', wt.branch)) why.push(`commits on ${wt.branch} not in the HEAD of ${at}`);
     }
   }
-  return why.length ? { reasons: why.join('; '), key: confirmationKey(wt) } : null;
+  return why.length ? { reasons: why, key: confirmationKey(wt) } : null;
 }
 
 export function removeWorktree(wt: Worktree, force: boolean) {

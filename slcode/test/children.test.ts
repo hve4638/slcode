@@ -578,6 +578,10 @@ test('worktree: team new --worktree [이름] 은 리더 HEAD 에서 <이름> 브
   const twice = await cli(dir, lid, ['team', 'clean-worktree', aid]);
   assert.equal(twice.code, 0);
   assert.match(twice.err, /already removed/);
+  // --json — 같은 결과를 값으로 (플러그인 cleanWorktree 가 읽는다)
+  const twiceJson = await cli(dir, lid, ['team', 'clean-worktree', aid, '--json']);
+  assert.equal(twiceJson.code, 0);
+  assert.deepEqual(JSON.parse(twiceJson.out), { removed: true, already: true, path: wa, branch: 'feat-a' });
   // --self — 팀원이 자기 것을 닫지 않고 지운다. 키는 그사이 무엇이든 바뀌면 달라진다
   const wb = meta(dir, bid).worktree!.path;
   fs.writeFileSync(path.join(wb, 'c.txt'), 'c\n');
@@ -589,8 +593,17 @@ test('worktree: team new --worktree [이름] 은 리더 HEAD 에서 <이름> 브
   assert.equal(stale.code, 1, '바뀐 뒤의 옛 키로는 지우지 않는다');
   const key2 = /--key ([0-9a-f]{5})/.exec(stale.err)![1];
   assert.notEqual(key2, key);
-  const selfOk = await cli(dir, bid, ['team', 'clean-worktree', '--self', '--key', key2]);
+  fs.writeFileSync(path.join(wb, 'd.txt'), 'd\n');
+  const jsonRefused = await cli(dir, bid, ['team', 'clean-worktree', '--self', '--key', key2, '--json']);
+  assert.equal(jsonRefused.code, 1);
+  const refused = JSON.parse(jsonRefused.out);
+  assert.equal(refused.removed, false);
+  assert.deepEqual(refused.reasons, [`uncommitted changes in ${wb}`]);
+  assert.match(refused.key, /^[0-9a-f]{5}$/);
+  assert.notEqual(refused.key, key2);
+  const selfOk = await cli(dir, bid, ['team', 'clean-worktree', '--self', '--key', refused.key, '--json']);
   assert.equal(selfOk.code, 0, selfOk.err);
+  assert.deepEqual(JSON.parse(selfOk.out), { removed: true, path: wb, branch: 'beta-task' });
   assert.equal(fs.existsSync(wb), false);
   assert.equal(hasBranch(work, 'beta-task'), false);
   assert.equal(await sockAlive(sockOf(dir, bid)), true, '--self 는 자기 세션을 닫지 않는다');

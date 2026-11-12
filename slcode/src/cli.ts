@@ -28,7 +28,7 @@ import { randomUUID } from 'node:crypto';
 import { pluginCommand } from 'slcode-plugin/cli';
 import { addProfile, getProfile, listProfiles, removeProfile, setProfile, type Profile } from './profiles.js';
 import { findAgent, listAgents, type AgentDef } from './teamAgents.js';
-import { createWorktree, removeWorktree, worktreeLoss } from './worktree.js';
+import { createWorktree, removeWorktree, worktreeLoss, type Loss } from './worktree.js';
 import { summarize } from './activity.js';
 import type { Worktree } from './worktree.js';
 import { FILES, PERMISSION_MODES, TEAM_PRESETS, type ApprovalRequest, type LoggedEvent, type Methods, type SessionInfo } from './protocol.js';
@@ -110,11 +110,12 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
                                  -m 은 모델 이름 또는 anthropic:<모델>·openai:<모델>. 주지 않은 모델·effort·권한 모드는 리더를 따른다.
                                  --agent 는 .slcode/agents/<A>.md(리더 폴더에서 위로)·<상태 폴더>/agents/<A>.md 의 에이전트 정의 — 본문은 팀원의 지시문, frontmatter 의 model·effort·mode·relation·profile 은 주지 않은 옵션의 기본값.
                                  팀원에게 지시는 prompt·interrupt·respond·close <팀원> 이 리더 core 를 거쳐 간다. prompt <팀원> --wait 는 답을 기다려 출력한다
-  team clean-worktree <팀원> [--key K] | team clean-worktree --self [--key K]
+  team clean-worktree <팀원> [--key K] [--json] | team clean-worktree --self [--key K] [--json]
                                  team new --worktree 로 띄운 팀원의 worktree 와 브랜치를 지운다. 켜져 있으면 먼저 닫는다. 세션 기록은 남는다.
                                  --self 는 팀원 세션 안에서 자기 것을 지운다 (자기 세션은 닫지 않는다).
                                  커밋하지 않은 변경이 있거나 브랜치가 부모 브랜치(slcodeparent)에 반영되지 않았으면 거절하고 확인 키를 보인다.
-                                 그 작업을 버리려면 --key <키> 로 다시 친다 — 그사이 무엇이든 바뀌면 키도 바뀐다
+                                 그 작업을 버리려면 --key <키> 로 다시 친다 — 그사이 무엇이든 바뀌면 키도 바뀐다.
+                                 --json 이면 결과를 JSON 으로: {removed, path, branch} · 이미 지웠으면 already · 거절이면 {removed: false, reasons, key}
 에이전트 플러그인 (Claude·Codex 세션에 싣는다. 바꾼 설정은 새 세션부터, 떠 있는 세션은 사이드바의 다시 싣기로 — Codex 는 skill 만)
   plugin add <folder>            slcode-plugin.json(애드온은 slcode-addon.json)이 있는 원본 폴더를 설치한다. 같은 내용이면 아무것도 하지 않는다
   plugin remove <name> [--cascade]
@@ -324,7 +325,7 @@ async function teamNew(args: string[]): Promise<void> {
 /** `slcode team clean-worktree <팀원> | --self [--key K]` (ticket slcode-team-worktree·-self, 사용자 2026-11-11) — team new --worktree 로 띄운 팀원의 worktree 와 브랜치를 지운다.
  *  <팀원> 은 세션 밖에서도 된다(리더가 죽은 뒤 사람이 정리), 켜진 팀원은 먼저 닫는다. --self 는 이 세션(SLCODE_SESSION_ID)의 것을 닫지 않고 지운다.
  *  잃을 작업이 있으면 그 확인 키를 --key 로 받을 때만 버리고 지운다(wtree destroy --key 와 같다, --force 로는 넘지 못한다). 키는 닫기 전에 먼저 본다 — 거절할 것이면 팀원을 닫지 않는다.
- *  세션 기록은 남기고 meta 에 지운 시각을 적는다 */
+ *  세션 기록은 남기고 meta 에 지운 시각을 적는다. --json 이면 결과(지움·이미 지움·거절)를 stdout 에 JSON 으로 — 플러그인 main.js 의 cleanWorktree 가 읽는다 (ticket slcode-plugin-clean-worktree-export) */
 async function teamCleanWorktree(args: string[]): Promise<void> {
   const how = 'team clean-worktree <teammate> [--key K] | team clean-worktree --self [--key K]';
   if (flags.force) usage(`team clean-worktree takes no --force — when it refuses, it prints a --key that discards the work it found (${how})`);
@@ -335,9 +336,9 @@ async function teamCleanWorktree(args: string[]): Promise<void> {
   const { id, worktree: wt } = log.meta;
   if (!wt) { err(`session ${id} has no worktree made by slcode team new --worktree`); process.exit(1); }
   if (!flags.self && id === me) usage(`${id} is this session — to remove its own worktree without closing it, use --self`);
-  if (wt.removedAt) { err(`the worktree of ${id} was already removed (${wt.path})`); return; }
+  if (wt.removedAt) { if (flags.json) print({ removed: true, already: true, path: wt.path, branch: wt.branch }); else err(`the worktree of ${id} was already removed (${wt.path})`); return; }
   const again = `slcode team clean-worktree ${flags.self ? '--self' : id}`;
-  const refuse = (l: { reasons: string; key: string }) => { err(`kept the worktree of ${id}: ${l.reasons}\n  to discard that work: ${again} --key ${l.key}`); process.exit(1); };
+  const refuse = (l: Loss) => { if (flags.json) print({ removed: false, reasons: l.reasons, key: l.key }); else err(`kept the worktree of ${id}: ${l.reasons.join('; ')}\n  to discard that work: ${again} --key ${l.key}`); process.exit(1); };
   const first = worktreeLoss(wt);
   if (first && flags.key !== first.key) refuse(first);
   if (!flags.self && (await sockAlive(log.sockPath))) {
@@ -351,7 +352,7 @@ async function teamCleanWorktree(args: string[]): Promise<void> {
   if (loss && flags.key !== loss.key) refuse(loss);
   try { removeWorktree(wt, !!loss); } catch (e) { err((e as Error).message); process.exit(1); }
   EventLog.open(P.sessionsDir, id)?.updateMeta({ worktree: { ...wt, removedAt: Date.now() } });
-  console.log(`removed worktree ${wt.path} and branch ${wt.branch}`);
+  if (flags.json) print({ removed: true, path: wt.path, branch: wt.branch }); else console.log(`removed worktree ${wt.path} and branch ${wt.branch}`);
 }
 /** 이 세션(SLCODE_SESSION_ID)의 link 팀원이면 리더 core 를 거쳐 지시한다 — 입력 제어 중인 팀원은 리더의 소유 연결로 온 지시만 받는다. 팀원이 아니면 null */
 async function viaParent(s: string | undefined, method: 'session.send' | 'session.interrupt' | 'session.approve' | 'session.close', params: Record<string, unknown> = {}, wait = false): Promise<{ result: unknown } | null> {
