@@ -451,7 +451,7 @@ export function aliasErrors(dir, m) {
 }
 /** 명령의 정적 검사 — 모든 part(켜지 않은 것도)를 본다. 이름 규칙·COMMAND 파일 둘·part 끼리 같은 이름·같은 플러그인 skill 과 같은 이름.
  *  하나라도 있으면 add 가 거부한다(플러그인 적용 실패, 사용자 결정 2026-11-02) */
-/** Claude 내장 명령의 이름·별칭 — add 때 미리 거른다(사용자 결정 2026-11-02). Claude Agent SDK 0.3.282 의 supportedCommands 중 builtin 인 것(API 키 계정, 2026-11-02 실측).
+/** Claude 내장 명령의 이름·별칭 — add 때 미리 거른다(사용자 결정 2026-11-02). Claude Agent SDK 0.3.282 의 supportedCommands 중 builtin 인 것(API 키 계정, 2026-11-02 실측)과 0.3.322 에서 늘어난 plugin-authoring(2026-11-12).
  *  계정·기능 플래그나 새 판에서 늘어난 것은 slcode 가 세션을 열 때 SDK 목록으로 다시 본다 — 이 목록은 그 판정을 대신하지 않는다 */
 export const CLAUDE_BUILTIN_COMMANDS = new Set([
     'deep-research', 'design', 'design-sync', 'dataviz', 'update-config', 'verify', 'debug', 'code-review', 'review', 'simplify', 'batch',
@@ -459,7 +459,7 @@ export const CLAUDE_BUILTIN_COMMANDS = new Set([
     'advisor', 'agents', 'auto-mode-setup', 'autocompact', 'clear', 'reset', 'new', 'color', 'compact', 'config', 'settings', 'output-style',
     'context', 'effort', 'fast', 'focus', 'heapdump', 'init', 'mcp', 'import', 'model', 'workflow-launch-exec', 'reload-plugins',
     'reload-skills', 'rename', 'name', 'security-review', 'usage', 'cost', 'stats', 'insights', 'recap', 'skill-doctor', 'goal',
-    'design-consent', 'design-revoke', 'list-agents', 'peers', 'team-onboarding',
+    'design-consent', 'design-revoke', 'list-agents', 'peers', 'team-onboarding', 'plugin-authoring',
 ]);
 export function commandErrors(dir, m) {
     const errors = [];
