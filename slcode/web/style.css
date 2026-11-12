@@ -413,13 +413,17 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .composer .stat .where button.ico:hover { background: var(--acf-soft); color: var(--acf-fg); }
 .acf .composer .stat .where button.ico svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .acf .composer .stat .lim + .lim { margin-left: 4px; }
-.acf .composer .stat .lim { display: inline-flex; align-items: center; gap: 6px; }
+.acf .composer .stat .lim { display: inline-flex; align-items: center; gap: 4px; }
 .acf .composer .stat .track { position: relative; display: inline-flex; }
-/* 세로 기둥 — 가로 막대를 세운 꼴, 아래부터 채운다 (사용자 2026-10-14) */
-/* 기둥이 작아 --acf-soft 로는 빈 칸이 안 보인다 — 흐린 글자색을 옅게 깐다. 채운 부분은 위를 평평하게 (둥글면 점처럼 보인다) */
-.acf .composer .stat .bar { width: 6px; height: 12px; border-radius: 2px; background: color-mix(in srgb, var(--acf-muted) 30%, transparent); overflow: hidden; display: flex; align-items: flex-end; }
-.acf .composer .stat .bar i { display: block; width: 100%; background: var(--acf-accent); }
-.acf .composer .stat .lim.hot .bar i { background: var(--acf-err); }
+/* 고리 — 원 안에 5h·1w, 12시부터 시계 방향으로 쓴 양만큼 채운다 (ticket slcode-plan-limit-ring, 사용자 2026-11-12 A1안).
+   16px·굵기 1.25 로 옆 아이콘의 선 굵기에 맞추고 줄 높이(16.5px)를 넘지 않는다. 빈 고리는 흐린 글자색을 옅게, 안 글자는 본문 글꼴로 한 단계 흐리게 */
+.acf .composer .stat .ring { width: 16px; height: 16px; flex: none; display: block; overflow: visible; }
+.acf .composer .stat .ring circle { fill: none; stroke-width: 1.25; }
+.acf .composer .stat .ring .rt { stroke: color-mix(in srgb, var(--acf-muted) 30%, transparent); }
+.acf .composer .stat .ring .rf { stroke: var(--acf-accent); }
+.acf .composer .stat .ring .rf.warn { stroke: var(--acf-warn); }
+.acf .composer .stat .ring .rf.hot { stroke: var(--acf-err); }
+.acf .composer .stat .ring text { font: 500 8px var(--acf-sans); fill: color-mix(in srgb, var(--acf-fg) 60%, var(--acf-muted)); }
 .acf .composer .stat .v { position: absolute; bottom: calc(100% + 4px); left: 50%; transform: translateX(-50%); padding: 1px 7px; border: 1px solid var(--acf-line); border-radius: 6px; background: var(--acf-panel); color: var(--acf-fg); box-shadow: 0 2px 8px var(--acf-shadow); white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity .12s; z-index: 1; }
 .acf .composer .stat .lim:hover .v, .acf .composer .stat .cost:hover .v { opacity: 1; }
 /* 비용 툴팁 — 총 소모 토큰 표, 비용 왼쪽 끝에 맞춰 연다 (넘치면 app.js 가 안쪽으로 민다) */

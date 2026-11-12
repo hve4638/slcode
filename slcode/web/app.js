@@ -604,7 +604,6 @@ export function mountAgentFront(root, transport, opts = {}) {
     folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
     branch: '<line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
     fork: '<circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/>',
-    hourglass: '<path d="M5 22h14"/><path d="M5 2h14"/><path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22"/><path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2"/>',
     box: '<path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>',
     cpu: '<rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/>',
     coin: '<circle cx="12" cy="12" r="10"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><path d="M12 18V6"/>',
@@ -1054,12 +1053,19 @@ export function mountAgentFront(root, transport, opts = {}) {
     const m = Math.max(0, Math.round((new Date(iso) - Date.now()) / 6e4));
     return m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m` : `${Math.floor(m / 1440)}d${Math.floor((m % 1440) / 60)}h`;
   };
-  // 작성창 아래 한 줄 — 📁폴더 🌿repo(브랜치) ⌛플랜 리밋(5h·1w 막대·남은 시간) 📦ctx 누적 비용, 묶음 사이는 · 없이 간격만. 사이드바 위에서 옮겼다 (사용자 2026-10-13, 짧은 꼴은 2026-10-14).
-  // 폴더는 올리면 전체 경로 복사, repo 는 git 안일 때만. 모르는 리밋·context 는 뺀다. 리밋 막대는 세로 기둥으로 쓴 양을 채우고, % 는 올리면 작은 툴팁으로 (사용자 2026-09-30, 세로는 2026-10-14)
+  // 작성창 아래 한 줄 — 📁폴더 🌿repo(브랜치) 플랜 리밋(5h·1w 고리·남은 시간) 📦ctx 누적 비용, 묶음 사이는 · 없이 간격만. 사이드바 위에서 옮겼다 (사용자 2026-10-13, 짧은 꼴은 2026-10-14).
+  // 폴더는 올리면 전체 경로 복사, repo 는 git 안일 때만. 모르는 리밋·context 는 뺀다. % 는 올리면 작은 툴팁으로 (사용자 2026-09-30).
+  // 리밋은 원 안에 5h·1w 를 쓰고 둘레 고리를 12시부터 시계 방향으로 쓴 양만큼 채운다, 60% 이상 노랑·90% 이상 빨강 (ticket slcode-plan-limit-ring, 사용자 2026-11-12 A1안)
   function renderStat() {
     const cwd = info?.cwd ?? ready?.cwd ?? '';
-    const lim = (label, w) => w && h('span', { class: 'lim' + (w.pct >= 90 ? ' hot' : '') }, h('span', {}, label),
-      h('span', { class: 'track' }, h('span', { class: 'bar' }, h('i', { style: `height:${Math.min(100, w.pct ?? 0)}%` })), h('span', { class: 'v' }, w.pct != null ? `${Math.round(w.pct)}%` : '—')),
+    const ring = (label, pct) => {
+      const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('class', 'ring'); s.setAttribute('viewBox', '0 0 16 16');
+      const level = pct >= 90 ? ' hot' : pct >= 60 ? ' warn' : '';
+      s.innerHTML = `<circle class="rt" cx="8" cy="8" r="7.375"/><circle class="rf${level}" cx="8" cy="8" r="7.375" pathLength="100" stroke-dasharray="${Math.min(100, pct ?? 0)} 100" transform="rotate(-90 8 8)"/><text x="8" y="10.9" text-anchor="middle">${label}</text>`;
+      return s;
+    };
+    const lim = (label, w) => w && h('span', { class: 'lim' },
+      h('span', { class: 'track' }, ring(label, w.pct), h('span', { class: 'v' }, w.pct != null ? `${Math.round(w.pct)}%` : '—')),
       h('span', {}, fmtReset(w.resetsAt)));
     const grp = (name, ...kids) => h('span', { class: 'grp' }, icon(name), ...kids);
     const lims = [lim('5h', status?.limits?.fiveHour), lim('1w', status?.limits?.sevenDay)].filter(Boolean);
@@ -1074,7 +1080,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     stat.replaceChildren(...[
       cwd && h('span', { class: 'grp where' }, icon('folder'), h('span', { class: 'name', title: cwd }, cwd.split('/').filter(Boolean).pop() ?? cwd), iconBtn('copy', '전체 경로 복사', copyOf(cwd))),
       status?.repo && h('span', { class: 'grp where' }, icon('branch'), h('span', { class: 'name' }, status.repo, status.branch ? h('span', { class: 'dim' }, ` (${status.branch})`) : '')),
-      lims.length && grp('hourglass', ...lims),
+      lims.length && h('span', { class: 'grp' }, ...lims),
       ctx && grp('box', h('span', { title: `${fmtTok(ctx.tokens)} / ${fmtTok(ctx.max)}` }, 'ctx ', h('b', { class: ctxLevel(ctx.pct, settings.context) }, `${Math.round(ctx.pct)}%`))),
       h('span', { class: 'grp cost', onmouseenter: fit }, icon('coin'), h('span', {}, usage.turns && !costKnown ? '—' : usage.cost ? `$${usage.cost.toFixed(2)}` : '$0'), tok), // 턴이 있는데 비용을 모르면(가격표에 없는 Codex 모델) —
     ].filter(Boolean));
