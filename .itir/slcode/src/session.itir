@@ -42,10 +42,10 @@ export class ClaudeSession {
     role: SDK applyFlagSettings({effortLevel}) — 세션 한정 설정층이라 설정 파일엔 안 쓴다. meta.effort 에 남겨 복원 때 options.effort 로 넘긴다. models() 가 지금 effort 와 모델별 supportedEffortLevels 를 같이 준다. 기동 때 meta.effort 가 있으면 query 를 띄운 뒤 models() 로 effortMisfit 을 보고, 맞지 않으면 notice 뒤 applyFlagSettings({effortLevel: null})(모델 기본)·meta.effort 를 비운다 — 첫 프롬프트와 나란히 돌아 첫 턴은 SDK 가 그 모델에 맞게 낮춘 값으로 돌 수 있다
   }
   export fn rewind(seq, conversation, files) -> String[]? {
-    role: idle 일 때만. files 면 SDK rewindFiles(그 턴의 userUuid), conversation 이면 생성기를 닫고(restarting 플래그로 exit 이벤트를 막는다) 앞 턴의 uuid 를 resumeSessionAt 으로 run 재기동(유지 지점은 그 턴보다 앞의 마지막 turn.end 또는 session.imported 표지의 uuid — 표지는 가져온 턴들 뒤에 서므로 대상보다 앞의 것만 본다. 없으면 새 벤더 세션, 표지의 uuid 가 없으면 가져온 대화를 지킬 수 없어 오류. 되돌림을 반영한 로그는 eventLog.unrewound). turn.rewound 이벤트
+    role: idle 일 때만. files 면 SDK rewindFiles(그 턴의 userUuid), conversation 이면 생성기를 닫고(restarting 플래그로 exit 이벤트를 막는다) 앞 턴의 uuid 를 resumeSessionAt 으로 run 재기동(유지 지점은 그 턴보다 앞의 마지막 turn.end 또는 session.imported 표지의 uuid — 표지는 가져온 턴들 뒤에 서므로 대상보다 앞의 것만 본다. 없으면 새 벤더 세션, 표지의 uuid 가 없으면 가져온 대화를 지킬 수 없어 오류. 되돌림을 반영한 로그는 eventLog.unrewound). turn.rewound 이벤트. 대화 되돌리기의 재기동은 뒤에서 돈다 (ticket slcode-rewind-latency, 2026-11-12) — 옛 프로세스가 내려가기까지 0.5초쯤 걸려(stdin 을 닫으면 CLI 가 기록에 last-prompt·cost-state 를 쓰고 나간다) 그것을 기다리면 화면이 그만큼 늦다. 큐를 먼저 바꾸고(그사이 보낸 프롬프트는 새 프로세스가 받는다) q 를 비운 뒤 생성기를 닫고, turn.rewound·idle 을 먼저 낸다. 새 프로세스는 옛 것이 내려간 뒤에 띄운다 — 두 프로세스가 같은 기록 파일에 쓰지 않게. 그사이 닫혔으면 띄우지 않는다. 벤더에 묻는 rewind·rewindPreview·reopen·interrupt 는 재기동이 끝나길 기다린다. 그 밖의 벤더 호출은 그사이 q 가 없어 벤더에 닿지 않는다 — 모델·effort 는 meta 에 남아 새 프로세스가 그 값으로 뜬다
   }
   export fn rewindPreview(seq) -> RewindPreview {
-    role: 되돌리기 창 확인 단계 — rewind 와 같은 턴·유지 지점을 보고 파일은 SDK rewindFiles dryRun 으로만 잰다. 체크포인트가 없으면 files null, 가져온 대화 앞이면 conversation false
+    role: 되돌리기 창 확인 단계 — rewind 와 같은 턴·유지 지점을 보고 파일은 SDK rewindFiles dryRun 으로만 잰다. 체크포인트가 없으면 files null, 가져온 대화 앞이면 conversation false. 대화 되돌리기의 재기동 중이면 끝나길 기다린다
   }
   export fn queued() -> Int {
     role: 보냈지만 아직 turn.end 가 오지 않은 턴 수 — idle 경계에서도 다음 턴이 줄 서 있을 수 있다. 턴 중에 넣어 같은 턴에서 처리된 메시지는 SDK 의 command_lifecycle completed(맨 앞이 아닌 uuid)로 뺀다 — 그 메시지에는 따로 result 가 오지 않는다

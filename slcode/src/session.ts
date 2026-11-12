@@ -88,6 +88,8 @@ export class ClaudeSession extends AgentSession {
   private opts: SessionOptions;
   private running: Promise<void> = Promise.resolve();
   private restarting = false;
+  /** 대화 되돌리기의 뒤에서 도는 재기동 — 옛 프로세스가 내려가고 새 run 이 뜨면 풀린다. 벤더에 묻는 rewind·rewindPreview·reopen·interrupt 가 기다린다 */
+  private restart: Promise<void> = Promise.resolve();
   /** 대화 되돌리기: 다음 run 의 resumeSessionAt */
   private resumeAt: string | null = null;
   /** 보낸 순서대로의 사용자 메시지 uuid (우리가 정해 보낸다 — SDK 의 submitMessage options.uuid 와 같은 자리). 턴이 끝날 때 하나씩 꺼낸다 */
@@ -206,6 +208,7 @@ export class ClaudeSession extends AgentSession {
   async interrupt() {
     // 진행 턴을 끊으면 그 턴의 승인 대기도 뜻을 잃는다 — cancelled 로 푼다
     this.cancelPending('interrupted');
+    await this.restart; // 되돌린 직후 보낸 턴은 새 프로세스가 받는다
     await this.q?.interrupt();
   }
 
@@ -241,6 +244,7 @@ export class ClaudeSession extends AgentSession {
 
   /** 턴 되돌리기 — seq 의 turn.start 부터 버린다. files 는 SDK rewindFiles(그 턴의 사용자 메시지 uuid), conversation 은 벤더 세션을 앞 턴의 마지막 uuid 에서 다시 연다(첫 턴이면 새 벤더 세션) */
   async rewind(seq: number, conversation: boolean, files: boolean): Promise<string[] | null> {
+    await this.restart;
     if (this.state !== 'idle') throw new Error('rewind needs an idle session');
     // 되돌림을 반영한 로그 — 앞선 turn.rewound 가 버린 턴은 벤더 쪽에도 없으므로 유지 지점 후보에서 뺀다 (2026-09-27 실측: 버린 턴의 uuid 로 다시 열면 No message found)
     const evs = unrewound(this.log.since(0));
@@ -261,12 +265,17 @@ export class ClaudeSession extends AgentSession {
       if (prev?.kind === 'session.imported' && !prev.uuid) throw new Error('cannot rewind before the imported conversation');
       this.resumeAt = prev?.uuid ?? null;
       if (!this.resumeAt) this.log.updateMeta({ vendorSessionId: null });
-      this.restarting = true;
-      try { (this.q as any)?.return?.(); } catch {}
-      await this.running;
       this.lastUuid = this.resumeAt; // 벤더 쪽 마지막 항목은 이제 유지 지점 — 다음 turn.end 가 옛 uuid 를 물지 않게
-      this.input = new AsyncQueue(); // 옛 생성기의 대기자가 큐에 남아 새 프롬프트를 삼킨다 (2026-09-27 실측) — idle 이라 잃는 메시지는 없다
-      this.running = this.run({ ...this.opts, resume: null });
+      // 재기동은 기다리지 않는다 (ticket slcode-rewind-latency) — 옛 claude 는 stdin 을 닫고 0.5초쯤 뒤에 내려가 기다리면 화면이 그만큼 늦다.
+      // 큐를 먼저 바꾼다 — 옛 생성기의 대기자가 큐에 남아 새 프롬프트를 삼킨다 (2026-09-27 실측). 그사이 보낸 프롬프트는 새 큐에 쌓여 새 프로세스가 받는다.
+      // q 도 먼저 비운다 — 내려가는 옛 프로세스에 제어 요청을 보내지 않게
+      this.input = new AsyncQueue();
+      this.restarting = true;
+      const old = this.q;
+      this.q = null;
+      try { (old as any)?.return?.(); } catch {}
+      // 새 프로세스는 옛 것이 내려간 뒤에 — 옛 claude 가 나가면서 기록 파일에 last-prompt·cost-state 를 쓴다 (2026-11-12 실측). 그사이 닫혔으면 띄우지 않는다
+      this.restart = this.running.then(() => { if (!this.ended) this.running = this.run({ ...this.opts, resume: null }); });
       this.emit({ kind: 'session.state', state: 'idle' }); // 새 프로세스의 init 은 다음 프롬프트 뒤에 온다 — 보낼 수 있는 상태
     }
     this.emit({ kind: 'turn.rewound', seq, conversation, files, filesChanged });
@@ -275,6 +284,7 @@ export class ClaudeSession extends AgentSession {
 
   /** 되돌리기 미리 보기 — rewind 와 같은 턴·유지 지점을 보고 파일은 SDK dry-run 으로만 잰다 */
   async rewindPreview(seq: number): Promise<RewindPreview> {
+    await this.restart;
     const evs = unrewound(this.log.since(0));
     const i = evs.findIndex((e) => e.seq === seq && e.ev.kind === 'turn.start');
     if (i < 0) throw new Error(`no turn at seq ${seq}`);
@@ -294,6 +304,7 @@ export class ClaudeSession extends AgentSession {
   get queued(): number { return this.turnUuids.length; }
 
   async reopen(env: NodeJS.ProcessEnv) {
+    await this.restart;
     if (this.state !== 'idle' && this.state !== 'starting') throw new Error('reopen needs an idle session');
     // 줄 선 턴이 있으면 옛 프로세스와 함께 사라진다 (그 턴의 turn.end 가 오지 않는다) — 그 턴이 끝난 뒤에
     if (this.queued) throw new Error('reopen needs an idle session with no queued turn');
