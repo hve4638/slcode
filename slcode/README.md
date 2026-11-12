@@ -48,7 +48,9 @@ scripts/release.sh --upload   # gh release create v<버전> (없으면, 태그�
 
 올리는 일은 GitHub Actions(`.github/workflows/release.yml`)가 한다. `plugin.json`·`package.json` 의 version 을 올린 커밋을 main 에 push 하고, 그 커밋에 태그 `v<버전>` 을 달아 push 하면 workflow 가 돈다. 태그와 두 version 이 다르거나 `binary.version` 조건이 그 버전을 만족하지 않으면 멈춘다. 맞으면 빌드·테스트, `scripts/release.sh` 를 거친 뒤 `scripts/smoke.sh` 로 linux-x64 zip 을 x64 러너에서, linux-arm64 zip 을 arm 러너(ubuntu-24.04-arm)에서 연기 검사한다. 둘 다 통과해야 세 zip 과 `SHA256SUMS.txt` 를 release `slcode v<버전>` 으로 공개하고, 하나라도 실패하면 release 가 생기지 않는다. 그 태그에 release 가 이미 있으면 자산만 덮어쓴다. 진행은 repo 의 Actions 탭에서 본다.
 
-workflow 가 실패하면 로컬에서 `scripts/release.sh` 로 만든 zip 을 웹으로 올린다. Releases 의 "Draft a new release" 에서 태그 `v<버전>` 을 고르고, 세 zip 을 이름 그대로 첨부해 Publish 한다. draft·pre-release 로 두거나 태그의 `v` 를 빼면 플러그인이 찾지 못한다. 올린 뒤 `curl -s https://api.github.com/repos/hve4638/slcode/releases` 로 태그와 자산 이름을 대조한다.
+시험판은 태그 `v<x.y.z>-<채널>.<번호>` 로 낸다. 채널은 안정한 순서로 `beta`, `unstable`, `experimental` 이고 꼬리가 없는 태그가 stable 이다. 그 밖의 꼬리는 workflow 가 멈춘다 (`scripts/release-channel.sh`). 시험판 release 는 pre-release 로 표시되어 저장소의 Latest 가 되지 않는다. `unstable`·`experimental` 은 테스트와 arm 연기 검사를 건너뛰고 linux-x64 zip 하나만 올린다. 시험판 커밋의 `plugin.json` `binary.version` 은 범위가 아닌 판 그대로(`0.6.0-beta.1`) 적는다. `^`·`~` 범위는 시험판을 고르지 않는다. 플러그인은 채널을 모른다. 어느 채널의 플러그인 소스를 설치할지는 superlite 와 marketplace 가 고르고, 바이너리는 그 소스의 `binary.version` 을 따른다.
+
+workflow 가 실패하면 로컬에서 `scripts/release.sh` 로 만든 zip 을 웹으로 올린다. Releases 의 "Draft a new release" 에서 태그 `v<버전>` 을 고르고, 세 zip 을 이름 그대로 첨부해 Publish 한다. draft 로 두거나 태그의 `v` 를 빼면 플러그인이 찾지 못한다. 시험판 태그만 pre-release 로 표시한다. 올린 뒤 `curl -s https://api.github.com/repos/hve4638/slcode/releases` 로 태그와 자산 이름을 대조한다.
 
 플러그인은 받은 zip 을 플러그인 폴더의 `bin/<platform>/` 에 풀고, 그 안의 `manifest.json` 으로 설치 여부를 판단한다 (plugin.json `binary.version` 조건과 platform 대조). 원격 세션에서는 superlite 가 그 폴더를 원격에 올린 사본의 `bin/slcode` 를 쓴다.
 

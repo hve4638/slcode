@@ -3,7 +3,7 @@
 #
 #   scripts/release.sh                 linux-x64·linux-arm64·win-x64 zip 을 release/ 에 만든다
 #   scripts/release.sh win-x64         한 플랫폼만
-#   scripts/release.sh --upload        release/ 의 zip 을 GitHub release v<버전> 에 올린다 (gh 로그인·origin 필요)
+#   scripts/release.sh --upload        release/ 의 zip 을 GitHub release v<버전> 에 올린다 (gh 로그인·origin 필요, 시험판 판은 prerelease)
 #
 # zip 안 (최상위): manifest.json {version, platform, node}, bin/slcode(sh)·bin/slcode.cmd, runtime/node(.exe),
 # dist/, web/, node_modules/ (prod 의존성 — Agent SDK 는 그 플랫폼 패키지 하나만, slcode-plugin 은 커밋한 dist 복사본), package.json.
@@ -20,8 +20,9 @@ if [ "${1:-}" = "--upload" ]; then
   tag=v$VER
   zips=("$OUT/slcode-$VER-linux-x64.zip" "$OUT/slcode-$VER-linux-arm64.zip" "$OUT/slcode-$VER-win-x64.zip")
   for z in "${zips[@]}"; do [ -f "$z" ] || { echo "없음: $z — 먼저 scripts/release.sh" >&2; exit 1; }; done
-  # 태그는 지금 HEAD 에 건다. 이미 있으면 자산만 덮어쓴다
-  gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --target "$(git -C "$ROOT" rev-parse HEAD)" --title "slcode $tag" --notes "slcode $tag 바이너리 (linux-x64, linux-arm64, win-x64)"
+  # 태그는 지금 HEAD 에 건다. 이미 있으면 자산만 덮어쓴다. 판에 꼬리(-beta.1 등)가 있으면 prerelease 로 만든다
+  pre=(); [[ $VER != *-* ]] || pre=(--prerelease)
+  gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" "${pre[@]}" --target "$(git -C "$ROOT" rev-parse HEAD)" --title "slcode $tag" --notes "slcode $tag 바이너리 (linux-x64, linux-arm64, win-x64)"
   gh release upload "$tag" "${zips[@]}" --clobber
   exit 0
 fi

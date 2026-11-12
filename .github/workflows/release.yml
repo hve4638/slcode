@@ -1,5 +1,6 @@
 # 태그 v<버전> 을 push 하면 slcode 바이너리 zip 을 만들어 GitHub release 로 공개한다 (slcode/README.md "바이너리 배포").
 # 플러그인(main.js)은 release 태그 v<ver> 와 자산 slcode-<ver>-<platform>.zip 만 안다 — 바꾸면 그쪽도 바꾼다.
+# 시험판 태그 v<ver>-<beta|unstable|experimental>.<번호> 는 prerelease 로 공개한다. unstable·experimental 은 테스트 없이 linux-x64 만 (scripts/release-channel.sh).
 name: release
 
 on:
@@ -15,6 +16,9 @@ jobs:
     timeout-minutes: 30
     env:
       TAG: ${{ github.ref_name }}
+    outputs:
+      prerelease: ${{ steps.channel.outputs.prerelease }}
+      fast: ${{ steps.channel.outputs.fast }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -25,6 +29,12 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
+
+      - name: 채널
+        id: channel
+        run: | # 파이프로 바로 tee 하면 기본 셸(bash -e, pipefail 없음)이 스크립트의 실패를 삼킨다
+          out=$(slcode/scripts/release-channel.sh "$TAG")
+          echo "$out" | tee -a "$GITHUB_OUTPUT"
 
       - name: 태그와 버전 대조
         run: |
@@ -37,7 +47,7 @@ jobs:
           const errs = [];
           if (plugin.version !== ver) errs.push(`plugin.json version ${plugin.version} 이 태그 ${tag} 와 다르다`);
           if (pkg.version !== ver) errs.push(`slcode/package.json version ${pkg.version} 이 태그 ${tag} 와 다르다`);
-          if (!satisfies(ver, plugin.binary.version)) errs.push(`plugin.json binary.version ${plugin.binary.version} 이 ${ver} 를 만족하지 않는다`);
+          if (!satisfies(ver, plugin.binary.version)) errs.push(`plugin.json binary.version ${plugin.binary.version} 이 ${ver} 를 만족하지 않는다${ver.includes('-') ? ' (시험판은 판 그대로 적는다)' : ''}`);
           for (const e of errs) console.error(`::error::${e}`);
           if (errs.length) process.exit(1);
           console.log(`버전 ${ver} 일치`);
@@ -54,12 +64,15 @@ jobs:
           if [ -s /tmp/dist.diff ]; then echo "::error::slcode/slcode-plugin/dist 가 src 와 다르다 — pnpm build 뒤 커밋"; exit 1; fi
 
       - name: 테스트
+        if: steps.channel.outputs.fast != 'true'
         working-directory: slcode
         timeout-minutes: 10
         run: pnpm test
 
       - name: zip
-        run: slcode/scripts/release.sh
+        env:
+          FAST: ${{ steps.channel.outputs.fast }}
+        run: if [ "$FAST" = true ]; then slcode/scripts/release.sh linux-x64; else slcode/scripts/release.sh; fi
 
       - name: 연기 검사 (linux-x64 zip)
         timeout-minutes: 5
@@ -76,6 +89,7 @@ jobs:
   smoke-arm64:
     # zip 은 x64 러너에서 만들고, 실행 검사만 arm 러너에서 한다
     needs: build
+    if: needs.build.outputs.fast != 'true'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
     env:
@@ -93,14 +107,18 @@ jobs:
         run: slcode/scripts/smoke.sh "zips/slcode-${TAG#v}-linux-arm64.zip"
 
   publish:
-    # 세 플랫폼 검사가 모두 통과해야 공개한다 (사용자 결정 2026-11-04). 실패하면 release 가 생기지 않는다
+    # 세 플랫폼 검사가 모두 통과해야 공개한다 (사용자 결정 2026-11-04). 실패하면 release 가 생기지 않는다.
+    # 빠른 경로는 arm 검사를 건너뛴다 — 건너뛴 job 을 needs 로 두면 이 job 도 건너뛰므로 결과를 직접 본다
     needs: [build, smoke-arm64]
+    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.smoke-arm64.result == 'success' || needs.build.outputs.fast == 'true' && needs.smoke-arm64.result == 'skipped') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: write
     env:
       TAG: ${{ github.ref_name }}
+      PRERELEASE: ${{ needs.build.outputs.prerelease }}
+      FAST: ${{ needs.build.outputs.fast }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -109,18 +127,23 @@ jobs:
 
       - name: SHA256SUMS.txt
         working-directory: zips
-        run: sha256sum "slcode-${TAG#v}-linux-x64.zip" "slcode-${TAG#v}-linux-arm64.zip" "slcode-${TAG#v}-win-x64.zip" | tee SHA256SUMS.txt
+        run: |
+          plats=(linux-x64); [ "$FAST" = true ] || plats+=(linux-arm64 win-x64)
+          for p in "${plats[@]}"; do echo "slcode-${TAG#v}-$p.zip"; done > files.txt
+          xargs -d '\n' sha256sum < files.txt | tee SHA256SUMS.txt
 
       - name: release 공개
         working-directory: zips
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        # 태그에 release 가 이미 있으면 자산만 덮어쓴다
+        # 태그에 release 가 이미 있으면 자산만 덮어쓴다. 시험판은 prerelease — 저장소의 Latest 와 releases/latest 에 잡히지 않는다
         run: |
-          files=("slcode-${TAG#v}-linux-x64.zip" "slcode-${TAG#v}-linux-arm64.zip" "slcode-${TAG#v}-win-x64.zip" SHA256SUMS.txt)
+          mapfile -t files < files.txt; files+=(SHA256SUMS.txt)
+          plats='linux-x64, linux-arm64, win-x64'; [ "$FAST" != true ] || plats=linux-x64
+          pre=(); [ "$PRERELEASE" != true ] || pre=(--prerelease)
           if gh release view "$TAG" > /dev/null 2>&1; then
             gh release upload "$TAG" "${files[@]}" --clobber
           else
-            gh release create "$TAG" "${files[@]}" --verify-tag --title "slcode $TAG" --notes "slcode $TAG 바이너리 (linux-x64, linux-arm64, win-x64)"
+            gh release create "$TAG" "${files[@]}" --verify-tag "${pre[@]}" --title "slcode $TAG" --notes "slcode $TAG 바이너리 ($plats)"
           fi
