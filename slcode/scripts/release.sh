@@ -31,24 +31,24 @@ platforms=("$@"); [ ${#platforms[@]} -gt 0 ] || platforms=(linux-x64 linux-arm64
 mkdir -p "$OUT/cache"
 (cd "$ROOT" && pnpm install --frozen-lockfile && pnpm build)
 
-# 공식 배포의 SHASUMS256.txt 로 대조한 파일만 쓴다
+# 공식 배포의 SHASUMS256.txt 로 대조한 파일만 쓴다. 목록은 플랫폼들이 동시에 받다 겹치지 않게 먼저 한 번 받는다
+[ -f "$OUT/cache/SHASUMS256-v$NODE_VERSION.txt" ] || curl -fsSL -o "$OUT/cache/SHASUMS256-v$NODE_VERSION.txt" "https://nodejs.org/dist/v$NODE_VERSION/SHASUMS256.txt"
 fetch_node() { # $1 = 배포 파일 이름
   local f=$1 base=https://nodejs.org/dist/v$NODE_VERSION
   cd "$OUT/cache"
-  [ -f "SHASUMS256-v$NODE_VERSION.txt" ] || curl -fsSL -o "SHASUMS256-v$NODE_VERSION.txt" "$base/SHASUMS256.txt"
   [ -f "$f" ] || curl -fL -o "$f" "$base/$f"
   grep " $f\$" "SHASUMS256-v$NODE_VERSION.txt" | sha256sum -c --quiet - || { rm -f "$f"; echo "SHASUMS 불일치: $f" >&2; exit 1; }
   cd - >/dev/null
 }
 
-for plat in "${platforms[@]}"; do
+build() { # $1 = 플랫폼
+  local plat=$1 os cpu libc nodepkg st zip
   case $plat in
     linux-x64) os=linux; cpu=x64; libc=glibc; nodepkg=node-v$NODE_VERSION-linux-x64 ;;
     linux-arm64) os=linux; cpu=arm64; libc=glibc; nodepkg=node-v$NODE_VERSION-linux-arm64 ;;
     win-x64) os=win32; cpu=x64; libc=; nodepkg=node-v$NODE_VERSION-win-x64 ;;
     *) echo "모르는 플랫폼: $plat (linux-x64 | linux-arm64 | win-x64)" >&2; exit 1 ;;
   esac
-  echo "== $plat"
   (cd "$OUT" && rm -rf "stage-$plat")
   st=$OUT/stage-$plat
   mkdir -p "$st/bin" "$st/runtime"
@@ -92,4 +92,17 @@ EOF
   rm -f "$zip"
   (cd "$st" && zip -qr -X "$zip" .)
   echo "$zip $(du -h "$zip" | cut -f1)"
+}
+
+# 플랫폼들을 동시에 만든다. zip 은 코어 하나만 쓰고 받기는 CPU 를 거의 쓰지 않아, 차례로 하면 러너 코어가 논다 (ticket slcode-test-prune).
+# 출력이 섞이지 않게 플랫폼마다 로그 파일에 받고, 다 끝난 뒤 차례로 보인다
+pids=()
+for plat in "${platforms[@]}"; do build "$plat" > "$OUT/build-$plat.log" 2>&1 & pids+=($!); done
+failed=()
+for i in "${!platforms[@]}"; do
+  plat=${platforms[$i]}
+  ok=1; wait "${pids[$i]}" || ok=0
+  echo "== $plat"; cat "$OUT/build-$plat.log"
+  [ $ok = 1 ] || failed+=("$plat")
 done
+[ ${#failed[@]} = 0 ] || { echo "실패: ${failed[*]}" >&2; exit 1; }
