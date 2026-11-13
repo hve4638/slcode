@@ -260,6 +260,10 @@ export type McpStatus = { name: string; status: string; error?: string };
 
 /** 플랜 리밋 창 하나 — pct 는 쓴 비율(0-100), resetsAt 은 ISO 8601 */
 export type LimitWindow = { pct: number | null; resetsAt: string | null };
+/** 모델 하나에만 걸린 주간 한도 — name 은 벤더가 붙인 이름(예: Fable) (ticket slcode-model-scoped-limits) */
+export type ScopedLimit = LimitWindow & { name: string };
+/** 플랜 리밋 — scoped 는 모델별 한도(Claude 만, Codex 는 빈 배열). 옛 core 의 답엔 scoped 가 없다 */
+export type Limits = { fiveHour: LimitWindow | null; sevenDay: LimitWindow | null; scoped: ScopedLimit[] } | null;
 
 export type Methods = {
   /** 첫 요청. UDS 는 소켓 권한(0600)이 곧 인증이라 토큰을 보지 않는다. 루프백 밖 호스트의 웹은 serve 가 remote 를 붙여 넘기고 core 가 토큰을 검사한다.
@@ -314,7 +318,7 @@ export type Methods = {
    *  start·end 는 고른 후보로 바꿀 자리(text 기준), hint 는 argumentHint. stale 이면 더 새 요청에 밀렸다 */
   'session.completeCommand': { params: { id: string; text: string; cursor?: number }; result: { command: string | null; hint: string; items: { value: string; label?: string; description?: string }[]; start: number; end: number; error: string | null; stale?: boolean } };
   /** 사이드바 상단(claude 상태줄과 같은 정보) — cwd 의 git repo 이름·브랜치, 벤더 플랜 리밋 창(5시간·7일, 0-100 %), 컨텍스트 창 사용량. 플랜이 없거나 벤더가 답을 못 주면 그 항목은 null. 폴링 없이 attach·turn.end 때 한 번씩 (사용자 2026-09-29) */
-  'session.status': { params: { id: string }; result: { repo: string | null; branch: string | null; limits: { fiveHour: LimitWindow | null; sevenDay: LimitWindow | null } | null; context: { tokens: number; max: number; pct: number } | null } };
+  'session.status': { params: { id: string }; result: { repo: string | null; branch: string | null; limits: Limits; context: { tokens: number; max: number; pct: number } | null } };
   /** MCP 서버 상태 — 벤더가 지금 아는 값. session.ready 의 mcp 는 기동 때 것이고 실패 사유가 없다. 벤더가 안 떠 있거나 Codex 면 [] */
   'session.mcp': { params: { id: string }; result: McpStatus[] };
   /** MCP 서버 하나를 다시 연결한 뒤의 상태 목록 — 다시 실패해도 오류가 아니라 목록의 error 로 온다 */

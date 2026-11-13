@@ -5,7 +5,6 @@ role: 벤더 어댑터의 공통 뼈대 (ticket agent-core-codex, 2026-09-30) �
 
 export val CLAUDE_EFFORTS
 type ModelsResult
-type Limits
 type ContextUsage
 type Command
 type ApproveOpts

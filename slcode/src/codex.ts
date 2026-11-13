@@ -5,8 +5,8 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import readline from 'node:readline';
 import { randomUUID } from 'node:crypto';
-import type { ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, LimitWindow, McpStatus, RewindPreview, TaskEvent } from './protocol.js';
-import { AgentSession, effortMisfit, type ApproveOpts, type Command, type ContextUsage, type Limits, type ModelsResult } from './base.js';
+import type { ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, Limits, LimitWindow, McpStatus, RewindPreview, TaskEvent } from './protocol.js';
+import { AgentSession, effortMisfit, type ApproveOpts, type Command, type ContextUsage, type ModelsResult } from './base.js';
 import type { EventLog } from './eventLog.js';
 import { SLCODE_PROMPT } from './prompt.js';
 
@@ -475,7 +475,7 @@ export class CodexSession extends AgentSession {
     if (!this.lastLimits) { try { this.lastLimits = (await this.request('account/rateLimits/read', {}))?.rateLimits ?? null; } catch { return null; } }
     const w = (x: any): LimitWindow | null => (x ? { pct: x.usedPercent ?? null, resetsAt: isoOf(x.resetsAt) } : null);
     const l = this.lastLimits; if (!l) return null;
-    return { fiveHour: w(l.primary), sevenDay: w(l.secondary) };
+    return { fiveHour: w(l.primary), sevenDay: w(l.secondary), scoped: [] };
   }
   async context(): Promise<ContextUsage> {
     // total 은 턴들의 누계라 계속 늘고, 지금 컨텍스트 크기는 last(마지막 턴의 입력+출력) 이다 (t3code 도 같다, 2026-10-01 실측 13.7k→27k→41k 누계)

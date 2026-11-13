@@ -149,7 +149,8 @@ export function mountAgentFront(root, transport, opts = {}) {
   const modelBtn = h('button', { class: 'ghost pill-btn model', style: 'display:none' }, modelLbl);
   const modelMenu = h('div', { class: 'menu acf-models', popover: '' });
   modelBtn.popoverTargetElement = modelMenu; // id 로 잇지 않는다 — 웹은 한 문서에 세션 화면이 여러 개다 (ticket slcode-web-session-url)
-  let modelName = '', effortNow = null;
+  let modelName = '', modelKey = '', effortNow = null; // modelKey — 지금 모델의 이름·id 를 소문자로 이은 것, 모델별 한도 이름과 견준다
+  const keyOf = (m, id) => [m?.displayName, m?.resolvedModel, m?.value, id].join(' ').toLowerCase();
   const paintModel = () => { modelLbl.textContent = effortNow ? `${modelName} · ${effortNow}` : modelName; };
   // 벤더 토글 — 첫 메시지 전에만 바꾼다(session.setVendor: 같은 세션 id 로 core 를 새 벤더로 다시 띄운다). 그 뒤엔 지금 벤더만 칠한 채 흐리게 둔다
   const vendorSeg = h('div', { class: 'vendor' });
@@ -1056,6 +1057,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   // 작성창 아래 한 줄 — 📁폴더 🌿repo(브랜치) 플랜 리밋(5h·1w 고리·남은 시간) 📦ctx 누적 비용, 묶음 사이는 · 없이 간격만. 사이드바 위에서 옮겼다 (사용자 2026-10-13, 짧은 꼴은 2026-10-14).
   // 폴더는 올리면 전체 경로 복사, repo 는 git 안일 때만. 모르는 리밋·context 는 뺀다. % 는 올리면 작은 툴팁으로 (사용자 2026-09-30).
   // 리밋은 원 안에 5h·1w 를 쓰고 둘레 고리를 12시부터 시계 방향으로 쓴 양만큼 채운다, 60% 이상 노랑·90% 이상 빨강 (ticket slcode-plan-limit-ring, 사용자 2026-11-12 A1안)
+  // 모델별 주간 한도(Fable 등)는 지금 모델에 걸린 것만 1w 뒤에 첫 글자 고리로 — 초기화가 1w 와 같아 남은 시간은 뺀다. 1w 툴팁엔 모델별 한도 모두, 지금 모델 것은 굵게 (ticket slcode-model-scoped-limits, 사용자 2026-11-13 B안)
   function renderStat() {
     const cwd = info?.cwd ?? ready?.cwd ?? '';
     const ring = (label, pct) => {
@@ -1064,11 +1066,16 @@ export function mountAgentFront(root, transport, opts = {}) {
       s.innerHTML = `<circle class="rt" cx="8" cy="8" r="7.375"/><circle class="rf${level}" cx="8" cy="8" r="7.375" pathLength="100" stroke-dasharray="${Math.min(100, pct ?? 0)} 100" transform="rotate(-90 8 8)"/><text x="8" y="10.9" text-anchor="middle">${label}</text>`;
       return s;
     };
-    const lim = (label, w) => w && h('span', { class: 'lim' },
-      h('span', { class: 'track' }, ring(label, w.pct), h('span', { class: 'v' }, w.pct != null ? `${Math.round(w.pct)}%` : '—')),
-      h('span', {}, fmtReset(w.resetsAt)));
+    const pct = (w) => (w.pct != null ? `${Math.round(w.pct)}%` : '—');
+    const lim = (label, w, tip, time = true) => w && h('span', { class: 'lim' },
+      h('span', { class: 'track' }, ring(label, w.pct), tip ?? h('span', { class: 'v' }, pct(w))),
+      time ? h('span', {}, fmtReset(w.resetsAt)) : null);
+    const scoped = status?.limits?.scoped ?? []; // 옛 core 엔 없다
+    const mine = scoped.filter((s) => modelKey.includes(s.name.toLowerCase()));
+    const week = status?.limits?.sevenDay;
+    const weekTip = week && scoped.length ? h('span', { class: 'v rows' }, [['1w', week], ...scoped.map((s) => [s.name, s])].flatMap(([k, w]) => [h('span', { class: mine.includes(w) ? 'cur' : '' }, k), h('span', {}, pct(w)), h('span', {}, fmtReset(w.resetsAt))])) : null;
     const grp = (name, ...kids) => h('span', { class: 'grp' }, icon(name), ...kids);
-    const lims = [lim('5h', status?.limits?.fiveHour), lim('1w', status?.limits?.sevenDay)].filter(Boolean);
+    const lims = [lim('5h', status?.limits?.fiveHour), lim('1w', week, weekTip), ...mine.map((s) => lim(s.name.slice(0, 1), s, h('span', { class: 'v' }, `${s.name} ${pct(s)}`), false))].filter(Boolean);
     const ctx = status?.context;
     // 비용에 올리면 총 소모 토큰 — 리밋처럼 작은 툴팁 (사용자 2026-10-13). 입력 = 캐시 읽기 + 캐시 쓰기 + 그 외.
     // Codex 의 input 은 캐시 읽기를 이미 포함한다 (OpenAI 계열 usage), Claude 의 input 은 캐시를 뺀 나머지다
@@ -1561,7 +1568,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     // 지금 모델 찾기는 core 의 effortMisfit 과 같다 — 모르면(첫 턴 전) default
     const cur = r.current == null ? r.models.find((m) => m.value === 'default')
       : r.models.find((m) => m.value === r.current) ?? r.models.find((m) => m.value !== 'default' && base(m.resolvedModel) === base(r.current));
-    modelName = cur?.displayName ?? r.current ?? '모델'; effortNow = r.effort; paintModel(); renderSide(); // 상단 요약의 모델 이름
+    modelName = cur?.displayName ?? r.current ?? '모델'; modelKey = keyOf(cur, r.current); effortNow = r.effort; paintModel(); renderSide(); // 상단 요약의 모델 이름
     modelBtn.style.display = r.models.length ? '' : 'none';
     // effort 슬라이더 — 단계는 고른 모델의 efforts(core 가 준다: Claude 는 supportedEffortLevels, 없으면 CLAUDE_EFFORTS · Codex 는 모델의 목록). 비었으면 없다
     // ChatGPT 꼴 (사용자 2026-09-27): 위에 단계 이름, 아래 range 한 칸 = 한 단계. 놓으면 session.setEffort (다음 턴부터)
@@ -1585,7 +1592,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     for (const m of r.models) { if (!ver(m).length) continue; const f = fam(m); if (!best.has(f) || newer(ver(m), ver(best.get(f)))) best.set(f, m); }
     const top = r.models.filter((m) => best.get(fam(m)) === m), rest = r.models.filter((m) => !top.includes(m));
     // 골라도 메뉴는 열어 둔다 — 이어서 effort 를 고를 수 있게. 닫기는 바깥 클릭·Esc (사용자 2026-10-24)
-    const item = (m) => h('button', { class: 'item', 'aria-checked': String(m === cur), onclick: (e) => { for (const b of modelMenu.querySelectorAll('.item[aria-checked]')) b.setAttribute('aria-checked', String(b === e.currentTarget)); modelName = m.displayName; paintModel(); renderSide(); rpc('session.setModel', { id: current, model: m.value }).then(loadModels).catch((e) => push(h('div', { class: 'meta err' }, e.message))); } }, m.displayName);
+    const item = (m) => h('button', { class: 'item', 'aria-checked': String(m === cur), onclick: (e) => { for (const b of modelMenu.querySelectorAll('.item[aria-checked]')) b.setAttribute('aria-checked', String(b === e.currentTarget)); modelName = m.displayName; modelKey = keyOf(m); paintModel(); renderSide(); rpc('session.setModel', { id: current, model: m.value }).then(loadModels).catch((e) => push(h('div', { class: 'meta err' }, e.message))); } }, m.displayName);
     const more = h('div', { class: 'more' }, ...rest.map(item));
     if (modelMenu.querySelector('.more.open')) more.classList.add('open'); // 다시 그려도 펼친 채로
     paintVendor();

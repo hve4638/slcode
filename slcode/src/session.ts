@@ -3,7 +3,7 @@
 // 승인(canUseTool)은 Deferred 로 무기한 기다린다 — interrupt·close·프로세스 종료만 cancelled 로 푼다 (사용자 결정 2026-09-26).
 import { query, type Options, type Query, type SDKMessage, type SDKUserMessage, type PermissionResult, type PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
 import { randomUUID } from 'node:crypto';
-import type { AgentCommandEvent, AgentHookEvent, ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, RewindPreview, Usage, LimitWindow, McpStatus } from './protocol.js';
+import type { AgentCommandEvent, AgentHookEvent, ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, RewindPreview, Usage, Limits, LimitWindow, McpStatus } from './protocol.js';
 import { EventLog, unrewound } from './eventLog.js';
 import { AgentSession, CLAUDE_EFFORTS, effortMisfit, type ApproveOpts, type Command } from './base.js';
 import { SLCODE_PROMPT } from './prompt.js';
@@ -131,14 +131,15 @@ export class ClaudeSession extends AgentSession {
     return { current: this.model, effort: this.effort, models: list.map((m) => ({ value: m.value, resolvedModel: m.resolvedModel, displayName: m.displayName, description: m.description, efforts: (m.supportedEffortLevels as string[] | undefined) ?? CLAUDE_EFFORTS })) };
   }
 
-  /** 플랜 리밋 창 — SDK 의 /usage 자료(실험 메서드, 0.3.282). 벤더가 안 떠 있거나 플랜이 없으면 null. 한 번에 1.5초쯤 (2026-09-29 실측) */
-  async limits(): Promise<{ fiveHour: LimitWindow | null; sevenDay: LimitWindow | null } | null> {
+  /** 플랜 리밋 창 — SDK 의 /usage 자료(실험 메서드, 0.3.282). 벤더가 안 떠 있거나 플랜이 없으면 null. 한 번에 1.5초쯤 (2026-09-29 실측).
+   *  모델별 주간 한도는 model_scoped 만 읽는다 — seven_day_sonnet·seven_day_opus 는 비어 오고 Fable 은 model_scoped 에 온다 (2026-11-13 실측, ticket slcode-model-scoped-limits) */
+  async limits(): Promise<Limits> {
     if (!this.q) return null;
     try {
       const u = await (this.q as any).usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true });
       if (!u?.rate_limits_available || !u.rate_limits) return null;
       const w = (x: any): LimitWindow | null => (x ? { pct: x.utilization ?? null, resetsAt: x.resets_at ?? null } : null);
-      return { fiveHour: w(u.rate_limits.five_hour), sevenDay: w(u.rate_limits.seven_day) };
+      return { fiveHour: w(u.rate_limits.five_hour), sevenDay: w(u.rate_limits.seven_day), scoped: (u.rate_limits.model_scoped ?? []).map((x: any) => ({ name: x.display_name, ...w(x)! })) };
     } catch { return null; }
   }
 

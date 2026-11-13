@@ -1,13 +1,12 @@
 // 벤더 어댑터의 공통 뼈대 — 세션 id·EventLog·state·seq·구독자·raw 스위치와 emit/info/onEvent/since.
 // 벤더별 동작은 추상 메서드로 두고 serve.ts 는 이 표면만 본다 (ticket agent-core-codex, 2026-09-30).
-import type { ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, LoggedEvent, RewindPreview, SessionInfo, SessionState, LimitWindow, McpStatus } from './protocol.js';
+import type { ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, LoggedEvent, RewindPreview, SessionInfo, SessionState, Limits, McpStatus } from './protocol.js';
 import { EventLog } from './eventLog.js';
 
 /** Claude 의 effort 이름 (SDK EffortLevel) — 한 곳. CLI 의 --effort 검사와 supportedEffortLevels 를 주지 않는 모델의 efforts. 플러그인 main.js 는 따로 둔다 */
 export const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 export type ModelsResult = { current: string | null; effort: string | null; models: { value: string; resolvedModel?: string; displayName: string; description: string; efforts?: string[] }[] };
-export type Limits = { fiveHour: LimitWindow | null; sevenDay: LimitWindow | null } | null;
 export type ContextUsage = { tokens: number; max: number; pct: number } | null;
 /** 슬래시 명령 하나 — builtin·aliases 는 Claude SDK 가 준 것(내장 명령 표시와 별칭), kind 'command' 는 에이전트 플러그인 명령(이름은 <플러그인>:<명령>, ticket slcode-agent-plugin-command) */
 export type Command = { name: string; description: string; argumentHint: string; builtin?: boolean; aliases?: string[]; kind?: 'command'; complete?: boolean };

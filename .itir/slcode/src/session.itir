@@ -21,7 +21,7 @@ export class ClaudeSession {
     role: SDK setModel — 다음 턴부터. meta.model 에 남겨 복원 때 options.model 로 넘긴다
   }
   export fn limits() {
-    role: 플랜 리밋 창(5시간·7일 %·리셋 시각) — SDK usage_EXPERIMENTAL(get_usage, 0.3.282 실험 메서드)의 rate_limits 만 골라 LimitWindow 로. 벤더 미기동·플랜 없음·오류면 null. 한 번에 1.5초쯤이라 폴링하지 않는다
+    role: 플랜 리밋 창(5시간·7일 %·리셋 시각) — SDK usage_EXPERIMENTAL(get_usage, 0.3.282 실험 메서드)의 rate_limits 만 골라 LimitWindow 로. 모델별 주간 한도는 model_scoped(이름·%·리셋 시각)를 scoped 로 — seven_day_sonnet·seven_day_opus 는 읽지 않는다(Max 계정에서 비어 오고 Fable 만 model_scoped 에 온다, 2026-11-13 실측, ticket slcode-model-scoped-limits). 벤더 미기동·플랜 없음·오류면 null. 한 번에 1.5초쯤이라 폴링하지 않는다
   }
   export fn setMode(mode) {
     role: SDK setPermissionMode — 즉시. meta.permissionMode 에 남겨 복원 때 options.permissionMode 로 넘긴다. bypassPermissions 로 바꿀 수 있게 query 옵션 allowDangerouslySkipPermissions 를 켠다(그 자체는 우회가 아니다)

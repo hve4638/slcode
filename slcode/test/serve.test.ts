@@ -55,7 +55,7 @@ test('세션 프로세스: 슬러그 폴더·소켓, 웹은 그 세션만, meta 
   const st = await c.request('session.status', { id: h.session.id });
   assert.equal(st.branch, null, '임시 폴더는 git repo 가 아니다'); assert.equal(st.repo, null);
   assert.ok(st.context === null || (st.context.max > 0 && st.context.tokens >= 0), '컨텍스트 창은 tokens·max·pct');
-  assert.ok(st.limits === null || ('fiveHour' in st.limits && 'sevenDay' in st.limits), '플랜이 있으면 두 창, 없으면 null');
+  assert.ok(st.limits === null || ('fiveHour' in st.limits && 'sevenDay' in st.limits && Array.isArray(st.limits.scoped)), '플랜이 있으면 두 창, 없으면 null');
   c.close();
   // core 가 자기 pid 를 meta 에 남긴다 (close --force·list)
   const pid = EventLog.open(corePaths(dir).sessionsDir, h.session.id)!.meta.pid!;

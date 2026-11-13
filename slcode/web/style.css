@@ -425,6 +425,11 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .composer .stat .ring .rf.hot { stroke: var(--acf-err); }
 .acf .composer .stat .ring text { font: 500 8px var(--acf-sans); fill: color-mix(in srgb, var(--acf-fg) 60%, var(--acf-muted)); }
 .acf .composer .stat .v { position: absolute; bottom: calc(100% + 4px); left: 50%; transform: translateX(-50%); padding: 1px 7px; border: 1px solid var(--acf-line); border-radius: 6px; background: var(--acf-panel); color: var(--acf-fg); box-shadow: 0 2px 8px var(--acf-shadow); white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity .12s; z-index: 1; }
+.acf .composer .stat .v.rows { display: grid; grid-template-columns: auto auto auto; column-gap: 10px; padding: 4px 9px; } /* 1w 툴팁 — 주간 전체와 모델별 한도를 한 줄씩: 이름·%·남은 시간 */
+.acf .composer .stat .v.rows > :nth-child(3n+1) { font-family: var(--acf-sans); }
+.acf .composer .stat .v.rows > :nth-child(3n+2) { text-align: right; }
+.acf .composer .stat .v.rows > :nth-child(3n) { color: var(--acf-muted); }
+.acf .composer .stat .v.rows .cur { font-weight: 600; }
 .acf .composer .stat .lim:hover .v, .acf .composer .stat .cost:hover .v { opacity: 1; }
 /* 비용 툴팁 — 총 소모 토큰 표, 비용 왼쪽 끝에 맞춰 연다 (넘치면 app.js 가 안쪽으로 민다) */
 .acf .composer .stat .cost { position: relative; }

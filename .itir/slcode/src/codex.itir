@@ -51,7 +51,7 @@ export class CodexSession {
     role: 미지원 — 오류
   }
   export fn limits() {
-    role: 마지막 account/rateLimits/updated, 없으면 account/rateLimits/read
+    role: 마지막 account/rateLimits/updated, 없으면 account/rateLimits/read. 모델별 한도(scoped)는 없어 빈 배열
   }
   export fn context() {
     role: 마지막 thread/tokenUsage/updated 의 last.totalTokens / modelContextWindow (total 은 누계라 안 쓴다)

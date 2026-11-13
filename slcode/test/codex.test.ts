@@ -67,7 +67,7 @@ test('codex: initialize→thread/start→turn/start, 델타·도구·승인(acce
   assert.deepEqual(models.models.map((m) => [m.value, m.displayName, m.efforts]), [['fake-model', 'Fake 1.0', ['low', 'high']]]);
   const st = await c.request('session.status', { id: h.session.id });
   assert.deepEqual(st.context, { tokens: 500, max: 200000, pct: 0.25 }, 'last(현재 컨텍스트), total(누계) 아님');
-  assert.equal(st.limits.fiveHour.pct, 3); assert.equal(st.limits.sevenDay.pct, 40);
+  assert.equal(st.limits.fiveHour.pct, 3); assert.equal(st.limits.sevenDay.pct, 40); assert.deepEqual(st.limits.scoped, [], 'Codex 는 모델별 한도가 없다');
   await assert.rejects(c.request('session.setMode', { id: h.session.id, mode: 'plan' }), /mode default\|auto\|bypassPermissions/, '메뉴에서 뺀 모드는 거절');
   await c.request('session.setMode', { id: h.session.id, mode: 'bypassPermissions' });
   assert.deepEqual((await c.request('session.commands', { id: h.session.id })).map((x: any) => x.name), ['compact']);
