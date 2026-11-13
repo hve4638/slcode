@@ -542,6 +542,30 @@ test('exports.close: 없는 세션·close 실패는 reject', async () => {
   });
 });
 
+test('exports.list: slcode list (live 만, 설정 dir) 의 행을 그대로 돌려준다, 실패는 stderr 로 reject (ticket slcode-plugin-list-reveal-export)', async () => {
+  const live = JSON.stringify([{ id: 'w1', state: 'idle', live: true }]);
+  const calls = await withMain({ 'plugin.json': PLUGIN_JSON }, { settings: { bin: '/opt/slcode', dir: '/d' }, run: (c) => (c.endsWith(" list --dir '/d'") ? { code: 0, stdout: live, stderr: '' } : undefined) }, async ({ exports }) => {
+    assert.deepEqual(await exports.list(), [{ id: 'w1', state: 'idle', live: true }]);
+  });
+  assert.deepEqual(calls.filter((c) => c.startsWith('proc ')), [`proc ${BIN} list --dir '/d'`], '--all 없이, 캐시 없이 한 번');
+  await withMain({ 'plugin.json': PLUGIN_JSON }, { settings: { bin: '/opt/slcode' }, run: () => ({ code: 1, stdout: '', stderr: 'boom\n' }) }, async ({ exports }) => {
+    await assert.rejects(exports.list(), /^Error: boom$/);
+  });
+});
+
+test('exports.open: 둘째 인자 없으면 {id} 만, {reveal: true} 면 reveal 을 함께 메인 창 cards.open 에', async () => {
+  const calls = await withMain({ 'plugin.json': PLUGIN_JSON }, { settings: { bin: '/opt/slcode' } }, async ({ exports }) => {
+    await exports.open('w1');
+    await exports.open('w2', { reveal: true });
+    await exports.open('w3', { reveal: false });
+  });
+  assert.deepEqual(calls.filter((c) => c.startsWith('call ')), [
+    'call wmain slcode/cards.open {"id":"w1"}',
+    'call wmain slcode/cards.open {"id":"w2","reveal":true}',
+    'call wmain slcode/cards.open {"id":"w3"}',
+  ]);
+});
+
 test('exports.mail: slcode mail --from <from> -- <to> <text> (따옴표·대시로 시작하는 본문), 출력 {id, to}; 실패는 stderr 로 reject', async () => {
   const calls = await withMain({ 'plugin.json': PLUGIN_JSON }, { settings: { bin: '/opt/slcode', dir: '/d' }, run: (c) => (c.includes(" 'gone' ") ? { code: 1, stdout: '', stderr: '[slcode] no session gone\n' } : c.includes(' mail') ? { code: 0, stdout: '{"id":"m1","to":"orch-id"}', stderr: '' } : undefined) }, async ({ exports }) => {
     assert.deepEqual(await exports.mail({ to: 'orch', text: "--done: it's ok", from: 'w1' }), { id: 'm1', to: 'orch-id' });

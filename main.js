@@ -1,7 +1,7 @@
 // slcode 플러그인 main (새 방식 apiVersion 2, ticket slcode-plugin-v2) — 세션 머신의 node 에서 머신마다 한 번 돈다. 카드 하나 = slcode 세션 하나.
 //
 // 세 갈래 (사용자 확정 2026-10-21): main(이 파일) — 바이너리 받기·설치, `slcode list`·`close --force` 같은 명령, 셸 동사
-// slcode.new·slcode.resume·slcode.team, 다른 플러그인용 open·close·mail·cleanWorktree(activate 반환값). renderer.js — 창마다: 팔레트 명령, 액티비티바 사이드바·배지, 카드 열기(이 main 이
+// slcode.new·slcode.resume·slcode.team, 다른 플러그인용 open·list·close·mail·cleanWorktree(activate 반환값). renderer.js — 창마다: 팔레트 명령, 액티비티바 사이드바·배지, 카드 열기(이 main 이
 // 부른다). views/session.js — 카드마다: 서비스 기동·연결·배지·다시 붙기, slcode 화면 그리기·중계. views/sessions.js — 세션 목록 사이드바.
 // 카드 화면이 서비스를 띄우는 명령은 여기서 짓는다 (command) — 받은 바이너리의 경로가 이 머신의 것이라서다.
 // slcode.new: 이 main 이 key 를 정해 요청자 터미널의 메인 창 renderer 에 카드를 열게 하고, 카드 화면이 hello 로 세션 id 를 알면 started 로
@@ -365,8 +365,11 @@ export function activate(api) {
 
   shutdown = () => { for (const w of waits.values()) w.reject(new Error('slcode 플러그인이 내려갔습니다')); waits.clear(); };
   return {
-    /** 다른 플러그인용 (같은 머신 main 의 plugins.get) — 세션 id 로 카드 열기 (이 머신의 메인 창에) */
-    open: async (id) => { await (await windowFor(null)).call(CARDS, 'open', { id }); },
+    /** 다른 플러그인용 (같은 머신 main 의 plugins.get) — 세션 id 로 카드 열기 (이 머신의 메인 창에). reveal: 카드가 다른 superlite 세션 탭에
+     *  있으면 그 탭으로 옮겨 보인다 — 사용자가 누른 동작일 때만 (ticket slcode-plugin-list-reveal-export) */
+    open: async (id, { reveal } = {}) => { await (await windowFor(null)).call(CARDS, 'open', { id, ...(reveal ? { reveal: true } : {}) }); },
+    /** 살아 있는 세션의 `slcode list` 행 배열. 약속하는 칸은 id·state 뿐, 나머지는 CLI 를 따라 바뀔 수 있다. 캐시 없음 (사용자 2026-11-14) */
+    list: () => list(false),
     /** 세션 끄기 + 그 카드에 닫기 요청 → {ok, already?, card} */
     close,
     /** 켜진 세션에 메시지 → {id, to} */
