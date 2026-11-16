@@ -924,7 +924,9 @@ export function mountAgentFront(root, transport, opts = {}) {
     const hadFocus = document.activeElement === input || document.activeElement === document.body || dock.contains(document.activeElement);
     for (const c of cards.values()) c._mark?.classList.toggle('docked', c === next); // 떠 있는 카드의 피드 호출 표식은 숨긴다
     dock.replaceChildren(next ?? '');
+    const was = composer.hidden;
     composer.hidden = !!next;
+    if (was && !next) fitInput(); // 숨은 동안 들어온 글(되돌린 요청)은 높이를 잴 수 없었다 (ticket slcode-rewind-input-height)
     if (next) { next.classList.add('live'); if (hadFocus) next.focus({ preventScroll: true }); }
     else if (hadFocus) input.focus();
   }
@@ -1700,7 +1702,8 @@ export function mountAgentFront(root, transport, opts = {}) {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (slashMenu.matches(':popover-open')) slashMenu.hidePopover(); send(); } else if (e.key === 'Escape' && !busy.hidden && current) { e.preventDefault(); esc.reset(); rpc('session.interrupt', { id: current }); } else if (e.key === 'Escape' && !e.isComposing) { e.preventDefault(); onEscape(); } };
   // 높이를 재려고 잠깐 기본 높이로 줄이면 그동안 피드가 늘어 scrollTop 이 그 높이의 바닥으로 깎인 채 남는다 — 재고 나서 자리를 되돌린다 (ticket slcode-scroll-follow-fixes)
   // 불러온 글로 `/` 메뉴를 열지 않는다 — 위·아래 키를 메뉴가 가져가 다음 기록으로 못 간다. 글을 고치면(nav 풀림) 다시 연다
-  input.oninput = () => { const top = feed.scrollTop; input.style.height = ''; input.style.height = Math.min(input.scrollHeight, 220) + 'px'; jump(follow ? feed.scrollHeight : top); canSend(); if (!hist.nav) { slashSel = 0; argQuery(); slashDraw(); } saveDraft(); };
+  function fitInput() { const top = feed.scrollTop; input.style.height = ''; input.style.height = Math.min(input.scrollHeight, 220) + 'px'; jump(follow ? feed.scrollHeight : top); }
+  input.oninput = () => { fitInput(); canSend(); if (!hist.nav) { slashSel = 0; argQuery(); slashDraw(); } saveDraft(); };
   input.addEventListener('mousedown', () => hist.unpin());
   // Esc 두 번 (ticket slcode-rewind-esc-picker, 사용자 2026-11-03, Claude Code 2.1.316 실측) — 글이 있으면 비운다(지운 글은 기록에 남고 Ctrl+Z 로 돌아온다). 첫 번째 누름의 안내 문구는 두지 않는다 (사용자 2026-11-03).
   // 빈 입력이면 되돌리기 창을 연다. 턴 중 Esc 는 위에서 중단만 하고 판정을 지운다 — 두 번 눌러도 창은 열리지 않는다 (session.rewind 는 idle 에서만 된다)
