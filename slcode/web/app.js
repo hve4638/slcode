@@ -1505,11 +1505,13 @@ export function mountAgentFront(root, transport, opts = {}) {
     current = id; renderSide();
     let r;
     const first = !lastSeq; // 처음이면 끝 한 페이지, 재접속이면 끊긴 동안의 것 전부
+    attaching = true;
     try { r = await rpc('session.attach', first ? { id, limit: PAGE } : { id, since: lastSeq }); }
     catch (e) {
       if (e.code === 'no_session') { push(h('div', { class: 'meta err' }, `세션 없음: ${id}`)); setState('exited'); return; }
       else throw e;
     }
+    finally { attaching = false; }
     if (first && r.summary) { more = !!r.more; oldest = r.history[0]?.seq ?? 0; }
     if (first && r.prompts) outlineSeed(r.prompts);
     info = r.info; setTitle(info.title); syncInspect(); paintLock(); loadKids();
@@ -1522,8 +1524,11 @@ export function mountAgentFront(root, transport, opts = {}) {
     loadModels(); loadStatus(); loadCommands(); loadMcp(); loadPlugins(); loadProfiles(); renderMode(); prefetch(); act.refresh();
     if (opts.onAttach) opts.onAttach(id, info);
   }
+  // 기록을 청하고 응답을 기다리는 사이의 이벤트는 그리지 않는다 — 응답의 기록에 들어 있다. 카드에서는 플러그인이 같은 연결에 먼저 구독을 걸어 두어
+  // 이벤트가 응답보다 먼저 온다. 그리면 lastSeq 가 올라가 응답으로 온 지난 기록이 이미 그린 것으로 걸러졌다 (ticket slcode-fork-card-empty-history)
+  let attaching = false;
   transport.onEvent((m) => {
-    if (m.event === 'session.event' && m.params.id === current) render(m.params, true);
+    if (m.event === 'session.event' && m.params.id === current) { if (!attaching) render(m.params, true); }
     else if (m.event === 'session.changed' && m.params.id === current) { info = m.params; setTitle(info.title); syncInspect(); renderMode(); renderSide(); paintVendor(); paintLock(); }
     else if (m.event === 'session.children' && m.params.id === current) paintKids(m.params.children);
     else if (m.event === 'session.queue' && m.params.id === current) paintQueue(m.params.items);

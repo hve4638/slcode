@@ -6,7 +6,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { serveSession } from '../src/serve.ts';
+import { loadWeb, serveSession, webFiles } from '../src/serve.ts';
 import { connectSession } from '../src/client.ts';
 import { spawnCore, sockAlive } from '../src/live.ts';
 import { EventLog } from '../src/eventLog.ts';
@@ -172,4 +172,58 @@ test('웹 복제 (ticket slcode-session-fork): 응답 아래 복제 버튼은 �
   // 이 웹이 띄운 복제본은 웹을 닫을 때 함께 닫힌다 — 연결이 끊긴 뒤 core 가 소켓을 지우기까지 잠깐 걸린다
   for (const m of forks()) { const sock = new EventLog(sessionsDir, m).sockPath; for (let i = 0; i < 25 && await sockAlive(sock); i++) await sleep(200); assert.ok(!(await sockAlive(sock)), `${m.title} 이 떠 있다`); }
   assert.equal(forks().length, 2);
+});
+
+// 카드에서는 플러그인(views/session.js)이 배지를 위해 같은 연결에 먼저 구독을 걸고, 그 연결로 오는 이벤트를 모두 화면 포트로 넘긴다.
+// 화면이 기록을 청한 뒤 응답이 오기 전에 세션이 이벤트를 내면(resume 직후의 SessionStart 훅, 돌고 있는 턴) 그 이벤트가 기록보다 먼저 화면에 닿는다
+test('카드 화면 (ticket slcode-fork-card-empty-history): 기록 응답보다 먼저 실시간 이벤트가 닿아도 다시 연 세션의 지난 턴이 그려진다', { skip: !chrome && 'chrome 없음' }, async (t) => {
+  const b = await openChrome(chrome!).catch((e: Error) => e);
+  if (b instanceof Error) { t.skip(b.message); return; }
+  process.env.SLCODE_GRACE_SECS = '30';
+  const CID = 'eca2ea0c-cd14-4216-b88c-558435351e88';
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-cardrace-'));
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-cardrace-claude-'));
+  const pd = path.join(home, 'projects', work.replace(/[^A-Za-z0-9-]/g, '-'));
+  fs.mkdirSync(pd, { recursive: true });
+  fs.writeFileSync(path.join(pd, `${CID}.jsonl`), fs.readFileSync(path.join(import.meta.dirname, 'fixtures', 'claude-session.jsonl'), 'utf8').replaceAll('__CWD__', work));
+  const prevHome = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = home;
+  const { sessionsDir } = corePaths(dir);
+  const src = EventLog.create(sessionsDir, { id: 'csrc0001', vendor: 'claude', cwd: work, title: 'A', vendorSessionId: CID, createdAt: 1, permissionMode: 'auto', raw: false });
+  await pullHistory(src, CID);
+  const last = src.all.at(-1)!; // 화면이 기록을 청하는 사이 세션이 낸 것으로 칠 이벤트 — 기록 응답에도 들어 있다
+  src.close();
+  const h = await serveSession({ dir, cwd: work, resume: 'csrc0001' });
+  try {
+    const origin = new URL(h.url!).origin;
+    await b.send('Page.navigate', { url: `${origin}/card.html` });
+    await b.until(`document.readyState === 'complete'`, 'card.html');
+    // 플러그인 대역 — 먼저 구독하고, 화면의 session.attach 를 넘기기 직전에 이벤트 하나를 포트로 보낸다
+    await b.ev(`(async () => {
+      const files = {};
+      for (const f of ${JSON.stringify(Object.keys(webFiles(loadWeb(), dir, 'superlite').files))}) files[f] = await (await fetch('/' + f)).text();
+      const ws = new WebSocket('${origin.replace('http', 'ws')}/ws?id=csrc0001');
+      await new Promise((r) => { ws.onopen = r; });
+      const ch = new MessageChannel(), port = ch.port1, mine = new Map();
+      const call = (method, params) => new Promise((r) => { const id = 'plugin' + mine.size; mine.set(id, r); ws.send(JSON.stringify({ id, method, params })); });
+      ws.onmessage = (e) => { const m = JSON.parse(e.data); if (mine.has(m.id)) mine.get(m.id)(m); else port.postMessage(m); };
+      await call('core.auth', { token: '' });
+      await call('session.attach', { id: 'csrc0001', since: Number.MAX_SAFE_INTEGER });
+      port.onmessage = (e) => {
+        const m = e.data;
+        if (m.id === undefined) return;
+        if (m.method === 'session.attach') port.postMessage({ event: 'session.event', params: { id: 'csrc0001', ...${JSON.stringify(last)} } });
+        ws.send(JSON.stringify(m));
+      };
+      postMessage({ type: 'slcode.port', files, ui: {} }, '*', [ch.port2]);
+      port.postMessage({ status: { connected: true } });
+    })()`);
+    await b.until(`document.querySelector('.hdr .title')?.textContent === 'A' && document.querySelector('.pill')?.textContent === '대기'`, '카드 화면이 붙음');
+    assert.equal(await b.ev(`document.querySelectorAll('.user').length`), 2, '지난 두 턴의 요청이 그려진다');
+  } finally {
+    await b.close().catch(() => {});
+    await h.close('test');
+    if (prevHome === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prevHome;
+  }
 });
