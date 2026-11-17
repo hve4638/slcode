@@ -3,7 +3,8 @@
 // 오른쪽은 아직 누르지 못한다. 프로필은 세션에 들어가 대화 화면 가운데에서 고른다 — 프로필 설정은 나중에 이 화면의 설정에 둔다(사용자).
 // 웹(entry.ts 가 세션을 띄우기 전에 서빙)과 superlite 카드(views/session.js 가 플러그인 문서에 그린다)가 같은 화면을 쓴다. <html data-start> 가 입구:
 // web 이면 같은 출처의 api/<동작> 에 POST, card 면 카드에 {type: 'slcode.start.<동작>', id} 를 보내고 {re: id, result|error} 를 받는다.
-// 동작은 list({cwd, here, all} — startPage.ts StartList), go({new: true} | {resume: <id>}), 에이전트 플러그인 관리의 plugins.list·check·set·export (serve.pluginMethod).
+// 동작은 list({cwd, here, all} — startPage.ts StartList), go({new: true} | {resume: <id>}), 에이전트 플러그인 관리의 plugins.list·check·set·export (serve.pluginMethod),
+// system prompt 편집 창의 prompt.profiles·fetch·save (promptMethods.ts).
 
 const root = document.getElementById('start');
 const html = document.documentElement;
@@ -46,7 +47,7 @@ function ago(t) {
 const base = (p) => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
 
 const RECENT = 6; // 목록마다 처음에 이만큼 — 나머지는 '모두 보기'
-const state = { list: null, open: { here: false, all: false }, error: null, busy: null, plugins: null };
+const state = { list: null, open: { here: false, all: false }, error: null, busy: null, plugins: null, prompt: null };
 
 async function load() {
   try { state.list = await call('list'); state.error = null; }
@@ -100,7 +101,7 @@ html:not([data-theme*="-"]) .st .go:hover{filter:none;border-color:light-dark(#0
 .st .more:hover{background:var(--acf-soft);color:var(--acf-fg)}
 .st .none{padding:6px 10px;color:var(--acf-muted);font-size:12px}
 .st .err{color:var(--acf-err);white-space:pre-wrap;margin-top:16px;text-align:center}
-.st .more.plug{display:block;margin:40px auto 0}
+.st .tools{display:flex;justify-content:center;gap:8px;margin-top:40px}
 .st.pl{max-width:1040px;padding-top:16px}
 .st.pl .phead{display:flex;align-items:center;gap:6px;padding-bottom:10px;border-bottom:1px solid var(--acf-line)}
 .st.pl .phead .more{margin:0;padding:0 8px;font-size:18px;line-height:28px}
@@ -150,8 +151,22 @@ async function openPlugins() {
   state.plugins.load();
 }
 
+/** system prompt 편집 창 (ticket slcode-profile-system-prompt, 사용자 2026-11-17: 시작 화면에서 연다) — 프로필 설정의 자리. 모듈을 읽는 길은 openPlugins 와 같다 */
+async function openPrompt() {
+  const { promptPanel } = globalThis.slcodePrompt ?? await import('./prompt.js');
+  state.prompt = promptPanel(call);
+  draw();
+  state.prompt.load();
+}
+
 function draw() {
   const l = state.list;
+  if (state.prompt) {
+    root.replaceChildren(el('style', {}, STYLE), el('div', { class: 'st pl sp' },
+      el('div', { class: 'phead' }, el('button', { class: 'more', title: '시작 화면', on: { click: () => { state.prompt = null; draw(); } } }, '‹'), el('h1', {}, 'system prompt')),
+      state.prompt.el));
+    return;
+  }
   if (state.plugins) {
     root.replaceChildren(el('style', {}, STYLE), el('div', { class: 'st pl' },
       el('div', { class: 'phead' }, el('button', { class: 'more', title: '시작 화면', on: { click: () => { state.plugins = null; draw(); } } }, '‹'), el('h1', {}, '에이전트 플러그인')),
@@ -164,7 +179,7 @@ function draw() {
     state.busy ? el('div', { class: 'busy' }, `${state.busy} — 여는 중…`) : null,
     l ? el('div', { class: 'cols' }, column('here', pathHead(l.cwd), l.cwd, l.here, true, false), column('all', 'all sessions', null, l.all, false, true)) : null,
     state.error ? el('div', { class: 'err' }, state.error) : null,
-    el('button', { class: 'more plug', on: { click: () => void openPlugins() } }, '에이전트 플러그인')));
+    el('div', { class: 'tools' }, el('button', { class: 'more', on: { click: () => void openPlugins() } }, '에이전트 플러그인'), el('button', { class: 'more', on: { click: () => void openPrompt() } }, 'system prompt'))));
 }
 
 draw();

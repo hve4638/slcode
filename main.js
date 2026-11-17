@@ -223,9 +223,9 @@ export function activate(api) {
   const startPage = (cwd) => cli(`start-page ${shq(cwd)}`);
   /** 화면의 list — 그 폴더의 세션과 모든 세션, 마지막 활동 순 (startPage.ts StartList) */
   const startList = async (cwd) => JSON.parse(await cli(`start-page ${shq(cwd)} --json`));
-  /** 시작 화면의 에이전트 플러그인 관리 요청 — plugins.list·check·set·export (ticket slcode-agent-plugin-export-action). 오류는 slcode 의 error: 줄에서 */
-  const startCall = async (method, params) => {
-    try { return JSON.parse(await cli(`start-call ${shq(method)} ${shq(JSON.stringify(params ?? {}))}`)); }
+  /** 시작 화면의 에이전트 플러그인 관리 요청 — plugins.list·check·set·export (ticket slcode-agent-plugin-export-action), system prompt 편집 창의 prompt.profiles·fetch·save(cwd 는 가져오기를 돌릴 폴더, ticket slcode-profile-system-prompt). 오류는 slcode 의 error: 줄에서 */
+  const startCall = async (method, params, cwd) => {
+    try { return JSON.parse(await cli(`start-call ${shq(method)} ${shq(JSON.stringify(params ?? {}))}${cwd ? ` --cwd ${shq(cwd)}` : ''}`)); }
     catch (e) { throw new Error(String(e?.message ?? e).replace(/^error: /, '')); }
   };
   /** 시작 화면으로 — 시작 화면에서 연 빈 세션(첫 메시지 전)을 닫고 지운다. 아니면 slcode 가 거절한다 */

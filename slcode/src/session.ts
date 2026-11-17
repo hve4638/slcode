@@ -54,6 +54,8 @@ export type SessionOptions = {
   load?: ClaudeLoad;
   /** 에이전트 플러그인 js/ts 훅의 디스패처 (hookRunner.sdkHooks, ticket slcode-agent-plugin-hooks) — SDK options.hooks */
   hooks?: Options['hooks'];
+  /** 프로필의 system prompt 설정으로 조립한 글 (promptCapture.promptOption, ticket slcode-profile-system-prompt) — 있으면 기본 프롬프트 대신 이것을 보낸다. slcode 지시는 그 뒤에 그대로 */
+  prompt?: string[];
   /** 팀 지시 (prompt.familyPrompt, ticket slcode-team-agent) — SLCODE_PROMPT 바로 뒤에. 없으면 빈 문자열 */
   family?: string;
   /** 팀원 도구 (teamTools.teamMcp, ticket slcode-team-agent) — 팀원을 만들 수 있는 세션의 in-process MCP 서버. 벤더를 다시 띄울 때(rewind)마다 새 인스턴스로 */
@@ -359,6 +361,8 @@ export class ClaudeSession extends AgentSession {
     const excludes = [...((opts.agent?.settings?.claudeMdExcludes as string[] | undefined) ?? []), ...(opts.load?.claudeMdExcludes ?? [])];
     // Remote Control 은 늘 자동으로 켜지 않는다 — 사용자 설정을 끈 프로필이면 ~/.claude 의 false 가 안 실려 계정 기본값으로 켜질 수 있다 (사용자 결정 2026-10-30)
     const settings = { ...opts.agent?.settings, ...(excludes.length ? { claudeMdExcludes: excludes } : {}), remoteControlAtStartup: false };
+    // slcode 고정 지시, 그 뒤에 팀 지시와 에이전트 플러그인의 지시문 (ticket slcode-append-system-prompt·slcode-agent-plugin)
+    const append = [SLCODE_PROMPT, opts.family, opts.agent?.append].filter(Boolean).join('\n\n');
     const q = query({
       prompt: this.input,
       options: {
@@ -369,11 +373,13 @@ export class ClaudeSession extends AgentSession {
         forwardSubagentText: true,      // 서브에이전트의 텍스트·thinking 도 parent_tool_use_id 를 달고 온다 — 작업 카드 안에 중첩해 그린다
         agentProgressSummaries: true,   // task_progress 에 한 줄 진행 요약 (약 30초마다 짧은 포크, 비용은 작다)
         thinking: { type: 'adaptive', display: 'summarized' },
-        // slcode 고정 지시를 기본 프롬프트 뒤에 (ticket slcode-append-system-prompt). 에이전트 플러그인의 지시문은 그 뒤에 (ticket slcode-agent-plugin)
-        systemPrompt: { type: 'preset', preset: 'claude_code', append: [SLCODE_PROMPT, opts.family, opts.agent?.append].filter(Boolean).join('\n\n') },
+        // slcode 지시를 기본 프롬프트 뒤에.
+        // 프로필이 프롬프트를 고쳤으면 조립한 글을 보내고 slcode 지시는 CLI 의 append 플래그로 — SDK 는 직접 준 프롬프트에 append 를 받지 않고,
+        // 플래그로 주면 정체성 한 줄이 preset 때와 같다 (SDK 0.3.322 실측, ticket slcode-profile-system-prompt)
+        systemPrompt: opts.prompt ?? { type: 'preset', preset: 'claude_code', append },
         // snapshot 을 끈다 — 켜 두면 첫 요청 때 기록한 시스템 프롬프트를 resume 이 그대로 보내 바뀐 지시문이 안 들어가고, import 한 세션은 그쪽 기록이라 위 append 가 빠진다.
         // SDK 옵션 systemPromptSnapshot:false 는 resume 에 듣지 않아 CLI 플래그로 (CLI 2.1.282 실측, ticket slcode-agent-plugin-instructions-resume, 사용자 결정 2026-11-02)
-        extraArgs: { 'system-prompt-snapshot': 'off' },
+        extraArgs: { 'system-prompt-snapshot': 'off', ...(opts.prompt ? { 'append-system-prompt': append } : {}) },
         // slcode 에이전트 플러그인 — 세션 폴더의 링크 경로를 <이름>@inline 으로 싣는다. 사용자 설정·설치 기록은 건드리지 않는다
         ...(opts.agent?.plugins.length ? { plugins: opts.agent.plugins } : {}),
         settings: settings as any,

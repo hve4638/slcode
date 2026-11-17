@@ -9,12 +9,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseAssignment } from 'slcode-plugin/agentFormat';
 import { agentPaths, locked, pluginManifest, readConfig, writeConfig, type AgentConfig, type PluginLayer } from 'slcode-plugin/agentPlugins';
+import { cleanSpec, type PromptSpec } from './systemPrompt.js';
 
 /** Claude 가 읽을 것 — 끄면 그 출처의 CLAUDE.md·skill·플러그인·MCP·훅·권한이 함께 빠진다 (SDK settingSources). Md 는 CLAUDE.md 만 따로 끈다 */
 export type ClaudeLoadSpec = { user: boolean; project: boolean; userMd: boolean; projectMd: boolean; builtinSkills: boolean };
+/** systemPrompt 는 기본 프롬프트의 블록 설정 (systemPrompt.ts, ticket slcode-profile-system-prompt) — 없으면 기본 프롬프트 그대로. 편집 창이 쓴다 */
+export type ClaudeSpec = ClaudeLoadSpec & { systemPrompt?: PromptSpec };
 /** plugins 는 플러그인별 싣기(on)와 part·옵션 값(on 이 없으면 rest 를 따른다), rest 는 plugins 에서 on 을 정하지 않은 플러그인(나중에 설치한 것 포함)을 실을지 —
  *  세션에 싣는 쪽(slcode-plugin agentPlugins.PluginLayer)이 이 꼴을 받는다 */
-export type Profile = PluginLayer & { claude: ClaudeLoadSpec };
+export type Profile = PluginLayer & { claude: ClaudeSpec };
 export const DEFAULT_PROFILE = 'default';
 const ALL: ClaudeLoadSpec = { user: true, project: true, userMd: true, projectMd: true, builtinSkills: true };
 // CLAUDE.md 끄기는 출처가 켜져 있을 때만 뜻이 있다 — bare 에서 만든 프로필이 출처를 켜면 그 CLAUDE.md 도 실린다
@@ -90,6 +93,24 @@ export async function setProfile(name: string, assignments: string[], stateDir?:
     return { name, profile: p };
   });
 }
+/** 프로필의 system prompt 설정을 바꾼다 — spec 이 비었으면 지운다(기본 프롬프트 그대로). 기본 제공 프로필이면 as 이름의 새 프로필을 그 값으로 만들어 거기에 */
+export async function setProfilePrompt(name: string, spec: PromptSpec | undefined, stateDir?: string, as?: string): Promise<{ name: string }> {
+  const to = BUILTIN_PROFILES[name] ? as : name;
+  if (!to) throw new Error(`${name} is a built-in profile: give a name for the new profile`);
+  editable(to);
+  const ap = agentPaths(stateDir);
+  return locked(ap, () => {
+    const c = readConfig(ap);
+    if (to !== name && c.profiles?.[to]) throw new Error(`profile ${to} already exists`);
+    const cur = (to === name ? c.profiles?.[name] : BUILTIN_PROFILES[name]) as Profile | undefined;
+    if (!cur) throw new Error(`no profile ${name} (slcode profile list)`);
+    const p = clone(cur), clean = cleanSpec(spec);
+    if (clean) p.claude.systemPrompt = clean; else delete p.claude.systemPrompt;
+    c.profiles = { ...c.profiles, [to]: p };
+    writeConfig(ap, c);
+    return { name: to };
+  });
+}
 /** assignments 를 p 에 얹는다 (p 를 바꾼다). 틀린 값은 던진다 */
 function assign(p: Profile, assignments: string[], c: AgentConfig, ap: ReturnType<typeof agentPaths>): Profile {
   const onOff = (key: string, raw: string) => { if (raw !== 'on' && raw !== 'off') throw new Error(`${key} takes on|off`); return raw === 'on'; };
@@ -119,7 +140,7 @@ export function profileSummary(p: Profile): string {
   const c = p.claude;
   const src = (k: string, set: boolean, md: boolean) => (set ? (md ? k : `${k} (CLAUDE.md 끔)`) : null);
   const claude = [src('사용자 설정', c.user, c.userMd), src('프로젝트 설정', c.project, c.projectMd)].filter(Boolean);
-  return [which, claude.length ? `Claude ${claude.join(' · ')}` : 'Claude 설정 끔', c.builtinSkills ? null : '내장 skill 숨김'].filter(Boolean).join(' · ');
+  return [which, claude.length ? `Claude ${claude.join(' · ')}` : 'Claude 설정 끔', c.builtinSkills ? null : '내장 skill 숨김', cleanSpec(c.systemPrompt) ? 'system prompt 고침' : null].filter(Boolean).join(' · ');
 }
 
 export type ProfileRow = { name: string; builtin: boolean; profile: Profile };

@@ -1,0 +1,8 @@
+role: system prompt 편집 창의 요청 (ticket slcode-profile-system-prompt, 사용자 2026-11-17: 시작 화면에서 연다, 세션 안에는 두지 않는다) — 웹은 시작 화면 서버(startPage)의 api/, superlite 카드는 `slcode start-call`. 화면은 web/prompt.js.
+
+export val PROMPT_METHODS
+type PromptMethod
+type PromptView
+export fn promptMethod(dir, cwd, method, params) {
+  role: prompt.profiles 는 프로필 목록(고친 프로필 표시). prompt.fetch {profile, model?} 는 cwd(slcode 를 띄운 폴더)·그 프로필의 로드 설정·고른 모델로 받아 와 프로필의 설정을 입힌 줄들과 읽기 전용 글(정체성 한 줄·tail·slcode 지시)을 준다. prompt.save {profile, items, as?} 는 화면의 줄들을 해시로 바꿔 저장한다 — 기본 제공 프로필이면 as 이름의 새 프로필로
+}

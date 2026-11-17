@@ -422,6 +422,14 @@ export function mountAgentFront(root, transport, opts = {}) {
   // 에이전트 플러그인 (ticket slcode-agent-plugin) — 실은 빌드와 지금 설정의 빌드가 다르면 다시 싣기를 켠다. attach·turn.end 때 묻는다 (폴링 없음)
   let plugs = null, plugBusy = false; // plugs: session.plugins 결과
   async function loadPlugins() { if (!current) return; try { plugs = await rpc('session.plugins', { id: current }); } catch { plugs = null; } renderSide(); }
+  // 프로필의 system prompt 설정 가져오기 (ticket slcode-profile-system-prompt) — core 가 턴이 끝난 뒤 다시 뜬다(core.replaced). 그때까지 버튼은 기다린다고 보인다
+  let promptBusy = false;
+  async function pullPrompt() {
+    if (promptBusy || !current) return;
+    promptBusy = true; renderSide();
+    try { await rpc('session.pullPrompt', { id: current }); }
+    catch (e) { promptBusy = false; push(h('div', { class: 'meta err' }, e.message)); renderSide(); }
+  }
   async function reloadPlugins() {
     if (plugBusy || !current) return;
     plugBusy = true; renderSide();
@@ -1262,10 +1270,12 @@ export function mountAgentFront(root, transport, opts = {}) {
     // 에이전트 플러그인 — 실은 것과 지금 설정이 다르면 다시 싣기 (다음 턴 전에 적용, 지시문은 새 세션부터)
     // 시작 프로필(ticket slcode-session-profile)은 default 가 아닐 때만 맨 위 줄로 — 실은 플러그인이 없어도(bare) 칸을 보인다. 옛 core 는 profile 이 없다
     const profile = plugs?.profile && plugs.profile !== 'default' ? plugs.profile : null;
-    if (plugs && (plugs.plugins.length || plugs.added.length || profile)) {
+    // 프로필의 system prompt 설정이 이 세션의 것과 달라졌으면 알리고 가져오기 버튼을 둔다 — 세션은 스스로 따라가지 않는다 (ticket slcode-profile-system-prompt, 사용자 2026-11-17).
+    // 누르면 턴이 끝난 뒤 core 가 같은 대화로 다시 뜨고 다음 턴부터 적용된다. 대화 전체가 캐시를 한 번 새로 쓴다
+    if (plugs && (plugs.plugins.length || plugs.added.length || profile || plugs.promptChanged)) {
       const stale = plugs.plugins.some((p) => p.current !== p.build);
       side.append(sec('agentPlugins', '에이전트 플러그인', h('div', { class: 'plugs' },
-        kv([...(profile ? [['프로필', profile]] : []), ...plugs.plugins.map((p) => [h('span', { title: p.values }, `${p.name} ${p.version}`), p.current == null ? '지워짐' : p.current === p.build ? '최신' : '설정 바뀜']),
+        kv([...(profile ? [['프로필', profile]] : []), ...(plugs.promptChanged ? [['system prompt', h('button', { disabled: promptBusy ? '' : null, title: '프로필의 system prompt 설정이 바뀌었습니다. 가져오면 턴이 끝난 뒤 세션을 다시 띄워 다음 턴부터 적용합니다. 그 턴은 지금까지의 대화가 캐시를 새로 씁니다', onclick: pullPrompt }, promptBusy ? '턴이 끝나면 적용합니다' : '바뀜 · 가져오기')]] : []), ...plugs.plugins.map((p) => [h('span', { title: p.values }, `${p.name} ${p.version}`), p.current == null ? '지워짐' : p.current === p.build ? '최신' : '설정 바뀜']),
           ...plugs.added.map((n) => [n, '새 세션부터'])]),
         plugs.plugins.length || plugs.added.length ? h('button', { disabled: !stale || plugBusy || plugs.pending ? '' : null, title: ready?.vendor === 'codex' ? '바뀐 skill 을 이 세션에 다시 싣습니다. MCP·지시문·bin·env 는 새 세션부터 적용됩니다' : '바뀐 part·옵션을 이 세션에 다시 싣습니다. 지시문은 새 세션부터 적용됩니다', onclick: reloadPlugins },
           plugs.pending ? '턴이 끝나면 다시 싣습니다' : plugBusy ? '다시 싣는 중…' : '다시 싣기') : null)));
@@ -1518,7 +1528,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     else if (m.event === 'session.children' && m.params.id === current) paintKids(m.params.children);
     else if (m.event === 'session.queue' && m.params.id === current) paintQueue(m.params.items);
     else if (m.event === 'session.restored' && m.params.id === current) restoreInput(m.params.text, m.params.attachments);
-    else if (m.event === 'core.replaced') loadCommands(); // 옛 core 에서 받은 명령 목록을 새 core 의 것으로 — serve 가 다시 붙은 뒤에 알린다
+    else if (m.event === 'core.replaced') { loadCommands(); promptBusy = false; loadPlugins(); } // 옛 core 에서 받은 명령 목록을 새 core 의 것으로 — serve 가 다시 붙은 뒤에 알린다
     else if (m.event === 'session.closed' && m.params.id === current) paintQueue([]); // 큐는 메모리에만 있어 함께 사라진다. 나머지는 session.exit 이벤트가 이미 그렸다
     else if (m.event === 'settings.changed') setSettings(m.params);
   });

@@ -19,6 +19,7 @@ import { inspectBlocked } from './inspect.js';
 import { runEntry, type EntryHandle } from './entry.js';
 import { reachable, closedSessions, closedTime, discardSession, isLoopback, sockAlive } from './live.js';
 import { startList, startPageHtml } from './startPage.js';
+import { promptMethod, PROMPT_METHODS, type PromptMethod } from './promptMethods.js';
 import { pluginMethod, PLUGIN_METHODS, serveSession } from './serve.js';
 import { findVendorSession, forkClaude, vendorResumeCommand } from './vendor.js';
 import { forkSession } from './fork.js';
@@ -141,7 +142,7 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
                                  (off 면 Claude 내장 skill 을 숨긴다 — ~/.claude 에 설치한 Claude 플러그인의 skill 도 함께 숨겨진다)
   profile list [--json]
   start-page [folder] [--json]   superlite 카드의 시작 화면 html, --json 이면 그 목록 (플러그인이 쓴다)
-  start-call <method> [<json>]   superlite 카드 시작 화면의 에이전트 플러그인 관리 요청 (plugins.list|check|set|export, 플러그인이 쓴다)
+  start-call <method> [<json>]   superlite 카드 시작 화면의 요청 (plugins.list|check|set|export, prompt.profiles|fetch|save [--cwd F], 플러그인이 쓴다)
   discard <s>                    시작 화면에서 연 빈 세션(첫 메시지 전)을 닫고 지운다 — 카드의 '시작 화면으로' (플러그인이 쓴다, new --from-start 로 연 세션)
 공통: --dir D (SLCODE_DIR 대체), --help, --version [--json] (--json 이면 {"version","build"} — build 는 dist/cli.js 의 mtime)`;
 
@@ -609,7 +610,7 @@ function describeProfile(title: string, p: Profile): string {
     .filter(([, l]) => l.length).map(([n, l]) => `${n}: ${l.join(' ')}`);
   const c = p.claude;
   const src = (k: string, set: boolean, md: boolean) => (set ? `${k} on${md ? '' : ' (CLAUDE.md off)'}` : `${k} off`);
-  return [title, `  plugins  ${[which, ...vals].join(' · ')}`, `  claude   ${src('user', c.user, c.userMd)} · ${src('project', c.project, c.projectMd)} · builtin skills ${c.builtinSkills ? 'shown' : 'hidden'}`].join('\n');
+  return [title, `  plugins  ${[which, ...vals].join(' · ')}`, `  claude   ${src('user', c.user, c.userMd)} · ${src('project', c.project, c.projectMd)} · builtin skills ${c.builtinSkills ? 'shown' : 'hidden'}${c.systemPrompt ? ' · system prompt edited' : ''}`].join('\n');
 }
 function folderArg(a: string | undefined): string {
   const cwd = path.resolve(a ?? process.cwd());
@@ -926,7 +927,9 @@ try {
     }
     case 'start-call': { // 카드 시작 화면의 에이전트 플러그인 관리 (ticket slcode-agent-plugin-export-action) — 웹 시작 화면의 api/<method> 와 같은 것을 카드가 CLI 로
       const [method, params] = rest;
-      if (!(PLUGIN_METHODS as readonly string[]).includes(method)) usage(`start-call <${PLUGIN_METHODS.join('|')}> [<json>]`);
+      // prompt.* 는 system prompt 편집 창 (ticket slcode-profile-system-prompt) — 폴더는 --cwd(카드가 연 폴더), 없으면 지금 폴더
+      if ((PROMPT_METHODS as readonly string[]).includes(method)) { print(await promptMethod(P.dir, path.resolve(flags.cwd ?? '.'), method as PromptMethod, params ? JSON.parse(params) : {})); break; }
+      if (!(PLUGIN_METHODS as readonly string[]).includes(method)) usage(`start-call <${[...PLUGIN_METHODS, ...PROMPT_METHODS].join('|')}> [<json>]`);
       print(await pluginMethod(P.dir, method as (typeof PLUGIN_METHODS)[number], params ? JSON.parse(params) : {}));
       break;
     }

@@ -11,6 +11,7 @@ import { EventLog } from './eventLog.js';
 import { closedTime, sockAlive } from './live.js';
 import { corePaths } from './paths.js';
 import { loopbackAllowed, pluginMethod, PLUGIN_METHODS, WEB_DIR, withPageAttrs } from './serve.js';
+import { promptMethod, PROMPT_METHODS, type PromptMethod } from './promptMethods.js';
 import type { SettingsKind } from './protocol.js';
 
 /** at 은 마지막 활동 — 꺼진 세션은 꺼진 시각, 떠 있는 세션은 활동 기록의 마지막 상태 변화(없으면 마지막 턴) */
@@ -33,7 +34,7 @@ export async function startList(dir: string, cwd: string): Promise<StartList> {
 
 const attr = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 /** start.html 에 테마·입구(data-start: web|card)·폴더를 넣는다. inline 이면 style.css·plugins.js·start.js 를 넣어 주소 없이 돈다 (카드 문서, 옛 플러그인은 iframe srcdoc).
- *  plugins.js 는 import 가 닿지 않아 export 를 떼고 globalThis.slcodePlugins 로 건넨다 — start.js 의 openPlugins 가 그것을 먼저 본다 */
+ *  plugins.js·prompt.js 는 import 가 닿지 않아 export 를 떼고 globalThis.slcodePlugins·slcodePrompt 로 건넨다 — start.js 의 openPlugins·openPrompt 가 그것을 먼저 본다 */
 export function startPageHtml(dir: string, kind: SettingsKind, cwd: string | null, inline: boolean): string {
   const read = (f: string) => fs.readFileSync(path.join(WEB_DIR, f), 'utf8');
   let html = withPageAttrs(read('start.html'), dir, kind).replace('<html lang="ko"', `<html lang="ko" data-start="${inline ? 'card' : 'web'}"${cwd ? ` data-cwd="${attr(cwd)}"` : ''}`);
@@ -41,7 +42,8 @@ export function startPageHtml(dir: string, kind: SettingsKind, cwd: string | nul
     // 스크립트 안의 </script 는 html 을 끊는다 — 모듈 글에는 없지만 막아 둔다
     html = html.replace('<link rel="stylesheet" href="./style.css">', () => `<style>${read('style.css')}</style>`)
       .replace('<script type="module" src="./start.js"></script>', () => [
-        `${read('plugins.js').replace('export function pluginsPanel', 'function pluginsPanel')}\nglobalThis.slcodePlugins = { pluginsPanel };`, read('start.js'),
+        `${read('plugins.js').replace('export function pluginsPanel', 'function pluginsPanel')}\nglobalThis.slcodePlugins = { pluginsPanel };`,
+        `${read('prompt.js').replace('export function promptPanel', 'function promptPanel')}\nglobalThis.slcodePrompt = { promptPanel };`, read('start.js'),
       ].map((js) => `<script type="module">${js.replace(/<\/script/gi, '<\\/script')}</script>`).join('\n'));
   }
   return html;
@@ -63,7 +65,7 @@ export function startServer(dir: string, cwd: string): { server: http.Server; ch
       if (url.startsWith('/s/')) { res.writeHead(302, { location: '/', connection: 'close' }); res.end(); return; } // 세션 주소를 연 탭이 시작 화면으로 돌아왔다 (ticket slcode-web-session-url)
       if (url === '/' || url === '/index.html') { send(200, 'text/html; charset=utf-8', startPageHtml(dir, 'web', cwd, false)); return; }
       const f = url.slice(1);
-      if (f === 'style.css' || f === 'start.js' || f === 'plugins.js') { send(200, f.endsWith('.css') ? 'text/css' : 'text/javascript', fs.readFileSync(path.join(WEB_DIR, f), 'utf8')); return; }
+      if (f === 'style.css' || f === 'start.js' || f === 'plugins.js' || f === 'prompt.js') { send(200, f.endsWith('.css') ? 'text/css' : 'text/javascript', fs.readFileSync(path.join(WEB_DIR, f), 'utf8')); return; }
       send(404, 'text/plain', 'not found'); return;
     }
     if (req.method !== 'POST' || !url.startsWith('/api/')) { send(404, 'text/plain', 'not found'); return; }
@@ -74,6 +76,7 @@ export function startServer(dir: string, cwd: string): { server: http.Server; ch
         const a = body ? JSON.parse(body) : {};
         const action = url.slice(5);
         if ((PLUGIN_METHODS as readonly string[]).includes(action)) { json(200, await pluginMethod(dir, action as (typeof PLUGIN_METHODS)[number], a)); return; } // 에이전트 플러그인 관리 (ticket slcode-agent-plugin-ui)
+        if ((PROMPT_METHODS as readonly string[]).includes(action)) { json(200, await promptMethod(dir, cwd, action as PromptMethod, a)); return; } // system prompt 편집 창 (ticket slcode-profile-system-prompt)
         switch (action) {
           case 'list': json(200, await startList(dir, cwd)); return;
           case 'go': {

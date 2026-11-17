@@ -978,3 +978,65 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .runline a.it:hover { background: var(--acf-soft); }
 .acf .runline a.it .name { font-weight: 600; white-space: nowrap; }
 .acf .runline a.it .desc { color: var(--acf-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+/* system prompt 편집 창 (web/prompt.js, ticket slcode-profile-system-prompt) — 시작 화면 안. 테두리 없는 평평한 목록(사용자 2026-11-17: 카드 꼴은 간격이 어긋나고 장식이 많았다).
+   블록 한 줄은 [설명 … 상태 글자 · 동작 · 크기 · 스위치], 그 아래가 그 자리에서 고치는 글. 왼쪽 선은 .body 의 12px 하나, 세로 간격은 4px 배수:
+   블록 padding 4 + 사이 띠(.ins) 16 = 블록 사이 24, 절 제목 위도 띠를 넣어 24. 구분선은 띠 가운데 한 번만 긋고 절 제목 앞뒤(.ins.bare)에는 없다.
+   색은 무채색 — accent 는 고치는 중인 글과 나눌 줄에만 쓴다. 머리(프로필·가져오기)와 발(저장)은 스크롤해도 붙어 있다 */
+.spanel { font: 14px/20px var(--acf-sans); color: var(--acf-fg); }
+.spanel * { box-sizing: border-box; }
+.spanel button, .spanel select, .spanel input { font: inherit; color: inherit; background: var(--acf-panel); border: 1px solid var(--acf-line); border-radius: 6px; padding: 3px 10px; }
+.spanel button { cursor: pointer; }
+.spanel button:hover:not(:disabled) { background: var(--acf-soft); }
+.spanel button:disabled, .spanel select:disabled { opacity: .5; cursor: default; }
+.spanel button.primary { background: var(--acf-accent); border-color: var(--acf-accent); color: var(--acf-on-accent); }
+.spanel .grow { flex: 1; }
+.spanel .head, .spanel .foot { position: sticky; z-index: 3; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px; background: var(--acf-bg); }
+.spanel .head { top: 0; border-bottom: 1px solid var(--acf-line); }
+.spanel .foot { bottom: 0; border-top: 1px solid var(--acf-line); }
+.spanel .sum, .spanel .sz { color: var(--acf-muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.spanel .err { color: var(--acf-err); } .spanel .ok { color: var(--acf-ok); }
+.spanel .body { padding: 12px 12px 24px; }
+.spanel .empty { padding: 64px 16px; text-align: center; color: var(--acf-muted); }
+.spanel .hd { margin: 8px 0; font-weight: 600; }
+.spanel .blk { padding: 4px 0; }
+.spanel .bar { display: flex; gap: 8px; align-items: center; min-height: 28px; font-size: 12px; color: var(--acf-muted); }
+.spanel .ttl { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.spanel input.ttl { border: 0; border-radius: 0; background: transparent; padding: 0; outline: none; }
+.spanel input.ttl:focus { color: var(--acf-fg); }
+.spanel input.ttl::placeholder { color: var(--acf-muted); opacity: .6; }
+.spanel .pst { font-size: 11px; white-space: nowrap; }
+.spanel .sz { width: 56px; text-align: right; }
+/* 동작 — 나누기(.keep)만 늘 보이고 나머지는 블록에 올리거나 안에 포커스가 있을 때. 숨겨도 자리는 지켜 크기·스위치가 움직이지 않는다 */
+.spanel .act { border: 0; background: transparent; color: var(--acf-muted); padding: 0 4px; white-space: nowrap; opacity: 0; }
+.spanel .act.keep, .spanel .blk:hover .act, .spanel .blk:focus-within .act { opacity: 1; }
+.spanel .act:hover:not(:disabled) { background: transparent; color: var(--acf-fg); }
+.spanel .act[aria-pressed=true] { color: var(--acf-accent); }
+@media (hover: none) { .spanel .act { opacity: 1; } }
+.spanel .txt, .spanel textarea { font: 12.5px/20px var(--acf-mono, ui-monospace, monospace); white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 4px; }
+.spanel .blk.ro .txt { color: var(--acf-muted); max-height: 180px; overflow: auto; }
+.spanel textarea { display: block; width: 100%; padding: 0; border: 0; border-radius: 2px; background: transparent; color: var(--acf-fg); resize: none; overflow: hidden; outline: none; }
+.spanel textarea:hover { background: var(--acf-soft); box-shadow: 0 0 0 4px var(--acf-soft); }
+.spanel textarea:focus { background: transparent; box-shadow: none; outline: 1px solid var(--acf-accent); outline-offset: 4px; }
+.spanel .blk.off textarea, .spanel .blk.off .txt { color: var(--acf-muted); }
+.spanel .ln { position: relative; min-height: 20px; }
+.spanel .ln.can { cursor: pointer; }
+.spanel .ln.can:hover { background: var(--acf-soft); }
+.spanel .ln.can:hover::before { content: ''; position: absolute; left: 0; right: 0; top: -1px; height: 2px; background: var(--acf-accent); }
+.spanel .ln.can:hover::after { content: '이 줄부터 나누기'; position: absolute; right: 0; top: -10px; padding: 0 6px; border-radius: 4px; background: var(--acf-accent); color: var(--acf-on-accent); font: 11px/18px var(--acf-sans); }
+.spanel .ins { position: relative; height: 16px; }
+.spanel .ins::before { content: ''; position: absolute; left: 0; right: 0; top: 50%; border-top: 1px solid var(--acf-line); }
+.spanel .ins.bare { height: 8px; }
+.spanel .hd + .ins.bare { height: 0; }
+.spanel .ins.bare::before { border-top-color: transparent; }
+.spanel .ins:hover::before, .spanel .ins:focus-within::before { border-top-color: var(--acf-muted); }
+.spanel .ins button { position: absolute; left: 50%; top: 50%; z-index: 2; transform: translate(-50%, -50%); padding: 0 10px; font-size: 12px; opacity: 0; }
+.spanel .ins:hover button, .spanel .ins button:focus { opacity: 1; }
+/* 스위치 — 누르는 자리 32×28, 보이는 길 28×16. 켜짐은 글자색, 꺼짐은 선색 */
+.spanel .sw { flex: none; position: relative; width: 32px; height: 28px; padding: 0; border: 0; background: transparent; }
+.spanel .sw:hover:not(:disabled) { background: transparent; }
+.spanel .sw::before { content: ''; position: absolute; left: 4px; top: 6px; width: 28px; height: 16px; border-radius: 8px; background: var(--acf-line); }
+.spanel .sw::after { content: ''; position: absolute; left: 6px; top: 8px; width: 12px; height: 12px; border-radius: 50%; background: var(--acf-muted); transition: left .1s; }
+.spanel .sw.on::before { background: var(--acf-fg); }
+.spanel .sw.on::after { left: 18px; background: var(--acf-bg); }
+.spanel .sw.none { visibility: hidden; }

@@ -3,9 +3,10 @@ import { EventLog } from './eventLog'
 import { closedTime, sockAlive } from './live'
 import { corePaths } from './paths'
 import { loopbackAllowed, pluginMethod, PLUGIN_METHODS, WEB_DIR, withPageAttrs } from './serve'
+import { promptMethod, PROMPT_METHODS, PromptMethod } from './promptMethods'
 import { SettingsKind } from './protocol'
 
-role: 시작 화면 (web/start.html·start.js, ticket slcode-session-profile, 사용자 2026-10-30) — 동사 없는 `slcode`. 프로그램의 첫 화면 자리다: 가운데 new session, 아래 왼쪽은 지금 폴더의 세션, 오른쪽은 모든 폴더의 세션. 목록은 마지막 활동 순 — 꺼진 세션은 꺼진 지 얼마나 됐는지, 떠 있는 세션은 초록 점으로 열려 있다고만(누르지 못한다), 처음엔 몇 개만 보이고 '모두 보기'로 펼친다. 왼쪽의 꺼진 세션은 눌러 이어서 열고, 오른쪽은 아직 누르지 못한다. 프로필은 세션에 들어가 대화 화면 가운데에서 고르고(core session.setProfile), 프로필 설정은 나중에 이 화면의 설정에, 대시보드도 나중에 여기서(사용자). 화면은 웹·카드가 같은 것을 쓰고 <html data-start> 로 입구를 안다. 웹은 진입 프로세스(entry.runEntry)가 세션을 띄우기 전에 이 서버로 서빙하고 고르면 새 세션(fromStart)을 또는 그 세션을 이어서 띄운다. 카드는 superlite 플러그인(slcode.start 동사 → views/session.js renderStart)이 `slcode start-page <folder>` 의 html 을 주소 없는 sandbox iframe 에 넣고, 화면의 list 는 main.js 가 `start-page <folder> --json` 으로, go 는 카드가 그 자리에서 spawn{cwd, fromStart} 이나 id 로 띄운다. 시작 화면에서 연 새 세션은 첫 메시지 전에 대화 화면의 '← 시작 화면'으로 돌아갈 수 있고 그 빈 세션은 지운다(웹 serve start.back → 진입 프로세스, 카드 slcode.back → discard)
+role: 시작 화면 (web/start.html·start.js, ticket slcode-session-profile, 사용자 2026-10-30) — 동사 없는 `slcode`. 프로그램의 첫 화면 자리다: 가운데 new session, 아래 왼쪽은 지금 폴더의 세션, 오른쪽은 모든 폴더의 세션. 목록은 마지막 활동 순 — 꺼진 세션은 꺼진 지 얼마나 됐는지, 떠 있는 세션은 초록 점으로 열려 있다고만(누르지 못한다), 처음엔 몇 개만 보이고 '모두 보기'로 펼친다. 왼쪽의 꺼진 세션은 눌러 이어서 열고, 오른쪽은 아직 누르지 못한다. 프로필은 세션에 들어가 대화 화면 가운데에서 고르고(core session.setProfile), 프로필 설정은 나중에 이 화면의 설정에, 대시보드도 나중에 여기서(사용자). 화면은 웹·카드가 같은 것을 쓰고 <html data-start> 로 입구를 안다. 웹은 진입 프로세스(entry.runEntry)가 세션을 띄우기 전에 이 서버로 서빙하고 고르면 새 세션(fromStart)을 또는 그 세션을 이어서 띄운다. 카드는 superlite 플러그인(slcode.start 동사 → views/session.js renderStart)이 `slcode start-page <folder>` 의 html 을 주소 없는 sandbox iframe 에 넣고, 화면의 list 는 main.js 가 `start-page <folder> --json` 으로, go 는 카드가 그 자리에서 spawn{cwd, fromStart} 이나 id 로 띄운다. 시작 화면에서 연 새 세션은 첫 메시지 전에 대화 화면의 '← 시작 화면'으로 돌아갈 수 있고 그 빈 세션은 지운다(웹 serve start.back → 진입 프로세스, 카드 slcode.back → discard) system prompt 편집 창(web/prompt.js, ticket slcode-profile-system-prompt)도 이 화면에서 연다 — 웹은 api/<PROMPT_METHODS>, 카드 html 에는 prompt.js 를 plugins.js 처럼 넣는다(globalThis.slcodePrompt).
 
 type StartSession
 type StartList
