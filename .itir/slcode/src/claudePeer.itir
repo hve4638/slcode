@@ -1,0 +1,20 @@
+import { VERSION } from './client'
+import { CoreError, ERR } from './protocol'
+
+role: slcode 세션을 Claude Code 의 세션 목록에 올리고 메시지를 주고받는다 (ticket slcode-claude-peer-relay, 사용자 결정 2026-11-17, 조사 ws docs/report/slcode-claude-message-relay.md). 별도 중계 프로세스 없이 core 가 세션마다 Claude Code 등록 파일 `<Claude 설정 폴더>/sessions/<core pid>.json` 을 쓰고 `/tmp/cc-socks/<core pid>.sock` 을 연다 — Claude Code 의 ListAgents 에 `slcode-<제목>` 으로 보이고 SendMessage 가 그 소켓에 JSON 한 줄로 온다. 공개 문서에 없는 형식(Claude Code 2.1.326 실측)이라 다른 peerProtocol 을 보면 멈춘다. 설정 폴더는 세션의 벤더 env 가 가리키는 곳(CLAUDE_CONFIG_DIR, 없으면 HOME/.claude) — 같은 폴더를 쓰는 Claude Code 세션끼리만 서로 보인다(실측). 폴더가 없으면, /proc 이 없으면(Linux 밖은 범위 밖), SLCODE_CLAUDE_PEER=0 이면(테스트가 사용자 ~/.claude 에 쓰지 않게) 아무것도 하지 않는다. 사용자 Claude Code 설정(crossSessionInbound 등)은 건드리지 않는다. 등록 파일: pid·procStart(/proc/<pid>/stat 22번째 — Claude Code 가 pid 와 함께 대조해 죽은 프로세스의 파일을 목록에서 뺀다, 지우지는 않는다)·sessionId·cwd·version(slcode 판)·peerProtocol 1·peerFeatures []·kind interactive·entrypoint cli(TUI 에서 확인한 값)·messagingSocketPath·name·status(idle|busy — Claude Code 는 적힌 값을 그대로 보이고 낡았는지 보지 않으므로 바뀔 때마다 고쳐 쓴다)·slcode(세션 id — slcode 가 쓴 파일이라는 표시). 받는 줄: `{"type":"user","message":{"content":"<cross-session-message from from-name from-mode>\n본문\n</cross-session-message>"}}` 는 본문과 from-name 을 꺼내 넘기고(봉투가 없으면 글 전체), `{"type":"control","action":"peer_message_status","status","reason","from"}` 은 보낸 메시지의 처리 결과(held·denied·expired·refused·dropped·delivered)로 넘긴다. 빈 연결(살아 있는지 확인)과 그 밖의 줄은 버린다. 보내는 줄은 같은 꼴에 from 은 자기 소켓, from-mode 는 항상 bypass(사용자 결정 — 실제 권한 모드를 적는 옵션은 없다). 보류·거절 통보는 from 소켓을 연 프로세스가 직접 보냈을 때만 돌아오므로(실측) CLI 가 아니라 core 가 보낸다. 봉투 속성에는 escape 가 없어 이름에서 " < > 와 제어 문자를 지운다(Claude Code 와 같은 규칙, 안 지우면 봉투로 읽히지 않아 bypass 표기가 사라진다). 본문의 닫는 태그는 `<\/cross-session-message` 로. CLAUDE_PREFIX `claude:` 는 slcode 쪽에서 Claude Code 세션을 가리키는 주소 머리다(`slcode mail claude:<이름>`, 받은 메시지의 from)
+
+export val CLAUDE_PREFIX
+export fn peerDir(env) -> String? {
+  role: 그 env 의 Claude Code 설정 폴더 아래 sessions — 설정 폴더가 없거나 SLCODE_CLAUDE_PEER=0 이면 null
+}
+export fn peerName(title, id) -> String {
+  role: 등록 이름 `slcode-<제목>` — 제목에서 " < > 와 제어 문자를 지우고 57자로 자른다(Claude Code 는 64자 넘는 이름을 줄인다). 제목이 없거나 글자·숫자가 없으면 `slcode-<세션 id>`
+}
+export fn parseEnvelope(text) -> Envelope {
+  role: 봉투의 from-name 과 본문 — 봉투가 아니면 글 전체가 본문
+}
+export fn startPeer(o) -> ClaudePeer {
+  role: 죽은 slcode 등록 파일(slcode 표시가 있고 프로세스가 없는 것)과 그 소켓을 치우고, 소켓을 열고 등록 파일을 쓴다. sync(name, status) 는 바뀐 때만 고쳐 쓴다. send(이름, 글) 은 살아 있는 Claude Code 세션(slcode 표시 없고 소켓이 적힌 등록 파일) 중 이름이 같은 하나의 소켓에 한 줄을 쓴다 — 없으면 no_session(살아 있는 이름을 함께), 여럿이면 bad_request. peerProtocol 이 1 이 아닌 살아 있는 Claude Code 세션을 보면(기동 때·보낼 때) 등록을 내리고 onStop 으로 한 번 알린 뒤 그 뒤의 send 를 거절한다(판별 호환 코드는 두지 않는다, 사용자 결정). close 는 소켓과 등록 파일을 지운다
+}
+type ClaudePeer
+type Envelope

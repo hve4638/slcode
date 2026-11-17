@@ -15,6 +15,7 @@ slcode prompt <s> <text> | interrupt <s>
 slcode status <s> | pending <s> | last <s> [--turn N] | log <s> [--since N] [--tail N]   # 조회: 평문 기본, --json
 slcode respond <s> <req> allow|deny [--remember] | respond <s> <req> --answer <text> | respond <s> <req> --json '<updatedInput>'
 slcode mail <to> <text> [--from X] [--re <id>]                            # 켜진 세션에만 (꺼진 세션은 no session)
+slcode mail claude:<name> <text> [--from <s>]                             # Claude Code 세션에 (slcode 세션은 그쪽 목록에 slcode-<제목> 으로 보인다)
 slcode check | ask <to> <text> [--timeout S] | reply <메시지 id> <text>      # 세션 안에서(SLCODE_SESSION_ID)
 pnpm test                               # 잠금·로그·세션 프로세스·교체·CLI 동사 테스트
 ```

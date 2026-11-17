@@ -21,6 +21,7 @@ import { isLoopback, reachable, sockAlive, spawnCore } from './live.js';
 import { BUILD, PKG, VERSION, replacing, replacingMark } from './client.js';
 import { corePaths, ensureDir, readOrCreateToken, sessionDir } from './paths.js';
 import { formatMail, newMail, parseMails, sendMail, sessionMeta } from './mail.js';
+import { CLAUDE_PREFIX, peerDir, peerName, startPeer } from './claudePeer.js';
 import { ANSWERED, Children, teamOf, teamOptionsError } from './children.js';
 import { familyPrompt } from './prompt.js';
 import { listAgents } from './teamAgents.js';
@@ -605,7 +606,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       return { ok };
     },
     'session.close': (_c, p) => { mine(p?.id); setImmediate(() => void close('closed by client')); return { ok: true }; },
-    'session.rename': (_c, p) => { const s = mine(p?.id); s.log.updateMeta({ title: p.title ?? null }); broadcast('session.changed', s.info()); return { ok: true }; },
+    'session.rename': (_c, p) => { const s = mine(p?.id); s.log.updateMeta({ title: p.title ?? null }); broadcast('session.changed', s.info()); syncPeer(); return { ok: true }; },
     'session.setInspect': async (_c, p) => {
       const s = mine(p?.id);
       if (typeof p.on !== 'boolean') throw new CoreError(ERR.badRequest, 'on required');
@@ -641,6 +642,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     'session.ask': async (_c, p) => {
       mine(p?.id);
       if (typeof p.to !== 'string' || !p.to) throw new CoreError(ERR.badRequest, 'to required');
+      if (p.to.startsWith(CLAUDE_PREFIX)) throw new CoreError(ERR.badRequest, 'ask does not reach Claude Code sessions — use: slcode mail claude:<name> <text>');
       // 받는 이는 켜진 세션 — 아니면 sendMail 이 no_session
       const { id: mailId } = await sendMail(P.sessionsDir, p.to, { from: sid, kind: 'ask', body: String(p.text ?? '') });
       const reply = await new Promise<Mail>((resolve, reject) => {
@@ -653,7 +655,14 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       mine(p?.id);
       const to = received.get(String(p.re));
       if (!to) throw new CoreError(ERR.badRequest, `unknown mail ${p.re} — this session did not receive it (use: slcode mail <to> <text>)`);
+      if (to.startsWith(CLAUDE_PREFIX)) return peer.send(to.slice(CLAUDE_PREFIX.length), String(p.text ?? ''));
       return sendMail(P.sessionsDir, to, { from: sid, kind: 'reply', body: String(p.text ?? ''), re: String(p.re) });
+    },
+    // Claude Code 세션에 (ticket slcode-claude-peer-relay) — 보류·거절 통보가 이 core 의 소켓으로 돌아오게 CLI 가 아니라 core 가 보낸다
+    'session.peerSend': (_c, p) => {
+      mine(p?.id);
+      if (typeof p.to !== 'string' || !p.to) throw new CoreError(ERR.badRequest, 'to required');
+      return peer.send(p.to, String(p.text ?? ''));
     },
     // ---- 팀원 세션 (ticket slcode-team-agent, 사용자 결정 2026-11-07~08)
     'session.spawnChild': async (_c, p) => {
@@ -974,6 +983,15 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     session.send(batch.map(renderMail).join('\n\n'), 'mail');
   }
   logFile.updateMeta({ pid: process.pid });
+  // ---- Claude Code 세션 목록에 오르기 (claudePeer.ts, ticket slcode-claude-peer-relay) — 온 글은 지금의 메일 길로, 보낸 이는 claude:<이름>
+  const peer = startPeer({
+    dir: peerDir(env), id: sid, cwd, name: peerName(logFile.meta.title, sid), log,
+    onMessage: (from, body) => take(newMail({ from: CLAUDE_PREFIX + (from ?? 'unknown'), to: sid, kind: 'message', body })),
+    onStatus: (from, status, reason) => take(newMail({ from: CLAUDE_PREFIX + (from ?? 'unknown'), to: sid, kind: 'notice', body: `Message ${status}${reason ? `: ${reason}` : ''}` })),
+    onStop: (why) => session.notice(`Claude Code 세션과 메시지를 주고받지 않습니다: ${why}`),
+  });
+  function syncPeer() { peer.sync(peerName(logFile.meta.title, sid), mailCalm() ? 'idle' : 'busy'); }
+  session.onEvent((e) => { if (e.ev.kind === 'session.state') syncPeer(); });
   void children.adoptLive(); // 교체 전의 core 가 띄운 켜진 link 팀원
 
   // ---- 수명
@@ -1003,6 +1021,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     await inspect?.close();
     if (sweeper) clearInterval(sweeper);
     store?.close();
+    peer.close();
     uds.close();
     for (const s of socks) s.end(); // serve 의 중계·제어 연결이 닫힘을 본다
     try { fs.unlinkSync(sockPath); } catch {}
@@ -1034,6 +1053,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     try { fs.writeFileSync(mark, String(Date.now() + REPLACE_MS)); } catch {}
     uds.close();
     try { fs.unlinkSync(sockPath); } catch {}
+    peer.close(); // 새 core 가 자기 pid 로 다시 오른다
     if (draft) try { fs.writeFileSync(draftFile, draft); } catch {}
     let deadline: NodeJS.Timeout | undefined;
     await Promise.race([session.close('replaced', true), new Promise<void>((r) => { deadline = setTimeout(() => { log(`vendor did not close in ${CLOSE_DEADLINE_MS / 1000}s — leaving it`); r(); }, CLOSE_DEADLINE_MS); })]);

@@ -371,6 +371,8 @@ export type Methods = {
   'session.ask': { params: { id: string; to: string; text: string; timeoutMs?: number }; result: { mailId: string; reply: Mail; text: string } };
   /** 받은 메시지 id 로 그 보낸 이에게 kind=reply. 모르는 id(이 세션이 받은 적 없음)면 bad_request, 보낸 이가 켜진 세션이 아니면 no_session */
   'session.reply': { params: { id: string; re: string; text: string }; result: { id: string; to: string } };
+  /** Claude Code 세션(등록 이름)에 한 통 — 이 세션의 core 가 자기 소켓을 from 으로 보낸다 (claudePeer.ts, ticket slcode-claude-peer-relay). 없는 이름은 no_session */
+  'session.peerSend': { params: { id: string; to: string; text: string }; result: { id: string; to: string } };
   // ---- 팀원 세션 (ticket slcode-team-agent, 사용자 결정 2026-11-07~08) — 리더 core 가 팀원 core 를 띄우고, link 팀원은 소유한다
   /** 리더 세션 안의 `slcode team new` 가 부른다 — 팀원을 띄우고(link 면 소유하고) id 를 돌려준다. vendor·model·effort·mode 는 주지 않으면 리더를 따른다(모델·effort 는 벤더가 같을 때만).
    *  team 은 관여 옵션 — 빠진 키는 teammate 프리셋 값. 이 세션이 팀원을 만들지 못하면(meta.noTeam) team_disabled. */

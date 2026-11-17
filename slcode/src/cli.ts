@@ -12,6 +12,7 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { connectSession, diskBuild, type RpcClient } from './client.js';
 import { sendMail, sessionMeta } from './mail.js';
+import { CLAUDE_PREFIX } from './claudePeer.js';
 import { EventLog } from './eventLog.js';
 import { corePaths, readOrCreateToken } from './paths.js';
 import { readSettings } from './settings.js';
@@ -93,6 +94,9 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
                                  보낸 이는 --from, 없으면 지금 세션, 세션 밖이면 unknown. --re 는 그 메시지의 답장으로.
                                  받는 세션이 일하는 중이어도 바로 넣는다 (Claude 는 다음 도구 호출 사이에). --lazy 면 받는 세션이 일을 마친 뒤에.
                                  팀원 세션 안에서 <to> 가 leader 면 리더 세션 (SLCODE_PARENT_ID). 같은 이름이 여럿이면 자기 팀(리더·팀원)의 것
+  mail claude:<name> <text> [--from <s>]
+                                 Claude Code 세션에 보낸다 (<name> 은 Claude Code 의 세션 이름). 세션 안에서, 또는 --from 으로 보내는 slcode 세션을 정해서.
+                                 slcode 세션은 Claude Code 의 세션 목록에 slcode-<제목> 으로 보이고 SendMessage 로 받는다
 * check                          밀린 메시지를 지금 읽는다
 * ask <to> <text> [--timeout S]  묻고 답장을 기다린다
 * reply <id> <text>              받은 메시지에 답장
@@ -886,6 +890,14 @@ try {
       if (!rest[1]) usage('mail <to> <text> [--from X] [--re <id>]');
       if ((rest[0] === 'leader' || rest[0] === 'parent') && process.env.SLCODE_PARENT_ID) rest[0] = process.env.SLCODE_PARENT_ID; // link 팀원의 리더 (ticket slcode-team-agent)
       const me = process.env.SLCODE_SESSION_ID;
+      // Claude Code 세션 (ticket slcode-claude-peer-relay) — 보내는 slcode 세션의 core 가 보낸다 (보류·거절 통보가 그 세션으로 돌아온다)
+      if (rest[0].startsWith(CLAUDE_PREFIX)) {
+        const sender = flags.from ?? me;
+        if (!sender) { err('mail claude:<name> needs a sending slcode session — run it inside a session, or pass --from <live session>'); process.exit(2); }
+        const { client, id } = await liveClient(sender);
+        try { print(await client.request('session.peerSend', { id, to: rest[0].slice(CLAUDE_PREFIX.length), text: rest.slice(1).join(' ') })); } finally { client.close(); }
+        break;
+      }
       const from = flags.from ?? me ?? 'unknown';
       const via = !me ? 'outside' : from !== me ? me : undefined;
       const r = await sendMail(P.sessionsDir, rest[0], { from, kind: flags.re ? 'reply' : 'message', body: rest.slice(1).join(' '), ...(flags.re ? { re: flags.re } : {}), ...(via ? { via } : {}), ...(flags.lazy ? { lazy: true } : {}) });
