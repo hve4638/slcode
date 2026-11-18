@@ -1,0 +1,10 @@
+import { addProfile, listProfiles, profileSummary, removeProfile, renameProfile, setProfile } from './profiles'
+import { listPlugins } from '../slcode-plugin/src/agentPlugins'
+
+role: 프로필 관리 화면의 요청 (ticket slcode-profile-manager, 사용자 2026-11-18: 시작 화면의 "system prompt" 단추 자리를 "프로필" 로, 편집 창은 이 화면에서 연다) — 웹은 시작 화면 서버(startPage)의 api/, superlite 카드는 `slcode start-call`. plugins.*·prompt.* 와 같은 길이다. 화면은 web/profiles.js. 고치는 요청은 CLI `slcode profile` 과 같은 함수를 부르므로 화면과 `profile list --json` 의 결과가 같다.
+
+export val PROFILE_METHODS
+type ProfileMethod
+export fn profileMethod(dir, method, params) {
+  role: profile.list 는 프로필 행(listProfiles 에 한 줄 요약·system prompt 고침 여부)과 설치된 플러그인(이름·판·part 의 필수·플러그인 설정 값·기본값, 옵션의 꼴·값·기본값·라벨 — 화면이 "플러그인 설정을 따름" 의 값을 보인다). profile.add {name, from?}, profile.set {name, set?: ["<키>=<값>"...], unset?: ["<키>"...]}, profile.remove {name}, profile.rename {from, to} 는 profiles.ts 의 같은 이름 함수 — 오류는 badRequest 로
+}

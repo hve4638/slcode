@@ -28,14 +28,15 @@ import { pullHistory } from './history.js';
 import { CLAUDE_EFFORTS, sessionEnv, sessionParams } from './base.js';
 import { randomUUID } from 'node:crypto';
 import { pluginCommand } from 'slcode-plugin/cli';
-import { addProfile, getProfile, listProfiles, removeProfile, setProfile, type Profile } from './profiles.js';
+import { addProfile, getProfile, listProfiles, removeProfile, renameProfile, setProfile, type Profile } from './profiles.js';
+import { profileMethod, PROFILE_METHODS, type ProfileMethod } from './profileMethods.js';
 import { findAgent, listAgents, type AgentDef } from './teamAgents.js';
 import { createWorktree, removeWorktree, worktreeLoss, type Loss } from './worktree.js';
 import { summarize } from './activity.js';
 import type { Worktree } from './worktree.js';
 import { FILES, PERMISSION_MODES, TEAM_PRESETS, type ApprovalRequest, type LoggedEvent, type Methods, type SessionInfo } from './protocol.js';
 
-type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; model?: string; effort?: string; profile?: string; env?: string[]; param?: string[]; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; 'no-inspect'?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; re?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; takeover?: boolean; version?: boolean; help?: boolean; 'from-start'?: boolean; to?: string[]; remove?: boolean; name?: string; options?: string; subagent?: boolean; teammate?: boolean; detached?: boolean; lazy?: boolean; wait?: boolean; agent?: string; cwd?: string; worktree?: string; self?: boolean; key?: string };
+type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; model?: string; effort?: string; profile?: string; env?: string[]; param?: string[]; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; 'no-inspect'?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; unset?: string[]; re?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; takeover?: boolean; version?: boolean; help?: boolean; 'from-start'?: boolean; to?: string[]; remove?: boolean; name?: string; options?: string; subagent?: boolean; teammate?: boolean; detached?: boolean; lazy?: boolean; wait?: boolean; agent?: string; cwd?: string; worktree?: string; self?: boolean; key?: string };
 
 const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세션 id 또는 유일한 제목. * 는 세션 안(SLCODE_SESSION_ID)에서만)
 
@@ -135,18 +136,20 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
   hook <claude|codex> <plugin folder> <event>
                                  export 한 플러그인의 js/ts 훅을 한 번 돌린다 (훅 입력 JSON 은 stdin, 출력은 하네스 훅 JSON) — hooks.json 이 부르는 것
 세션 시작 프로필 (new --profile 로 고른다. 바꾼 프로필은 그 프로필로 띄우는 다음 기동부터. Codex 세션은 따르지 않는다)
-  기본 제공: default (설치한 플러그인·사용자·프로젝트 설정 전부), bare (플러그인·사용자·프로젝트 설정·Claude 내장 skill 없음). 고칠 수 없다
+  기본 제공: default (설치한 플러그인·사용자·프로젝트 설정 전부), minimal (플러그인·사용자·프로젝트 설정·Claude 내장 skill 없음, 옛 이름 bare). 고칠 수 없다
   profile add <name> [--from P] [<key>=<value> ...]
                                  새 프로필 — P(생략 시 default)의 값으로 시작하고 profile set 과 같은 값을 얹는다
   profile remove <name>          지운다 (그 프로필의 세션은 다음 기동부터 default)
-  profile set <name> <key>=<value> ...
+  profile set <name> [--unset <key> ...] <key>=<value> ...
                                  <plugin>=on|off · <plugin>.<part>=on|off · <plugin>.<option>=<value> · other-plugins=on|off (나열하지 않은 플러그인)
                                  claude.user=on|off (~/.claude 의 CLAUDE.md·skill·플러그인·MCP·훅·권한, claude.ai 계정 커넥터) · claude.project=on|off (프로젝트의 것, .mcp.json 포함)
                                  claude.user-md·claude.project-md=on|off (CLAUDE.md 만) · claude.builtin-skills=on|off
                                  (off 면 Claude 내장 skill 을 숨긴다 — ~/.claude 에 설치한 Claude 플러그인의 skill 도 함께 숨겨진다)
+                                 --unset <plugin> · <plugin>.<part|option>: 정한 값을 지워 other-plugins·플러그인 설정을 따르게 한다 (여러 번)
+  profile rename <old> <new>     이름을 바꾼다 — 옛 이름(그 이름의 세션·--profile)은 새 이름으로 이어진다
   profile list [--json]
   start-page [folder] [--json]   superlite 카드의 시작 화면 html, --json 이면 그 목록 (플러그인이 쓴다)
-  start-call <method> [<json>]   superlite 카드 시작 화면의 요청 (plugins.list|check|set|export, prompt.profiles|fetch|save [--cwd F], 플러그인이 쓴다)
+  start-call <method> [<json>]   superlite 카드 시작 화면의 요청 (plugins.list|check|set|export, prompt.profiles|fetch|save [--cwd F], profile.list|add|set|remove|rename, 플러그인이 쓴다)
   discard <s>                    시작 화면에서 연 빈 세션(첫 메시지 전)을 닫고 지운다 — 카드의 '시작 화면으로' (플러그인이 쓴다, new --from-start 로 연 세션)
 공통: --dir D (SLCODE_DIR 대체), --help, --version [--json] (--json 이면 {"version","build"} — build 는 dist/cli.js 의 mtime)`;
 
@@ -167,7 +170,7 @@ try {
     options: {
       port: { type: 'string' }, host: { type: 'string' }, stdio: { type: 'boolean' }, vendor: { type: 'string' }, mode: { type: 'string' }, title: { type: 'string' }, model: { type: 'string', short: 'm' }, effort: { type: 'string', short: 'e' }, profile: { type: 'string' }, env: { type: 'string', multiple: true }, param: { type: 'string', multiple: true, short: 'P' },
       since: { type: 'string' }, tail: { type: 'string' }, turn: { type: 'string' }, raw: { type: 'boolean' }, 'no-inspect': { type: 'boolean' }, all: { type: 'boolean' }, force: { type: 'boolean' }, json: { type: 'boolean' },
-      remember: { type: 'boolean' }, from: { type: 'string' }, re: { type: 'string' }, timeout: { type: 'string' }, answer: { type: 'string' },
+      remember: { type: 'boolean' }, from: { type: 'string' }, unset: { type: 'string', multiple: true }, re: { type: 'string' }, timeout: { type: 'string' }, answer: { type: 'string' },
       'no-web': { type: 'boolean' }, web: { type: 'boolean' }, takeover: { type: 'boolean' }, 'from-start': { type: 'boolean' }, version: { type: 'boolean' }, dir: { type: 'string' }, help: { type: 'boolean', short: 'h' }, to: { type: 'string', multiple: true }, remove: { type: 'boolean' }, cascade: { type: 'boolean' },
       // team new (ticket slcode-team-agent) 와 mail --lazy
       name: { type: 'string', short: 'n' }, options: { type: 'string', short: 'o' }, subagent: { type: 'boolean', short: 's' }, teammate: { type: 'boolean', short: 't' }, detached: { type: 'boolean', short: 'd' }, lazy: { type: 'boolean' }, wait: { type: 'boolean' }, agent: { type: 'string' },
@@ -925,8 +928,9 @@ try {
       const [sub, ...args] = rest;
       if (sub === 'add') { if (args.length < 1) usage('profile add <name> [--from <profile>] [<key>=<value> ...]'); print(await addProfile(args[0], flags.from, P.dir, args.slice(1))); break; }
       if (sub === 'remove') { if (args.length !== 1) usage('profile remove <name>'); print(await removeProfile(args[0], P.dir)); break; }
-      if (sub === 'set') { if (args.length < 2) usage('profile set <name> <key>=<value> ...'); const r = await setProfile(args[0], args.slice(1), P.dir); if (flags.json) print(r); else console.log(describeProfile(r.name, r.profile)); break; }
-      if (sub !== 'list') usage('profile add|remove|set|list');
+      if (sub === 'set') { const unset = flags.unset ?? []; if (args.length < 1 || (args.length < 2 && !unset.length)) usage('profile set <name> [--unset <key> ...] <key>=<value> ...'); const r = await setProfile(args[0], args.slice(1), P.dir, unset); if (flags.json) print(r); else console.log(describeProfile(r.name, r.profile)); break; }
+      if (sub === 'rename') { if (args.length !== 2) usage('profile rename <old> <new>'); print(await renameProfile(args[0], args[1], P.dir)); break; }
+      if (sub !== 'list') usage('profile add|remove|set|rename|list');
       const rows = listProfiles(P.dir);
       if (flags.json) { print(rows); break; }
       console.log(rows.map((r) => describeProfile(r.name + (r.builtin ? ' (built-in)' : ''), r.profile)).join('\n'));
@@ -941,7 +945,8 @@ try {
       const [method, params] = rest;
       // prompt.* 는 system prompt 편집 창 (ticket slcode-profile-system-prompt) — 폴더는 --cwd(카드가 연 폴더), 없으면 지금 폴더
       if ((PROMPT_METHODS as readonly string[]).includes(method)) { print(await promptMethod(P.dir, path.resolve(flags.cwd ?? '.'), method as PromptMethod, params ? JSON.parse(params) : {})); break; }
-      if (!(PLUGIN_METHODS as readonly string[]).includes(method)) usage(`start-call <${[...PLUGIN_METHODS, ...PROMPT_METHODS].join('|')}> [<json>]`);
+      if ((PROFILE_METHODS as readonly string[]).includes(method)) { print(await profileMethod(P.dir, method as ProfileMethod, params ? JSON.parse(params) : {})); break; } // 프로필 관리 (ticket slcode-profile-manager)
+      if (!(PLUGIN_METHODS as readonly string[]).includes(method)) usage(`start-call <${[...PLUGIN_METHODS, ...PROMPT_METHODS, ...PROFILE_METHODS].join('|')}> [<json>]`);
       print(await pluginMethod(P.dir, method as (typeof PLUGIN_METHODS)[number], params ? JSON.parse(params) : {}));
       break;
     }

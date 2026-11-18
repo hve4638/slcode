@@ -4,7 +4,7 @@
 // 웹(entry.ts 가 세션을 띄우기 전에 서빙)과 superlite 카드(views/session.js 가 플러그인 문서에 그린다)가 같은 화면을 쓴다. <html data-start> 가 입구:
 // web 이면 같은 출처의 api/<동작> 에 POST, card 면 카드에 {type: 'slcode.start.<동작>', id} 를 보내고 {re: id, result|error} 를 받는다.
 // 동작은 list({cwd, here, all} — startPage.ts StartList), go({new: true} | {resume: <id>}), 에이전트 플러그인 관리의 plugins.list·check·set·export (serve.pluginMethod),
-// system prompt 편집 창의 prompt.profiles·fetch·save (promptMethods.ts).
+// system prompt 편집 창의 prompt.profiles·fetch·save (promptMethods.ts), 프로필 관리의 profile.list·add·set·remove·rename (profileMethods.ts).
 
 const root = document.getElementById('start');
 const html = document.documentElement;
@@ -47,7 +47,7 @@ function ago(t) {
 const base = (p) => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
 
 const RECENT = 6; // 목록마다 처음에 이만큼 — 나머지는 '모두 보기'
-const state = { list: null, open: { here: false, all: false }, error: null, busy: null, plugins: null, prompt: null };
+const state = { list: null, open: { here: false, all: false }, error: null, busy: null, plugins: null, prompt: null, profiles: null };
 
 async function load() {
   try { state.list = await call('list'); state.error = null; }
@@ -108,6 +108,8 @@ html:not([data-theme*="-"]) .st .go:hover{filter:none;border-color:light-dark(#0
 .st.pl .pdetail{overflow:visible}
 .st.pl .apply{background:var(--acf-bg)}
 .st.pl h1{margin:0;font-size:15px;font-weight:600;text-align:left;letter-spacing:0}
+.st.pl .phead .grow{flex:1}
+.st.pl .phead .pname{color:var(--acf-muted);font-size:13px}
 @container (max-width:640px){
   .st{padding:32px 16px 24px}
   .st h1{font-size:22px}
@@ -151,10 +153,17 @@ async function openPlugins() {
   state.plugins.load();
 }
 
-/** system prompt 편집 창 (ticket slcode-profile-system-prompt, 사용자 2026-11-17: 시작 화면에서 연다) — 프로필 설정의 자리. 모듈을 읽는 길은 openPlugins 와 같다 */
-async function openPrompt() {
+/** 프로필 관리 (ticket slcode-profile-manager, 사용자 2026-11-18: 시작 화면의 "system prompt" 단추 자리를 "프로필" 로) — 모듈을 읽는 길은 openPlugins 와 같다 */
+async function openProfiles() {
+  const { profilesPanel } = globalThis.slcodeProfiles ?? await import('./profiles.js');
+  state.profiles = profilesPanel(call, { openPrompt: (name) => void openPrompt(name) });
+  draw();
+  state.profiles.load();
+}
+/** system prompt 편집 창 (ticket slcode-profile-system-prompt) — 프로필 화면의 system prompt 탭에서 그 프로필로 연다. ‹ 는 프로필 화면의 그 탭으로 */
+async function openPrompt(profile) {
   const { promptPanel } = globalThis.slcodePrompt ?? await import('./prompt.js');
-  state.prompt = promptPanel(call);
+  state.prompt = promptPanel(call, { profile });
   draw();
   state.prompt.load();
 }
@@ -163,8 +172,14 @@ function draw() {
   const l = state.list;
   if (state.prompt) {
     root.replaceChildren(el('style', {}, STYLE), el('div', { class: 'st pl sp' },
-      el('div', { class: 'phead' }, el('button', { class: 'more', title: '시작 화면', on: { click: () => { state.prompt = null; draw(); } } }, '‹'), el('h1', {}, 'system prompt')),
+      el('div', { class: 'phead' }, el('button', { class: 'more', title: '프로필', on: { click: () => { const name = state.prompt.current(); state.prompt = null; draw(); void state.profiles?.show(name, 'prompt'); } } }, '‹'), el('h1', {}, 'system prompt'), state.prompt.name),
       state.prompt.el));
+    return;
+  }
+  if (state.profiles) {
+    root.replaceChildren(el('style', {}, STYLE), el('div', { class: 'st pl' },
+      el('div', { class: 'phead' }, el('button', { class: 'more', title: '시작 화면', on: { click: () => { state.profiles = null; draw(); } } }, '‹'), el('h1', {}, '프로필'), el('span', { class: 'grow' }), state.profiles.status),
+      state.profiles.el));
     return;
   }
   if (state.plugins) {
@@ -179,7 +194,7 @@ function draw() {
     state.busy ? el('div', { class: 'busy' }, `${state.busy} — 여는 중…`) : null,
     l ? el('div', { class: 'cols' }, column('here', pathHead(l.cwd), l.cwd, l.here, true, false), column('all', 'all sessions', null, l.all, false, true)) : null,
     state.error ? el('div', { class: 'err' }, state.error) : null,
-    el('div', { class: 'tools' }, el('button', { class: 'more', on: { click: () => void openPlugins() } }, '에이전트 플러그인'), el('button', { class: 'more', on: { click: () => void openPrompt() } }, 'system prompt'))));
+    el('div', { class: 'tools' }, el('button', { class: 'more', on: { click: () => void openPlugins() } }, '에이전트 플러그인'), el('button', { class: 'more', on: { click: () => void openProfiles() } }, '프로필'))));
 }
 
 draw();

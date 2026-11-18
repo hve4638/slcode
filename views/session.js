@@ -483,6 +483,8 @@ export function mount(el, ctx) {
     ...Object.fromEntries(['list', 'check', 'set', 'export'].map((m) => [`slcode.start.plugins.${m}`, ({ type, id, ...params }) => host('startCall', `plugins.${m}`, params)])),
     // system prompt 편집 창 (ticket slcode-profile-system-prompt) — 가져오기는 이 카드가 연 폴더에서 돌린다
     ...Object.fromEntries(['profiles', 'fetch', 'save'].map((m) => [`slcode.start.prompt.${m}`, ({ type, id, ...params }) => host('startCall', `prompt.${m}`, params, c.start)])),
+    // 프로필 관리 (ticket slcode-profile-manager)
+    ...Object.fromEntries(['list', 'add', 'set', 'remove', 'rename'].map((m) => [`slcode.start.profile.${m}`, ({ type, id, ...params }) => host('startCall', `profile.${m}`, params)])),
     'slcode.back': backToStart,
     // 같은 가족의 세션으로 (ticket slcode-web-session-url) — renderer 가 그 세션의 카드로 옮긴다. 다른 터미널·다른 superlite 세션 탭에 있어도 찾아가고, 카드가 없으면 이 카드 옆에 연다
     'slcode.goto': (d) => { void ctx.post({ type: 'goto', id: String(d.target) }); return {}; },

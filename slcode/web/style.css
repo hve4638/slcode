@@ -1040,3 +1040,101 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .spanel .sw.on::before { background: var(--acf-fg); }
 .spanel .sw.on::after { left: 18px; background: var(--acf-bg); }
 .spanel .sw.none { visibility: hidden; }
+
+/* 프로필 관리 (web/profiles.js, ticket slcode-profile-manager) — 왼쪽 프로필 목록, 오른쪽 위 탭. 줄·스위치는 system prompt 편집 창(.spanel)과 같은 꼴:
+   이름 + 회색 설명 한 줄, 무채색 스위치는 줄 맨 오른쪽, 묶음 사이 얇은 줄, 절 위 24px, 모서리 6px, 채운 단추는 하나(기본 제공의 "복제해서 고치기") */
+.st.pl .phead .pstat { font-size: 12px; color: var(--acf-muted); }
+.st.pl .phead .pstat.ok { color: var(--acf-ok); }
+.st.pl .phead .pstat.err { color: var(--acf-err); }
+.prpanel { font: 14px/20px var(--acf-sans); color: var(--acf-fg); }
+.prpanel .prbody { display: grid; grid-template-columns: 200px minmax(0, 1fr); min-height: 60vh; }
+.prpanel * { box-sizing: border-box; }
+.prpanel button { font: inherit; color: inherit; cursor: pointer; }
+.prpanel .grow { flex: 1; }
+.prpanel div.none { padding: 16px 0; font-size: 12px; color: var(--acf-muted); }
+.prpanel .plist { display: flex; flex-direction: column; gap: 2px; padding: 12px 8px 12px 0; border-right: 1px solid var(--acf-line); }
+.prpanel .pitem { display: flex; align-items: baseline; gap: 8px; height: 32px; padding: 0 10px; border: 0; border-radius: 6px; background: none; text-align: left; line-height: 32px; }
+.prpanel .pitem:hover, .prpanel .pitem[aria-current=true] { background: var(--acf-soft); }
+.prpanel .pitem[aria-current=true] .nm { font-weight: 600; }
+.prpanel .pitem .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prpanel .pitem .kind { font-size: 11px; color: var(--acf-muted); }
+.prpanel .add { margin-top: 8px; height: 32px; padding: 0 10px; border: 0; border-radius: 6px; background: none; color: var(--acf-muted); text-align: left; font-size: 13px; }
+.prpanel .add:hover { background: var(--acf-soft); color: var(--acf-fg); }
+.prpanel .pdetail { min-width: 0; padding: 16px 0 24px 32px; }
+.prpanel .phd { display: flex; align-items: center; gap: 12px; min-height: 28px; }
+.prpanel .phd h2 { display: block; margin: 0; padding: 0; border: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 600; line-height: 28px; } /* 시작 화면의 .st h2(목록 머리) 꼴을 걷는다 */
+.prpanel .phd .btn, .prpanel .phd .lock { flex-shrink: 0; }
+.prpanel .phd .lock { font-size: 12px; color: var(--acf-muted); }
+.prpanel .tabs { display: flex; gap: 24px; margin-top: 12px; border-bottom: 1px solid var(--acf-line); }
+.prpanel .tab { margin-bottom: -1px; padding: 8px 0; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--acf-muted); font-size: 13px; white-space: nowrap; }
+.prpanel .tab:hover { color: var(--acf-fg); }
+.prpanel .tab[aria-selected=true] { color: var(--acf-fg); border-bottom-color: var(--acf-fg); }
+.prpanel .tab .n { margin-left: 6px; font-size: 11px; color: var(--acf-muted); font-variant-numeric: tabular-nums; }
+.prpanel .pane { max-width: 704px; padding-top: 8px; }
+.prpanel .pane.wide { max-width: none; }
+.prpanel .pane > section:first-child { margin-top: 16px; }
+.prpanel section { margin-top: 24px; }
+.prpanel section > h3 { margin: 0 0 4px; font-size: 14px; font-weight: 600; }
+.prpanel .grp { border-top: 1px solid var(--acf-line); }
+.prpanel section > h3 + .grp { border-top: 0; }
+.prpanel .row { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
+.prpanel .row.child { padding: 0 0 10px 20px; min-height: 38px; }
+.prpanel .row .tx { flex: 1; min-width: 0; }
+.prpanel .row .nm { display: flex; align-items: baseline; gap: 8px; }
+.prpanel .row .meta { font-size: 12px; color: var(--acf-muted); font-variant-numeric: tabular-nums; }
+.prpanel .row .path { font: 12px var(--acf-mono, ui-monospace, monospace); color: var(--acf-muted); }
+.prpanel .row .desc { font-size: 12px; line-height: 18px; color: var(--acf-muted); }
+.prpanel .row .desc .tbtn { padding: 0 2px; font-size: 12px; line-height: 18px; }
+.prpanel .row.dim .nm > :first-child { color: var(--acf-muted); }
+.prpanel .tbtn { padding: 0 4px; border: 0; background: none; color: var(--acf-muted); font-size: 12px; white-space: nowrap; }
+.prpanel .tbtn:hover { color: var(--acf-fg); }
+.prpanel .act { opacity: 0; }
+.prpanel .row:hover .act, .prpanel .row:focus-within .act, .prpanel .act.keep { opacity: 1; }
+@media (hover: none) { .prpanel .act { opacity: 1; } }
+.prpanel .btn { flex-shrink: 0; height: 26px; padding: 0 12px; border: 1px solid var(--acf-line); border-radius: 6px; background: none; font-size: 12px; }
+.prpanel .btn:hover { background: var(--acf-soft); }
+.prpanel .btn.solid { border-color: var(--acf-accent); background: var(--acf-accent); color: var(--acf-on-accent); }
+.prpanel .btn.danger { color: var(--acf-err); }
+.prpanel input.val { width: 180px; height: 26px; padding: 0 8px; border: 1px solid var(--acf-line); border-radius: 6px; background: var(--acf-bg); color: inherit; font: inherit; font-size: 13px; }
+.prpanel input.val:disabled { opacity: .5; }
+.prpanel .sw { flex: none; position: relative; width: 32px; height: 28px; padding: 0; border: 0; background: transparent; }
+.prpanel .sw::before { content: ''; position: absolute; left: 4px; top: 6px; width: 28px; height: 16px; border-radius: 8px; background: var(--acf-line); }
+.prpanel .sw::after { content: ''; position: absolute; left: 6px; top: 8px; width: 12px; height: 12px; border-radius: 50%; background: var(--acf-muted); transition: left .1s; }
+.prpanel .sw.on::before { background: var(--acf-fg); }
+.prpanel .sw.on::after { left: 18px; background: var(--acf-bg); }
+.prpanel .sw:disabled { opacity: .5; cursor: default; }
+.prpanel .sw:focus-visible { outline: 2px solid var(--acf-accent); outline-offset: -2px; }
+/* 플러그인 탭 — 위 고정 "나머지 플러그인", 검색·걸러 보기, 안쪽 목록(32px 줄) + 고른 플러그인의 part·옵션 */
+.prpanel .pbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 12px 0 8px; border-top: 1px solid var(--acf-line); }
+.prpanel .pbar input { width: 200px; height: 26px; margin-right: 8px; padding: 0 8px; border: 1px solid var(--acf-line); border-radius: 6px; background: var(--acf-bg); color: inherit; font: inherit; font-size: 13px; }
+.prpanel .pbar .tbtn[aria-pressed=true] { color: var(--acf-fg); }
+.prpanel .pbar .tbtn .n { margin-left: 4px; font-variant-numeric: tabular-nums; }
+.prpanel .pcols { display: grid; grid-template-columns: 304px minmax(0, 1fr); }
+.prpanel .plugs { display: flex; flex-direction: column; gap: 2px; max-height: max(240px, calc(100vh - 330px)); padding-right: 8px; overflow-y: auto; border-right: 1px solid var(--acf-line); }
+.prpanel .plug { display: flex; align-items: center; gap: 8px; flex: none; height: 32px; padding: 0 4px 0 10px; border-radius: 6px; cursor: pointer; }
+.prpanel .plug:hover, .prpanel .plug[aria-current=true] { background: var(--acf-soft); }
+.prpanel .plug .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prpanel .plug.off .nm { color: var(--acf-muted); }
+.prpanel .plug .mark { font-size: 11px; color: var(--acf-muted); white-space: nowrap; }
+.prpanel .plugs div.none { padding: 8px 10px; }
+.prpanel .pd { min-width: 0; padding: 0 0 0 24px; }
+.prpanel .pd .row:first-child { padding-top: 4px; }
+.prpanel .pd h4 { margin: 16px 0 0; font-size: 12px; font-weight: 600; color: var(--acf-muted); }
+.prpanel .pd .row.sub { padding: 6px 0; min-height: 40px; }
+/* 대화상자 — .ppanel dialog.pconfirm 과 같은 꼴 */
+.prpanel dialog { width: min(400px, calc(100vw - 32px)); padding: 16px 18px; border: 1px solid var(--acf-line); border-radius: 8px; background: var(--acf-bg); color: var(--acf-fg); font: 14px/20px var(--acf-sans); }
+.prpanel dialog::backdrop { background: rgba(0,0,0,.4); }
+.prpanel dialog h4 { margin: 0 0 14px; font-size: 14px; font-weight: 600; }
+.prpanel dialog label { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; font-size: 12px; color: var(--acf-muted); }
+.prpanel dialog input, .prpanel dialog select { height: 28px; padding: 0 8px; border: 1px solid var(--acf-line); border-radius: 6px; background: var(--acf-bg); color: var(--acf-fg); font: inherit; }
+.prpanel dialog p { margin: 0 0 14px; font-size: 12px; color: var(--acf-muted); }
+.prpanel dialog .err { margin: 0; text-align: left; white-space: normal; min-height: 18px; font-size: 12px; color: var(--acf-err); }
+.prpanel dialog .acts { display: flex; justify-content: flex-end; gap: 6px; margin-top: 4px; }
+@container (max-width: 760px) {
+  .prpanel .prbody { grid-template-columns: minmax(0, 1fr); }
+  .prpanel .plist { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--acf-line); padding: 8px 0; }
+  .prpanel .pdetail { padding: 16px 0 24px; }
+  .prpanel .pcols { grid-template-columns: minmax(0, 1fr); }
+  .prpanel .plugs { max-height: 240px; padding-right: 0; border-right: 0; border-bottom: 1px solid var(--acf-line); }
+  .prpanel .pd { padding: 12px 0 0; }
+}

@@ -497,7 +497,8 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     // setVendor 처럼 core 를 다시 띄운다 — 새 core 가 그 프로필로 플러그인·Claude 로드 설정을 다시 짠다. 그 전에 default 로 뜬 것(MCP·SessionStart 훅)은 한 번 돈 뒤다
     'session.profiles': (_c, p) => {
       mine(p?.id);
-      return { current: prof.name, profiles: listProfiles(P.dir).map((r) => ({ name: r.name, builtin: r.builtin, summary: profileSummary(r.profile) })) };
+      // 이름은 부를 때 푼다 — 세션이 뜬 뒤 프로필 이름을 바꿔도 지금 이름이 골라져 보인다 (ticket slcode-profile-manager)
+      return { current: sessionProfile(logFile.meta.profile, P.dir).name, profiles: listProfiles(P.dir).map((r) => ({ name: r.name, builtin: r.builtin, summary: profileSummary(r.profile) })) };
     },
     'session.setProfile': async (_c, p) => {
       const s = mine(p?.id);

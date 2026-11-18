@@ -1268,7 +1268,7 @@ export function mountAgentFront(root, transport, opts = {}) {
       h('button', { class: 'ico', title: '다시 연결', 'aria-label': '다시 연결', disabled: mcpBusy ? '' : null, onclick: () => retryMcp(m.name) }, icon('retry')),
       m.error ? h('div', { class: 'why' }, m.error) : null);
     // 에이전트 플러그인 — 실은 것과 지금 설정이 다르면 다시 싣기 (다음 턴 전에 적용, 지시문은 새 세션부터)
-    // 시작 프로필(ticket slcode-session-profile)은 default 가 아닐 때만 맨 위 줄로 — 실은 플러그인이 없어도(bare) 칸을 보인다. 옛 core 는 profile 이 없다
+    // 시작 프로필(ticket slcode-session-profile)은 default 가 아닐 때만 맨 위 줄로 — 실은 플러그인이 없어도(minimal) 칸을 보인다. 옛 core 는 profile 이 없다
     const profile = plugs?.profile && plugs.profile !== 'default' ? plugs.profile : null;
     // 프로필의 system prompt 설정이 이 세션의 것과 달라졌으면 알리고 가져오기 버튼을 둔다 — 세션은 스스로 따라가지 않는다 (ticket slcode-profile-system-prompt, 사용자 2026-11-17).
     // 누르면 턴이 끝난 뒤 core 가 같은 대화로 다시 뜨고 다음 턴부터 적용된다. 대화 전체가 캐시를 한 번 새로 쓴다

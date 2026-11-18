@@ -1,4 +1,4 @@
-// 세션 시작 프로필 (profiles.ts, ticket slcode-session-profile, 사용자 결정 2026-10-28) — 기본 제공 default·bare, 사용자 프로필 add·set·remove,
+// 세션 시작 프로필 (profiles.ts, ticket slcode-session-profile, 사용자 결정 2026-10-28) — 기본 제공 default·minimal, 사용자 프로필 add·set·remove,
 // 플러그인 싣기와 설정 층(기본 설정 < 프로필 < 세션), Claude 로드 설정(settingSources·claudeMdExcludes·skills), CLI --profile.
 // 살아 있는 세션은 가짜 codex(test/fixtures/fake-codex.mjs)로 본다 — Codex 는 플러그인 선택만 따르고 Claude 쪽 로드 설정은 없다고 알린다
 import { test } from 'node:test';
@@ -7,8 +7,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
-import { addPlugin, agentPaths, currentBuilds, loadSessionPlugins, readConfig, reloadSessionPlugins, setPlugin } from 'slcode-plugin/agentPlugins';
-import { addProfile, claudeLoad, getProfile, listProfiles, removeProfile, sessionProfile, setProfile } from '../src/profiles.ts';
+import { addPlugin, agentPaths, removePlugin, currentBuilds, loadSessionPlugins, readConfig, reloadSessionPlugins, setPlugin } from 'slcode-plugin/agentPlugins';
+import { addProfile, claudeLoad, getProfile, listProfiles, removeProfile, renameProfile, sessionProfile, setProfile } from '../src/profiles.ts';
+import { profileMethod, type ProfileMethod } from '../src/profileMethods.ts';
 import { EventLog } from '../src/eventLog.ts';
 import { corePaths } from '../src/paths.ts';
 
@@ -35,15 +36,20 @@ async function installed() {
   return dir;
 }
 
-test('기본 제공: default 는 전부, bare 는 아무것도 — 고치거나 지울 수 없고, 없는 이름은 default 로 띄우며 원래 이름을 알린다', async () => {
+test('기본 제공: default 는 전부, minimal 은 아무것도 — 고치거나 지울 수 없고, 없는 이름은 default 로 띄우며 원래 이름을 알린다', async () => {
   const dir = tmp('state');
-  assert.deepEqual(listProfiles(dir).map((r) => [r.name, r.builtin]), [['default', true], ['bare', true]]);
+  assert.deepEqual(listProfiles(dir).map((r) => [r.name, r.builtin]), [['default', true], ['minimal', true]]);
   assert.equal(getProfile('default', dir)!.rest, true);
-  assert.deepEqual(getProfile('bare', dir)!.claude, { user: false, project: false, userMd: true, projectMd: true, builtinSkills: false });
-  await assert.rejects(addProfile('bare', 'default', dir), /built-in/);
+  assert.deepEqual(getProfile('minimal', dir)!.claude, { user: false, project: false, userMd: true, projectMd: true, builtinSkills: false });
+  await assert.rejects(addProfile('minimal', 'default', dir), /built-in/);
   await assert.rejects(setProfile('default', ['claude.user=off'], dir), /built-in/);
   await assert.rejects(removeProfile('default', dir), /built-in/);
   assert.deepEqual(sessionProfile(undefined, dir).name, 'default');
+  // 옛 이름 bare 는 minimal 로 이어 준다 (사용자 2026-11-18) — 사용자가 bare 를 만들면 그 프로필이 된다
+  assert.deepEqual([sessionProfile('bare', dir).name, sessionProfile('bare', dir).missing, getProfile('bare', dir)!.rest], ['minimal', null, false]);
+  await addProfile('bare', 'default', dir);
+  assert.deepEqual([sessionProfile('bare', dir).name, getProfile('bare', dir)!.rest], ['bare', true]);
+  await removeProfile('bare', dir);
   const gone = sessionProfile('basic', dir);
   assert.equal(gone.name, 'default');
   assert.equal(gone.missing, 'basic');
@@ -51,7 +57,7 @@ test('기본 제공: default 는 전부, bare 는 아무것도 — 고치거나 
 
 test('사용자 프로필: from 의 값으로 시작하고, set 은 플러그인 on·part·옵션·other-plugins·claude 키를 바꾼다. 하나라도 틀리면 아무것도 바꾸지 않는다', async () => {
   const dir = await installed();
-  await addProfile('basic', 'bare', dir);
+  await addProfile('basic', 'minimal', dir);
   await assert.rejects(addProfile('basic', 'default', dir), /already exists/);
   await assert.rejects(addProfile('x', 'nope', dir), /no profile nope/);
   await assert.rejects(addProfile('../x', 'default', dir), /must match/);
@@ -73,9 +79,9 @@ test('세션에 싣기: 프로필이 싣는 플러그인만, 설정 값은 기�
   const env = { HOME: '/h', CLAUDE_CONFIG_DIR: '/cfg' };
   const names = (s: { loaded: { name: string }[] }) => s.loaded.map((l) => l.name);
   assert.deepEqual(names(loadSessionPlugins(tmp('s'), env, {}, dir, 'claude', getProfile('default', dir)!)), ['core', 'sfa']);
-  const bare = loadSessionPlugins(tmp('s'), env, {}, dir, 'claude', getProfile('bare', dir)!);
+  const bare = loadSessionPlugins(tmp('s'), env, {}, dir, 'claude', getProfile('minimal', dir)!);
   assert.deepEqual([bare.plugins, bare.append], [[], '']);
-  await addProfile('basic', 'bare', dir);
+  await addProfile('basic', 'minimal', dir);
   await setProfile('basic', ['core=on', 'core.ponytail=on'], dir);
   await setPlugin('core', ['proactive=true'], dir); // 기본 설정 — 프로필이 정하지 않은 값은 그대로
   const basic = loadSessionPlugins(tmp('s'), env, {}, dir, 'claude', getProfile('basic', dir)!);
@@ -91,7 +97,7 @@ test('세션에 싣기: 프로필이 싣는 플러그인만, 설정 값은 기�
 test('다시 싣기·지금 빌드: 지금 프로필을 따른다 — 빠진 플러그인은 링크를 떼고, 새로 설치해도 프로필이 싣지 않으면 새 세션부터로 알리지 않는다', async () => {
   const dir = tmp('state');
   await addPlugin(source('core'), dir);
-  await addProfile('basic', 'bare', dir);
+  await addProfile('basic', 'minimal', dir);
   await setProfile('basic', ['core=on'], dir);
   const sdir = tmp('s'), env = { HOME: '/h' };
   const s = loadSessionPlugins(sdir, env, {}, dir, 'claude', getProfile('basic', dir)!);
@@ -115,7 +121,7 @@ test('Claude 로드: 출처는 settingSources 로, CLAUDE.md 만 끄면 claudeMd
   const all = { user: true, project: true, userMd: true, projectMd: true, builtinSkills: true };
   assert.deepEqual(claudeLoad(all, cwd, env, []), { settingSources: ['user', 'project', 'local'], claudeMdExcludes: [], skills: null, env: {} });
   assert.deepEqual(claudeLoad({ ...all, user: false, project: false, builtinSkills: false }, cwd, env, [{ name: 'core', path: plug }]),
-    { settingSources: [], claudeMdExcludes: [], skills: ['core:hello'], env: { ENABLE_CLAUDEAI_MCP_SERVERS: 'false' } }, 'bare 꼴 — slcode 플러그인 skill 만, claude.ai 커넥터도 끈다');
+    { settingSources: [], claudeMdExcludes: [], skills: ['core:hello'], env: { ENABLE_CLAUDEAI_MCP_SERVERS: 'false' } }, 'minimal 꼴 — slcode 플러그인 skill 만, claude.ai 커넥터도 끈다');
   assert.deepEqual(claudeLoad({ ...all, builtinSkills: false }, cwd, env, []).skills, ['mine', 'projs'], '켠 출처의 skill 은 허용 목록에 남긴다');
   assert.deepEqual(claudeLoad({ ...all, userMd: false }, cwd, env, []).claudeMdExcludes, [path.join(cfg, 'CLAUDE.md'), path.join(cfg, 'rules/**')]);
   const proj = claudeLoad({ ...all, projectMd: false }, cwd, env, []).claudeMdExcludes;
@@ -137,23 +143,23 @@ function run(dir: string, args: string[], env: NodeJS.ProcessEnv = {}): Promise<
 
 test('CLI: profile add·set·list, new --profile 은 없는 이름을 열기 전에 거절하고 카드로 넘기며, 이어받는 세션에는 거절한다', async () => {
   const dir = await installed();
-  assert.equal((await run(dir, ['profile', 'add', 'basic', '--from', 'bare'])).code, 0);
+  assert.equal((await run(dir, ['profile', 'add', 'basic', '--from', 'minimal'])).code, 0);
   const set = await run(dir, ['profile', 'set', 'basic', 'core=on', 'claude.project=on']);
   assert.equal(set.code, 0, set.stderr);
   assert.match(set.stdout, /^basic\n  plugins  core\n  claude   user off · project on · builtin skills hidden$/m);
   const list = await run(dir, ['profile', 'list']);
   assert.match(list.stdout, /^default \(built-in\)\n  plugins  all\n  claude   user on · project on · builtin skills shown$/m);
-  assert.match(list.stdout, /^bare \(built-in\)\n  plugins  none\n/m);
+  assert.match(list.stdout, /^minimal \(built-in\)\n  plugins  none\n/m);
   const nope = await run(dir, ['new', '.', '--profile', 'nope']);
   assert.equal(nope.code, 2);
-  assert.match(nope.stderr, /no profile 'nope' \(default\|bare\|basic\)/);
+  assert.match(nope.stderr, /no profile 'nope' \(default\|minimal\|basic\)/);
   // 카드로 — 가짜 superlite 심이 받은 인자
   const bin = tmp('shim'), calls = path.join(bin, 'calls');
   fs.writeFileSync(path.join(bin, 'superlite'), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${calls}'\necho s-card-1\n`, { mode: 0o755 });
   const card = await run(dir, ['new', os.tmpdir(), '--profile', 'basic'], { SUPERLITE_SOCK: '/tmp/fake.sock', PATH: `${bin}:${process.env.PATH}` });
   assert.equal(card.code, 0, card.stderr);
   assert.match(fs.readFileSync(calls, 'utf8'), /^slcode\.new --cwd \S+ --profile basic$/m);
-  const resume = await run(dir, ['resume', 'abc', '--profile', 'bare']);
+  const resume = await run(dir, ['resume', 'abc', '--profile', 'minimal']);
   assert.equal(resume.code, 2);
   assert.match(resume.stderr, /--profile is only for a new session/);
 });
@@ -175,9 +181,9 @@ test('CLI: Codex 세션은 프로필 이름을 남기고 플러그인 선택만 
     await new Promise((r) => child.on('exit', r));
     return { meta, evs, notices: evs.filter((e) => e.kind === 'error').map((e) => e.message ?? '') };
   }
-  const bare = await session('pf-bare', 'bare');
-  assert.equal(bare.meta.profile, 'bare');
-  assert.ok(bare.notices.some((m) => /Codex 세션은 프로필\(bare\)의 플러그인 선택만 따릅니다/.test(m)), JSON.stringify(bare.notices));
+  const bare = await session('pf-bare', 'minimal');
+  assert.equal(bare.meta.profile, 'minimal');
+  assert.ok(bare.notices.some((m) => /Codex 세션은 프로필\(minimal\)의 플러그인 선택만 따릅니다/.test(m)), JSON.stringify(bare.notices));
   // 연 표지(ticket slcode-session-open-notice) — 새 세션은 startup, 기동 때의 알림보다 먼저
   const opened = bare.evs.findIndex((e) => e.kind === 'session.opened');
   assert.equal(bare.evs[opened]?.source, 'startup', JSON.stringify(bare.evs));
@@ -237,4 +243,104 @@ test('시작 화면(동사 없는 slcode): 카드용 html 은 css·모듈을 넣
   assert.equal(EventLog.open(corePaths(dir).sessionsDir, meta.id), null, '빈 세션은 지웠다');
   child.kill('SIGINT');
   await new Promise((r) => child.on('exit', r));
+});
+
+// ---- 프로필 관리 화면 (ticket slcode-profile-manager, 사용자 결정 2026-11-18)
+const config = (dir: string) => JSON.parse(fs.readFileSync(agentPaths(dir).config, 'utf8'));
+
+test('이름 바꾸기: 옛 이름은 새 이름으로 이어 주고(두 번 바꿔도), 옛 이름으로 새 프로필을 만들면 끊기고, 이어 받은 프로필을 지우면 default 로 뜬다', async () => {
+  const dir = await installed();
+  await addProfile('a', 'minimal', dir, ['core=on']);
+  assert.deepEqual(await renameProfile('a', 'b', dir), { from: 'a', to: 'b' });
+  assert.deepEqual(listProfiles(dir).map((r) => r.name), ['default', 'minimal', 'b']);
+  assert.deepEqual(sessionProfile('a', dir).name, 'b');
+  assert.equal(getProfile('a', dir)!.plugins.core.on, true);
+  await renameProfile('b', 'c', dir);
+  assert.deepEqual(config(dir).profileRenames, { a: 'c', b: 'c' }, '여러 번 바꿔도 한 번에 풀린다');
+  assert.deepEqual([sessionProfile('a', dir).name, sessionProfile('b', dir).name, sessionProfile('a', dir).missing], ['c', 'c', null]);
+  // 고치는 길은 지금 이름만 받는다
+  await assert.rejects(setProfile('a', ['core=off'], dir), /no profile a/);
+  await assert.rejects(renameProfile('c', 'default', dir), /built-in/);
+  await assert.rejects(renameProfile('default', 'x', dir), /built-in/);
+  await assert.rejects(renameProfile('c', 'c', dir), /already has that name/);
+  await assert.rejects(renameProfile('nope', 'x', dir), /no profile nope/);
+  await addProfile('d', 'default', dir);
+  await assert.rejects(renameProfile('c', 'd', dir), /already exists/);
+  // 옛 이름 a 로 새 프로필 — 그때부터 a 는 새 프로필
+  await addProfile('a', 'default', dir);
+  assert.deepEqual(config(dir).profileRenames, { b: 'c' });
+  assert.equal(sessionProfile('a', dir).name, 'a');
+  // 되돌려 바꾸기 c → b: b 는 다시 진짜 이름, c 가 b 로 이어진다
+  await renameProfile('c', 'b', dir);
+  assert.deepEqual(config(dir).profileRenames, { c: 'b' });
+  // 이어 받은 프로필을 지우면 기록도 지운다 — 옛 이름의 세션은 default 와 사유
+  await removeProfile('b', dir);
+  assert.equal(config(dir).profileRenames, undefined);
+  assert.deepEqual([sessionProfile('c', dir).name, sessionProfile('c', dir).missing], ['default', 'c']);
+});
+
+test('옛 config.json(profileRenames 없음)은 그대로 열리고, 고쳐 써도 모르는 항목을 남긴다', async () => {
+  const dir = await installed();
+  const ap = agentPaths(dir);
+  const old = { ...config(dir), profiles: { basic: { plugins: { core: { on: true } }, rest: false, claude: { user: true, project: false, userMd: true, projectMd: true, builtinSkills: true } } } };
+  fs.writeFileSync(ap.config, JSON.stringify(old));
+  assert.deepEqual(listProfiles(dir).map((r) => [r.name, r.builtin]), [['default', true], ['minimal', true], ['basic', false]]);
+  assert.equal(sessionProfile('basic', dir).profile.plugins.core.on, true);
+  await setProfile('basic', ['claude.project=on'], dir);
+  assert.equal(config(dir).profileRenames, undefined, '이름을 바꾸기 전엔 항목이 생기지 않는다');
+  await renameProfile('basic', 'main', dir);
+  await setPlugin('core', ['ponytail=on'], dir); // slcode-plugin 이 config.json 을 고쳐 써도 profileRenames 는 남는다
+  assert.deepEqual(config(dir).profileRenames, { basic: 'main' });
+});
+
+test('되돌리기(unset): 플러그인 on·part·옵션 값을 지워 따름으로 — other-plugins·claude·없는 part 는 거절하고 아무것도 바꾸지 않는다', async () => {
+  const dir = await installed();
+  await addProfile('p', 'default', dir, ['core=off', 'sfa.ponytail=on', 'sfa.proactive=true']);
+  let r = await setProfile('p', [], dir, ['core']);
+  assert.deepEqual(r.profile.plugins, { sfa: { parts: { ponytail: true }, options: { proactive: true } } }, '빈 칸은 걷는다');
+  r = await setProfile('p', ['core=on'], dir, ['sfa.ponytail', 'sfa.proactive']);
+  assert.deepEqual(r.profile.plugins, { core: { on: true } });
+  for (const [key, why] of [['other-plugins', /always has a value/], ['claude.user', /always has a value/], ['sfa.nope', /no part or option named nope/], ['nope', /no agent plugin nope/]] as const) {
+    await assert.rejects(setProfile('p', ['sfa=off'], dir, [key]), why);
+  }
+  assert.deepEqual(getProfile('p', dir)!.plugins, { core: { on: true } }, '틀리면 아무것도 바꾸지 않는다');
+  await assert.rejects(setProfile('default', [], dir, ['core']), /built-in/);
+  // 지운 플러그인의 남은 값도 지울 수 있다
+  await setProfile('p', ['sfa.ponytail=on'], dir);
+  await removePlugin('sfa', dir);
+  assert.deepEqual((await setProfile('p', [], dir, ['sfa.ponytail'])).profile.plugins, { core: { on: true } });
+  await assert.rejects(setProfile('p', [], dir, ['sfa.base']), /no agent plugin sfa/);
+});
+
+test('화면 요청(profile.*): 웹 api·카드 start-call 이 CLI 와 같은 결과 — list 에 플러그인 설정 값, 고치기·이름 바꾸기·지우기, 틀린 요청은 거절', async () => {
+  const dir = await installed();
+  await setPlugin('sfa', ['proactive=true'], dir);
+  const call = (m: string, p: unknown = {}) => profileMethod(dir, m as ProfileMethod, p) as Promise<any>;
+  await call('profile.add', { name: 'w', from: 'minimal' });
+  await call('profile.set', { name: 'w', set: ['core=on', 'core.ponytail=on'] });
+  await call('profile.set', { name: 'w', unset: ['core.ponytail'] });
+  await call('profile.rename', { from: 'w', to: 'web' });
+  const list = await call('profile.list');
+  const cliList = JSON.parse((await run(dir, ['profile', 'list', '--json'])).stdout);
+  assert.deepEqual(list.profiles.map(({ name, builtin, profile }: any) => ({ name, builtin, profile })), cliList, '화면과 CLI 가 같다');
+  assert.equal(list.profiles.find((r: any) => r.name === 'web').summary, '플러그인 core · Claude 설정 끔 · 내장 skill 숨김');
+  const sfa = list.plugins.find((x: any) => x.name === 'sfa');
+  assert.deepEqual([sfa.parts.map((x: any) => [x.name, x.required, x.default]), sfa.options], [[['base', true, true], ['ponytail', false, false]], [{ name: 'proactive', type: 'boolean', value: true, default: false, label: null }]]);
+  await assert.rejects(call('profile.set', { name: 'web' }), /needs set or unset/);
+  await assert.rejects(call('profile.set', { name: 'web', set: 'core=on' }), /array of strings/);
+  await assert.rejects(call('profile.rename', { from: 'web', to: 'minimal' }), /built-in/);
+  assert.deepEqual(await call('profile.remove', { name: 'web' }), { name: 'web', removed: true });
+  // 카드 start-call 과 CLI rename·--unset
+  assert.equal((await run(dir, ['profile', 'add', 'x', '--from', 'minimal', 'core=on'])).code, 0);
+  const un = await run(dir, ['profile', 'set', 'x', '--unset', 'core', '--json']);
+  assert.equal(un.code, 0, un.stderr);
+  assert.deepEqual(JSON.parse(un.stdout).profile.plugins, {});
+  assert.deepEqual(JSON.parse((await run(dir, ['profile', 'rename', 'x', 'y'])).stdout), { from: 'x', to: 'y' });
+  assert.equal((await run(dir, ['profile', 'rename', 'y'])).code, 2);
+  const viaCard = JSON.parse((await run(dir, ['start-call', 'profile.list'])).stdout);
+  assert.deepEqual(viaCard.profiles.map((r: any) => r.name), ['default', 'minimal', 'y']);
+  assert.match((await run(dir, ['start-call', 'profile.set', '{"name":"default","set":["core=on"]}'])).stderr, /built-in/);
+  // 카드 html 에 화면 모듈
+  const card = (await run(dir, ['start-page', os.tmpdir()])).stdout;
+  assert.ok(card.includes('globalThis.slcodeProfiles = { profilesPanel }') && !card.includes('export function profilesPanel'), '카드에 프로필 화면 모듈');
 });

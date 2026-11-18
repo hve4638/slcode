@@ -91,7 +91,7 @@ test('profiles: 옛 프로필(systemPrompt 없음)은 그대로 열리고, 프�
   assert.deepEqual(await setProfilePrompt('default', spec, dir, 'lean'), { name: 'lean' });
   assert.deepEqual(getProfile('lean', dir)!.claude.systemPrompt, spec);
   assert.equal(getProfile('default', dir)!.claude.systemPrompt, undefined);
-  await assert.rejects(setProfilePrompt('bare', spec, dir, 'lean'), /already exists/);
+  await assert.rejects(setProfilePrompt('minimal', spec, dir, 'lean'), /already exists/);
   assert.match(profileSummary(getProfile('lean', dir)!), /system prompt 고침/);
   // 다른 설정을 바꿔도 프롬프트 설정은 남고, 새 프로필은 원본의 것을 물려받는다
   await setProfile('lean', ['claude.user=off'], dir);

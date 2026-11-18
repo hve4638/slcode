@@ -18,7 +18,7 @@ const CID = 'eca2ea0c-cd14-4216-b88c-558435351e88';
 const tmp = (p: string) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const kinds = (log: EventLog) => log.all.map((e) => e.ev.kind);
-const settings = { permissionMode: 'bypassPermissions', raw: false, model: 'claude-x', effort: 'high', profile: 'bare', env: { SE_A: '1' }, params: { P: 'v' }, inspect: true };
+const settings = { permissionMode: 'bypassPermissions', raw: false, model: 'claude-x', effort: 'high', profile: 'minimal', env: { SE_A: '1' }, params: { P: 'v' }, inspect: true };
 
 /** 가짜 CLAUDE_CONFIG_DIR 에 실제 기록(두 턴)을 두고, 그 기록을 옮겨 쓴 원본 slcode 세션 */
 async function claudeSource() {

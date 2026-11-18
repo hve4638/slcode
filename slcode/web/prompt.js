@@ -18,10 +18,10 @@ const el = (tag, attrs = {}, ...kids) => {
 const MODELS = [['', '기본 모델'], ['sonnet', 'sonnet'], ['opus', 'opus'], ['haiku', 'haiku'], ['fable', 'fable']];
 const tok = (s) => Math.max(1, Math.round(s.length * 0.34)); // 영어 글의 어림 — 화면의 크기 표시용
 
-/** call(method, params) → Promise */
-export function promptPanel(call) {
-  const root = el('div', { class: 'spanel' });
-  let profiles = null, profile = null, model = '', view = null, items = [], busy = null, error = null, saved = null, cutting = null, as = '';
+/** call(method, params) → Promise. profile 은 처음 고를 프로필 — 프로필 관리 화면의 "편집" 이 준다 (ticket slcode-profile-manager) */
+export function promptPanel(call, { profile: first } = {}) {
+  const root = el('div', { class: 'spanel' }), name = el('span', { class: 'pname' });
+  let profiles = null, profile = first ?? null, model = '', view = null, items = [], busy = null, error = null, saved = null, cutting = null, as = '';
   const cur = (it) => (it.kind === 'piece' ? it.edit ?? it.text : it.text);
   const sent = (it) => (it.kind === 'heading' || !it.off) && cur(it).trim() !== '';
 
@@ -128,9 +128,8 @@ export function promptPanel(call) {
     const sc = scroller(), top = sc?.scrollTop ?? 0;
     const row = profiles?.find((p) => p.name === profile);
     sumEl = el('span', { class: 'sum' });
+    name.textContent = profile ?? '';
     const head = el('div', { class: 'head' },
-      el('label', {}, '프로필 ', el('select', { disabled: !!busy, onchange: (e) => { profile = e.target.value; view = null; items = []; saved = null; error = null; draw(); } },
-        (profiles ?? []).map((p) => el('option', { value: p.name, selected: p.name === profile }, `${p.name}${p.edited ? ' · 고침' : ''}`)))),
       el('span', { class: 'grow' }), sumEl,
       el('select', { disabled: !!busy, title: '가져올 때 쓸 모델 — 모델마다 붙는 문단이 다르다', onchange: (e) => { model = e.target.value; } }, MODELS.map(([v, n]) => el('option', { value: v, selected: v === model }, n))),
       el('button', { disabled: !!busy || !profile, onclick: () => void fetchPrompt() }, busy === '가져오는 중…' ? busy : view ? '다시 가져오기' : '기본 시스템 프롬프트 가져오기'));
@@ -160,5 +159,7 @@ export function promptPanel(call) {
     sum();
   }
   draw();
-  return { el: root, load };
+  // current·name 은 지금 프로필 — 기본 제공 프로필을 새 이름으로 저장하면 그 이름이 된다. 프로필 화면이 돌아갈 자리, 창 머리의 이름으로 쓴다
+  // (사용자 2026-11-18: 프로필은 프로필 화면에서 고르므로 이 창에서 바꾸지 않는다)
+  return { el: root, name, load, current: () => profile };
 }
