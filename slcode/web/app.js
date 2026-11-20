@@ -9,6 +9,7 @@ import { inspectDialog } from './inspect.js';
 import { activityPanel } from './activity.js';
 import { escGate, inputHistory } from './inputkeys.js';
 import { rewindPicker } from './rewind.js';
+import { translateButton } from './translate.js';
 
 const STATE_LABEL = { starting: '시작 중', idle: '대기', running: '실행 중', requires_action: '응답 필요', exited: '종료', disconnected: '연결 끊김' };
 const h = (tag, attrs = {}, ...children) => {
@@ -61,7 +62,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   // 세션 종료 (사용자 2026-10-11) — 카드는 두고 세션만 끈다(카드를 제거하면 세션도 끝난다). 꺼진 세션은 resume 으로 다시 띄운다.
   // 자리는 설정 창 맨 아래 줄의 빨간 '종료', 누르면 확인 창을 한 번 더 (사용자 2026-10-16 — 전엔 헤더 사이드바 버튼 옆)
   const endSession = () => { if (current) rpc('session.close', { id: current }).catch((e) => push(h('div', { class: 'meta err' }, e.message))); };
-  const settingsUi = settingsDialog(h, (patch) => rpc('settings.set', { settings: patch }).then(setSettings), endSession, (m, p) => rpc(m, p));
+  const settingsUi = settingsDialog(h, (patch) => rpc('settings.set', { settings: patch }).then(setSettings), endSession, (m, p) => rpc(m, p), opts.translator);
   const gearBtn = h('button', { class: 'ico gear', title: '설정', 'aria-label': '설정', onclick: () => settingsUi.open() });
   // 업데이트 — 헤더 오른쪽, 설정 버튼 왼쪽 (ticket slcode-core-serve-split 2단계, 사용자 2026-10-19). 누를 때만 새 버전을 확인한다(폴링 없음).
   // 새 버전이 있으면 'restart required' — 누르면 serve 를 바꾼다. 웹은 serve 가 확인하고 같은 주소로 다시 붙은 뒤 새로고침된다(아래 onStatus 의 serve.info),
@@ -468,7 +469,14 @@ export function mountAgentFront(root, transport, opts = {}) {
   const toBottom = () => { follow = true; jump(feed.scrollHeight); paintJump(); };
   const atBottom = () => follow;
   function push(node, sc = main) { const stick = atBottom(); node.dataset.seq = curSeq; (sc.col ?? col).append(node); if (!busy.hidden && !replaying) placeBusy(); if (stick && !replaying) feed.scrollTop = feed.scrollHeight; return node; }
-  function endText(sc = main) { if (sc.textEl) { sc.textEl.classList.remove('streaming'); sc.textEl.append(sc.textEl._acts = sc.acts = acts(iconBtn('copy', '복사', copyOf(sc.textBuf)), rawBtn())); } sc.textEl = null; sc.textBuf = ''; sc.thinkEl = null; sc.thinkBuf = ''; }
+  // 생각 블록이 끝났다(같은 자리에 글·도구가 오거나 턴이 끝났다) — superlite 카드면 번역 단추를 붙인다. 흐르는 중에는 붙이지 않는다 (ticket slcode-thinking-translate,
+  // 사용자 2026-11-20). 끝난 블록은 놓아서 그 뒤에 오는 생각은 새 블록이 된다 — 단추가 든 원문이 바뀌지 않게
+  function endThink(sc) {
+    const d = sc.thinkEl;
+    if (d && opts.translator) d._sum.append(translateButton({ text: sc.thinkBuf, body: d._t, translate: opts.translator.translate, keep: keepAt, before: () => { d.open = true; } }));
+    sc.thinkEl = null; sc.thinkBuf = '';
+  }
+  function endText(sc = main) { endThink(sc); if (sc.textEl) { sc.textEl.classList.remove('streaming'); sc.textEl.append(sc.textEl._acts = sc.acts = acts(iconBtn('copy', '복사', copyOf(sc.textBuf)), rawBtn())); } sc.textEl = null; sc.textBuf = ''; }
   // 원문 보기 (ticket slcode-response-raw-toggle, 사용자 2026-11-10) — 어느 응답의 버튼이든 이 채팅(화면 하나 = 세션 하나)의 모든 응답을 함께 바꾼다.
   // 켜 둔 동안 새로 오는 응답도 원문으로 그린다. 글꼴은 그대로 두고 마크다운만 그리지 않는다. 다시 그리면(새로 고침·이어받기) 꺼진다
   let rawMode = false;
@@ -478,14 +486,21 @@ export function mountAgentFront(root, transport, opts = {}) {
     if (rawMode) t.replaceChildren(h('pre', { class: 'rawtext' }, text)); else t.innerHTML = renderMarkdown(text, info?.cwd ?? ready?.cwd);
     if (t._acts) t.append(t._acts);
   }
-  // 누른 버튼은 다시 그린 뒤에도 화면의 같은 높이에 남는다 (사용자 2026-11-10) — 위아래 응답의 길이가 바뀐 만큼 스크롤을 옮긴다
-  function toggleRaw(e) {
-    const b0 = e.currentTarget, y0 = b0.getBoundingClientRect().top;
-    rawMode = !rawMode; el.classList.toggle('rawmode', rawMode);
-    for (const t of el.querySelectorAll('.assistant')) if (t._text != null) paintText(t, t._text);
-    for (const b of el.querySelectorAll('.acts .rawbtn')) { b.title = rawTitle(); b.setAttribute('aria-label', rawTitle()); b.setAttribute('aria-pressed', rawMode); }
+  // 누른 버튼은 다시 그린 뒤에도 화면의 같은 높이에 남는다 (사용자 2026-11-10, 번역 단추 2026-11-21) — 위아래 글의 길이가 바뀐 만큼 스크롤을 옮기고,
+  // 바닥 따라가기는 정확히 바닥일 때만 남긴다 — 손으로 내린 것이 아니라 80px 여유를 두지 않는다. 남기면 짧은 대화에서 처음 스크롤 막대가 생길 때
+  // ResizeObserver 가 바닥으로 보내 단추가 움직인다
+  function keepAt(b0, fn) {
+    const y0 = b0.getBoundingClientRect().top;
+    fn();
     jump(feed.scrollTop + b0.getBoundingClientRect().top - y0);
-    follow = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 80; paintJump();
+    follow = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 1; paintJump();
+  }
+  function toggleRaw(e) {
+    keepAt(e.currentTarget, () => {
+      rawMode = !rawMode; el.classList.toggle('rawmode', rawMode);
+      for (const t of el.querySelectorAll('.assistant')) if (t._text != null) paintText(t, t._text);
+      for (const b of el.querySelectorAll('.acts .rawbtn')) { b.title = rawTitle(); b.setAttribute('aria-label', rawTitle()); b.setAttribute('aria-pressed', rawMode); }
+    });
   }
   function rawBtn() { const b = iconBtn('raw', rawTitle(), toggleRaw); b.classList.add('rawbtn'); b.setAttribute('aria-pressed', rawMode); return b; }
   // 훅 실행 하나 — 아무 일도 안 했으면 흔적 없음. 알림(message)은 대상 아래 제 줄(응답처럼), 추가 컨텍스트는 대상 아래 '겹 +N'(누르면 펼침),
@@ -781,6 +796,7 @@ export function mountAgentFront(root, transport, opts = {}) {
       case 'text.delta': {
         const sc = scopeOf(ev.parent);
         if (!ev.parent) setBusy('작성 중');
+        endThink(sc);
         if (!sc.textEl) {
           if (live && !ev.parent && !follow) { unread++; paintJump(); }
           sc.textEl = push(h('div', { class: 'assistant streaming' }), sc); sc.textBuf = '';
@@ -795,7 +811,7 @@ export function mountAgentFront(root, transport, opts = {}) {
         if (!ev.parent) setBusy('생각 중');
         // 접힌 상태에선 summary 에 본문 첫 줄이 … 로 잘려 보이고, 펼치면 '생각' 라벨 + 전문 (사용자 2026-09-27)
         const sc = scopeOf(ev.parent);
-        if (!sc.thinkEl) { const t = h('div', { class: 't' }); const pre = h('span', { class: 'pre' }); sc.thinkEl = push(h('details', { class: 'thinking chev' }, h('summary', {}, pre), t), sc); sc.thinkEl._t = t; sc.thinkEl._pre = pre; sc.thinkBuf = ''; }
+        if (!sc.thinkEl) { const t = h('div', { class: 't' }); const pre = h('span', { class: 'pre' }); const sum = h('summary', {}, pre); sc.thinkEl = push(h('details', { class: 'thinking chev' }, sum, t), sc); sc.thinkEl._t = t; sc.thinkEl._pre = pre; sc.thinkEl._sum = sum; sc.thinkBuf = ''; }
         sc.thinkBuf += ev.text; sc.thinkEl._t.textContent = sc.thinkBuf; sc.thinkEl._pre.textContent = sc.thinkBuf.trimStart().split('\n')[0];
         break;
       }

@@ -27,6 +27,38 @@ export function stamp(t) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+// 번역 (ticket slcode-thinking-translate, 사용자 2026-11-20·21) — 화면의 번역 단추(web/translate.js)와 설정의 superlite 하위 창(web/settings.js)이 쓴다.
+// superlite 설정 › AI Model 의 모델에 api.llm.experiment.chat 으로 묻는다 — sl llm 과 같은 함수지만 플러그인 API 라 허용 확인 창을 거치지 않는다.
+// 답은 문단마다 {source, translation}. 지침(system 메시지)은 사용자가 설정에서 통째로 고친다 — 저장값이 없으면 기본 지침.
+// 캐시는 플러그인 저장소(그 머신, 모든 카드 공용)의 목록 하나 — 지침과 원문이 같아야 쓰고(지침을 바꾸면 다시 묻는다), 새것이 뒤, CACHE_MAX 개를 넘으면 앞에서 버린다.
+// 한 키에 두어 설정의 "모두 비우기" 가 한 번에 지운다 (storage 에는 키 목록이 없다). 세션 기록은 바꾸지 않는다
+const DEFAULT_GUIDE = 'Translate the text into natural Korean. Split it into paragraphs; for each paragraph return the original paragraph unchanged as source and its Korean translation as translation. Keep code, identifiers, file names, paths and commands as they are.';
+const TRANSLATE_SCHEMA = '{ pairs: { source: string, translation: string }[] }';
+const CACHE_KEY = 'translateCache', GUIDE_KEY = 'translateGuide', CACHE_MAX = 300;
+function translator(ctx) {
+  const guide = async () => (await ctx.storage.get(GUIDE_KEY).catch(() => undefined)) ?? DEFAULT_GUIDE;
+  const cache = async () => { const v = await ctx.storage.get(CACHE_KEY).catch(() => undefined); return Array.isArray(v) ? v : []; };
+  return {
+    defaultGuide: DEFAULT_GUIDE,
+    guide,
+    /** 기본 지침과 같거나 비우면 저장값을 지운다 — 기본 지침이 바뀌면 따라가게 */
+    setGuide: (text) => ctx.storage.set(GUIDE_KEY, text.trim() === '' || text === DEFAULT_GUIDE ? null : text),
+    cacheCount: async () => (await cache()).length,
+    clearCache: () => ctx.storage.set(CACHE_KEY, []),
+    /** fresh 면 캐시를 읽지 않고 묻는다 (단추 Ctrl+클릭) — 답은 캐시의 같은 자리를 바꾼다 */
+    async translate(text, { fresh = false } = {}) {
+      const g = await guide();
+      const hit = fresh ? null : (await cache()).find((e) => e.text === text && e.guide === g);
+      if (hit) return hit.pairs;
+      const r = await ctx.llm.experiment.chat(text, { system: g, schema: TRANSLATE_SCHEMA });
+      const { pairs } = JSON.parse(r.text);
+      const rest = (await cache()).filter((e) => !(e.text === text && e.guide === g));
+      await ctx.storage.set(CACHE_KEY, [...rest, { text, guide: g, pairs }].slice(-CACHE_MAX)).catch(() => {});
+      return pairs;
+    },
+  };
+}
+
 let cleanup = () => {};
 
 /** @param {HTMLElement} el @param {import('@superlite/plugin').ViewCtx} ctx */
@@ -218,7 +250,7 @@ export function mount(el, ctx) {
       const root = document.createElement('div');
       root.style.cssText = 'flex:1;min-height:0';
       wrap.appendChild(root);
-      mountCard(root, openPort(), ui, { host: flatHost, reload: () => location.reload() }); // serve 가 바뀌었다 — 새 문서가 새 화면 파일을 받는다
+      mountCard(root, openPort(), ui, { host: flatHost, reload: () => location.reload(), translator: translator(ctx) }); // serve 가 바뀌었다 — 새 문서가 새 화면 파일을 받는다
       if (c.conn) c.port.postMessage({ status: { connected: true } });
       // 머리줄 높이를 superlite 에 알려 카드 알림·떠 있는 창이 그 아래에 뜨게 한다 (ticket slcode-card-top-inset). 0.21.0 이하 superlite 에는 setTopInset 이 없다
       const hdr = root.querySelector('.acf > .hdr');

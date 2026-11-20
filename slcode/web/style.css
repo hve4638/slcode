@@ -218,6 +218,39 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf details.thinking summary .pre { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .acf details.thinking[open] summary .pre { display: none; } .acf details.thinking[open] summary::after { content: "생각"; }
 .acf details.thinking .t { white-space: pre-wrap; margin-top: 4px; padding-left: 12px; border-left: 2px solid var(--acf-line); }
+.acf details.thinking summary .trbtn { order: 9; } /* '생각' 라벨(::after) 옆 */
+.acf details.thinking:not([open]) summary .trbtn { display: none; } /* 접힌 생각에는 보이지 않는다 (사용자 2026-11-21) */
+/* 번역 단추 (ticket slcode-thinking-translate, 사용자 2026-11-20 프로토타입 C) — 늘 반투명, 올리면 진하게. 번역문은 짝마다 원문 아래 */
+.acf button.trbtn { flex: none; display: inline-grid; place-items: center; width: 22px; height: 20px; padding: 0; margin: 0; border: 0; border-radius: 6px; background: transparent; color: var(--acf-muted); opacity: .45; cursor: pointer; transition: opacity .12s, background .12s; }
+.acf button.trbtn:hover { opacity: 1; background: var(--acf-soft); color: var(--acf-fg); }
+.acf button.trbtn.on { opacity: .9; color: var(--acf-accent); }
+.acf button.trbtn.err { color: var(--acf-err); }
+.acf button.trbtn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+/* 번역 중 (사용자 2026-11-21 프로토타입 f4) — 단추 둘레를 위쪽 가운데에서 출발한 빛이 가속·감속하며 한 바퀴 돈다. 날카로운 머리(--acf-tr-a, 세기·꼬리가
+   바퀴 가운데서 가장 크다)와 그보다 0.08초 늦게 따라 도는 흐린 잔상 층(::after, --acf-tr-b). 43.2deg 는 머리 자리(88%)를 위쪽 가운데로 옮기는 값 */
+@property --acf-tr-a { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+@property --acf-tr-b { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+@property --acf-tr-t { syntax: '<percentage>'; inherits: false; initial-value: 3%; }
+@property --acf-tr-l { syntax: '<number>'; inherits: false; initial-value: 0; }
+.acf button.trbtn.busy { position: relative; opacity: 1; cursor: default; color: var(--acf-fg); border: 1.5px solid transparent;
+  background: linear-gradient(var(--acf-bg), var(--acf-bg)) padding-box,
+    conic-gradient(from calc(var(--acf-tr-a) + 43.2deg), transparent 0 calc(88% - var(--acf-tr-t)),
+      color-mix(in srgb, var(--acf-accent) calc(var(--acf-tr-l) * 12%), transparent) calc(88% - var(--acf-tr-t) * .6),
+      color-mix(in srgb, var(--acf-accent) calc(var(--acf-tr-l) * 45%), transparent) calc(88% - var(--acf-tr-t) * .15),
+      color-mix(in srgb, var(--acf-accent) calc(var(--acf-tr-l) * 100%), transparent) 88%, transparent 89.5%) border-box;
+  filter: drop-shadow(0 0 2.5px color-mix(in srgb, var(--acf-accent) calc(var(--acf-tr-l) * 55%), transparent));
+  animation: acf-tr-rot 1.4s cubic-bezier(.7,0,.3,1) infinite, acf-tr-pulse 1.4s ease-in-out infinite; }
+.acf button.trbtn.busy::after { content: ""; position: absolute; inset: -1.5px; border-radius: inherit; padding: 1.5px; pointer-events: none; filter: blur(1.6px);
+  background: conic-gradient(from calc(var(--acf-tr-b) + 43.2deg), transparent 0 54.56%, color-mix(in srgb, var(--acf-accent) 25%, transparent) 76.6%, color-mix(in srgb, var(--acf-accent) 60%, transparent) 88%, transparent 90%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude;
+  animation: acf-tr-rot-b 1.4s cubic-bezier(.6,0,.4,1) infinite -1.32s; }
+@keyframes acf-tr-rot { to { --acf-tr-a: 360deg; } }
+@keyframes acf-tr-rot-b { to { --acf-tr-b: 360deg; } }
+@keyframes acf-tr-pulse { 0%, 100% { --acf-tr-l: 0; --acf-tr-t: 3%; } 50% { --acf-tr-l: 1; --acf-tr-t: 30%; } }
+.acf .trpair + .trpair { margin-top: .8em; }
+.acf .trpair .tl { color: var(--acf-fg); opacity: .9; margin-top: 2px; }
+.acf .trerr { color: var(--acf-err); margin-top: 6px; }
+.acf dialog.settings textarea.guide { display: block; width: 100%; min-height: 9em; margin-top: 6px; resize: none; font: 12px/1.5 var(--acf-mono); color: var(--acf-fg); background: var(--acf-panel); border: 1px solid var(--acf-line); border-radius: 8px; padding: 8px 10px; }
 
 /* 도구 블록 — 한 줄 요약, 펼치면 입력·결과 */
 .acf .tool { border: 1px solid var(--acf-line); border-radius: 10px; background: var(--acf-panel); font-size: 13px; overflow: hidden; }

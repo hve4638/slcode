@@ -46,8 +46,9 @@ const CLEANS = [
 ];
 
 /** 설정 창 — <dialog>. set(patch) 는 settings.set 을 부르고, 바뀐 값은 settings.changed 로 와서 update 가 다시 그린다.
- *  end 는 세션 종료 (확인 창에서 '종료'를 눌렀을 때), rpc 는 serve 요청 (inspect 캐시). h 는 app.js 의 요소 도우미 */
-export function settingsDialog(h, set, end, rpc) {
+ *  end 는 세션 종료 (확인 창에서 '종료'를 눌렀을 때), rpc 는 serve 요청 (inspect 캐시). h 는 app.js 의 요소 도우미.
+ *  translator 는 superlite 카드만 준다 (views/session.js) — 있으면 superlite 하위 창을 둔다 */
+export function settingsDialog(h, set, end, rpc, translator) {
   const close = h('button', { class: 'ghost x', title: '닫기', 'aria-label': '닫기', onclick: () => dlg.close() }, '✕');
   const err = h('div', { class: 'meta err', hidden: '' });
   /** 설정 한 줄 — [이름 ··· 버튼] (사용자 2026-10-20) */
@@ -147,6 +148,23 @@ export function settingsDialog(h, set, end, rpc) {
       .finally(() => { cleaning = false; paintUsage(); });
   }
 
+  // superlite 하위 창 (ticket slcode-thinking-translate, 사용자 2026-11-21) — superlite 카드에서만. 번역 지침(모델에 주는 지시 전체, 처음엔 기본 지침)을 고치고
+  // 기본값으로 되돌리며, 번역 캐시를 모두 비운다. 값은 superlite 플러그인 저장소에 있다 — slcode 설정 파일이 아니다. 지침은 치는 동안 0.4초 쉬면 저장한다
+  let guideTimer = null, edits = 0; // edits — 읽어 오는 사이에 고쳤으면 읽은 값으로 덮지 않는다
+  const guide = h('textarea', { class: 'guide', rows: 7, spellcheck: 'false', 'aria-label': '번역 지침', oninput: () => { edits++; clearTimeout(guideTimer); guideTimer = setTimeout(saveGuide, 400); } });
+  const fail = (what) => (e) => { err.textContent = `${what}: ${e?.message ?? e}`; err.hidden = false; };
+  function saveGuide() { clearTimeout(guideTimer); guideTimer = null; translator.setGuide(guide.value).then(() => { err.hidden = true; }, fail('지침을 저장하지 못했습니다')); }
+  const trCount = h('span', { class: 'amt' });
+  const trClear = h('button', { onclick: () => translator.clearCache().then(loadSuperlite, fail('캐시를 비우지 못했습니다')) }, '모두 비우기');
+  function loadSuperlite() {
+    const at = edits;
+    translator.guide().then((g) => { if (edits === at) guide.value = g; }, fail('지침을 읽지 못했습니다'));
+    translator.cacheCount().then((n) => { trCount.textContent = `${n}개`; trClear.disabled = n === 0; }, fail('캐시를 읽지 못했습니다'));
+  }
+  const slBody = translator ? h('div', { class: 'body', hidden: '' },
+    h('section', {}, row(h('h3', {}, '번역 지침'), h('button', { onclick: () => { edits++; guide.value = translator.defaultGuide; saveGuide(); } }, '기본값으로')), guide),
+    h('section', { class: 'cache' }, row(h('div', { class: 'name' }, h('h3', {}, '번역 캐시'), trCount), trClear))) : null;
+
   // 세션 종료 — 맨 아래 줄, 왼쪽 이름 · 오른쪽 끝 빨간 '종료' (context 경고 줄과 같은 꼴). 누르면 확인 창을 한 번 더 (사용자 2026-10-16). 끝난 세션이면 숨긴다(endable)
   const confirmEnd = h('dialog', { class: 'confirm' }, h('p', {}, '세션을 종료할까요?'), h('div', { class: 'btns' },
     h('button', { onclick: () => confirmEnd.close() }, '취소'),
@@ -168,23 +186,27 @@ export function settingsDialog(h, set, end, rpc) {
     h('section', {}, h('label', { class: 'switch' }, h('h3', {}, 'context 경고'), warn), ctxBody),
     h('section', {}, h('label', { class: 'switch' }, h('h3', {}, '새 세션 팀원'), team), teamNote),
     h('section', { class: 'nav' }, h('button', { class: 'nav', onclick: () => show('inspect') }, h('h3', {}, 'inspect'), h('span', { class: 'go' }, inspState, h('span', { class: 'chev', 'aria-hidden': 'true' }, '›')))),
+    translator ? h('section', { class: 'nav' }, h('button', { class: 'nav', onclick: () => show('superlite') }, h('h3', {}, 'superlite'), h('span', { class: 'go' }, h('span', { class: 'chev', 'aria-hidden': 'true' }, '›')))) : null,
     endRow,
     err,
     ver);
   const inspBody = h('div', { class: 'body', hidden: '' },
     h('section', {}, h('label', { class: 'switch' }, h('h3', {}, '새 세션 inspect'), insp), inspNote),
     h('section', { class: 'cache' }, row(h('h3', {}, '캐시 사용량'), total), ...cleanRows.map((r) => r.el), liveNote));
-  /** view: main | inspect */
+  /** view: main | inspect | superlite */
   function show(view) {
     mainBody.hidden = view !== 'main'; inspBody.hidden = view !== 'inspect'; back.hidden = view === 'main';
-    title.textContent = { main: '설정', inspect: 'inspect' }[view];
+    if (slBody) slBody.hidden = view !== 'superlite';
+    title.textContent = { main: '설정', inspect: 'inspect', superlite: 'superlite' }[view];
     if (view === 'inspect') loadUsage();
+    if (view === 'superlite') loadSuperlite();
   }
   const dlg = h('dialog', { class: 'settings' },
     h('header', {}, back, title, close),
-    mainBody, inspBody,
+    mainBody, inspBody, slBody,
     confirmEnd, confirmClean);
   closeOnBackdrop(dlg);
+  dlg.addEventListener('close', () => { if (guideTimer !== null) saveGuide(); }); // 쉬기 전에 닫아도 친 지침을 남긴다
 
   function update(s) {
     cur = known(s.theme); mark();
