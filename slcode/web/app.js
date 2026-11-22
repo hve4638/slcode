@@ -21,14 +21,14 @@ const h = (tag, attrs = {}, ...children) => {
 const short = (s, n = 120) => { s = String(s ?? ''); return s.length > n ? s.slice(0, n) + '…' : s; };
 const fmtTok = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(n % 1e6 ? 1 : 0)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 
-/** 도구 입력 한 줄 요약 — Bash 는 명령, 파일 도구는 경로 */
+/** 도구 입력 한 줄 요약 — Bash 는 명령, 파일 도구는 경로, WebSearch 는 검색어, WebFetch 는 주소. 아는 키가 없으면 첫 키 */
+// 키 순서가 우선순위다: Grep·Glob 은 path 보다 pattern, WebSearch 입력의 첫 키 mode 는 넘긴다 (ticket slcode-tool-preview-query)
+const ARG_KEYS = ['command', 'file_path', 'notebook_path', 'pattern', 'path', 'query', 'url', 'description'];
 function toolArg(name, input) {
   if (!input || typeof input !== 'object') return '';
-  if (input.command) return input.command;
-  if (input.file_path) return input.file_path;
-  if (input.pattern) return input.pattern;
-  if (input.description) return input.description;
+  for (const k of ARG_KEYS) if (input[k] && typeof input[k] === 'string') return input[k];
   if (Array.isArray(input.questions)) return input.questions.map((q) => q?.question).filter(Boolean).join(' · ');
+  if (Array.isArray(input.changes)) return input.changes.map((c) => c?.path).filter(Boolean).join(' · '); // Codex 파일 변경(codex.ts toolOf)
   const keys = Object.keys(input);
   return keys.length ? `${keys[0]}: ${short(JSON.stringify(input[keys[0]]), 80)}` : '';
 }
