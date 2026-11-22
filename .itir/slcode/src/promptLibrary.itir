@@ -1,0 +1,47 @@
+import { cleanSpec, compose, segment, PromptSpec } from './systemPrompt'
+import { BUILTIN_PIECES } from './promptPieces'
+
+role: system prompt 목록·판 (ticket slcode-prompt-library, 사용자 2026-11-18·19 — ws docs/ticket/slcode-prompt-library/TICKET.md). 프롬프트는 프로필과 따로 이름 있는 목록이고 여러 프로필이 같은 것을 고른다(프로필 claude.prompt, 없으면 벤더 기본). 디스크: <상태 폴더>/prompts/<이름>/v<n>.json — 판마다 파일 하나, 쓰면 고치지 않는다(돌고 있는 세션이 옛 판을 쓴다), 가져오기·저장마다 하나씩 오른다. 판은 가져온 Claude Code 원본(original: 가져온 때·모델·정체성 한 줄·배열 블록·tail, 메모리 경로·설정 폴더·작업 폴더·홈은 자리표시 <memory>·<config>·<cwd>·<home>)과 블록 설정(spec, systemPrompt 의 해시 꼴)을 함께 둔다 — 편집 창·세션이 Claude Code 를 다시 돌리지 않는다. 판이 없는 프롬프트(만들기 직후)는 세션이 벤더 기본으로 뜬다. original 이 없는 판은 사용자가 직접 쓴 판이다 — spec 의 더한 블록만 보낸다(사용자 2026-11-21).
+
+type PromptOriginal
+type PromptVersion
+type PromptRef
+export val PROMPTS_DIR
+export fn checkPromptName(name) {
+  role: 프로필 이름과 같은 꼴(영문·숫자로 시작, 영문·숫자·. _ -, 64자) — 폴더 이름이 된다
+}
+export fn promptNames(stateDir) -> String[]
+export fn latestVersion(stateDir, name) {
+  role: 최신 판 번호 — 프롬프트가 없으면 null, 판이 없으면 0
+}
+export fn readVersion(stateDir, name, v) -> PromptVersion {
+  role: 판 하나 — 없거나 꼴이 아니면 null, 원본이 없거나(직접 쓴 판) 꼴이 틀리면 original null
+}
+export fn createPrompt(stateDir, name) {
+  role: 판 없는 프롬프트(폴더)를 만든다 — 있는 이름·틀린 이름이면 던진다
+}
+export fn addVersion(stateDir, name, data) -> PromptVersion {
+  role: 최신 + 1 번 판을 쓴다 — tmp 를 link 해 한 번에 나타나고, 다른 프로세스가 그 번호를 먼저 쓰면 다음 번호로
+}
+export fn deletePrompt(stateDir, name) -> Bool
+export fn copyPrompt(stateDir, from, to) {
+  role: 폴더째(판·설명) 복사한다 — to 가 있으면 던진다
+}
+export fn movePrompt(stateDir, from, to) {
+  role: 폴더 이름을 바꾼다 — 고른 프로필을 고치는 것은 profiles.renamePrompt
+}
+export fn readDescription(stateDir, name) {
+  role: 설명 — <이름>/prompt.json 의 description, 판과 따로 둬 고쳐도 판이 오르지 않는다(사용자 2026-11-21). 한 번도 정하지 않았으면 null, 빈 글은 사용자가 지운 것
+}
+export fn writeDescription(stateDir, name, description) {
+  role: 설명을 쓴다 — tmp 를 rename 해 한 번에 바뀐다, 없는 프롬프트면 던진다
+}
+export fn firstSpec(blocks, prev) {
+  role: 처음 가져온 원본에 씌울 설정 — promptPieces 의 off 블록 중 맞는 것을 끈다(앞 판이 정한 블록은 앞 판의 것). 표에 없는 블록은 켜진 채
+}
+export fn memoryDirOf(configDir, cwd) -> String {
+  role: Claude Code 의 메모리 폴더 자리 — <설정 폴더>/projects/<프로젝트 뿌리 경로의 영문·숫자 밖을 ->, 뿌리는 git 이면 주 체크아웃(git-common-dir 의 부모), 아니면 작업 폴더. Claude Code 2.1.326 의 규칙을 따라 한 것이라 어긋나면 메모리 절의 경로만 틀린다
+}
+export fn sessionPrompt(stateDir, ref, at) {
+  role: 세션이 보낼 배열 블록 글 — 판의 저장 원본에 설정을 입혀 조립하고(segment·compose) 자리표시를 세션 값으로 바꾼다(고친 글·더한 글 안의 것도). 원본이 없는 판은 더한 블록만 한 덩어리로. 판이 없거나 원본도 더한 블록도 없으면 {why}
+}

@@ -1,5 +1,6 @@
 // Claude system prompt 편집 (ticket slcode-profile-system-prompt, 사용자 결정 2026-11-17 — ws docs/ticket/slcode-profile-system-prompt/TICKET.md).
-// 프로필은 Claude Code 의 기본 프롬프트를 블록 단위로 끄고·고치고·나누고, 사이에 글을 더한다. 원문은 저장하지 않는다 — 블록은 해시로 가리킨다.
+// 프롬프트(promptLibrary.ts 의 판)는 Claude Code 의 기본 프롬프트를 블록 단위로 끄고·고치고·나누고, 사이에 글을 더한다. 설정은 원문과 따로 블록 해시로 가리킨다 —
+// 다시 가져온 원본에도 같은 블록이면 설정이 이어진다 (ticket slcode-prompt-library: 원문은 판에 함께 저장한다).
 // 받은 프롬프트(promptCapture.ts)를 줄로 쪼개고, 블록은 연속한 줄 몇 개다. 블록마다 첫 줄 해시(head)·줄 수(lines)·전체 해시(hash)를 저장해
 // 첫 줄 해시로 시작 자리를 찾고 전체 해시가 맞으면 그 블록의 설정을 적용한다. 맞지 않는 줄은 받은 글 그대로 나간다 — Claude Code 가 한 블록의 글을
 // 바꾸면 그 블록의 설정만 풀린다. 해시는 세션마다 다른 값(메모리 경로·작업 폴더·홈)을 자리표시로 바꾼 뒤 잰다.
@@ -7,7 +8,7 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 
-/** 저장되는 블록 — 끄거나(off) 고치거나(text) 사용자가 직접 나눈 것만. note 는 화면의 설명 */
+/** 저장되는 블록 — 끄거나(off) 고치거나(text) 사용자가 직접 나눈 것만. note 는 화면의 설명. 미리 나눠 둔 블록(promptPieces)의 off 는 처음 가져올 때 끌지 여부라 segment 가 입히지 않는다 */
 export type PromptPiece = { head: string; lines: number; hash: string; note?: string; off?: true; text?: string };
 /** 사용자가 더한 글 — after 는 바로 앞 블록(이나 제목 줄)의 hash, null 이면 맨 앞. 앞 블록을 찾지 못하면 맨 끝에 둔다 */
 export type PromptAdded = { after: string | null; text: string; note?: string; off?: true };
@@ -45,6 +46,8 @@ export function segment(blocks: string[], spec: PromptSpec | undefined, builtin:
   const put = (p: PromptPiece, from: 'profile' | 'builtin') => { const a = byHead.get(p.head) ?? []; a.push({ p, from }); byHead.set(p.head, a); };
   for (const p of spec?.pieces ?? []) put(p, 'profile');
   for (const p of builtin) put(p, 'builtin');
+  // 저장된 블록에 설명이 없으면(처음 가져올 때 끈 블록·옛 설정) 같은 블록의 미리 쓴 설명을 쓴다
+  const noteOf = new Map(builtin.filter((p) => p.note).map((p) => [p.hash, p.note!]));
   const items: PromptItem[] = [];
   blocks.forEach((text, block) => {
     const raw = text.split('\n'), nl = raw.map(norm), heads = nl.map((l) => sha(l, 8));
@@ -55,7 +58,7 @@ export function segment(blocks: string[], spec: PromptSpec | undefined, builtin:
       const m = match(i);
       if (m) {
         const { p, from } = m;
-        items.push({ kind: 'piece', block, gap, text: raw.slice(i, i + p.lines).join('\n'), head: p.head, lines: p.lines, hash: p.hash, known: from, ...(p.note ? { note: p.note } : {}), ...(p.off ? { off: true } : {}), ...(p.text !== undefined ? { edit: p.text } : {}) });
+        items.push({ kind: 'piece', block, gap, text: raw.slice(i, i + p.lines).join('\n'), head: p.head, lines: p.lines, hash: p.hash, known: from, ...(p.note ?? noteOf.get(p.hash) ? { note: p.note ?? noteOf.get(p.hash) } : {}), ...(from === 'profile' && p.off ? { off: true } : {}), ...(p.text !== undefined ? { edit: p.text } : {}) });
         i += p.lines; gap = 0; continue;
       }
       if (isHeading(raw[i])) { items.push({ kind: 'heading', block, gap, text: raw[i], hash: sha(nl[i], 16) }); i++; gap = 0; continue; }

@@ -4,7 +4,7 @@
 // 웹(entry.ts 가 세션을 띄우기 전에 서빙)과 superlite 카드(views/session.js 가 플러그인 문서에 그린다)가 같은 화면을 쓴다. <html data-start> 가 입구:
 // web 이면 같은 출처의 api/<동작> 에 POST, card 면 카드에 {type: 'slcode.start.<동작>', id} 를 보내고 {re: id, result|error} 를 받는다.
 // 동작은 list({cwd, here, all} — startPage.ts StartList), go({new: true} | {resume: <id>}), 에이전트 플러그인 관리의 plugins.list·check·set·export (serve.pluginMethod),
-// system prompt 편집 창의 prompt.profiles·fetch·save (promptMethods.ts), 프로필 관리의 profile.list·add·set·remove·rename (profileMethods.ts).
+// system prompt 목록·편집 창의 prompt.list·create·remove·get·fetch·save (promptMethods.ts), 프로필 관리의 profile.list·add·set·remove·rename (profileMethods.ts).
 
 const root = document.getElementById('start');
 const html = document.documentElement;
@@ -160,10 +160,12 @@ async function openProfiles() {
   draw();
   state.profiles.load();
 }
-/** system prompt 편집 창 (ticket slcode-profile-system-prompt) — 프로필 화면의 system prompt 탭에서 그 프로필로 연다. ‹ 는 프로필 화면의 그 탭으로 */
-async function openPrompt(profile) {
+/** system prompt 편집 창 (ticket slcode-profile-system-prompt → slcode-prompt-library) — 프로필 화면의 system prompt 탭에서 그 프롬프트로 연다. ‹ 는 프로필 화면의 그 탭으로 */
+async function openPrompt(name) {
   const { promptPanel } = globalThis.slcodePrompt ?? await import('./prompt.js');
-  state.prompt = promptPanel(call, { profile });
+  // 블록 번역 — 카드에서만(번역은 superlite 카드가 한다, ticket slcode-prompt-block-translate). 웹에는 단추가 없다
+  const translator = mode === 'card' && cardHost ? { translate: (text, o) => call('translate', { text, fresh: !!o?.fresh }).then((r) => r.pairs) } : null;
+  state.prompt = promptPanel(call, { name, translator });
   draw();
   state.prompt.load();
 }
@@ -172,7 +174,7 @@ function draw() {
   const l = state.list;
   if (state.prompt) {
     root.replaceChildren(el('style', {}, STYLE), el('div', { class: 'st pl sp' },
-      el('div', { class: 'phead' }, el('button', { class: 'more', title: '프로필', on: { click: () => { const name = state.prompt.current(); state.prompt = null; draw(); void state.profiles?.show(name, 'prompt'); } } }, '‹'), el('h1', {}, 'system prompt'), state.prompt.name),
+      el('div', { class: 'phead' }, el('button', { class: 'more', title: '프로필', on: { click: () => state.prompt.leave(() => { state.prompt = null; draw(); void state.profiles?.show(null, 'prompt'); }) } }, '‹'), el('h1', {}, 'system prompt'), state.prompt.name),
       state.prompt.el));
     return;
   }

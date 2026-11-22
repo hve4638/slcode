@@ -45,11 +45,6 @@ test('기본 제공: default 는 전부, minimal 은 아무것도 — 고치거�
   await assert.rejects(setProfile('default', ['claude.user=off'], dir), /built-in/);
   await assert.rejects(removeProfile('default', dir), /built-in/);
   assert.deepEqual(sessionProfile(undefined, dir).name, 'default');
-  // 옛 이름 bare 는 minimal 로 이어 준다 (사용자 2026-11-18) — 사용자가 bare 를 만들면 그 프로필이 된다
-  assert.deepEqual([sessionProfile('bare', dir).name, sessionProfile('bare', dir).missing, getProfile('bare', dir)!.rest], ['minimal', null, false]);
-  await addProfile('bare', 'default', dir);
-  assert.deepEqual([sessionProfile('bare', dir).name, getProfile('bare', dir)!.rest], ['bare', true]);
-  await removeProfile('bare', dir);
   const gone = sessionProfile('basic', dir);
   assert.equal(gone.name, 'default');
   assert.equal(gone.missing, 'basic');
@@ -277,20 +272,6 @@ test('이름 바꾸기: 옛 이름은 새 이름으로 이어 주고(두 번 바
   await removeProfile('b', dir);
   assert.equal(config(dir).profileRenames, undefined);
   assert.deepEqual([sessionProfile('c', dir).name, sessionProfile('c', dir).missing], ['default', 'c']);
-});
-
-test('옛 config.json(profileRenames 없음)은 그대로 열리고, 고쳐 써도 모르는 항목을 남긴다', async () => {
-  const dir = await installed();
-  const ap = agentPaths(dir);
-  const old = { ...config(dir), profiles: { basic: { plugins: { core: { on: true } }, rest: false, claude: { user: true, project: false, userMd: true, projectMd: true, builtinSkills: true } } } };
-  fs.writeFileSync(ap.config, JSON.stringify(old));
-  assert.deepEqual(listProfiles(dir).map((r) => [r.name, r.builtin]), [['default', true], ['minimal', true], ['basic', false]]);
-  assert.equal(sessionProfile('basic', dir).profile.plugins.core.on, true);
-  await setProfile('basic', ['claude.project=on'], dir);
-  assert.equal(config(dir).profileRenames, undefined, '이름을 바꾸기 전엔 항목이 생기지 않는다');
-  await renameProfile('basic', 'main', dir);
-  await setPlugin('core', ['ponytail=on'], dir); // slcode-plugin 이 config.json 을 고쳐 써도 profileRenames 는 남는다
-  assert.deepEqual(config(dir).profileRenames, { basic: 'main' });
 });
 
 test('되돌리기(unset): 플러그인 on·part·옵션 값을 지워 따름으로 — other-plugins·claude·없는 part 는 거절하고 아무것도 바꾸지 않는다', async () => {

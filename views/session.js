@@ -68,6 +68,7 @@ export function mount(el, ctx) {
   const st = ctx.state && typeof ctx.state === 'object' ? ctx.state : {};
   if (!st.key) { el.textContent = 'slcode: 카드 전용 뷰'; return; }
   const host = (method, ...args) => ctx.main.call('host', method, ...args);
+  const tr = translator(ctx); // 대화의 생각 블록과 시작 화면의 system prompt 편집 창이 함께 쓴다
   const c = {
     key: st.key, id: st.id ?? null, savedId: st.id ?? null,
     pick: !st.id && typeof st.pick === 'string' ? st.pick : null, // 고르기 전 resume 카드 — 서비스를 띄우지 않는다
@@ -271,7 +272,7 @@ export function mount(el, ctx) {
       const root = document.createElement('div');
       root.style.cssText = 'flex:1;min-height:0';
       wrap.appendChild(root);
-      mountCard(root, openPort(), ui, { host: flatHost, reload: () => location.reload(), translator: translator(ctx) }); // serve 가 바뀌었다 — 새 문서가 새 화면 파일을 받는다
+      mountCard(root, openPort(), ui, { host: flatHost, reload: () => location.reload(), translator: tr }); // serve 가 바뀌었다 — 새 문서가 새 화면 파일을 받는다
       if (c.conn) c.port.postMessage({ status: { connected: true } });
       // 머리줄 높이를 superlite 에 알려 카드 알림·떠 있는 창이 그 아래에 뜨게 한다 (ticket slcode-card-top-inset). 0.21.0 이하 superlite 에는 setTopInset 이 없다
       const hdr = root.querySelector('.acf > .hdr');
@@ -534,8 +535,10 @@ export function mount(el, ctx) {
     'slcode.start.go': (d) => { void begin(typeof d.resume === 'string' ? { resume: d.resume } : { new: true }); return {}; },
     // 에이전트 플러그인 관리 — slcode 의 입구는 시작 화면뿐이라 카드도 중계한다 (ticket slcode-agent-plugin-export-action)
     ...Object.fromEntries(['list', 'check', 'set', 'export'].map((m) => [`slcode.start.plugins.${m}`, ({ type, id, ...params }) => host('startCall', `plugins.${m}`, params)])),
-    // system prompt 편집 창 (ticket slcode-profile-system-prompt) — 가져오기는 이 카드가 연 폴더에서 돌린다
-    ...Object.fromEntries(['profiles', 'fetch', 'save'].map((m) => [`slcode.start.prompt.${m}`, ({ type, id, ...params }) => host('startCall', `prompt.${m}`, params, c.start)])),
+    // system prompt 목록·편집 창 (ticket slcode-profile-system-prompt → slcode-prompt-library) — 가져오기는 이 카드가 연 폴더에서 돌린다
+    ...Object.fromEntries(['list', 'create', 'remove', 'get', 'fetch', 'save', 'describe', 'copy', 'rename'].map((m) => [`slcode.start.prompt.${m}`, ({ type, id, ...params }) => host('startCall', `prompt.${m}`, params, c.start)])),
+    // 편집 창 블록의 번역 단추 (ticket slcode-prompt-block-translate) — 대화의 번역 단추와 같은 translator·캐시
+    'slcode.start.translate': ({ text, fresh }) => tr.translate(String(text), { fresh: !!fresh }).then((pairs) => ({ pairs })),
     // 프로필 관리 (ticket slcode-profile-manager)
     ...Object.fromEntries(['list', 'add', 'set', 'remove', 'rename'].map((m) => [`slcode.start.profile.${m}`, ({ type, id, ...params }) => host('startCall', `profile.${m}`, params)])),
     'slcode.back': backToStart,

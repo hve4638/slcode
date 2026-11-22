@@ -1,8 +1,10 @@
-role: system prompt 편집 창의 요청 (ticket slcode-profile-system-prompt, 사용자 2026-11-17: 시작 화면에서 연다, 세션 안에는 두지 않는다) — 웹은 시작 화면 서버(startPage)의 api/, superlite 카드는 `slcode start-call`. 화면은 web/prompt.js.
+role: system prompt 목록·편집 창의 요청 (ticket slcode-profile-system-prompt → slcode-prompt-library, 사용자 2026-11-18) — 웹은 시작 화면 서버(startPage)의 api/, superlite 카드는 `slcode start-call`. 화면은 web/profiles.js(목록·고르기)와 web/prompt.js(편집 창). 가져오기만 Claude Code 를 돌린다.
 
 export val PROMPT_METHODS
+export fn fetchedNote(model, d) -> String
 type PromptMethod
+type PromptRow
 type PromptView
 export fn promptMethod(dir, cwd, method, params) {
-  role: prompt.profiles 는 프로필 목록(고친 프로필 표시). prompt.fetch {profile, model?} 는 cwd(slcode 를 띄운 폴더)·그 프로필의 로드 설정·고른 모델로 받아 와 프로필의 설정을 입힌 줄들과 읽기 전용 글(정체성 한 줄·tail·slcode 지시)을 준다. prompt.save {profile, items, as?} 는 화면의 줄들을 해시로 바꿔 저장한다 — 기본 제공 프로필이면 as 이름의 새 프로필로
+  role: prompt.list 는 프롬프트마다 최신 판·그 판 원본의 가져온 때·모델·고른 프로필. prompt.create {name} 은 판 없는 프롬프트, prompt.remove {name} 은 고른 프로필이 없을 때만(profiles.removePrompt). prompt.get {name, version?} 은 판(기본 최신)의 줄들 — 저장 원본에 판의 설정을 입힌 것, 원본이 없으면 original false. prompt.fetch {name, model?, recommended?} 은 cwd(slcode 를 띄운 폴더)·default 프로필의 로드 설정·고른 모델로 받아 곧바로 새 판으로 저장한다 — 원본은 자리표시로, 앞 판의 설정은 해시가 맞는 블록에 이어지고 처음 가져오는 것이면 recommended(기본 true)일 때 기본으로 끄는 블록을 끈다(promptLibrary.firstSpec), false 면 블록만 나누고 모두 켠다. prompt.save {name, base, items} 는 base 판의 원본에 화면의 설정을 얹은 새 판, 원본이 없으면(base 0 포함) 더한 블록만의 직접 쓴 판(사용자 2026-11-21). 셋 다 그 판의 화면을 돌려준다. 설명(description)은 list·화면에 함께 오고, prompt.fetch 는 설명을 한 번도 정하지 않은 프롬프트에 "from Claude on 26.11.21" 을 채운다(fetchedNote). prompt.describe {name, description} 은 설명만 고치고 판은 오르지 않는다(사용자 2026-11-21). prompt.copy {name, to} 는 판째·설명째 복사(벤더 기본의 복제는 화면이 create·fetch 로 한다), prompt.rename {name, to} 은 profiles.renamePrompt
 }

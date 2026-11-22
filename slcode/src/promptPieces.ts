@@ -1,5 +1,5 @@
 // 미리 나눠 둔 블록과 설명 (ticket slcode-profile-system-prompt) — scripts/prompt-pieces.mjs 가 만든다, 손으로 고치지 않는다.
-// 받은 프롬프트에서 해시가 맞는 줄들에만 씌우는 보조다: 맞지 않으면 받은 대로 한 덩어리로 보인다. 원문은 여기에도 없다.
+// 받은 프롬프트에서 해시가 맞는 줄들에만 씌우는 보조다: 맞지 않으면 받은 대로 한 덩어리로 보인다. 원문은 여기에도 없다. off 는 처음 가져올 때 꺼진 채 시작하는 블록.
 // Claude Code 2.1.322 (sonnet·haiku·opus·fable) 기준 — 판을 올려 다시 만들면 이 줄도 고친다.
 import type { PromptPiece } from './systemPrompt.js';
 
@@ -9,7 +9,7 @@ export const BUILTIN_PIECES: readonly PromptPiece[] = [
   { head: '45e4bd58', lines: 1, hash: '45e4bd587061fb27', note: "답은 터미널에 markdown 으로 보인다" },
   { head: '57f66414', lines: 1, hash: '57f664143d45b1ab', note: "권한 모드와 거절된 도구 호출" },
   { head: '5e36b6aa', lines: 1, hash: '5e36b6aa90cf962c', note: "대화 중 system 알림과 hook" },
-  { head: '1c6916a5', lines: 1, hash: '1c6916a5997f1ad4', note: "붙여 넣은 글(pasted_content) 다루기" },
+  { head: '1c6916a5', lines: 1, hash: '1c6916a5997f1ad4', note: "붙여 넣은 글(pasted_content) 다루기", off: true },
   { head: '5fc7063c', lines: 1, hash: '5fc7063c38d40c22', note: "전용 도구 우선 · 병렬 호출" },
   { head: '9f644245', lines: 1, hash: '9f644245e7d3885f', note: "코드 위치 표기(file:line)" },
   { head: '3fcd2b20', lines: 1, hash: '3fcd2b200896a716', note: "사람을 가리키는 대명사" },
@@ -18,8 +18,8 @@ export const BUILTIN_PIECES: readonly PromptPiece[] = [
   { head: '33edcd97', lines: 1, hash: '33edcd9775b2c118', note: "/이름 을 치면 Skill 로 호출" },
   { head: '32e367d3', lines: 20, hash: 'ea4f387fc2b6394c', note: "파일 메모리 쓰는 법" },
   { head: '8cf22ff3', lines: 1, hash: '8cf22ff3194ae12a', note: "최신 Claude 모델 목록" },
-  { head: '465985bc', lines: 1, hash: '465985bc2156eec3', note: "Claude Code 제품 안내(CLI·데스크톱·IDE)" },
-  { head: '0ae4fa68', lines: 1, hash: '0ae4fa6881d79392', note: "fast mode 안내" },
+  { head: '465985bc', lines: 1, hash: '465985bc2156eec3', note: "Claude Code 제품 안내(CLI·데스크톱·IDE)", off: true },
+  { head: '0ae4fa68', lines: 1, hash: '0ae4fa6881d79392', note: "fast mode 안내", off: true },
   { head: '1c628de2', lines: 1, hash: '1c628de2023cb1b3', note: "긴 대화는 요약된다" },
   { head: '4e4e48fb', lines: 1, hash: '4e4e48fb23ceb764', note: "정보가 충분하면 바로 실행" },
   { head: '1f235867', lines: 1, hash: '1f23586747809764', note: "effort 는 생각의 양만 바꾼다 — 큰 일도 한 턴에" },

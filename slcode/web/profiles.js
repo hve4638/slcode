@@ -34,26 +34,20 @@ function claudeLine(c) {
   const a = [c.user ? `사용자 설정${c.userMd ? '' : ' (CLAUDE.md 제외)'}` : null, c.project ? `프로젝트 설정${c.projectMd ? '' : ' (CLAUDE.md 제외)'}` : null, c.builtinSkills ? '기본 skill' : null].filter(Boolean);
   return a.length ? a.join(', ') : '읽지 않음';
 }
-/** 저장된 블록 설정(systemPrompt.ts PromptSpec)의 한 줄 — 원문은 저장하지 않아 수만 센다 */
-function promptLine(sp) {
-  const off = sp?.pieces?.filter((x) => x.off).length ?? 0, edit = sp?.pieces?.filter((x) => x.text != null).length ?? 0, add = sp?.added?.length ?? 0;
-  const a = [off ? `블록 ${off}개 끔` : null, edit ? `${edit}개 고침` : null, add ? `${add}개 더함` : null].filter(Boolean);
-  return a.length ? a.join(' · ') : '기본 프롬프트 그대로';
-}
 
-/** call(method, params) → Promise. openPrompt(name) 은 system prompt 편집 창을 그 프로필로 연다(start.js) */
+/** call(method, params) → Promise. openPrompt(name) 은 system prompt 편집 창을 그 프롬프트로 연다(start.js) */
 export function profilesPanel(call, { openPrompt } = {}) {
   // 대화상자는 root 에 두고 그리기는 body 만 바꾼다 — 저장이 끝나 다시 그려도 열린 창이 닫히지 않는다
   const root = el('div', { class: 'prpanel' }), body = el('div', { class: 'prbody' });
   root.append(body);
   const status = el('span', { class: 'pstat' });
-  const S = { rows: null, plugins: [], sel: null, tab: 'general', plug: null, q: '', filter: 'all', error: null, saved: false };
+  const S = { rows: null, plugins: [], prompts: [], sel: null, tab: 'general', plug: null, q: '', filter: 'all', error: null, saved: false };
   let savedTimer, queue = Promise.resolve();
 
   async function load() {
     try {
-      const r = await call('profile.list');
-      S.rows = r.profiles; S.plugins = r.plugins; S.error = null;
+      const [r, pr] = await Promise.all([call('profile.list'), call('prompt.list')]);
+      S.rows = r.profiles; S.plugins = r.plugins; S.prompts = pr.prompts; S.error = null;
       if (!S.rows.some((x) => x.name === S.sel)) S.sel = (S.rows.find((x) => !x.builtin) ?? S.rows[0]).name;
     } catch (e) { S.error = `프로필을 읽지 못했습니다: ${e.message}`; }
     draw();
@@ -71,7 +65,6 @@ export function profilesPanel(call, { openPrompt } = {}) {
   }
   const set = (r, keyValue) => change('profile.set', { name: r.name, set: [keyValue] });
   const unset = (r, key) => change('profile.set', { name: r.name, unset: [key] });
-
   const sw = (on, disabled, onclick, label) => el('button', { class: `sw${on ? ' on' : ''}`, role: 'switch', 'aria-checked': String(!!on), 'aria-label': label, disabled, onclick });
   const row = ({ cls = '', label, meta, path, desc, ctl }) => el('div', { class: `row ${cls}` },
     el('div', { class: 'tx' },
@@ -89,7 +82,7 @@ export function profilesPanel(call, { openPrompt } = {}) {
       el('section', {}, el('h3', {}, '이 프로필이 싣는 것'),
         el('div', { class: 'grp' }, row({ label: 'Claude 가 읽는 것', desc: claudeLine(r.profile.claude), ctl: open('claude') })),
         el('div', { class: 'grp' }, row({ label: '에이전트 플러그인', desc: S.plugins.length ? `${S.plugins.length}개 중 ${onCount(r.profile)}개 실음` : '설치한 플러그인이 없습니다', ctl: open('plugins') })),
-        el('div', { class: 'grp' }, row({ label: 'system prompt', desc: promptLine(r.profile.claude.systemPrompt), ctl: open('prompt') }))),
+        el('div', { class: 'grp' }, row({ label: 'system prompt', desc: r.profile.claude.prompt ?? '벤더 기본', ctl: open('prompt') }))),
       r.builtin ? null : el('section', {}, el('h3', {}, '관리'),
         el('div', { class: 'grp' }, row({ label: '이름', desc: '이름을 바꾸면 옛 이름으로 띄운 세션도 새 이름을 따릅니다', ctl: el('button', { class: 'btn', onclick: () => renameDialog(r) }, '이름 바꾸기') })),
         el('div', { class: 'grp' }, row({ label: '복제', desc: '같은 설정으로 새 프로필을 만듭니다', ctl: el('button', { class: 'btn', onclick: () => newDialog(r.name) }, '복제') })),
@@ -156,11 +149,18 @@ export function profilesPanel(call, { openPrompt } = {}) {
             desc: by(v.options?.[o.name] !== undefined, `${x.name}.${o.name}`), ctl: opt(o) }))] : null]);
   }
 
-  // ---------- 탭: system prompt ----------
+  // ---------- 탭: system prompt (ticket slcode-prompt-library) ----------
+  // 이 프로필이 쓸 프롬프트 하나 — 맨 위 "벤더 기본" 은 아무것도 덮어쓰지 않는다(사용자 2026-11-21: 스위치 대신 선택 칸).
+  // 프롬프트 목록(만들기·지우기)은 편집 창의 사이드바에 있다(사용자 2026-11-20). 편집은 고른 것과 상관없이 늘 연다
   function promptTab(r) {
+    const cur = r.profile.claude.prompt ?? '', chosen = S.prompts.find((x) => x.name === cur);
     return el('div', { class: 'pane' },
-      row({ label: promptLine(r.profile.claude.systemPrompt),
-        ctl: el('button', { class: 'btn', onclick: () => openPrompt?.(r.name) }, '편집') }));
+      el('section', {},
+        row({ label: '쓸 프롬프트', desc: chosen ? chosen.description || null : '벤더의 기본 프롬프트가 사용됩니다.',
+          ctl: [el('select', { class: 'val', 'aria-label': '쓸 프롬프트', disabled: r.builtin, onchange: (e) => void (e.target.value ? set(r, `system-prompt=${e.target.value}`) : unset(r, 'system-prompt')) },
+            el('option', { value: '', selected: !cur }, '벤더 기본'),
+            S.prompts.map((x) => el('option', { value: x.name, selected: x.name === cur }, x.name))),
+          el('button', { class: 'btn', onclick: () => openPrompt?.(chosen?.name ?? null) }, '편집')] })));
   }
 
   // ---------- 대화상자 ----------

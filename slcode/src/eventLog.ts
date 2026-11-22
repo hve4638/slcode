@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { HistorySummary, LoggedEvent, OutlineItem, PromptTurn, SessionInfo, TeamOptions, TeamAgent, Vendor } from './protocol.js';
 import type { Worktree } from './worktree.js';
-import type { PromptSpec } from './systemPrompt.js';
+import type { PromptRef } from './promptLibrary.js';
 import { cwdSlug, sessionDir, sessionRoots } from './paths.js';
 
 /** seq 는 kind fork 의 복제 지점 — 원본 기록에서 복제본에 들어간 마지막 턴 끝(turn.end·session.imported)의 seq (ticket slcode-session-fork). 복제본 자신의 일은 제 기록의 session.imported(fork) 뒤다 */
@@ -41,9 +41,9 @@ export type SessionMeta = {
   agentPlugins?: Record<string, { parts?: Record<string, boolean>; options?: Record<string, boolean | string | number> } | undefined>;
   /** 세션 시작 프로필 이름 (ticket slcode-session-profile) — 없으면 default. 띄울 때마다(resume 포함) 그 프로필의 지금 값을 읽는다 */
   profile?: string;
-  /** 이 세션이 쓰는 system prompt 설정 (ticket slcode-profile-system-prompt, 사용자 2026-11-17) — 세션을 만들 때 프로필의 것을 옮겨 적는다. 프로필의 다른 값과 달리
-   *  프로필을 고쳐도 따라가지 않는다: 사용자가 그 세션에서 가져오기를 눌러야 바뀐다. 없으면 기본 프롬프트 */
-  systemPrompt?: PromptSpec;
+  /** 이 세션이 쓰는 system prompt 와 그 판 (ticket slcode-prompt-library) — 세션을 만들 때 프로필이 고른 프롬프트의 최신 판을 적는다. 프로필의 다른 값과 달리
+   *  따라가지 않는다: 사이드바에서 새 판으로 올리거나 다른 프롬프트로 바꿔야 바뀐다. 없으면 벤더 기본. 0.6.0 의 systemPrompt(블록 설정)는 읽지 않는다 */
+  prompt?: PromptRef;
   /** 새 세션에 준 env (ticket slcode-new-session-env) — 띄울 때마다(resume·벤더 재기동 포함) 벤더 프로세스 env 에 넣는다. 주지 않았으면 없다 */
   env?: Record<string, string>;
   /** 새 세션에 준 세션 인자 (ticket slcode-agent-plugin-part-when) — 띄울 때마다 SLCODE_PARAM_<이름> env·에이전트 플러그인 part 조건·js/ts 훅에. 주지 않았으면 없다 */

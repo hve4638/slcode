@@ -30,9 +30,8 @@ import { blockInspect, CODEX_ROUTE, codexArgs, codexUpstream, inspectBlocked, in
 import { InspectStore, maybeSweep } from './inspectDb.js';
 import { Activity } from './activity.js';
 import { claudeLoad, DEFAULT_PROFILE, getProfile, listProfiles, profileSummary, sessionProfile } from './profiles.js';
-import { BUILTIN_PIECES } from './promptPieces.js';
-import { capturePrompt, promptOption } from './promptCapture.js';
-import { cleanSpec, compose, normOf, sameSpec, segment } from './systemPrompt.js';
+import { promptOption } from './promptCapture.js';
+import { latestVersion, promptNames, sessionPrompt, type PromptRef } from './promptLibrary.js';
 import { claudeSessionExists } from './vendor.js';
 import { agentPaths, currentBuilds, loadSessionPlugins, reloadSessionPlugins, unlinkSessionPlugins, type Loaded, type SessionPlugins } from 'slcode-plugin/agentPlugins';
 import { HookRunner, type LoadedCommand } from 'slcode-plugin/hookRunner';
@@ -125,6 +124,8 @@ export type CoreHandle = { sock: string; session: SessionInfo; close: (reason?: 
 
 /** 없는 폴더로는 벤더가 뜨지 못한다 — core 가 뜬 뒤 죽기 전에 사유를 알려 거절한다 (ticket slcode-small-fixes-1025) */
 const isDir = (p: string) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } };
+/** 프로필이 고른 프롬프트 이름 → 세션에 적을 판(그 프롬프트의 최신). 고르지 않았거나 없는 이름이면 undefined — 벤더 기본 (ticket slcode-prompt-library) */
+const promptRefOf = (name: string | undefined, dir: string): PromptRef | undefined => { if (!name) return undefined; const v = latestVersion(dir, name); return v === null ? undefined : { name, version: v }; };
 
 export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   const log = opts.log ?? (() => {});
@@ -160,8 +161,8 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       vendorSessionId: null, createdAt: Date.now(), permissionMode: opts.permissionMode ?? 'auto', raw: opts.raw ?? false,
       ...(opts.model ? { model: opts.model } : {}), ...(opts.effort ? { effort: opts.effort } : {}), ...(opts.inspect ? { inspect: true } : {}),
       ...(opts.profile && opts.profile !== DEFAULT_PROFILE ? { profile: opts.profile } : {}), ...(opts.fromStart ? { fromStart: true } : {}),
-      // system prompt 설정은 만들 때 프로필의 것을 옮겨 적는다 — 그 뒤 프로필을 고쳐도 이 세션은 가져오기 전까지 그대로 (ticket slcode-profile-system-prompt)
-      ...((): { systemPrompt?: SessionMeta['systemPrompt'] } => { const sp = cleanSpec(sessionProfile(opts.profile, P.dir).profile.claude.systemPrompt); return sp ? { systemPrompt: sp } : {}; })(),
+      // system prompt 는 만들 때 프로필이 고른 프롬프트의 최신 판을 적는다 — 그 뒤 새 판이 생겨도 이 세션은 올리기 전까지 그대로 (ticket slcode-prompt-library)
+      ...((): { prompt?: PromptRef } => { const r = promptRefOf(sessionProfile(opts.profile, P.dir).profile.claude.prompt, P.dir); return r ? { prompt: r } : {}; })(),
       ...(opts.env && Object.keys(opts.env).length ? { env: opts.env } : {}),
       ...(opts.params && Object.keys(opts.params).length ? { params: opts.params } : {}),
       ...(opts.parent ? { parent: opts.parent } : {}),
@@ -238,23 +239,19 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   const prof = sessionProfile(logFile.meta.profile, P.dir);
   /** 다시 싣기 때의 프로필 — 그사이 고쳤으면 고친 값, 지웠으면 기동 때 값 */
   const profileNow = () => getProfile(prof.name, P.dir) ?? prof.profile;
-  /** 프로필의 system prompt 설정이 이 세션에 적힌 것과 다른가 — 화면이 가져오기 버튼을 보인다. Claude 만 */
-  const promptChanged = () => !codex && !sameSpec(logFile.meta.systemPrompt, profileNow().claude.systemPrompt);
   let agent: SessionPlugins | null = null, agentFailed: string | null = null;
   // 링크는 옛 폴더의 세션이어도 이 상태 폴더 쪽에 둔다 — 빌드 정리(gcBuilds)가 상태 폴더의 sessions 만 훑어, 옛 폴더의 링크로는 쓰는 빌드를 지키지 못한다 (옛 폴더 호환, 1.0.0 에서 지운다: ticket slcode-remove-legacy-state-dir)
   const linksDir = sessionDir(P.sessionsDir, cwd, logFile.meta.id);
   try { agent = loadSessionPlugins(linksDir, env, logFile.meta.agentPlugins ?? {}, P.dir, harness, prof.profile, params); } catch (e) { agentFailed = (e as Error).message; }
   const load = codex ? undefined : claudeLoad(prof.profile.claude, cwd, env, (agent?.loaded ?? []).map((l, i) => ({ name: l.name, path: agent!.plugins[i].path })));
   let agentLoaded: Loaded[] = agent?.loaded ?? [];
-  // system prompt (ticket slcode-profile-system-prompt) — 세션에 적힌 설정이 있으면 Claude Code 의 지금 기본 프롬프트를 받아 와 그 블록 설정을 입힌다.
-  // 받지 못하면 기본 프롬프트로 띄우고 사유를 남긴다. 모델은 기동 때의 것 — 세션 중 모델을 바꾸면 모델별 문단은 다음 기동에 맞춰진다
+  // system prompt (ticket slcode-prompt-library, 사용자 2026-11-19) — 세션에 적힌 판의 저장 원본에 그 판의 설정을 입혀 보낸다. Claude Code 를 다시 돌리지 않는다:
+  // 모델별 문단은 가져올 때 고른 모델의 것이다. 판이 없거나 원본이 없으면 벤더 기본으로 띄우고 사유를 남긴다. 적힌 것이 없으면 벤더 기본 — SDK 에 덮어쓰지 않는다
   let prompt: string[] | undefined, promptFailed: string | null = null;
-  const promptSpec = codex ? undefined : cleanSpec(logFile.meta.systemPrompt);
-  if (promptSpec) {
-    try {
-      const cap = await capturePrompt({ cwd, env: { ...env, ...agent?.env }, ...(logFile.meta.model ? { model: logFile.meta.model } : {}), ...(load ? { load } : {}) });
-      prompt = promptOption(compose(segment(cap.blocks, promptSpec, BUILTIN_PIECES, normOf(env, cwd, os.homedir())), cap.blocks.length));
-    } catch (e) { promptFailed = (e as Error).message; }
+  if (!codex && logFile.meta.prompt) {
+    const vEnv = { ...env, ...agent?.env, ...load?.env };
+    const r = sessionPrompt(P.dir, logFile.meta.prompt, { configDir: path.resolve(vEnv.CLAUDE_CONFIG_DIR || path.join(vEnv.HOME || os.homedir(), '.claude')), cwd: path.resolve(cwd), home: vEnv.HOME || os.homedir() });
+    if ('why' in r) promptFailed = r.why; else prompt = promptOption(r.blocks);
   }
   // js/ts 훅 (ticket slcode-agent-plugin-hooks) — Claude 만. 플러그인을 하나라도 실었으면 디스패처를 건다(다시 싣기로 훅이 생겨도 받게). 세션이 생기기 전의 기록은 모았다가 낸다
   let hookQueue: (AgentHookEvent | AgentCommandEvent)[] | null = [];
@@ -304,7 +301,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   session.onEvent((e) => { if (e.ev.kind === 'session.state') activity.agent(e.ev.state); });
   if (lostVendor) session.notice(`이전 Claude 대화(${lostVendor})를 찾지 못해 새 대화로 시작합니다 — 위의 지난 턴은 모델이 기억하지 못합니다`);
   if (inspectFailed) session.notice(`inspect 를 켜지 않았습니다: ${inspectFailed}`);
-  if (promptFailed) session.notice(`system prompt 설정을 적용하지 못해 기본 프롬프트로 띄웠습니다: ${promptFailed}`);
+  if (promptFailed) session.notice(`벤더 기본 system prompt 로 띄웠습니다: ${promptFailed}`);
   if (prof.missing) session.notice(`프로필 ${prof.missing} 이 없어 default 로 띄웠습니다`);
   if (codex && prof.name !== DEFAULT_PROFILE) session.notice(`Codex 세션은 프로필(${prof.name})의 플러그인 선택만 따릅니다 — 사용자 설정·AGENTS.md·skill 은 그대로 실립니다`);
   if (agentFailed) session.notice(`에이전트 플러그인을 싣지 못했습니다: ${agentFailed}`);
@@ -506,7 +503,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       if (p.profile === prof.name && !prof.missing) return { ok: true };
       beforeFirst(s, 'profile');
       // 벤더 세션은 옛 프로필의 로드 설정으로 열린 것이다 — 첫 메시지 전이라 버려도 잃는 것이 없다
-      logFile.updateMeta({ profile: p.profile === DEFAULT_PROFILE ? undefined : p.profile, vendorSessionId: null, systemPrompt: cleanSpec(getProfile(p.profile, P.dir)!.claude.systemPrompt) });
+      logFile.updateMeta({ profile: p.profile === DEFAULT_PROFILE ? undefined : p.profile, vendorSessionId: null, prompt: promptRefOf(getProfile(p.profile, P.dir)!.claude.prompt, P.dir) });
       log(`profile switched to ${p.profile} — replacing this core`);
       void replace(PKG);
       return { ok: true };
@@ -564,17 +561,28 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     'session.plugins': (_c, p) => {
       mine(p?.id);
       const cur = currentBuilds(logFile.meta.agentPlugins ?? {}, P.dir, harness, profileNow(), params, env);
-      return { profile: prof.name, plugins: agentLoaded.map((l) => ({ name: l.name, version: l.version, build: l.build, values: l.values, current: cur[l.name] ?? null })), added: Object.keys(cur).filter((n) => !agentLoaded.some((l) => l.name === n)), pending: reloadWanted, ...(promptChanged() ? { promptChanged: true } : {}) };
+      return { profile: prof.name, plugins: agentLoaded.map((l) => ({ name: l.name, version: l.version, build: l.build, values: l.values, current: cur[l.name] ?? null })), added: Object.keys(cur).filter((n) => !agentLoaded.some((l) => l.name === n)), pending: reloadWanted };
     },
-    // 프로필의 system prompt 설정을 이 세션으로 가져온다 (ticket slcode-profile-system-prompt, 사용자 2026-11-17: 세션은 스스로 따라가지 않는다) —
-    // 세션에 옮겨 적고 core 를 다시 띄운다(같은 대화를 resume). 턴 중이면 끝난 뒤에 — core.retire 와 같은 길
-    'session.pullPrompt': (conn, p) => {
+    // 이 세션의 system prompt (ticket slcode-prompt-library) — 새 판 알림·바꾸기는 사이드바. 세션은 스스로 따라가지 않는다(사용자 2026-11-17·18)
+    'session.systemPrompt': (_c, p) => {
       mine(p?.id);
-      if (!promptChanged()) return { ok: true };
+      if (codex) throw new CoreError(ERR.badRequest, 'system prompt is for Claude sessions');
+      const cur = logFile.meta.prompt ?? null;
+      return { current: cur, latest: cur ? latestVersion(P.dir, cur.name) : null, failed: promptFailed, prompts: promptNames(P.dir).map((name) => ({ name, latest: latestVersion(P.dir, name) ?? 0 })) };
+    },
+    // 바꾸면 세션에 적고 core 를 다시 띄운다(같은 대화를 resume). 턴 중이면 끝난 뒤에 — core.retire 와 같은 길
+    'session.setSystemPrompt': (conn, p) => {
+      mine(p?.id);
+      if (codex) throw new CoreError(ERR.badRequest, 'system prompt is for Claude sessions');
+      if (p?.name !== null && typeof p?.name !== 'string') throw new CoreError(ERR.badRequest, 'name must be a prompt name or null');
+      const next = p.name === null ? undefined : promptRefOf(p.name, P.dir);
+      if (p.name !== null && !next) throw new CoreError(ERR.badRequest, `no system prompt ${p.name}`);
+      const cur = logFile.meta.prompt;
+      if (cur?.name === next?.name && cur?.version === next?.version) return { ok: true };
       if (retire || retiring) throw new CoreError(ERR.badRequest, 'this core is already being replaced');
       if (owner && !owner.follows) throw new CoreError(ERR.badRequest, 'the session owner cannot follow a core replacement (an older slcode started it)');
-      logFile.updateMeta({ systemPrompt: cleanSpec(profileNow().claude.systemPrompt) });
-      log('system prompt settings pulled from the profile — replacing this core');
+      logFile.updateMeta({ prompt: next });
+      log(`system prompt set to ${next ? `${next.name} v${next.version}` : 'the vendor default'} — replacing this core`);
       retire = { conn, pkg: PKG };
       maybeRetire();
       return { ok: true };
@@ -745,7 +753,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     return sendMail(P.sessionsDir, parentId, { from: sid, kind, body, ...(re ? { re } : {}) }).then(() => {}, (e) => log(`could not tell the leader (${kind}): ${(e as Error).message}`));
   }
   /** 리더가 지시하는 메서드 — 잠긴 동안 리더 밖의 연결은 거절, 끊은 뒤에는 리더를 거절 */
-  const LOCKED_METHODS = new Set(['session.send', 'session.interrupt', 'session.unqueue', 'session.setModel', 'session.setEffort', 'session.setVendor', 'session.setProfile', 'session.pullPrompt', 'session.setMode', 'session.rewind']);
+  const LOCKED_METHODS = new Set(['session.send', 'session.interrupt', 'session.unqueue', 'session.setModel', 'session.setEffort', 'session.setVendor', 'session.setProfile', 'session.setSystemPrompt', 'session.setMode', 'session.rewind']);
   function gate(conn: Conn, method: string) {
     if (!parentId) return;
     if (LOCKED_METHODS.has(method) && locked() && !conn.parent) throw new CoreError(ERR.locked, lockedWhy());

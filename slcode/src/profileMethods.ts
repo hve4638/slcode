@@ -2,7 +2,6 @@
 // superlite 카드는 `slcode start-call`. plugins.*·prompt.* 와 같은 길이다. 화면은 web/profiles.js. 고치는 요청은 CLI `slcode profile` 과 같은 함수를 부른다.
 import { listPlugins } from 'slcode-plugin/agentPlugins';
 import { addProfile, listProfiles, profileSummary, removeProfile, renameProfile, setProfile } from './profiles.js';
-import { cleanSpec } from './systemPrompt.js';
 import { CoreError, ERR } from './protocol.js';
 
 export const PROFILE_METHODS = ['profile.list', 'profile.add', 'profile.set', 'profile.remove', 'profile.rename'] as const;
@@ -16,7 +15,7 @@ export async function profileMethod(dir: string, method: ProfileMethod, params: 
   const p = (params ?? {}) as Record<string, unknown>;
   if (method === 'profile.list') {
     return {
-      profiles: listProfiles(dir).map((r) => ({ ...r, summary: profileSummary(r.profile), edited: !!cleanSpec(r.profile.claude.systemPrompt) })),
+      profiles: listProfiles(dir).map((r) => ({ ...r, summary: profileSummary(r.profile) })),
       // part 의 on·옵션의 value 는 플러그인 자체 설정(plugin set) — 프로필이 정하지 않으면 이 값을 따른다
       plugins: listPlugins(dir).map((x) => ({ name: x.name, version: x.version, parts: x.parts.map(({ name, on, required, default: d }) => ({ name, on, required, default: d })), options: x.options.map(({ name, type, value, default: d, label }) => ({ name, type, value, default: d, label })) })),
     };

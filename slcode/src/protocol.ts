@@ -325,9 +325,12 @@ export type Methods = {
   'session.mcpReconnect': { params: { id: string; name: string }; result: McpStatus[] };
   /** 이 세션에 실은 slcode 에이전트 플러그인 (ticket slcode-agent-plugin) — added 는 세션이 뜬 뒤 설치해 새 세션부터 실리는 것, pending 은 다시 싣기가
    *  지금 턴이 끝나기를 기다리는 중, profile 은 시작 프로필 이름(ticket slcode-session-profile). Claude·Codex 세션 */
-  'session.plugins': { params: { id: string }; result: { profile: string; plugins: AgentPluginState[]; added: string[]; pending: boolean; promptChanged?: boolean } };
-  /** 프로필의 system prompt 설정을 이 세션으로 가져온다 (ticket slcode-profile-system-prompt) — session.plugins 의 promptChanged 가 참일 때. 턴이 끝나면 core 가 다시 뜬다(core.replaced) */
-  'session.pullPrompt': { params: { id: string }; result: { ok: true } };
+  'session.plugins': { params: { id: string }; result: { profile: string; plugins: AgentPluginState[]; added: string[]; pending: boolean } };
+  /** 이 세션의 system prompt (ticket slcode-prompt-library) — current 는 쓰는 프롬프트와 판(null 은 벤더 기본), latest 는 그 프롬프트의 최신 판(지워졌으면 null),
+   *  failed 는 기동 때 적용하지 못한 사유(벤더 기본으로 떴다), prompts 는 고를 수 있는 것. Claude 세션만 — Codex 는 bad_request */
+  'session.systemPrompt': { params: { id: string }; result: { current: { name: string; version: number } | null; latest: number | null; failed: string | null; prompts: { name: string; latest: number }[] } };
+  /** 이 세션의 system prompt 를 바꾼다 — name 의 최신 판(null 은 벤더 기본). 같은 판이면 아무것도 하지 않는다. 턴이 끝나면 core 가 같은 대화로 다시 뜬다(core.replaced) */
+  'session.setSystemPrompt': { params: { id: string; name: string | null }; result: { ok: true } };
   /** 시작 프로필 — 고를 수 있는 것과 지금 것 (ticket slcode-session-profile). 첫 메시지 전에만 바꾼다 */
   'session.profiles': { params: { id: string }; result: { current: string; profiles: ProfileChoice[] } };
   /** 첫 메시지 전에 시작 프로필을 바꾼다 — session.setVendor 처럼 같은 세션 id 로 core 를 다시 띄운다 */

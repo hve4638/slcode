@@ -1,7 +1,7 @@
 // 세션 시작 프로필 (ticket slcode-session-profile, 사용자 결정 2026-10-28 — ws docs/ticket/slcode-session-profile/TICKET.md).
 // 새 세션을 띄울 때 고른다(`slcode new --profile <이름>`, 생략하면 default). 세션 meta 에는 이름만 남기고, 띄울 때마다(resume 포함) 그 프로필의 지금 값을 읽는다.
 // 프로필은 두 가지를 정한다: 실을 slcode 에이전트 플러그인과 그 설정 값(기본 설정 < 프로필 < 세션), Claude 가 사용자·프로젝트 설정을 읽을지.
-// 기본 제공 default·minimal 은 config.json 에 없고 고칠 수 없다(minimal 은 2026-11-18 에 bare 에서 이름을 바꿨다, 옛 이름은 이어 준다). 사용자 프로필은 config.json 의 profiles 에 둔다.
+// 기본 제공 default·minimal 은 config.json 에 없고 고칠 수 없다(minimal 은 2026-11-18 에 bare 에서 이름을 바꿨다, 옛 이름은 잇지 않는다 — 0.x 구판 호환 없음, 사용자 2026-11-22). 사용자 프로필은 config.json 의 profiles 에 둔다.
 // Codex 는 실을 플러그인과 그 값만 따르고 Claude 쪽 로드 설정(claude.*)에 해당하는 것은 없다 — 사용자 설정을 막을 옵션이 없고, pi 계열로 가기 전의
 // 중간 단계라 우회책을 두지 않는다 (사용자 2026-10-28).
 // 이름 바꾸기 (ticket slcode-profile-manager, 사용자 2026-11-18) — 옛 이름은 config.json 최상위 profileRenames 로 새 이름에 이어 준다. 세션 meta 는 고치지 않는다:
@@ -11,12 +11,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseAssignment } from 'slcode-plugin/agentFormat';
 import { agentPaths, locked, pluginManifest, readConfig, writeConfig, type AgentConfig, type PluginLayer } from 'slcode-plugin/agentPlugins';
-import { cleanSpec, type PromptSpec } from './systemPrompt.js';
+import { deletePrompt, latestVersion, movePrompt, promptNames } from './promptLibrary.js';
 
 /** Claude 가 읽을 것 — 끄면 그 출처의 CLAUDE.md·skill·플러그인·MCP·훅·권한이 함께 빠진다 (SDK settingSources). Md 는 CLAUDE.md 만 따로 끈다 */
 export type ClaudeLoadSpec = { user: boolean; project: boolean; userMd: boolean; projectMd: boolean; builtinSkills: boolean };
-/** systemPrompt 는 기본 프롬프트의 블록 설정 (systemPrompt.ts, ticket slcode-profile-system-prompt) — 없으면 기본 프롬프트 그대로. 편집 창이 쓴다 */
-export type ClaudeSpec = ClaudeLoadSpec & { systemPrompt?: PromptSpec };
+/** prompt 는 고른 system prompt 의 이름 (promptLibrary.ts, ticket slcode-prompt-library) — 없으면 벤더 기본(Claude Code 가 만드는 그대로, 덮어쓰지 않는다).
+ *  0.6.0 의 claude.systemPrompt 는 읽지 않는다(0.x 구판 호환 없음, 사용자 2026-11-21) */
+export type ClaudeSpec = ClaudeLoadSpec & { prompt?: string };
 /** plugins 는 플러그인별 싣기(on)와 part·옵션 값(on 이 없으면 rest 를 따른다), rest 는 plugins 에서 on 을 정하지 않은 플러그인(나중에 설치한 것 포함)을 실을지 —
  *  세션에 싣는 쪽(slcode-plugin agentPlugins.PluginLayer)이 이 꼴을 받는다 */
 export type Profile = PluginLayer & { claude: ClaudeSpec };
@@ -28,21 +29,22 @@ export const BUILTIN_PROFILES: Record<string, Profile> = {
   default: { plugins: {}, rest: true, claude: ALL },
   minimal: { plugins: {}, rest: false, claude: NONE },
 };
-/** 기본 제공의 옛 이름 — 그 이름의 세션·--profile 을 이어 준다 (사용자 2026-11-18: bare → minimal). 사용자가 같은 이름의 프로필을 만들면 그쪽이 먼저다 */
-const BUILTIN_RENAMES: Record<string, string> = { bare: 'minimal' };
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 /** profile set 의 Claude 키 — claude.<키>=on|off */
 const CLAUDE_KEYS: Record<string, keyof ClaudeLoadSpec> = { user: 'user', project: 'project', 'user-md': 'userMd', 'project-md': 'projectMd', 'builtin-skills': 'builtinSkills' };
+/** profile set 의 system prompt 키 — system-prompt=<프롬프트 이름>, --unset system-prompt 는 벤더 기본으로 */
+const PROMPT_KEY = 'system-prompt';
 
 const clone = (p: Profile): Profile => JSON.parse(JSON.stringify(p));
 /** slcode-plugin 의 AgentConfig 는 profileRenames 를 모른다 — readConfig·writeConfig 가 모르는 항목을 그대로 두어 여기서만 읽고 쓴다 */
 type Config = AgentConfig & { profileRenames?: Record<string, string> };
+const stateOf = (ap: ReturnType<typeof agentPaths>) => path.dirname(ap.dir);
 const readProfiles = (stateDir?: string): Config => readConfig(agentPaths(stateDir)) as Config;
 const userProfiles = (stateDir?: string): Record<string, Profile> => (readProfiles(stateDir).profiles ?? {}) as Record<string, Profile>;
 
 /** 옛 이름이면 이어 준 지금 이름, 아니면 그대로 */
 function resolveName(name: string, c: Config): string {
-  return BUILTIN_PROFILES[name] || c.profiles?.[name] ? name : c.profileRenames?.[name] ?? BUILTIN_RENAMES[name] ?? name;
+  return BUILTIN_PROFILES[name] || c.profiles?.[name] ? name : c.profileRenames?.[name] ?? name;
 }
 /** 이름으로 — 옛 이름이면 이어 준 프로필, 없으면 null */
 export function getProfile(name: string, stateDir?: string): Profile | null {
@@ -131,28 +133,31 @@ function dropRenames(c: Config, drop: (old: string, to: string) => boolean) {
   for (const [old, to] of Object.entries(c.profileRenames)) if (drop(old, to)) delete c.profileRenames[old];
   if (!Object.keys(c.profileRenames).length) delete c.profileRenames;
 }
-/** 프로필의 system prompt 설정을 바꾼다 — spec 이 비었으면 지운다(기본 프롬프트 그대로). 기본 제공 프로필이면 as 이름의 새 프로필을 그 값으로 만들어 거기에 */
-export async function setProfilePrompt(name: string, spec: PromptSpec | undefined, stateDir?: string, as?: string): Promise<{ name: string }> {
-  const to = BUILTIN_PROFILES[name] ? as : name;
-  if (!to) throw new Error(`${name} is a built-in profile: give a name for the new profile`);
-  editable(to);
+/** 프롬프트를 지운다 — 고른 프로필이 있으면 던진다. 옛 판도 함께 지워져, 그 판으로 돌던 세션은 다음 기동에 벤더 기본으로 뜬다 */
+export async function removePrompt(name: string, stateDir?: string): Promise<{ name: string; removed: boolean }> {
   const ap = agentPaths(stateDir);
   return locked(ap, () => {
-    const c = readConfig(ap);
-    if (to !== name && c.profiles?.[to]) throw new Error(`profile ${to} already exists`);
-    const cur = (to === name ? c.profiles?.[name] : BUILTIN_PROFILES[name]) as Profile | undefined;
-    if (!cur) throw new Error(`no profile ${name} (slcode profile list)`);
-    const p = clone(cur), clean = cleanSpec(spec);
-    if (clean) p.claude.systemPrompt = clean; else delete p.claude.systemPrompt;
-    c.profiles = { ...c.profiles, [to]: p };
-    if (to !== name) dropRenames(c as Config, (old) => old === to);
-    writeConfig(ap, c);
-    return { name: to };
+    const users = Object.entries((readConfig(ap) as Config).profiles ?? {}).filter(([, p]) => (p as Profile).claude?.prompt === name).map(([n]) => n);
+    if (users.length) throw new Error(`prompt ${name} is used by profile ${users.join(', ')}`);
+    return { name, removed: deletePrompt(stateOf(ap), name) };
+  });
+}
+/** 프롬프트 이름을 바꾸고 고른 프로필도 새 이름으로 고친다. 세션 meta 는 고치지 않는다 — 옛 이름으로 돌던 세션은 다음 기동에 벤더 기본으로 뜨고 알린다 */
+export async function renamePrompt(from: string, to: string, stateDir?: string): Promise<{ from: string; to: string }> {
+  const ap = agentPaths(stateDir);
+  return locked(ap, () => {
+    const c = readConfig(ap) as Config;
+    movePrompt(stateOf(ap), from, to);
+    let changed = false;
+    for (const p of Object.values(c.profiles ?? {})) if ((p as Profile).claude?.prompt === from) { (p as Profile).claude.prompt = to; changed = true; }
+    if (changed) writeConfig(ap, c);
+    return { from, to };
   });
 }
 /** unset 키의 값을 p 에서 지운다 (p 를 바꾼다) — `<플러그인>` 은 on, `<플러그인>.<part|옵션>` 은 그 값. 빈 칸은 걷는다. 틀린 키는 던진다 */
 function unassign(p: Profile, unset: string[], c: AgentConfig, ap: ReturnType<typeof agentPaths>): Profile {
   for (const key of unset) {
+    if (key === PROMPT_KEY) { delete p.claude.prompt; continue; }
     if (key === 'other-plugins' || key.startsWith('claude.')) throw new Error(`${key} always has a value: set it with ${key}=on|off`);
     const dot = key.indexOf('.');
     const plugin = dot < 0 ? key : key.slice(0, dot);
@@ -185,11 +190,15 @@ function assign(p: Profile, assignments: string[], c: AgentConfig, ap: ReturnTyp
     if (i <= 0) throw new Error(`expected <key>=<value>: ${a}`);
     const key = a.slice(0, i), raw = a.slice(i + 1);
     if (key === 'other-plugins') { p.rest = onOff(key, raw); continue; }
+    if (key === PROMPT_KEY) {
+      if (latestVersion(stateOf(ap), raw) === null) throw new Error(`no system prompt ${raw}${promptNames(stateOf(ap)).length ? ` (${promptNames(stateOf(ap)).join(', ')})` : ''}`);
+      p.claude.prompt = raw; continue;
+    }
     if (key.startsWith('claude.') && CLAUDE_KEYS[key.slice(7)]) { p.claude[CLAUDE_KEYS[key.slice(7)]] = onOff(key, raw); continue; }
     const dot = key.indexOf('.');
     const plugin = dot < 0 ? key : key.slice(0, dot);
     if (c.addons?.[plugin]) throw new Error(`${plugin} is an addon of ${c.addons[plugin].base} and loads with it: use ${c.addons[plugin].base}.<part>=on|off`);
-    if (!c.plugins[plugin]) throw new Error(`no agent plugin ${plugin} (slcode plugin list; claude keys: ${Object.keys(CLAUDE_KEYS).map((k) => `claude.${k}`).join(', ')})`);
+    if (!c.plugins[plugin]) throw new Error(`no agent plugin ${plugin} (slcode plugin list; claude keys: ${Object.keys(CLAUDE_KEYS).map((k) => `claude.${k}`).join(', ')}, ${PROMPT_KEY})`);
     const v = (p.plugins[plugin] ??= {});
     if (dot < 0) { v.on = onOff(key, raw); continue; }
     const r = parseAssignment(pluginManifest(ap, c, plugin), `${key.slice(dot + 1)}=${raw}`);
@@ -206,7 +215,7 @@ export function profileSummary(p: Profile): string {
   const c = p.claude;
   const src = (k: string, set: boolean, md: boolean) => (set ? (md ? k : `${k} (CLAUDE.md 끔)`) : null);
   const claude = [src('사용자 설정', c.user, c.userMd), src('프로젝트 설정', c.project, c.projectMd)].filter(Boolean);
-  return [which, claude.length ? `Claude ${claude.join(' · ')}` : 'Claude 설정 끔', c.builtinSkills ? null : '내장 skill 숨김', cleanSpec(c.systemPrompt) ? 'system prompt 고침' : null].filter(Boolean).join(' · ');
+  return [which, claude.length ? `Claude ${claude.join(' · ')}` : 'Claude 설정 끔', c.builtinSkills ? null : '내장 skill 숨김', c.prompt ? `system prompt ${c.prompt}` : null].filter(Boolean).join(' · ');
 }
 
 export type ProfileRow = { name: string; builtin: boolean; profile: Profile };

@@ -422,13 +422,20 @@ export function mountAgentFront(root, transport, opts = {}) {
   let mcp = null, mcpBusy = null; // mcp: session.mcp·mcpReconnect 결과, 없으면 ready.mcp 를 그린다. mcpBusy: 다시 연결 중인 서버 이름
   // 에이전트 플러그인 (ticket slcode-agent-plugin) — 실은 빌드와 지금 설정의 빌드가 다르면 다시 싣기를 켠다. attach·turn.end 때 묻는다 (폴링 없음)
   let plugs = null, plugBusy = false; // plugs: session.plugins 결과
-  async function loadPlugins() { if (!current) return; try { plugs = await rpc('session.plugins', { id: current }); } catch { plugs = null; } renderSide(); }
-  // 프로필의 system prompt 설정 가져오기 (ticket slcode-profile-system-prompt) — core 가 턴이 끝난 뒤 다시 뜬다(core.replaced). 그때까지 버튼은 기다린다고 보인다
+  // system prompt (ticket slcode-prompt-library) — 같이 묻는다. Codex·옛 core 는 거절하므로 칸을 보이지 않는다
+  let sysp = null; // session.systemPrompt 결과
+  async function loadPlugins() {
+    if (!current) return;
+    const id = current;
+    [plugs, sysp] = await Promise.all([rpc('session.plugins', { id }).catch(() => null), rpc('session.systemPrompt', { id }).catch(() => null)]);
+    renderSide();
+  }
+  // 이 세션의 system prompt 바꾸기 — 새 판으로 올리거나 다른 프롬프트로. core 가 턴이 끝난 뒤 다시 뜬다(core.replaced). 그때까지 기다린다고 보인다
   let promptBusy = false;
-  async function pullPrompt() {
+  async function setSystemPrompt(name) {
     if (promptBusy || !current) return;
     promptBusy = true; renderSide();
-    try { await rpc('session.pullPrompt', { id: current }); }
+    try { await rpc('session.setSystemPrompt', { id: current, name }); }
     catch (e) { promptBusy = false; push(h('div', { class: 'meta err' }, e.message)); renderSide(); }
   }
   async function reloadPlugins() {
@@ -1286,12 +1293,22 @@ export function mountAgentFront(root, transport, opts = {}) {
     // 에이전트 플러그인 — 실은 것과 지금 설정이 다르면 다시 싣기 (다음 턴 전에 적용, 지시문은 새 세션부터)
     // 시작 프로필(ticket slcode-session-profile)은 default 가 아닐 때만 맨 위 줄로 — 실은 플러그인이 없어도(minimal) 칸을 보인다. 옛 core 는 profile 이 없다
     const profile = plugs?.profile && plugs.profile !== 'default' ? plugs.profile : null;
-    // 프로필의 system prompt 설정이 이 세션의 것과 달라졌으면 알리고 가져오기 버튼을 둔다 — 세션은 스스로 따라가지 않는다 (ticket slcode-profile-system-prompt, 사용자 2026-11-17).
-    // 누르면 턴이 끝난 뒤 core 가 같은 대화로 다시 뜨고 다음 턴부터 적용된다. 대화 전체가 캐시를 한 번 새로 쓴다
-    if (plugs && (plugs.plugins.length || plugs.added.length || profile || plugs.promptChanged)) {
+    // system prompt (ticket slcode-prompt-library) — 이 세션이 쓰는 프롬프트·판, 새 판이 있으면 올리기, 다른 프롬프트로 바꾸기. 세션은 스스로 따라가지 않는다(사용자 2026-11-17).
+    // 바꾸면 턴이 끝난 뒤 core 가 같은 대화로 다시 뜨고 다음 턴부터 적용된다. 대화 전체가 캐시를 한 번 새로 쓴다
+    if (sysp) {
+      const cur = sysp.current, newer = cur && sysp.latest != null && sysp.latest > cur.version;
+      side.append(sec('sysPrompt', 'system prompt', h('div', { class: 'plugs' },
+        // 적용하지 못하고 벤더 기본으로 떴으면 그렇게 보이고 사유는 title 로
+        kv([['쓰는 것', !cur ? '벤더 기본' : sysp.failed ? h('span', { title: sysp.failed }, `벤더 기본 (${cur.name} 적용 못 함)`) : `${cur.name}${sysp.latest == null ? ' (지워짐)' : ''}`],
+          ...(newer ? [['새로 저장됨', h('button', { disabled: promptBusy ? '' : null, onclick: () => setSystemPrompt(cur.name) }, promptBusy ? '턴이 끝나면 적용합니다' : '이 세션에 적용')]] : [])]),
+        sysp.prompts.length ? h('select', { 'aria-label': '다른 프롬프트로 바꾸기', disabled: promptBusy ? '' : null, onchange: (e) => setSystemPrompt(e.target.value || null) },
+          h('option', { value: '', selected: cur ? null : '' }, '벤더 기본'),
+          ...sysp.prompts.map((x) => h('option', { value: x.name, selected: cur?.name === x.name ? '' : null }, x.name))) : null)));
+    }
+    if (plugs && (plugs.plugins.length || plugs.added.length || profile)) {
       const stale = plugs.plugins.some((p) => p.current !== p.build);
       side.append(sec('agentPlugins', '에이전트 플러그인', h('div', { class: 'plugs' },
-        kv([...(profile ? [['프로필', profile]] : []), ...(plugs.promptChanged ? [['system prompt', h('button', { disabled: promptBusy ? '' : null, title: '프로필의 system prompt 설정이 바뀌었습니다. 가져오면 턴이 끝난 뒤 세션을 다시 띄워 다음 턴부터 적용합니다. 그 턴은 지금까지의 대화가 캐시를 새로 씁니다', onclick: pullPrompt }, promptBusy ? '턴이 끝나면 적용합니다' : '바뀜 · 가져오기')]] : []), ...plugs.plugins.map((p) => [h('span', { title: p.values }, `${p.name} ${p.version}`), p.current == null ? '지워짐' : p.current === p.build ? '최신' : '설정 바뀜']),
+        kv([...(profile ? [['프로필', profile]] : []), ...plugs.plugins.map((p) => [h('span', { title: p.values }, `${p.name} ${p.version}`), p.current == null ? '지워짐' : p.current === p.build ? '최신' : '설정 바뀜']),
           ...plugs.added.map((n) => [n, '새 세션부터'])]),
         plugs.plugins.length || plugs.added.length ? h('button', { disabled: !stale || plugBusy || plugs.pending ? '' : null, title: ready?.vendor === 'codex' ? '바뀐 skill 을 이 세션에 다시 싣습니다. MCP·지시문·bin·env 는 새 세션부터 적용됩니다' : '바뀐 part·옵션을 이 세션에 다시 싣습니다. 지시문은 새 세션부터 적용됩니다', onclick: reloadPlugins },
           plugs.pending ? '턴이 끝나면 다시 싣습니다' : plugBusy ? '다시 싣는 중…' : '다시 싣기') : null)));

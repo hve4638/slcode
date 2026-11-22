@@ -28,7 +28,7 @@ export async function forkSession(sessionsDir: string, id: string, opts: { seq?:
   const n = EventLog.list(sessionsDir).filter((x) => x.parent?.kind === 'fork' && x.parent.id === m.id).length + 1;
   const log = EventLog.create(sessionsDir, {
     id: randomUUID().slice(0, 8), vendor: m.vendor, cwd: m.cwd, title: opts.title ?? `${m.title ?? m.id} (forked${n > 1 ? ` ${n}` : ''})`, vendorSessionId: vsid, createdAt: Date.now(),
-    permissionMode: m.permissionMode, raw: m.raw, model: m.model, effort: m.effort, profile: m.profile, systemPrompt: m.systemPrompt, env: m.env, params: m.params, agentPlugins: m.agentPlugins, inspect: m.inspect,
+    permissionMode: m.permissionMode, raw: m.raw, model: m.model, effort: m.effort, profile: m.profile, prompt: m.prompt, env: m.env, params: m.params, agentPlugins: m.agentPlugins, inspect: m.inspect,
     ...(claude ? {} : { forkFrom: m.vendorSessionId, forkAt: point }),
     parent: { id: m.id, kind: 'fork', seq: at.seq },
   });

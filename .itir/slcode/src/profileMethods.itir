@@ -6,5 +6,5 @@ role: 프로필 관리 화면의 요청 (ticket slcode-profile-manager, 사용�
 export val PROFILE_METHODS
 type ProfileMethod
 export fn profileMethod(dir, method, params) {
-  role: profile.list 는 프로필 행(listProfiles 에 한 줄 요약·system prompt 고침 여부)과 설치된 플러그인(이름·판·part 의 필수·플러그인 설정 값·기본값, 옵션의 꼴·값·기본값·라벨 — 화면이 "플러그인 설정을 따름" 의 값을 보인다). profile.add {name, from?}, profile.set {name, set?: ["<키>=<값>"...], unset?: ["<키>"...]}, profile.remove {name}, profile.rename {from, to} 는 profiles.ts 의 같은 이름 함수 — 오류는 badRequest 로
+  role: profile.list 는 프로필 행(listProfiles 에 한 줄 요약)과 설치된 플러그인(이름·판·part 의 필수·플러그인 설정 값·기본값, 옵션의 꼴·값·기본값·라벨 — 화면이 "플러그인 설정을 따름" 의 값을 보인다). profile.add {name, from?}, profile.set {name, set?: ["<키>=<값>"...], unset?: ["<키>"...]}, profile.remove {name}, profile.rename {from, to} 는 profiles.ts 의 같은 이름 함수 — 오류는 badRequest 로
 }

@@ -45,6 +45,9 @@ const PLAN = [
   ["Don't create planning, decision, or analysis documents", '계획·분석 문서는 요청받을 때만'],
 ];
 
+// 처음 가져올 때 꺼진 채 시작하는 블록 (ticket slcode-prompt-library) — slcode 화면과 관계없는 안내. 사용자가 편집 창에서 다시 켤 수 있다
+const OFF = new Set(['붙여 넣은 글(pasted_content) 다루기', 'Claude Code 제품 안내(CLI·데스크톱·IDE)', 'fast mode 안내']);
+
 const [configDir, ...files] = process.argv.slice(2);
 if (!configDir || !files.length) { console.error('usage: prompt-pieces.mjs <config dir> <request.json>...'); process.exit(2); }
 const norm = normalizer({ configDir, cwd: '\0', home: '\0' });
@@ -70,9 +73,9 @@ for (const f of files) {
 }
 const missing = PLAN.filter(([, note]) => ![...out.values()].some((p) => p.note === note));
 if (missing.length) console.error(`not found in the given requests: ${missing.map((p) => p[1]).join(', ')}`);
-const body = [...out.values()].map((p) => `  { head: '${p.head}', lines: ${p.lines}, hash: '${p.hash}', note: ${JSON.stringify(p.note)} },`).join('\n');
+const body = [...out.values()].map((p) => `  { head: '${p.head}', lines: ${p.lines}, hash: '${p.hash}', note: ${JSON.stringify(p.note)}${OFF.has(p.note) ? ', off: true' : ''} },`).join('\n');
 fs.writeFileSync(path.join(PKG, 'src', 'promptPieces.ts'), `// 미리 나눠 둔 블록과 설명 (ticket slcode-profile-system-prompt) — scripts/prompt-pieces.mjs 가 만든다, 손으로 고치지 않는다.
-// 받은 프롬프트에서 해시가 맞는 줄들에만 씌우는 보조다: 맞지 않으면 받은 대로 한 덩어리로 보인다. 원문은 여기에도 없다.
+// 받은 프롬프트에서 해시가 맞는 줄들에만 씌우는 보조다: 맞지 않으면 받은 대로 한 덩어리로 보인다. 원문은 여기에도 없다. off 는 처음 가져올 때 꺼진 채 시작하는 블록.
 // Claude Code 2.1.322 (sonnet·haiku·opus·fable) 기준 — 판을 올려 다시 만들면 이 줄도 고친다.
 import type { PromptPiece } from './systemPrompt.js';
 

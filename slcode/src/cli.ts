@@ -136,7 +136,7 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
   hook <claude|codex> <plugin folder> <event>
                                  export 한 플러그인의 js/ts 훅을 한 번 돌린다 (훅 입력 JSON 은 stdin, 출력은 하네스 훅 JSON) — hooks.json 이 부르는 것
 세션 시작 프로필 (new --profile 로 고른다. 바꾼 프로필은 그 프로필로 띄우는 다음 기동부터. Codex 세션은 따르지 않는다)
-  기본 제공: default (설치한 플러그인·사용자·프로젝트 설정 전부), minimal (플러그인·사용자·프로젝트 설정·Claude 내장 skill 없음, 옛 이름 bare). 고칠 수 없다
+  기본 제공: default (설치한 플러그인·사용자·프로젝트 설정 전부), minimal (플러그인·사용자·프로젝트 설정·Claude 내장 skill 없음). 고칠 수 없다
   profile add <name> [--from P] [<key>=<value> ...]
                                  새 프로필 — P(생략 시 default)의 값으로 시작하고 profile set 과 같은 값을 얹는다
   profile remove <name>          지운다 (그 프로필의 세션은 다음 기동부터 default)
@@ -149,7 +149,7 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
   profile rename <old> <new>     이름을 바꾼다 — 옛 이름(그 이름의 세션·--profile)은 새 이름으로 이어진다
   profile list [--json]
   start-page [folder] [--json]   superlite 카드의 시작 화면 html, --json 이면 그 목록 (플러그인이 쓴다)
-  start-call <method> [<json>]   superlite 카드 시작 화면의 요청 (plugins.list|check|set|export, prompt.profiles|fetch|save [--cwd F], profile.list|add|set|remove|rename, 플러그인이 쓴다)
+  start-call <method> [<json>]   superlite 카드 시작 화면의 요청 (plugins.list|check|set|export, prompt.list|create|remove|get|fetch|save [--cwd F], profile.list|add|set|remove|rename, 플러그인이 쓴다)
   discard <s>                    시작 화면에서 연 빈 세션(첫 메시지 전)을 닫고 지운다 — 카드의 '시작 화면으로' (플러그인이 쓴다, new --from-start 로 연 세션)
 공통: --dir D (SLCODE_DIR 대체), --help, --version [--json] (--json 이면 {"version","build"} — build 는 dist/cli.js 의 mtime)`;
 
@@ -617,7 +617,7 @@ function describeProfile(title: string, p: Profile): string {
     .filter(([, l]) => l.length).map(([n, l]) => `${n}: ${l.join(' ')}`);
   const c = p.claude;
   const src = (k: string, set: boolean, md: boolean) => (set ? `${k} on${md ? '' : ' (CLAUDE.md off)'}` : `${k} off`);
-  return [title, `  plugins  ${[which, ...vals].join(' · ')}`, `  claude   ${src('user', c.user, c.userMd)} · ${src('project', c.project, c.projectMd)} · builtin skills ${c.builtinSkills ? 'shown' : 'hidden'}${c.systemPrompt ? ' · system prompt edited' : ''}`].join('\n');
+  return [title, `  plugins  ${[which, ...vals].join(' · ')}`, `  claude   ${src('user', c.user, c.userMd)} · ${src('project', c.project, c.projectMd)} · builtin skills ${c.builtinSkills ? 'shown' : 'hidden'}${c.prompt ? ` · system prompt ${c.prompt}` : ''}`].join('\n');
 }
 function folderArg(a: string | undefined): string {
   const cwd = path.resolve(a ?? process.cwd());

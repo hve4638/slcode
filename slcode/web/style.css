@@ -221,18 +221,18 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf details.thinking summary .trbtn { order: 9; } /* '생각' 라벨(::after) 옆 */
 .acf details.thinking:not([open]) summary .trbtn { display: none; } /* 접힌 생각에는 보이지 않는다 (사용자 2026-11-21) */
 /* 번역 단추 (ticket slcode-thinking-translate, 사용자 2026-11-20 프로토타입 C) — 늘 반투명, 올리면 진하게. 번역문은 짝마다 원문 아래 */
-.acf button.trbtn { flex: none; display: inline-grid; place-items: center; width: 22px; height: 20px; padding: 0; margin: 0; border: 0; border-radius: 6px; background: transparent; color: var(--acf-muted); opacity: .45; cursor: pointer; transition: opacity .12s, background .12s; }
-.acf button.trbtn:hover { opacity: 1; background: var(--acf-soft); color: var(--acf-fg); }
-.acf button.trbtn.on { opacity: .9; color: var(--acf-accent); }
-.acf button.trbtn.err { color: var(--acf-err); }
-.acf button.trbtn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+:is(.acf, .spanel) button.trbtn { flex: none; display: inline-grid; place-items: center; width: 22px; height: 20px; padding: 0; margin: 0; border: 0; border-radius: 6px; background: transparent; color: var(--acf-muted); opacity: .45; cursor: pointer; transition: opacity .12s, background .12s; }
+:is(.acf, .spanel) button.trbtn:hover { opacity: 1; background: var(--acf-soft); color: var(--acf-fg); }
+:is(.acf, .spanel) button.trbtn.on { opacity: .9; color: var(--acf-accent); }
+:is(.acf, .spanel) button.trbtn.err { color: var(--acf-err); }
+:is(.acf, .spanel) button.trbtn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 /* 번역 중 (사용자 2026-11-21 프로토타입 f4) — 단추 둘레를 위쪽 가운데에서 출발한 빛이 가속·감속하며 한 바퀴 돈다. 날카로운 머리(--acf-tr-a, 세기·꼬리가
    바퀴 가운데서 가장 크다)와 그보다 0.08초 늦게 따라 도는 흐린 잔상 층(::after, --acf-tr-b). 43.2deg 는 머리 자리(88%)를 위쪽 가운데로 옮기는 값 */
 @property --acf-tr-a { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
 @property --acf-tr-b { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
 @property --acf-tr-t { syntax: '<percentage>'; inherits: false; initial-value: 3%; }
 @property --acf-tr-l { syntax: '<number>'; inherits: false; initial-value: 0; }
-.acf button.trbtn.busy { position: relative; opacity: 1; cursor: default; color: var(--acf-fg); border: 1.5px solid transparent;
+:is(.acf, .spanel) button.trbtn.busy { position: relative; opacity: 1; cursor: default; color: var(--acf-fg); border: 1.5px solid transparent;
   background: linear-gradient(var(--acf-bg), var(--acf-bg)) padding-box,
     conic-gradient(from calc(var(--acf-tr-a) + 43.2deg), transparent 0 calc(88% - var(--acf-tr-t)),
       color-mix(in srgb, var(--acf-accent) calc(var(--acf-tr-l) * 12%), transparent) calc(88% - var(--acf-tr-t) * .6),
@@ -240,16 +240,16 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
       color-mix(in srgb, var(--acf-accent) calc(var(--acf-tr-l) * 100%), transparent) 88%, transparent 89.5%) border-box;
   filter: drop-shadow(0 0 2.5px color-mix(in srgb, var(--acf-accent) calc(var(--acf-tr-l) * 55%), transparent));
   animation: acf-tr-rot 1.4s cubic-bezier(.7,0,.3,1) infinite, acf-tr-pulse 1.4s ease-in-out infinite; }
-.acf button.trbtn.busy::after { content: ""; position: absolute; inset: -1.5px; border-radius: inherit; padding: 1.5px; pointer-events: none; filter: blur(1.6px);
+:is(.acf, .spanel) button.trbtn.busy::after { content: ""; position: absolute; inset: -1.5px; border-radius: inherit; padding: 1.5px; pointer-events: none; filter: blur(1.6px);
   background: conic-gradient(from calc(var(--acf-tr-b) + 43.2deg), transparent 0 54.56%, color-mix(in srgb, var(--acf-accent) 25%, transparent) 76.6%, color-mix(in srgb, var(--acf-accent) 60%, transparent) 88%, transparent 90%);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude;
   animation: acf-tr-rot-b 1.4s cubic-bezier(.6,0,.4,1) infinite -1.32s; }
 @keyframes acf-tr-rot { to { --acf-tr-a: 360deg; } }
 @keyframes acf-tr-rot-b { to { --acf-tr-b: 360deg; } }
 @keyframes acf-tr-pulse { 0%, 100% { --acf-tr-l: 0; --acf-tr-t: 3%; } 50% { --acf-tr-l: 1; --acf-tr-t: 30%; } }
-.acf .trpair + .trpair { margin-top: .8em; }
-.acf .trpair .tl { color: var(--acf-fg); opacity: .9; margin-top: 2px; }
-.acf .trerr { color: var(--acf-err); margin-top: 6px; }
+:is(.acf, .spanel) .trpair + .trpair { margin-top: .8em; }
+:is(.acf, .spanel) .trpair .tl { color: var(--acf-fg); opacity: .9; margin-top: 2px; }
+:is(.acf, .spanel) .trerr { color: var(--acf-err); margin-top: 6px; }
 .acf dialog.settings textarea.guide { display: block; width: 100%; min-height: 9em; margin-top: 6px; resize: none; font: 12px/1.5 var(--acf-mono); color: var(--acf-fg); background: var(--acf-panel); border: 1px solid var(--acf-line); border-radius: 8px; padding: 8px 10px; }
 
 /* 도구 블록 — 한 줄 요약, 펼치면 입력·결과 */
@@ -660,6 +660,7 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .side .kv .k { color: var(--acf-muted); }
 .acf .side .kv .v { font-family: var(--acf-mono); font-size: 12px; overflow-wrap: anywhere; }
 .acf .side .plugs button { margin-top: 8px; }
+.acf .side .plugs select { display: block; width: 100%; margin-top: 8px; height: 26px; padding: 0 4px; border: 1px solid var(--acf-line); border-radius: 6px; background: var(--acf-bg); color: inherit; font: inherit; font-size: 12px; }
 /* 세션 id 의 복사 버튼은 id 에 올렸을 때만 (사용자 2026-10-09) */
 .acf .side .kv .idv { display: inline-flex; align-items: center; gap: 4px; }
 .acf .side .kv .idv button.ico { width: 20px; height: 20px; flex: none; padding: 0; border: 0; background: transparent; color: var(--acf-muted); border-radius: 6px; display: grid; place-items: center; opacity: 0; }
@@ -1015,7 +1016,7 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 /* system prompt 편집 창 (web/prompt.js, ticket slcode-profile-system-prompt) — 시작 화면 안. 테두리 없는 평평한 목록(사용자 2026-11-17: 카드 꼴은 간격이 어긋나고 장식이 많았다).
    블록 한 줄은 [설명 … 상태 글자 · 동작 · 크기 · 스위치], 그 아래가 그 자리에서 고치는 글. 왼쪽 선은 .body 의 12px 하나, 세로 간격은 4px 배수:
    블록 padding 4 + 사이 띠(.ins) 16 = 블록 사이 24, 절 제목 위도 띠를 넣어 24. 구분선은 띠 가운데 한 번만 긋고 절 제목 앞뒤(.ins.bare)에는 없다.
-   색은 무채색 — accent 는 고치는 중인 글과 나눌 줄에만 쓴다. 머리(프로필·가져오기)와 발(저장)은 스크롤해도 붙어 있다 */
+   색은 무채색 — accent 는 고치는 중인 글과 나눌 줄에만 쓴다. 머리(설명)와 발(저장)은 스크롤해도 붙어 있다 */
 .spanel { font: 14px/20px var(--acf-sans); color: var(--acf-fg); }
 .spanel * { box-sizing: border-box; }
 .spanel button, .spanel select, .spanel input { font: inherit; color: inherit; background: var(--acf-panel); border: 1px solid var(--acf-line); border-radius: 6px; padding: 3px 10px; }
@@ -1027,10 +1028,16 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .spanel .head, .spanel .foot { position: sticky; z-index: 3; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px; background: var(--acf-bg); }
 .spanel .head { top: 0; border-bottom: 1px solid var(--acf-line); }
 .spanel .foot { bottom: 0; border-top: 1px solid var(--acf-line); }
+.spanel .head input.desc { flex: 1; min-width: 120px; border-color: transparent; background: transparent; color: var(--acf-muted); padding: 3px 6px; }
+.spanel .head input.desc:hover { border-color: var(--acf-line); }
+.spanel .head input.desc:focus { border-color: var(--acf-line); color: var(--acf-fg); outline: none; }
 .spanel .sum, .spanel .sz { color: var(--acf-muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .spanel .err { color: var(--acf-err); } .spanel .ok { color: var(--acf-ok); }
 .spanel .body { padding: 12px 12px 24px; }
 .spanel .empty { padding: 64px 16px; text-align: center; color: var(--acf-muted); }
+.spanel .empty.start { display: flex; justify-content: center; gap: 8px; }
+.spanel .empty.start p { margin: 0; }
+.spanel .empty.start button { padding: 6px 16px; }
 .spanel .hd { margin: 8px 0; font-weight: 600; }
 .spanel .blk { padding: 4px 0; }
 .spanel .bar { display: flex; gap: 8px; align-items: center; min-height: 28px; font-size: 12px; color: var(--acf-muted); }
@@ -1047,6 +1054,11 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .spanel .act[aria-pressed=true] { color: var(--acf-accent); }
 @media (hover: none) { .spanel .act { opacity: 1; } }
 .spanel .txt, .spanel textarea { font: 12.5px/20px var(--acf-mono, ui-monospace, monospace); white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 4px; }
+/* 블록 번역 (ticket slcode-prompt-block-translate, 사용자 2026-11-21) — 단추는 대화의 번역(.trbtn)과 같은 꼴. 번역은 글 칸 아래 따로 둔 회색 칸,
+   원문을 고치면 단추가 노랑(drift) */
+.spanel .trv { margin-top: 8px; padding: 8px 12px; border: 1px solid var(--acf-line); border-radius: 6px; background: var(--acf-soft); font: 13px/20px var(--acf-sans); white-space: pre-wrap; overflow-wrap: anywhere; }
+.spanel .trv .tl { margin: 0; color: var(--acf-muted); opacity: 1; }
+.spanel button.trbtn.drift { opacity: 1; color: light-dark(#c49a00, #f2c230); }
 .spanel .blk.ro .txt { color: var(--acf-muted); max-height: 180px; overflow: auto; }
 .spanel textarea { display: block; width: 100%; padding: 0; border: 0; border-radius: 2px; background: transparent; color: var(--acf-fg); resize: none; overflow: hidden; outline: none; }
 .spanel textarea:hover { background: var(--acf-soft); box-shadow: 0 0 0 4px var(--acf-soft); }
@@ -1065,6 +1077,11 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .spanel .ins:hover::before, .spanel .ins:focus-within::before { border-top-color: var(--acf-muted); }
 .spanel .ins button { position: absolute; left: 50%; top: 50%; z-index: 2; transform: translate(-50%, -50%); padding: 0 10px; font-size: 12px; opacity: 0; }
 .spanel .ins:hover button, .spanel .ins button:focus { opacity: 1; }
+/* 마지막 블록 아래의 추가 — 늘 보인다 (사용자 2026-11-21) */
+.spanel .ins.end { height: auto; margin-top: 12px; display: flex; justify-content: center; }
+.spanel .ins.end::before { display: none; }
+.spanel .ins.end button { position: static; transform: none; padding: 3px 12px; opacity: 1; color: var(--acf-muted); }
+.spanel .ins.end button:hover { color: var(--acf-fg); }
 /* 스위치 — 누르는 자리 32×28, 보이는 길 28×16. 켜짐은 글자색, 꺼짐은 선색 */
 .spanel .sw { flex: none; position: relative; width: 32px; height: 28px; padding: 0; border: 0; background: transparent; }
 .spanel .sw:hover:not(:disabled) { background: transparent; }
@@ -1073,6 +1090,35 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .spanel .sw.on::before { background: var(--acf-fg); }
 .spanel .sw.on::after { left: 18px; background: var(--acf-bg); }
 .spanel .sw.none { visibility: hidden; }
+/* 편집 창 왼쪽의 프롬프트 목록 (사용자 2026-11-20) — 꼴은 프로필 화면의 목록(.prpanel .plist)과 같다 */
+.spanel { display: grid; grid-template-columns: 200px minmax(0, 1fr); }
+.spanel .side { position: sticky; top: 0; align-self: start; display: flex; flex-direction: column; gap: 2px; max-height: 100dvh; overflow-y: auto; padding: 12px 8px 12px 0; }
+.spanel .main { min-width: 0; min-height: 60vh; border-left: 1px solid var(--acf-line); }
+.spanel .prow { position: relative; }
+.spanel .pitem { display: flex; flex-direction: column; width: 100%; padding: 6px 34px 6px 10px; border: 0; border-radius: 6px; background: none; text-align: left; }
+.spanel .pitem:hover, .spanel .prow[aria-current=true] .pitem { background: var(--acf-soft); }
+.spanel .pitem .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spanel .prow[aria-current=true] .nm { font-weight: 600; }
+/* 항목의 ⋯ — 올렸거나 고른 항목에서만 보인다. 누르면 이름 바꾸기·복제·지우기 (사용자 2026-11-21) */
+.spanel .prow > .more { position: absolute; top: 50%; right: 4px; margin: 0; transform: translateY(-50%); display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--acf-muted); opacity: 0; }
+.spanel .prow > .more svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; }
+.spanel .prow:hover > .more, .spanel .prow[aria-current=true] > .more, .spanel .prow > .more:focus-visible, .spanel .prow > .more.open { opacity: 1; }
+.spanel .prow > .more:hover { background: var(--acf-line); color: var(--acf-fg); }
+.spanel .pmenu { position: fixed; z-index: 20; transform: translateX(-100%); display: flex; flex-direction: column; min-width: 120px; padding: 4px; border: 1px solid var(--acf-line); border-radius: 8px; background: var(--acf-panel); box-shadow: 0 6px 18px var(--acf-shadow); }
+.spanel .pmenu button { display: flex; align-items: center; gap: 8px; padding: 5px 10px; border: 0; border-radius: 6px; background: none; text-align: left; white-space: nowrap; }
+.spanel .pmenu button svg { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; opacity: .8; }
+.spanel .pmenu button.danger { color: var(--acf-err); }
+.spanel .pmenu button:hover:not(:disabled) { background: var(--acf-soft); }
+.spanel .pmenu button:disabled { opacity: .45; cursor: default; }
+.spanel .pitem .sub { font-size: 11px; line-height: 16px; color: var(--acf-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spanel .side .add { margin-top: 8px; padding: 6px 10px; border: 0; background: none; color: var(--acf-muted); text-align: left; font-size: 13px; }
+.spanel .side .add:hover:not(:disabled) { background: var(--acf-soft); color: var(--acf-fg); }
+.spanel button.danger { color: var(--acf-err); }
+@media (max-width: 640px) {
+  .spanel { grid-template-columns: minmax(0, 1fr); }
+  .spanel .side { position: static; flex-direction: row; flex-wrap: wrap; max-height: none; padding: 8px 0; border-bottom: 1px solid var(--acf-line); }
+  .spanel .main { border-left: 0; }
+}
 
 /* 프로필 관리 (web/profiles.js, ticket slcode-profile-manager) — 왼쪽 프로필 목록, 오른쪽 위 탭. 줄·스위치는 system prompt 편집 창(.spanel)과 같은 꼴:
    이름 + 회색 설명 한 줄, 무채색 스위치는 줄 맨 오른쪽, 묶음 사이 얇은 줄, 절 위 24px, 모서리 6px, 채운 단추는 하나(기본 제공의 "복제해서 고치기") */
@@ -1130,6 +1176,8 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .prpanel .btn.danger { color: var(--acf-err); }
 .prpanel input.val { width: 180px; height: 26px; padding: 0 8px; border: 1px solid var(--acf-line); border-radius: 6px; background: var(--acf-bg); color: inherit; font: inherit; font-size: 13px; }
 .prpanel input.val:disabled { opacity: .5; }
+.prpanel select.val { width: 180px; height: 26px; padding: 0 4px; border: 1px solid var(--acf-line); border-radius: 6px; background: var(--acf-bg); color: inherit; font: inherit; font-size: 13px; }
+.prpanel select.val:disabled { opacity: .5; }
 .prpanel .sw { flex: none; position: relative; width: 32px; height: 28px; padding: 0; border: 0; background: transparent; }
 .prpanel .sw::before { content: ''; position: absolute; left: 4px; top: 6px; width: 28px; height: 16px; border-radius: 8px; background: var(--acf-line); }
 .prpanel .sw::after { content: ''; position: absolute; left: 6px; top: 8px; width: 12px; height: 12px; border-radius: 50%; background: var(--acf-muted); transition: left .1s; }
@@ -1155,14 +1203,20 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .prpanel .pd h4 { margin: 16px 0 0; font-size: 12px; font-weight: 600; color: var(--acf-muted); }
 .prpanel .pd .row.sub { padding: 6px 0; min-height: 40px; }
 /* 대화상자 — .ppanel dialog.pconfirm 과 같은 꼴 */
-.prpanel dialog { width: min(400px, calc(100vw - 32px)); padding: 16px 18px; border: 1px solid var(--acf-line); border-radius: 8px; background: var(--acf-bg); color: var(--acf-fg); font: 14px/20px var(--acf-sans); }
-.prpanel dialog::backdrop { background: rgba(0,0,0,.4); }
-.prpanel dialog h4 { margin: 0 0 14px; font-size: 14px; font-weight: 600; }
-.prpanel dialog label { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; font-size: 12px; color: var(--acf-muted); }
-.prpanel dialog input, .prpanel dialog select { height: 28px; padding: 0 8px; border: 1px solid var(--acf-line); border-radius: 6px; background: var(--acf-bg); color: var(--acf-fg); font: inherit; }
-.prpanel dialog p { margin: 0 0 14px; font-size: 12px; color: var(--acf-muted); }
-.prpanel dialog .err { margin: 0; text-align: left; white-space: normal; min-height: 18px; font-size: 12px; color: var(--acf-err); }
-.prpanel dialog .acts { display: flex; justify-content: flex-end; gap: 6px; margin-top: 4px; }
+.prpanel dialog, .spanel dialog { width: min(400px, calc(100vw - 32px)); padding: 16px 18px; border: 1px solid var(--acf-line); border-radius: 8px; background: var(--acf-bg); color: var(--acf-fg); font: 14px/20px var(--acf-sans); }
+.prpanel dialog::backdrop, .spanel dialog::backdrop { background: rgba(0,0,0,.4); }
+.prpanel dialog h4, .spanel dialog h4 { margin: 0 0 14px; font-size: 14px; font-weight: 600; }
+.prpanel dialog label, .spanel dialog label { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; font-size: 12px; color: var(--acf-muted); }
+.prpanel dialog input, .prpanel dialog select, .spanel dialog input, .spanel dialog select { height: 28px; padding: 0 8px; border: 1px solid var(--acf-line); border-radius: 6px; background: var(--acf-bg); color: var(--acf-fg); font: inherit; }
+.prpanel dialog p, .spanel dialog p { margin: 0 0 14px; font-size: 12px; color: var(--acf-muted); }
+.prpanel dialog .err, .spanel dialog .err { margin: 0; text-align: left; white-space: normal; min-height: 18px; font-size: 12px; color: var(--acf-err); }
+.spanel dialog label.chk { flex-direction: row; align-items: center; gap: 8px; font-size: 13px; color: var(--acf-fg); cursor: pointer; }
+.spanel dialog label.chk input { width: 16px; height: 16px; margin: 0; padding: 0; }
+.prpanel dialog .acts, .spanel dialog .acts { display: flex; justify-content: flex-end; gap: 6px; margin-top: 4px; }
+/* 시작 화면의 포커스 (사용자 2026-11-22) — 브라우저 기본의 굵은 테두리 대신. 입력·선택 칸은 테두리를 accent 로, 단추·체크박스는 키보드로 옮겼을 때만 얇은 accent 선.
+   :where 로 낮춰 두어 칸마다 따로 정한 포커스(설명 칸·스위치 등)가 먼저다 */
+:where(#start) :is(input:not([type=checkbox]), select):focus { outline: none; border-color: var(--acf-accent); }
+:where(#start) :is(button, input[type=checkbox]):focus-visible { outline: 1px solid var(--acf-accent); outline-offset: 1px; }
 @container (max-width: 760px) {
   .prpanel .prbody { grid-template-columns: minmax(0, 1fr); }
   .prpanel .plist { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--acf-line); padding: 8px 0; }
