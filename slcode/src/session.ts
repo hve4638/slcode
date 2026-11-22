@@ -443,6 +443,9 @@ export class ClaudeSession extends AgentSession {
       case 'system': {
         const s: any = m;
         if (s.subtype === 'init') {
+          // init 은 턴마다 맨 앞에 온다. idle 에서 오면 send() 를 거치지 않은 턴이다 — background task 가 끝나 CLI 가 스스로 연 턴(task_notification 뒤).
+          // 아래 session_state_changed 는 SDK 가 CLAUDE_CODE_SDK_READS_SESSION_STATE 로 받아 자기만 읽고 넘기지 않아 이 턴의 running 을 알 길이 이것뿐이다 (SDK 0.3.322 실측, ticket slcode-background-task-rerun-state)
+          if (this.state === 'idle') this.emit({ kind: 'session.state', state: 'running' });
           this.model = this.log.meta.model ?? s.model ?? null;
           this.effort = this.log.meta.effort ?? s.effort ?? null;
           this.emit({
