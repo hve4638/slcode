@@ -7,7 +7,8 @@
 // serve 와 말하고 이 카드가 stdio 로 중계한다 (ticket slcode-card-svc-token-dead). card.js 가 없는 옛 serve 는 전처럼 안쪽 iframe 에, web.files 가 없으면 /svc 주소(conn.webUrl)로.
 // (3) 상태 — 같은 stdio 통로로 session.attach 를 걸어 배지에 반영한다. 선구독 services.onMessage 를 기동 전에 걸어 첫 줄을
 // 놓치지 않는다. ctx 의 services 는 카드 세션에 묶여 배경 세션이어도 자기 데몬과 주고받는다.
-// 승인 요청은 배지로만 — 알림은 띄우지 않는다 (사용자 2026-10-24, 그 카드에만 보이고 결정한 뒤에도 남았다).
+// 알림은 superlite 의 ctx.notify (ticket slcode-agent-state-notify·slcode-notify-presets) — 턴 끝남·질문·권한 확인은 상자에 한 줄, 세션이 살아 있는
+// 동안은 카드 동그라미에 idle·running. 보고 있으면 상자에 올리지 않고 카드를 보면 비활성으로 만드는 것은 superlite 가 한다.
 // 화면 상태(사이드바 열림·inspect 남은 공간)는 sandbox 라 localStorage 가 없어 storage 'ui' 에 — 세션 머신에 저장되어 그 머신의
 // 카드·브라우저가 같은 값을 본다 (사용자 2026-10-21).
 
@@ -17,6 +18,7 @@ const DEFAULT_NAME = 'SLCode'; // 이름 없는 세션의 카드 제목 (slcode 
 const PICK_NAME = 'Resume'; // 고르기 전 resume 카드의 제목
 const START_NAME = 'Start'; // 시작 화면 카드의 제목
 const FAR = Number.MAX_SAFE_INTEGER; // attach since — 이력은 화면이 그린다, 여기선 pending 만
+const ALIVE_MS = 60_000, ALIVE_SECS = 180; // 동그라미(idle·running) 다시 보내기 주기와 그 알림의 duration — 이 화면이 죽으면 duration 뒤 비활성
 // 이 화면의 표 — 카드 서비스의 stdio 는 같은 폴더를 연 모든 superlite 창에 방송된다. 요청 id 앞에 붙여 다른 창의 응답을 가려낸다
 const WIN = Math.random().toString(36).slice(2, 8);
 const newKey = () => 's' + Math.random().toString(36).slice(2, 8);
@@ -75,7 +77,7 @@ export function mount(el, ctx) {
     takeover: !!st.takeover, from: st.from ?? null, // 핸드오프의 새 카드 — 소유권을 가져오고, 붙으면 옛 카드(from)를 옮긴다
     moved: !!st.moved, // 핸드오프로 옮겨진 카드 — 다시 붙지 않는다
     seen: !!st.seen, // 사이드바가 눌러 연 새 카드 — 붙으면 "봤다" 신호를 한 번 (ticket slcode-sidebar-orca)
-    title: null, state: null, conn: null, unsub: null, attached: false, hello: false, lost: false, closing: false,
+    title: null, state: null, dot: null, conn: null, unsub: null, attached: false, hello: false, lost: false, closing: false,
     web: null, url: null, frame: null, shown: null, port: null, fwd: new Map(), portSeq: 0,
     nextId: 1, pending: new Map(), waits: new Map(), starting: null, note: null, error: null,
     fatal: null, early: 0, // 이 시도에서 slcode 가 낸 {fatal}, 살아 있는 것을 보지 못한 채 연달아 끝난 횟수
@@ -134,15 +136,34 @@ export function mount(el, ctx) {
     if (event === 'session.closed') { c.state = 'exited'; c.waits.clear(); badge(); countLive(); return; }
     if (event !== 'session.event') return;
     const ev = p.ev;
-    if (ev.kind === 'approval.requested') { c.waits.set(ev.requestId, ev); badge(); }
-    else if (ev.kind === 'approval.resolved') { c.waits.delete(ev.requestId); badge(); }
-    else if (ev.kind === 'session.state') { c.state = ev.state; badge(); }
+    if (ev.kind === 'approval.requested') { c.waits.set(ev.requestId, ev); badge(); void ctx.notify(ev.name === 'AskUserQuestion' ? ev.input?.questions?.[0]?.question || 'Question' : `Permission: ${ev.name}`, { color: 'yellow', id: `ask:${ev.requestId}` }); }
+    else if (ev.kind === 'approval.resolved') { c.waits.delete(ev.requestId); badge(); void ctx.notify.clear(`ask:${ev.requestId}`); }
+    else if (ev.kind === 'session.state') { c.state = ev.state; badge(); if (ev.state === 'running') void ctx.notify.clear('done'); }
+    else if (ev.kind === 'turn.end' && ev.ok && !ev.interrupted) void ctx.notify('Finished', { color: 'green', id: 'done' });
   }
+  // 상자의 줄 (사용자 2026-11-21) — 터미널 claude·codex 와 같게 턴 끝남은 green, 질문·권한 확인은 yellow. 오류·중단으로 끝난 턴은 올리지 않는다.
+  // 끝남은 카드마다 한 줄(id done)이고 다시 돌기 시작하면 비활성이 된다, 질문은 요청마다 한 줄이고 다른 곳에서 답해도 비활성이 된다. attach 는 since FAR 라 카드를
+  // 다시 읽어도 옛 일이 다시 오르지 않는다. 기록은 창마다라 같은 카드를 여러 창에 띄우면 창마다 한 줄이다
+
+  /** 동그라미 (ticket slcode-notify-presets) — 세션이 살아 있으면 idle(회색), 도는 동안 running(파랑, 끝남·질문이 오면 yield 로 물러난다).
+   *  둘 다 keep·silent 라 상자에 오르지 않고 카드를 봐도 남는다. ALIVE_MS 마다 같은 id 로 다시 보내(again) 이 화면이 죽으면 duration 뒤 비활성.
+   *  세션이 닫히거나 카드가 옮겨지면 이 카드의 알림을 모두 비활성으로 */
+  function dot(again = false) {
+    const k = c.moved || c.state === null || c.state === 'exited' ? null : c.state === 'running' ? 'running' : 'idle';
+    if (k === c.dot && !(again && k)) return;
+    c.dot = k;
+    if (!k) { void ctx.notify.clear(); return; }
+    void ctx.notify('Idle', { preset: 'idle', id: 'idle', duration: ALIVE_SECS });
+    if (k === 'running') void ctx.notify('Running', { preset: 'running', id: 'running', duration: ALIVE_SECS });
+    else void ctx.notify.clear('running');
+  }
+  const alive = setInterval(() => dot(true), ALIVE_MS);
 
   // ---- 카드 표면
   function badge() {
     const n = c.waits.size;
     void ctx.setBadge(c.moved ? null : n ? (n > 1 ? `!${n}` : '!') : c.state === 'running' ? '…' : c.state === 'exited' ? 'off' : null);
+    dot();
   }
   function applyTitle() { void ctx.setTitle(c.title || (c.pick && !c.id ? PICK_NAME : c.start ? START_NAME : DEFAULT_NAME)); } // 카드 제목 = 세션 이름, 없으면 SLCode
   /** 무엇을 띄우는가 — 카드 모드 화면(web.files, 주소 없음)이면 'port', 아니면 /svc 주소 */
@@ -382,7 +403,7 @@ export function mount(el, ctx) {
   function startFailed(reason) {
     c.state = 'exited'; c.note = null; c.error = reason; badge(); render();
     if (c.spawn) void host('failed', c.key, c.error).catch(() => {});
-    void ctx.notify('error', `slcode: ${c.error}`);
+    void ctx.notify(`slcode: ${c.error}`, { color: 'red' });
   }
   /** 서비스가 응답 전에 끝난 사유 — slcode 가 낸 {fatal}. 없으면(실행조차 못 했거나 옛 slcode) 같은 slcode 를 --version 으로 돌려 본 stderr */
   async function exitReason(otherwise) {
@@ -493,8 +514,8 @@ export function mount(el, ctx) {
         if (m.key === c.key && c.state === 'exited' && !c.conn && !c.starting && c.id) { c.state = null; c.error = null; badge(); render(); void ensure(); }
         return;
       case 'close': // 팔레트 "slcode: Close session (active card)"
-        if (!c.id) { void ctx.notify('info', 'slcode: 열린 세션 카드가 없습니다'); return; }
-        request('session.close', { id: c.id }).catch((e) => ctx.notify('error', `slcode: ${e.message}`));
+        if (!c.id) { void ctx.notify('slcode: 열린 세션 카드가 없습니다'); return; }
+        request('session.close', { id: c.id }).catch((e) => ctx.notify(`slcode: ${e.message}`, { color: 'red' }));
         return;
       case 'closing': if (m.id === c.id) c.closing = !!m.on; return;
       case 'closed': if (m.id === c.id) { c.state = 'exited'; c.url = null; c.web = null; c.waits.clear(); badge(); render(); } return;
@@ -530,7 +551,7 @@ export function mount(el, ctx) {
     }
     const verb = VERB[d?.type];
     if (!verb || typeof d.target !== 'string') return;
-    ctx.verbs.run(verb, [d.target]).catch((err) => ctx.notify('error', `slcode: ${err?.message ?? err}`));
+    ctx.verbs.run(verb, [d.target]).catch((err) => ctx.notify(`slcode: ${err?.message ?? err}`, { color: 'red' }));
   }
   const onFrame = (e) => { // 옛 serve·옛 slcode 의 안쪽 iframe
     if (!c.frame || e.source !== c.frame.contentWindow) return;
@@ -540,7 +561,7 @@ export function mount(el, ctx) {
     dispatch(d, (o) => e.source.postMessage(o, '*'));
   };
   window.addEventListener('message', onFrame);
-  cleanup = () => { window.removeEventListener('message', onFrame); unshared?.(); c.io?.disconnect(); detach(); };
+  cleanup = () => { window.removeEventListener('message', onFrame); unshared?.(); c.io?.disconnect(); clearInterval(alive); detach(); };
 
   render(); applyTitle(); badge();
   if (!c.pick && !c.moved && !c.start) void ensure();

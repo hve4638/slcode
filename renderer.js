@@ -16,7 +16,7 @@ const START_NAME = 'Start'; // 시작 화면 카드의 제목 (views/session.js 
 export function activate(api) {
   const newKey = () => 's' + Math.random().toString(36).slice(2, 8);
   const host = (method, ...args) => api.main.call('host', method, ...args);
-  const fail = (e) => void api.notify('error', `slcode: ${e?.message ?? e}`);
+  const fail = (e) => void api.notify(`slcode: ${e?.message ?? e}`, { color: 'red' });
   /** 카드 key → 이 창의 탭 id — 카드 화면이 mount 때 알린다. 다른 플러그인의 close 가 그 카드에 닫기 요청을 거는 데 쓴다 */
   const tabs = new Map();
   /** 세션 id → 그 세션을 띄운 카드의 key (카드 화면이 storage 'owners' 에 남긴다) — 같은 세션을 다시 열면 그 카드를 활성화 */
@@ -140,7 +140,7 @@ export function activate(api) {
   api.commands.register({
     id: 'close', title: 'slcode: Close session (active card)', run: async () => {
       const a = await api.views.active();
-      if (!a || a.viewId !== VIEW) { void api.notify('info', 'slcode: 열린 세션 카드가 없습니다'); return; }
+      if (!a || a.viewId !== VIEW) { void api.notify('slcode: 열린 세션 카드가 없습니다'); return; }
       void api.views.post({ type: 'close' }, a.tabId);
     },
   });

@@ -92,7 +92,7 @@ function fakeApi(files: Record<string, string>, opts: { settings?: Record<string
     proc: { run: async (cmd: string) => { calls.push(`proc ${cmd}`); return { code: 0, stdout: '[]', stderr: '', ...opts.run?.(cmd), truncated: false }; } },
     verbs: { handle: (name: string, run: unknown) => { verbs[name] = run; } },
     expose: (name: string, impl: unknown) => { exposed[name] = impl; return () => {}; },
-    notify: (sev: string, msg: string) => calls.push(`notify ${sev} ${msg}`),
+    notify: async (msg: string, o?: { color?: string; tmux?: string }) => { calls.push(`notify ${o?.color ?? '-'} ${o?.tmux ?? '-'} ${msg}`); },
     window: {
       main: async (u?: { tmux?: string }) => { calls.push(`window ${u?.tmux ?? '-'}`); return u?.tmux && !opts.tmuxWin ? null : win(u?.tmux ? `w${u.tmux}` : 'wmain'); },
       all: async () => Object.keys(opts.windows ?? {}).map(win),
@@ -228,7 +228,7 @@ test('slcode.team 동사: CLI 가 거절하면 그 사유로 throw 하고 카드
     assert.equal(await verbs['slcode.team']({ leader: 'L1' }, { cwd: '/w', tmux: '$3' }), 'ab12cd34');
   });
   assert.ok(!calls.some((c) => c.includes('cards.open')));
-  assert.ok(calls.some((c) => c.startsWith('notify warning 팀원 ab12cd34 의 카드를 열지 못했습니다')));
+  assert.ok(calls.some((c) => c.startsWith('notify orange $3 팀원 ab12cd34 의 카드를 열지 못했습니다')));
 });
 
 test('slcode.new 동사: 요청자 창에 key·폴더·옵션으로 카드를 열고, 카드 화면이 started 로 알린 세션 id 를 돌려준다 (두 번째 started 는 무시)', async () => {
@@ -334,7 +334,7 @@ function rendererWith(proc: { code: number | null; stdout: string; stderr: strin
   let onMsg: (m: unknown, from: unknown) => void = () => {};
   const noop = () => {};
   const api = {
-    main: { call: async () => [] }, notify: (_: string, m: string) => { notes.push(m); }, storage: { get: async () => ({}) }, expose: noop,
+    main: { call: async () => [] }, notify: (m: string) => { notes.push(m); }, storage: { get: async () => ({}) }, expose: noop,
     sidebar: { register: noop, setBadge: noop }, events: { on: noop }, commands: { register: (c: { id: string; run: () => void }) => { commands[c.id] = c.run; } },
     platform: async () => ({ os, arch: 'x86_64' }), proc: { run: async (cmd: string) => { ran.push(cmd); return { ...proc, truncated: false }; } },
     views: { open: async (...a: unknown[]) => { opens.push(a); }, post: noop, onMessage: (cb: typeof onMsg) => { onMsg = cb; }, active: () => null },
@@ -386,7 +386,7 @@ function fakeEl(tag = 'div'): any {
 }
 const textOf = (el: any): string => [el.textContent, ...el.children.map(textOf)].join(' ');
 async function mountCard(state: unknown, hostImpl: (method: string, ...a: unknown[]) => unknown = async () => 'cmd') {
-  const opens: any[] = [], notes: string[] = [], failed: unknown[][] = [];
+  const opens: any[] = [], notes: string[] = [], failed: unknown[][] = [], sent: unknown[][] = [];
   let onMsg: (m: unknown) => void = () => {};
   const g = globalThis as any;
   const saved = { document: g.document, window: g.window };
@@ -396,7 +396,8 @@ async function mountCard(state: unknown, hostImpl: (method: string, ...a: unknow
   const ctx = {
     state, card: 'card-1', tabId: 't1', storage: { get: async () => ({}), set: async () => {} },
     post: async () => {}, onMessage: () => () => {}, setBadge: async () => {}, setTitle: async () => {}, setState: async () => {},
-    notify: async (_: string, m: string) => { notes.push(m); },
+    // 알림 (ticket slcode-notify-presets) — notes 는 상자에 오를 글만, sent 는 동그라미(preset)·clear 까지 모두
+    notify: Object.assign(async (m: string, o?: { preset?: string }) => { sent.push(['notify', m, o]); if (!o?.preset) notes.push(m); }, { clear: async (id?: string) => { sent.push(['clear', id]); } }),
     main: { call: async (_: string, method: string, ...a: unknown[]) => { if (method === 'failed') failed.push(a); return hostImpl(method, ...a); } },
     services: {
       onMessage: (_: string, cb: typeof onMsg) => { onMsg = cb; return () => {}; },
@@ -406,7 +407,7 @@ async function mountCard(state: unknown, hostImpl: (method: string, ...a: unknow
   };
   (cardMod.default ?? cardMod).mount(el, ctx);
   await tick();
-  return { el, opens, notes, failed, msg: (m: unknown) => onMsg(m), exit: async (e: string | null = '서비스 종료') => { for (const cb of opens.at(-1).closers) cb(e); await tick(); }, restore: async () => { (cardMod.default ?? cardMod).unmount(); await tick(); g.document = saved.document; g.window = saved.window; } };
+  return { el, opens, notes, sent, failed, msg: (m: unknown) => onMsg(m), exit: async (e: string | null = '서비스 종료') => { for (const cb of opens.at(-1).closers) cb(e); await tick(); }, restore: async () => { (cardMod.default ?? cardMod).unmount(); await tick(); g.document = saved.document; g.window = saved.window; } };
 }
 
 test('카드: {fatal} 을 내고 끝나면 다시 띄우지 않고 그 오류와 다시 시도를 보인다, slcode.new 동사에도 실패로 알린다', async () => {
@@ -482,7 +483,7 @@ test('카드: 붙기 전에 사라져 open 이 거절하면 실제 사유를, --
     const el = fakeEl();
     (cardMod.default ?? cardMod).mount(el, {
       state: { key: 'k', id: 'sess-1' }, card: 'c', tabId: 't', storage: { get: async () => ({}), set: async () => {} },
-      post: async () => {}, onMessage: () => () => {}, setBadge: async () => {}, setTitle: async () => {}, setState: async () => {}, notify: async () => {},
+      post: async () => {}, onMessage: () => () => {}, setBadge: async () => {}, setTitle: async () => {}, setState: async () => {}, notify: Object.assign(async () => {}, { clear: async () => {} }),
       main: { call: async (_: string, m: string) => (m === 'checkUpdate' ? check : 'cmd') },
       services: { onMessage: () => () => {}, send: async () => {}, open: async () => { throw new Error('실행 중이 아니다: slcode/session'); } },
     });
@@ -492,6 +493,29 @@ test('카드: 붙기 전에 사라져 open 이 거절하면 실제 사유를, --
     await tick();
   }
   g.document = saved.document; g.window = saved.window;
+});
+
+test('카드 알림 (ticket slcode-notify-presets): 살아 있으면 idle, 도는 동안 running, 끝남·질문은 상자에, 답하면 질문을, 닫히면 모두 비활성', async () => {
+  const c = await mountCard({ key: 'k', id: 'sess-1' });
+  const ev = (e: unknown) => c.msg({ event: 'session.event', params: { ev: e } });
+  const drain = () => c.sent.splice(0);
+  try {
+    c.msg({ url: null, id: 'sess-1', sock: '/s' });
+    drain();
+    ev({ kind: 'session.state', state: 'idle' });
+    assert.deepEqual(drain(), [['notify', 'Idle', { preset: 'idle', id: 'idle', duration: 180 }], ['clear', 'running']]);
+    ev({ kind: 'session.state', state: 'running' });
+    assert.deepEqual(drain(), [['notify', 'Idle', { preset: 'idle', id: 'idle', duration: 180 }], ['notify', 'Running', { preset: 'running', id: 'running', duration: 180 }], ['clear', 'done']]);
+    ev({ kind: 'approval.requested', requestId: 'r1', name: 'AskUserQuestion', input: { questions: [{ question: '어느 쪽?' }] } });
+    ev({ kind: 'approval.requested', requestId: 'r2', name: 'Bash', input: {} });
+    ev({ kind: 'approval.resolved', requestId: 'r1' });
+    assert.deepEqual(drain(), [['notify', '어느 쪽?', { color: 'yellow', id: 'ask:r1' }], ['notify', 'Permission: Bash', { color: 'yellow', id: 'ask:r2' }], ['clear', 'ask:r1']]);
+    for (const end of [{ ok: false, error: 'x', interrupted: false }, { ok: true, interrupted: true }, { ok: true, interrupted: false }]) ev({ kind: 'turn.end', ...end });
+    ev({ kind: 'session.state', state: 'idle' });
+    assert.deepEqual(drain(), [['notify', 'Finished', { color: 'green', id: 'done' }], ['notify', 'Idle', { preset: 'idle', id: 'idle', duration: 180 }], ['clear', 'running']]);
+    c.msg({ event: 'session.closed', params: {} });
+    assert.deepEqual(drain(), [['clear', undefined]]);
+  } finally { await c.restore(); }
 });
 
 test('카드: hello 를 본 서비스가 끝나면 지금처럼 다시 붙는다', async () => {

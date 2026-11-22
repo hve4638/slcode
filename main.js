@@ -359,7 +359,7 @@ export function activate(api) {
     const id = r.stdout.trim();
     // 카드를 못 열어도 팀원은 돈다 — id 를 돌려주고 알린다
     try { await (await windowFor(ctx.tmux)).call(CARDS, 'open', { id, tmux: ctx.tmux }); }
-    catch (e) { api.notify('warning', `팀원 ${id} 의 카드를 열지 못했습니다: ${e?.message ?? e}`, ctx.tmux ? { tmux: ctx.tmux } : undefined); }
+    catch (e) { api.notify(`팀원 ${id} 의 카드를 열지 못했습니다: ${e?.message ?? e}`, { color: 'orange', ...(ctx.tmux ? { tmux: ctx.tmux } : {}) }).catch(() => {}); }
     return id;
   });
 
