@@ -395,7 +395,7 @@ async function mountCard(state: unknown, hostImpl: (method: string, ...a: unknow
   const el = fakeEl();
   const ctx = {
     state, card: 'card-1', tabId: 't1', storage: { get: async () => ({}), set: async () => {} },
-    post: async () => {}, onMessage: () => () => {}, setBadge: async () => {}, setTitle: async () => {}, setState: async () => {},
+    post: async () => {}, onMessage: () => () => {}, setTitle: async () => {}, setState: async () => {},
     // 알림 (ticket slcode-notify-presets) — notes 는 상자에 오를 글만, sent 는 동그라미(preset)·clear 까지 모두
     notify: Object.assign(async (m: string, o?: { preset?: string }) => { sent.push(['notify', m, o]); if (!o?.preset) notes.push(m); }, { clear: async (id?: string) => { sent.push(['clear', id]); } }),
     main: { call: async (_: string, method: string, ...a: unknown[]) => { if (method === 'failed') failed.push(a); return hostImpl(method, ...a); } },
@@ -483,7 +483,7 @@ test('카드: 붙기 전에 사라져 open 이 거절하면 실제 사유를, --
     const el = fakeEl();
     (cardMod.default ?? cardMod).mount(el, {
       state: { key: 'k', id: 'sess-1' }, card: 'c', tabId: 't', storage: { get: async () => ({}), set: async () => {} },
-      post: async () => {}, onMessage: () => () => {}, setBadge: async () => {}, setTitle: async () => {}, setState: async () => {}, notify: Object.assign(async () => {}, { clear: async () => {} }),
+      post: async () => {}, onMessage: () => () => {}, setTitle: async () => {}, setState: async () => {}, notify: Object.assign(async () => {}, { clear: async () => {} }),
       main: { call: async (_: string, m: string) => (m === 'checkUpdate' ? check : 'cmd') },
       services: { onMessage: () => () => {}, send: async () => {}, open: async () => { throw new Error('실행 중이 아니다: slcode/session'); } },
     });
@@ -531,7 +531,7 @@ test('카드: hello 를 본 서비스가 끝나면 지금처럼 다시 붙는다
   } finally { await c.restore(); }
 });
 
-// ---- 승인 요청은 카드 배지로만 (사용자 2026-10-24) — main 은 승인 알림을 받지도 띄우지도 않는다
+// ---- 승인 요청은 카드 알림으로만 (사용자 2026-10-24) — main 은 승인 알림을 받지도 띄우지도 않는다
 test('main host: approval 이 없다', async () => {
   await withMain({ 'plugin.json': PLUGIN_JSON }, {}, async ({ exposed }) => { assert.equal(exposed.host.approval, undefined); });
 });

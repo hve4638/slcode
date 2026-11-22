@@ -5,7 +5,7 @@
 // "slcode: Close session"·터미널 `slcode close`. (2) 화면 — slcode 가 stdout 첫 줄로 보내는 hello {id,sock} 로 세션을 알고, serve 가
 // stdio 로 준 화면 파일(web.files)을 이 문서에 직접 그린다 (ticket slcode-card-iframe-flatten). 화면은 여기서 건넨 MessagePort 로만
 // serve 와 말하고 이 카드가 stdio 로 중계한다 (ticket slcode-card-svc-token-dead). card.js 가 없는 옛 serve 는 전처럼 안쪽 iframe 에, web.files 가 없으면 /svc 주소(conn.webUrl)로.
-// (3) 상태 — 같은 stdio 통로로 session.attach 를 걸어 배지에 반영한다. 선구독 services.onMessage 를 기동 전에 걸어 첫 줄을
+// (3) 상태 — 같은 stdio 통로로 session.attach 를 걸어 알림(아래)에 반영한다. 선구독 services.onMessage 를 기동 전에 걸어 첫 줄을
 // 놓치지 않는다. ctx 의 services 는 카드 세션에 묶여 배경 세션이어도 자기 데몬과 주고받는다.
 // 알림은 superlite 의 ctx.notify (ticket slcode-agent-state-notify·slcode-notify-presets) — 턴 끝남·질문·권한 확인은 상자에 한 줄, 세션이 살아 있는
 // 동안은 카드 동그라미에 idle·running. 보고 있으면 상자에 올리지 않고 카드를 보면 비활성으로 만드는 것은 superlite 가 한다.
@@ -80,7 +80,7 @@ export function mount(el, ctx) {
     seen: !!st.seen, // 사이드바가 눌러 연 새 카드 — 붙으면 "봤다" 신호를 한 번 (ticket slcode-sidebar-orca)
     title: null, state: null, dot: null, conn: null, unsub: null, attached: false, hello: false, lost: false, closing: false,
     web: null, url: null, frame: null, shown: null, port: null, fwd: new Map(), portSeq: 0,
-    nextId: 1, pending: new Map(), waits: new Map(), starting: null, note: null, error: null,
+    nextId: 1, pending: new Map(), starting: null, note: null, error: null,
     fatal: null, early: 0, // 이 시도에서 slcode 가 낸 {fatal}, 살아 있는 것을 보지 못한 채 연달아 끝난 횟수
   };
   const flat = { on: false }; // 이 문서에 화면을 그렸다 (enterFlat)
@@ -133,13 +133,13 @@ export function mount(el, ctx) {
     }
   }
   function onEvent(event, p) {
-    if (event === 'session.changed') { c.state = p.state; c.title = p.title; applyTitle(); badge(); return; }
-    if (event === 'session.closed') { c.state = 'exited'; c.waits.clear(); badge(); countLive(); return; }
+    if (event === 'session.changed') { c.state = p.state; c.title = p.title; applyTitle(); dot(); return; }
+    if (event === 'session.closed') { c.state = 'exited'; dot(); countLive(); return; }
     if (event !== 'session.event') return;
     const ev = p.ev;
-    if (ev.kind === 'approval.requested') { c.waits.set(ev.requestId, ev); badge(); void ctx.notify(ev.name === 'AskUserQuestion' ? ev.input?.questions?.[0]?.question || 'Question' : `Permission: ${ev.name}`, { color: 'yellow', id: `ask:${ev.requestId}` }); }
-    else if (ev.kind === 'approval.resolved') { c.waits.delete(ev.requestId); badge(); void ctx.notify.clear(`ask:${ev.requestId}`); }
-    else if (ev.kind === 'session.state') { c.state = ev.state; badge(); if (ev.state === 'running') void ctx.notify.clear('done'); }
+    if (ev.kind === 'approval.requested') void ctx.notify(ev.name === 'AskUserQuestion' ? ev.input?.questions?.[0]?.question || 'Question' : `Permission: ${ev.name}`, { color: 'yellow', id: `ask:${ev.requestId}` });
+    else if (ev.kind === 'approval.resolved') void ctx.notify.clear(`ask:${ev.requestId}`);
+    else if (ev.kind === 'session.state') { c.state = ev.state; dot(); if (ev.state === 'running') void ctx.notify.clear('done'); }
     else if (ev.kind === 'turn.end' && ev.ok && !ev.interrupted) void ctx.notify('Finished', { color: 'green', id: 'done' });
   }
   // 상자의 줄 (사용자 2026-11-21) — 터미널 claude·codex 와 같게 턴 끝남은 green, 질문·권한 확인은 yellow. 오류·중단으로 끝난 턴은 올리지 않는다.
@@ -161,11 +161,6 @@ export function mount(el, ctx) {
   const alive = setInterval(() => dot(true), ALIVE_MS);
 
   // ---- 카드 표면
-  function badge() {
-    const n = c.waits.size;
-    void ctx.setBadge(c.moved ? null : n ? (n > 1 ? `!${n}` : '!') : c.state === 'running' ? '…' : c.state === 'exited' ? 'off' : null);
-    dot();
-  }
   function applyTitle() { void ctx.setTitle(c.title || (c.pick && !c.id ? PICK_NAME : c.start ? START_NAME : DEFAULT_NAME)); } // 카드 제목 = 세션 이름, 없으면 SLCode
   /** 무엇을 띄우는가 — 카드 모드 화면(web.files, 주소 없음)이면 'port', 아니면 /svc 주소 */
   const shownKey = () => (c.web ? 'port' : c.url);
@@ -342,11 +337,11 @@ export function mount(el, ctx) {
     c.start = d.cwd;
     try { await host('discard', id); }
     catch (e) { c.start = null; throw e; }
-    c.id = null; c.savedId = null; c.spawn = null; c.web = null; c.url = null; c.title = null; c.state = null; c.waits.clear();
+    c.id = null; c.savedId = null; c.spawn = null; c.web = null; c.url = null; c.title = null; c.state = null;
     detach();
     const saved = ctx.setState({ key: c.key, id: null, start: c.start });
     if (flat.on) { await saved; location.reload(); return {}; }
-    applyTitle(); render(); badge();
+    applyTitle(); render(); dot();
     return {};
   }
 
@@ -370,7 +365,7 @@ export function mount(el, ctx) {
         const conn = await ctx.services.open(SVC, { owner, command }).catch(async (e) => { throw new Error(await exitReason(String(e?.message ?? e))); });
         c.conn = conn; c.lost = false;
         conn.onClose((reason) => {
-          c.conn = null; c.attached = false; c.url = null; c.lost = true; dropped = true; badge();
+          c.conn = null; c.attached = false; c.url = null; c.lost = true; dropped = true; dot();
           portStatus(false); // 카드 모드 화면은 그대로 두고 끊겼다고만 — 다시 붙으면 같은 포트로 이어진다
           // 기다리던 응답(server.info·session.attach)은 이 연결로 오지 않는다 — 풀지 않으면 ensure 가 끝나지 않아 다시 붙지 못했다
           for (const p of c.pending.values()) p.reject(new Error('연결이 끊겼습니다'));
@@ -402,7 +397,7 @@ export function mount(el, ctx) {
   }
   /** 기동 실패 — 사유와 [다시 시도] 를 보인다. 다시 붙지 않는다(state exited) */
   function startFailed(reason) {
-    c.state = 'exited'; c.note = null; c.error = reason; badge(); render();
+    c.state = 'exited'; c.note = null; c.error = reason; dot(); render();
     if (c.spawn) void host('failed', c.key, c.error).catch(() => {});
     void ctx.notify(`slcode: ${c.error}`, { color: 'red' });
   }
@@ -420,8 +415,7 @@ export function mount(el, ctx) {
     try {
       const r = await request('session.attach', { id: c.id, since: FAR });
       c.state = r.info.state; c.title = r.info.title;
-      c.waits = new Map(r.pending.map((p) => [p.requestId, p]));
-      applyTitle(); badge();
+      applyTitle(); dot();
       if (c.seen) { c.seen = false; seenNow(); void ctx.setState({ key: c.key, id: c.id }); }
     } catch { /* 닫히는 중 — onClose 가 처리 */ }
   }
@@ -498,28 +492,28 @@ export function mount(el, ctx) {
    *  state·shared 에 남겨 새로고침·다른 브라우저에서도 다시 붙지 않는다 */
   async function moveOut() {
     if (c.moved) return;
-    c.moved = true; c.url = null; c.web = null; c.waits.clear();
-    detach(); render(); badge();
+    c.moved = true; c.url = null; c.web = null;
+    detach(); render(); dot();
     void ctx.setState({ key: c.key, id: c.id, moved: true });
     void ctx.shared?.set('moved', true).catch(() => {});
     await ctx.services.stop(SVC, { owner }).catch(() => {});
     if (ctx.tabId) void ctx.verbs.run('card.close', [ctx.tabId]).catch(() => {});
   }
   // 다른 브라우저에서 옮겨졌다 (moveOut 의 shared) — 이 창의 연결도 끊고 안내만
-  const unshared = ctx.shared?.on((k, v) => { if (k === 'moved' && v && !c.moved) { c.moved = true; c.url = null; c.web = null; detach(); render(); badge(); } });
+  const unshared = ctx.shared?.on((k, v) => { if (k === 'moved' && v && !c.moved) { c.moved = true; c.url = null; c.web = null; detach(); render(); dot(); } });
 
   // renderer 가 보낸 것 (renderer.js 머리말)
   ctx.onMessage((m) => {
     switch (m?.type) {
       case 'revive': // 닫힌 세션의 카드를 다시 열었다 — 다시 띄운다
-        if (m.key === c.key && c.state === 'exited' && !c.conn && !c.starting && c.id) { c.state = null; c.error = null; badge(); render(); void ensure(); }
+        if (m.key === c.key && c.state === 'exited' && !c.conn && !c.starting && c.id) { c.state = null; c.error = null; dot(); render(); void ensure(); }
         return;
       case 'close': // 팔레트 "slcode: Close session (active card)"
         if (!c.id) { void ctx.notify('slcode: 열린 세션 카드가 없습니다'); return; }
         request('session.close', { id: c.id }).catch((e) => ctx.notify(`slcode: ${e.message}`, { color: 'red' }));
         return;
       case 'closing': if (m.id === c.id) c.closing = !!m.on; return;
-      case 'closed': if (m.id === c.id) { c.state = 'exited'; c.url = null; c.web = null; c.waits.clear(); badge(); render(); } return;
+      case 'closed': if (m.id === c.id) { c.state = 'exited'; c.url = null; c.web = null; dot(); render(); } return;
       case 'moveOut': if (m.key === c.key) void moveOut(); return;
       case 'seen': if (m.key === c.key) { if (c.attached) seenNow(); else c.seen = true; } return; // 아직 붙기 전(숨긴 deck 을 다시 연 카드)이면 붙은 뒤에
     }
@@ -566,7 +560,7 @@ export function mount(el, ctx) {
   window.addEventListener('message', onFrame);
   cleanup = () => { window.removeEventListener('message', onFrame); unshared?.(); c.io?.disconnect(); clearInterval(alive); detach(); };
 
-  render(); applyTitle(); badge();
+  render(); applyTitle(); dot();
   if (!c.pick && !c.moved && !c.start) void ensure();
 }
 
