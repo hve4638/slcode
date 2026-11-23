@@ -112,6 +112,10 @@ export function mountAgentFront(root, transport, opts = {}) {
   const hero = h('div', { class: 'hero', hidden: '' }); // 첫 메시지 전 시작 프로필 고르기 (paintHero)
   feed.append(sentinel, older, hero, liveCol);
   const input = h('textarea', { rows: 1 });
+  // 슬래시 명령 강조 층 (ticket slcode-slash-command-highlight) — textarea 위에 같은 글을 같은 자리에 투명하게 그리고 명령 낱말만 칠한다.
+  // 글·IME 조합·선택은 textarea 가 그대로 그린다. 크기는 textarea 를 덮어 따라가고, 스크롤만 맞춘다
+  const inputHl = h('div', { class: 'input-hl', 'aria-hidden': 'true' });
+  input.addEventListener('scroll', () => { inputHl.scrollTop = input.scrollTop; });
   const sendBtn = h('button', { class: 'send primary', title: '전송', disabled: '', onclick: () => send() });
   const stopBtn = h('button', { class: 'stop primary', title: '중단', onclick: () => current && rpc('session.interrupt', { id: current }) });
   stopBtn.style.display = 'none';
@@ -301,11 +305,23 @@ export function mountAgentFront(root, transport, opts = {}) {
       input.value = `${t.slice(0, start)}${c.value}${tail.startsWith(' ') ? '' : ' '}${tail}`;
       const at = start + c.value.length + 1; input.setSelectionRange(at, at);
     } else input.value = `/${c.name} `;
-    input.focus(); argQuery(); slashDraw();
+    input.focus(); paintInputHl(); argQuery(); slashDraw();
   }
   // /fork 는 화면이 처리한다 (복제, ticket slcode-session-fork) — 벤더에 같은 이름이 있으면 가린다
   const FORK_CMD = { name: 'fork', description: '이 세션을 복제해 새 세션으로 엽니다 (끝난 턴까지, 같은 폴더)' };
-  async function loadCommands() { try { commands = [FORK_CMD, ...(await rpc('session.commands', { id: current })).filter((c) => c.name !== 'fork')]; } catch { commands = [FORK_CMD]; } }
+  async function loadCommands() { try { commands = [FORK_CMD, ...(await rpc('session.commands', { id: current })).filter((c) => c.name !== 'fork')]; } catch { commands = [FORK_CMD]; } paintSlashAll(); }
+  /** 글 맨 앞 낱말이 아는 명령이면 그 길이 — 전체 이름이거나 짧은 이름이 한 명령에만 맞을 때 (ticket slcode-slash-command-highlight) */
+  function slashLen(text) {
+    const m = /^\/(\S+)/.exec(text); if (!m) return 0;
+    const tok = m[1].toLowerCase();
+    return commands.some((c) => c.name.toLowerCase() === tok) || commands.filter((c) => shortOf(c.name.toLowerCase()) === tok).length === 1 ? m[0].length : 0;
+  }
+  const paintSlash = (span, text) => { const n = slashLen(text); span.replaceChildren(...(n ? [h('span', { class: 'slash' }, text.slice(0, n))] : []), text.slice(n)); return span; };
+  /** 말풍선 글 — 맨 앞 명령을 칠한다. 명령 목록이 늦게 오면(세션을 열 때 기록이 먼저 그려진다) paintSlashAll 이 다시 칠한다 */
+  const said = (text) => paintSlash(h('span', { class: 'said' }), text);
+  // textarea 끝의 빈 줄도 한 줄을 차지하게 '\n' 을 하나 더 붙인다
+  const paintInputHl = () => { paintSlash(inputHl, `${input.value}\n`); inputHl.scrollTop = input.scrollTop; };
+  function paintSlashAll() { for (const s of el.querySelectorAll('.bubble > .said')) paintSlash(s, s.textContent); paintInputHl(); }
   // 작성창 = 입력칸 위, 아래 한 줄: 왼쪽 끝 첨부·권한 모드, 오른쪽 모델(effort 포함)·보내기 (Codex Desktop 꼴, 사용자 2026-10-13). 상자 밖 아래에 폴더·repo·리밋·context·비용 한 줄(stat)
   const stat = h('div', { class: 'stat' });
   // 입력 큐 (ticket slcode-agent-plugin-command, 사용자 2026-11-02) — 턴 중에 친 명령과 그 뒤 메시지는 피드에 섞지 않고 입력창 바로 위에 보통 내 메시지와 같은 말풍선으로 순서대로 붙여 둔다. 처리되면 여기서 빠지고 피드에 보통 줄로 들어간다
@@ -316,7 +332,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     queueTray.hidden = !items.length;
     placeBusy();
     if (stick) feed.scrollTop = feed.scrollHeight;
-    queueTray.replaceChildren(...items.map((q) => h('div', { class: 'user' }, h('div', { class: 'bubble', title: '눌러서 입력창으로 꺼내기', onclick: () => unqueue(q) }, q.text || `첨부 ${q.attachments}개`))));
+    queueTray.replaceChildren(...items.map((q) => h('div', { class: 'user' }, h('div', { class: 'bubble', title: '눌러서 입력창으로 꺼내기', onclick: () => unqueue(q) }, q.text ? said(q.text) : `첨부 ${q.attachments}개`))));
   };
   const unqueue = (q) => {
     if (!current || !q.id) return; // 옛 core 의 항목엔 id 가 없다
@@ -342,7 +358,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   // 맥동하지 않는 초록 점으로 실행 중 줄(에이전트가 일함)과 가른다. 누르면 그 위로 목록이 펼쳐진다
   const bgLine = h('div', { class: 'runline bgline', hidden: '' });
   const lockOver = h('div', { class: 'lockover', hidden: '' });
-  const box = h('div', { class: 'box' }, inputHint, chips, input, h('div', { class: 'row' }, addBtn, modeBtn, modeMenu, h('span', { class: 'gap' }), modelBtn, modelMenu, stopBtn, sendBtn), slashMenu, filePick, lockOver);
+  const box = h('div', { class: 'box' }, inputHint, chips, h('div', { class: 'field' }, input, inputHl), h('div', { class: 'row' }, addBtn, modeBtn, modeMenu, h('span', { class: 'gap' }), modelBtn, modelMenu, stopBtn, sendBtn), slashMenu, filePick, lockOver);
   const composer = h('div', { class: 'composer' }, queueTray, bgLine, runLine, box, stat);
   const side = h('aside', { class: 'side' });
   const dock = h('div', { class: 'dock' });
@@ -544,7 +560,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   function commandRun(ev) {
     if (ev.phase === 'attached') { if (main.turnEl?.isConnected) for (const x of ev.items) hookContext(main.turnEl, [x.text], `/${x.name}`, `${x.plugin} · /${x.name}`); return; }
     const who = `${ev.plugin} · /${ev.name} · ${ev.ms}ms`;
-    const line = push(h('div', { class: `user${ev.outcome !== 'ok' ? ' failed' : ''}` }, h('div', { class: 'bubble', title: who }, `/${ev.name}${ev.args ? ` ${ev.args}` : ''}`)));
+    const line = push(h('div', { class: `user${ev.outcome !== 'ok' ? ' failed' : ''}` }, h('div', { class: 'bubble', title: who }, said(`/${ev.name}${ev.args ? ` ${ev.args}` : ''}`))));
     if (ev.outcome !== 'ok') push(h('div', { class: 'meta err', title: who }, `/${ev.name} 실패: ${ev.outcome === 'timeout' ? '시간 초과' : (ev.error ?? '').split('\n')[0]}`));
     for (const w of ev.warnings) push(h('div', { class: 'meta err', title: who }, `/${ev.name}: ${w}`));
     for (const m of ev.messages ?? []) hookAfter(line, h('div', { class: `hk-note${m.tone ? ` t-${m.tone}` : ''}`, title: who }, h('span', { class: 'ic' }, icon(NOTE_ICONS[m.icon] ?? 'bell')), h('span', { class: 't' }, m.text)));
@@ -801,7 +817,7 @@ export function mountAgentFront(root, transport, opts = {}) {
         if (ev.origin === 'mail') { outlineAdd(e.seq, ev, main.turnEl = push(mailCard(ev.text, e.seq))); break; }
         outlineAdd(e.seq, ev, main.turnEl = push(h('div', { class: 'user' }, h('div', { class: 'bubble' }, ev.origin ? h('span', { class: 'origin' }, ev.origin) : null,
           ev.attachments?.length ? h('div', { class: 'chips' }, ...ev.attachments.map((a) => { const local = sentFiles.get(a.name); return h('span', { class: 'chip' }, local ? h('img', { src: local }) : null, a.name); })) : null,
-          ev.text), rewindBtn(e.seq, ev.text))));
+          ev.text ? said(ev.text) : null), rewindBtn(e.seq, ev.text))));
         break;
       case 'text.delta': {
         const sc = scopeOf(ev.parent);
@@ -1696,10 +1712,10 @@ export function mountAgentFront(root, transport, opts = {}) {
   }
   function send() {
     const t = resolveSlash(input.value.trim()); if ((!t && !pendingFiles.length) || !current) return;
-    if (t === '/fork' && !pendingFiles.length) { input.value = ''; input.style.height = ''; canSend(); hist.reset(); saveDraft(true); void fork(null); return; }
+    if (t === '/fork' && !pendingFiles.length) { input.value = ''; input.style.height = ''; paintInputHl(); canSend(); hist.reset(); saveDraft(true); void fork(null); return; }
     const attachments = pendingFiles.splice(0).map(({ dataUrl, ...a }) => { if (a.mediaType.startsWith('image/')) sentFiles.set(a.name, dataUrl); return a; });
     chips.innerHTML = '';
-    input.value = ''; input.style.height = ''; canSend(); argRes = null; argSeq++; hist.reset();
+    input.value = ''; input.style.height = ''; paintInputHl(); canSend(); argRes = null; argSeq++; hist.reset();
     rpc('session.send', { id: current, text: t, ...(attachments.length ? { attachments } : {}) }).catch((e) => push(h('div', { class: 'meta err' }, e.message)));
     saveDraft(true);
     toBottom();
@@ -1787,7 +1803,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   // 높이를 재려고 잠깐 기본 높이로 줄이면 그동안 피드가 늘어 scrollTop 이 그 높이의 바닥으로 깎인 채 남는다 — 재고 나서 자리를 되돌린다 (ticket slcode-scroll-follow-fixes)
   // 불러온 글로 `/` 메뉴를 열지 않는다 — 위·아래 키를 메뉴가 가져가 다음 기록으로 못 간다. 글을 고치면(nav 풀림) 다시 연다
   function fitInput() { const top = feed.scrollTop; input.style.height = ''; input.style.height = Math.min(input.scrollHeight, 220) + 'px'; jump(follow ? feed.scrollHeight : top); }
-  input.oninput = () => { fitInput(); canSend(); if (!hist.nav) { slashSel = 0; argQuery(); slashDraw(); } saveDraft(); };
+  input.oninput = () => { fitInput(); paintInputHl(); canSend(); if (!hist.nav) { slashSel = 0; argQuery(); slashDraw(); } saveDraft(); };
   input.addEventListener('mousedown', () => hist.unpin());
   // Esc 두 번 (ticket slcode-rewind-esc-picker, 사용자 2026-11-03, Claude Code 2.1.316 실측) — 글이 있으면 비운다(지운 글은 기록에 남고 Ctrl+Z 로 돌아온다). 첫 번째 누름의 안내 문구는 두지 않는다 (사용자 2026-11-03).
   // 빈 입력이면 되돌리기 창을 연다. 턴 중 Esc 는 위에서 중단만 하고 판정을 지운다 — 두 번 눌러도 창은 열리지 않는다 (session.rewind 는 idle 에서만 된다)

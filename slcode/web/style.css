@@ -619,6 +619,13 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .user .chip { flex-direction: column; align-items: flex-start; max-width: 100%; }
 .acf .user .chip img { max-height: 160px; max-width: 100%; }
 .acf .composer textarea { resize: none; border: 0; outline: 0; background: transparent; color: inherit; font: inherit; line-height: 1.5; max-height: 220px; padding: 4px 6px; }
+/* 슬래시 명령 강조 (ticket slcode-slash-command-highlight) — textarea 위에 같은 글·같은 줄바꿈으로 투명하게 겹친 층(app.js inputHl)이 명령 낱말만 칠한다.
+   글자색만 바꾼다(배경 칩은 사용자가 빼기로, 2026-11-23). 다크는 Claude Code 의 명령 색 #a4d7ff (사용자 2026-11-23) */
+.acf .composer .field { position: relative; min-width: 0; }
+.acf .composer .field > textarea { display: block; width: 100%; }
+/* 층은 textarea 크기를 따르기만 한다 — 층이 높이에 끼면 글을 지울 때 fitInput 이 옛 글 높이를 잰다 */
+.acf .composer .input-hl { position: absolute; inset: 0; pointer-events: none; color: transparent; line-height: 1.5; padding: 4px 6px; white-space: pre-wrap; overflow-wrap: break-word; overflow-y: auto; scrollbar-color: transparent transparent; }
+.acf .slash { color: light-dark(#1f6fc4, #a4d7ff); }
 /* 빈 곳 클릭으로 옮긴 포커스는 치기 전까지 커서를 숨긴다 (app.js parked, 사용자 2026-11-02) */
 .acf .composer textarea.parked { caret-color: transparent; }
 .acf .composer button.send { width: 34px; height: 34px; padding: 0; border-radius: 50%; display: grid; place-items: center; align-self: flex-end; }
@@ -712,7 +719,7 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
   .acf .user { max-width: 92%; }
   .acf .dock > .card { max-height: 70dvh; overflow-y: auto; }
   /* iOS 는 16px 미만 입력칸에 초점이 가면 화면을 확대한다 */
-  .acf .composer textarea, .acf .card .q input[type=text] { font-size: 16px; }
+  .acf .composer textarea, .acf .composer .input-hl, .acf .card .q input[type=text] { font-size: 16px; }
   .acf .menu { max-width: calc(100vw - 20px); }
 }
 /* 아주 좁으면 (카드·휴대폰) 작성창 알약의 꺾쇠를 빼서 글자 자리를 남긴다 — 눌러서 여는 것은 같다 */
