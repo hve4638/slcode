@@ -17,7 +17,7 @@ slc new "$d/work" --no-web --dir "$d/state" > "$d/new.log" 2>&1 &
 pid=$!
 id=
 for _ in $(seq 60); do
-  id=$(slc list --dir "$d/state" | grep -o '"id": "[^"]*"' | cut -d'"' -f4 || true)
+  id=$(slc list --json --dir "$d/state" | grep -o '"id": "[^"]*"' | cut -d'"' -f4 || true)
   [ -n "$id" ] && break
   sleep 0.5
 done
