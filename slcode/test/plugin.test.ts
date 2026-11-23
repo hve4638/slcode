@@ -510,9 +510,16 @@ test('카드 알림 (ticket slcode-notify-presets): 살아 있으면 idle, 도�
     ev({ kind: 'approval.requested', requestId: 'r2', name: 'Bash', input: {} });
     ev({ kind: 'approval.resolved', requestId: 'r1' });
     assert.deepEqual(drain(), [['notify', '어느 쪽?', { color: 'yellow', id: 'ask:r1' }], ['notify', 'Permission: Bash', { color: 'yellow', id: 'ask:r2' }], ['clear', 'ask:r1']]);
-    for (const end of [{ ok: false, error: 'x', interrupted: false }, { ok: true, interrupted: true }, { ok: true, interrupted: false }]) ev({ kind: 'turn.end', ...end });
+    // 오류로 멈춘 턴은 같은 id 의 빨간 줄(첫 줄 첫 문장), 중지한 턴은 올리지 않는다 (ticket slcode-turn-error-red-notify)
+    for (const end of [
+      { ok: false, error: 'API Error: 529 Overloaded. This is a server-side issue, usually temporary.\nmore', interrupted: false },
+      { ok: false, error: 'Invalid API key · Fix external API key', errorKind: 'auth', interrupted: false },
+      { ok: false, error: null, interrupted: true }, { ok: true, interrupted: true }, { ok: true, interrupted: false },
+    ]) ev({ kind: 'turn.end', ...end });
     ev({ kind: 'session.state', state: 'idle' });
-    assert.deepEqual(drain(), [['notify', 'Finished', { color: 'green', id: 'done' }], ['notify', 'Idle', { preset: 'idle', id: 'idle', duration: 180 }], ['clear', 'running']]);
+    assert.deepEqual(drain(), [
+      ['notify', 'Error: API Error: 529 Overloaded', { color: 'red', id: 'done' }], ['notify', 'Error: Invalid API key · Fix external API key', { color: 'red', id: 'done' }],
+      ['notify', 'Finished', { color: 'green', id: 'done' }], ['notify', 'Idle', { preset: 'idle', id: 'idle', duration: 180 }], ['clear', 'running']]);
     c.msg({ event: 'session.closed', params: {} });
     assert.deepEqual(drain(), [['clear', undefined]]);
   } finally { await c.restore(); }

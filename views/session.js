@@ -140,14 +140,16 @@ export function mount(el, ctx) {
     if (ev.kind === 'approval.requested') ask(ev);
     else if (ev.kind === 'approval.resolved') void ctx.notify.clear(`ask:${ev.requestId}`);
     else if (ev.kind === 'session.state') { c.state = ev.state; dot(); if (ev.state === 'running') void ctx.notify.clear('done'); }
-    else if (ev.kind === 'turn.end' && ev.ok && !ev.interrupted) void ctx.notify('Finished', { color: 'green', id: 'done' });
+    else if (ev.kind === 'turn.end' && !ev.interrupted) void ctx.notify(ev.ok ? 'Finished' : `Error: ${brief(ev.error)}`, { color: ev.ok ? 'green' : 'red', id: 'done' });
   }
+  /** 오류 문구의 첫 줄 첫 문장 — 'API Error: 529 Overloaded. This is a server-side issue, …' 는 'API Error: 529 Overloaded' 로 */
+  function brief(error) { return String(error || 'failed').split('\n')[0].split(/\.\s/)[0].slice(0, 120); }
   /** 질문·권한 확인 한 건의 노란 알림 — 요청마다 id 가 고정이라 다시 보내면 그 줄을 덮어쓴다 */
   function ask(q) {
     void ctx.notify(q.name === 'AskUserQuestion' ? q.input?.questions?.[0]?.question || 'Question' : `Permission: ${q.name}`, { color: 'yellow', id: `ask:${q.requestId}` });
   }
-  // 상자의 줄 (사용자 2026-11-21) — 터미널 claude·codex 와 같게 턴 끝남은 green, 질문·권한 확인은 yellow. 오류·중단으로 끝난 턴은 올리지 않는다.
-  // 끝남은 카드마다 한 줄(id done)이고 다시 돌기 시작하면 비활성이 된다, 질문은 요청마다 한 줄이고 다른 곳에서 답해도 비활성이 된다. attach 는 since FAR 라 카드를
+  // 상자의 줄 (사용자 2026-11-21) — 터미널 claude·codex 와 같게 턴 끝남은 green, 질문·권한 확인은 yellow. 오류(API 오류·인증 실패)로 멈춘 턴은 red(사용자 2026-11-23),
+  // 중단한 턴은 올리지 않는다. 끝남·오류는 카드마다 한 줄(id done, 마지막 턴 결과)이고 다시 돌기 시작하면 비활성이 된다, 질문은 요청마다 한 줄이고 다른 곳에서 답해도 비활성이 된다. attach 는 since FAR 라 카드를
   // 다시 읽어도 옛 일이 다시 오르지 않는다. 기록은 창마다라 같은 카드를 여러 창에 띄우면 창마다 한 줄이다
 
   /** 동그라미 (ticket slcode-notify-presets) — 세션이 살아 있으면 idle(회색), 도는 동안 running(파랑, 끝남·질문이 오면 yield 로 물러난다).
