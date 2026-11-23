@@ -12,6 +12,8 @@ export function setFileToken(t) { fileToken = t; }
 // 카드 모드(card.html)는 주소가 없다 — href 를 비우고(이미지는 src 없이) 화면이 data-open 경로로 file.get 을 불러 채운다
 let fileUrls = true;
 export function setNoFileUrls() { fileUrls = false; }
+/** 로컬 파일 절대 경로 → { href, open } — 화면이 직접 그리는 파일 링크 (background 작업의 출력 파일). 답변 속 링크와 같은 길(data-open 가로채기) */
+export function fileLink(p) { return { href: fileUrls ? `file?path=${encodeURIComponent(p)}${fileToken ? `&token=${encodeURIComponent(fileToken)}` : ''}` : '', open: p }; }
 // <…> 는 공백까지 받는다 (이스케이프된 꼴로 맞춘다). 꺾쇠 없는 주소는 공백·) 에서 끝난다 — 문장 속 괄호는 대개 공백이 있어 원문으로 남는다
 const URL_RE = String.raw`(?:&lt;(.*?)&gt;|([^)\s]+))`;
 let cwd = '';

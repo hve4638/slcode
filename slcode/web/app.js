@@ -3,7 +3,7 @@
 // 화면 하나 = 세션 하나 (사용자 결정 2026-09-25/26): 세션 id 는 opts.sessionId(웹 주소 /s/<id>), 없으면 서버에 server.info 로 묻는다. 서버 하나는 메인 세션과 그 자손을 다룬다 (ticket slcode-web-session-url).
 // 세션 목록·새 세션은 이 화면에 없다 — 새 세션은 새 `slcode` 명령(또는 superlite 의 새 카드).
 // transport = { request(method, params), onEvent(fn), onStatus(fn) } (rpc.js 표면).
-import { renderMarkdown } from './markdown.js';
+import { fileLink, renderMarkdown } from './markdown.js';
 import { DEFAULTS, applySettings, closeOnBackdrop, ctxLevel, settingsDialog } from './settings.js';
 import { inspectDialog } from './inspect.js';
 import { activityPanel } from './activity.js';
@@ -338,9 +338,12 @@ export function mountAgentFront(root, transport, opts = {}) {
   const kidAsks = h('div', { class: 'kid-asks', hidden: '' });
   // 실행 중 줄 (ticket slcode-running-agents-above-input, 사용자 2026-11-11) — 사이드바 "에이전트 N" 절의 요약. 사이드바를 닫아도 입력 상자 바로 위(큐 아래)에 남는다. 승인 카드가 입력창 자리에 뜨면 같이 가려진다
   const runLine = h('div', { class: 'runline', hidden: '' });
+  // background 작업 줄 (ticket slcode-background-run-tool, 사용자 2026-11-23 시안 B) — 실행 중 줄 바로 위의 따로 된 줄. 에이전트가 쉬는 동안에도 남으므로
+  // 맥동하지 않는 초록 점으로 실행 중 줄(에이전트가 일함)과 가른다. 누르면 그 위로 목록이 펼쳐진다
+  const bgLine = h('div', { class: 'runline bgline', hidden: '' });
   const lockOver = h('div', { class: 'lockover', hidden: '' });
   const box = h('div', { class: 'box' }, inputHint, chips, input, h('div', { class: 'row' }, addBtn, modeBtn, modeMenu, h('span', { class: 'gap' }), modelBtn, modelMenu, stopBtn, sendBtn), slashMenu, filePick, lockOver);
-  const composer = h('div', { class: 'composer' }, queueTray, runLine, box, stat);
+  const composer = h('div', { class: 'composer' }, queueTray, bgLine, runLine, box, stat);
   const side = h('aside', { class: 'side' });
   const dock = h('div', { class: 'dock' });
   // 실행 중 표시 — 피드 맨 끝(내 요청 바로 아래)에 한 줄: 맥동 점 · 지금 하는 일 · 경과. state 가 running 일 때만, 새 항목이 와도 늘 마지막 (사용자 2026-09-30)
@@ -1241,6 +1244,36 @@ export function mountAgentFront(root, transport, opts = {}) {
     runLine.replaceChildren(...rows, h('button', { class: `sum${runOpen ? ' open' : ''}`, onclick: () => { runOpen = !runOpen; paintRunning(); } }, h('span', { class: 'dot' }), h('span', {}, sumText), icon('chevron')));
   }
 
+  // ---- background 작업 (ticket slcode-background-run-tool) — session.bgList·session.bg 로 받는다. 끝난 것은 세지 않는다.
+  // 줄마다 설명(없으면 명령)·지난 시간·명령·출력 파일 링크(크기, 비었으면 '출력 없음' — 빈 파일을 열면 흰 화면뿐이다)·중지. 중지는 화면에서 사람이 끈 것 — 에이전트에게 메시지는 가지 않는다
+  let bgTasks = [], bgOpen = false, bgTick = null;
+  const bgRunning = () => bgTasks.filter((t) => t.endedAt === undefined);
+  const fmtBytes = (n) => (n < 1024 ? `${n}B` : n < 1048576 ? `${(n / 1024).toFixed(1)}KB` : `${(n / 1048576).toFixed(1)}MB`);
+  const ago = (ms) => { const s = Math.max(0, Math.floor((Date.now() - ms) / 1000)); return s < 60 ? `${s}초` : s < 3600 ? `${Math.floor(s / 60)}분` : `${Math.floor(s / 3600)}시간 ${Math.floor((s % 3600) / 60)}분`; };
+  function bgRow(t) {
+    const link = fileLink(t.output);
+    const stop = h('button', { class: 'bgstop', title: '프로세스 그룹을 끕니다 (SIGTERM, 5초 뒤 SIGKILL)', onclick: (e) => {
+      e.stopPropagation(); stop.disabled = true; stop.textContent = '끄는 중…';
+      rpc('session.bgStop', { id: current, task: t.id, by: 'user' }).catch((err) => { stop.disabled = false; stop.textContent = '중지'; push(h('div', { class: 'meta err' }, err.message)); });
+    } }, '중지');
+    return h('div', { class: 'it bgit' }, h('span', { class: 'dot bg' }), h('span', { class: 'name' }, t.description || t.command), h('span', { class: 'dim' }, ago(t.startedAt)),
+      t.description ? h('code', { class: 'cmd', title: t.command }, t.command) : h('span', { class: 'cmd' }),
+      t.size ? h('a', { href: link.href, 'data-open': link.open, target: '_blank', rel: 'noopener', title: t.output }, `로그 ${fmtBytes(t.size)}`)
+        : h('span', { class: 'dim', title: `${t.output}\n아직 출력이 없습니다. 프로그램이 출력을 버퍼에 쥐고 있을 수도 있습니다` }, '출력 없음'), stop);
+  }
+  function paintBg(list, tick = false) {
+    if (list) bgTasks = list;
+    const run = bgRunning(), n = run.length;
+    if (!n) bgOpen = false;
+    // 펼친 동안만 2초마다 목록을 다시 받는다 — 지난 시간·출력 크기 (생기고 끝나는 것은 session.bg 로 온다)
+    if (bgOpen && !bgTick) bgTick = setInterval(() => rpc('session.bgList', { id: current }).then((r) => paintBg(r.tasks, true), () => {}), 2000); else if (!bgOpen && bgTick) { clearInterval(bgTick); bgTick = null; }
+    bgLine.hidden = !n;
+    bgLine.replaceChildren(...(n ? [...(bgOpen ? [h('div', { class: 'list' }, ...run.map(bgRow))] : []),
+      h('button', { class: `sum${bgOpen ? ' open' : ''}`, onclick: () => { bgOpen = !bgOpen; paintBg(); } }, h('span', { class: 'dot bg' }), h('span', {}, `background ${n}개 실행 중`), icon('chevron'))] : []));
+    if (!tick) renderSide(); // 사이드바 절
+  }
+  const loadBg = () => rpc('session.bgList', { id: current }).then((r) => paintBg(r.tasks), () => paintBg([]));
+
   function renderSide() {
     renderStat(); paintRunning(); // 남은 시간도 사이드바를 다시 그릴 때 같이 다시 잰다
     side.innerHTML = '';
@@ -1266,6 +1299,8 @@ export function mountAgentFront(root, transport, opts = {}) {
         ev.summary ? h('span', { class: 'sum' }, ev.summary) : null);
     }), ...mates.map((k) => famGo(k, '', h('span', { class: 'dot' }), h('span', { class: 'name' }, '팀원'), h('span', { class: 'desc' }, famName(k)),
       k.pending.length ? h('span', { class: 'dim' }, '승인 대기') : null))));
+    const bgRun = bgRunning();
+    if (bgRun.length) side.append(h('div', { class: 'tasks bgtasks' }, h('h4', {}, `background ${bgRun.length}`), ...bgRun.map(bgRow)));
     side.append(sec('session', '세션', kv([
       ['상태', STATE_LABEL[info?.state] ?? ''], ['id', current ? h('span', { class: 'idv' }, current, iconBtn('copy', '세션 id 복사', copyOf(current))) : null],['벤더 세션', info?.vendorSessionId ?? ready?.vendorSessionId], ['권한 모드', modeName(info?.permissionMode ?? ready?.permissionMode)],
       ['연결', connected ? '연결됨' : '끊김'], ['raw', info?.raw ? '켬' : '끔'],
@@ -1547,7 +1582,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     finally { attaching = false; }
     if (first && r.summary) { more = !!r.more; oldest = r.history[0]?.seq ?? 0; }
     if (first && r.prompts) outlineSeed(r.prompts);
-    info = r.info; setTitle(info.title); syncInspect(); paintLock(); loadKids();
+    info = r.info; setTitle(info.title); syncInspect(); paintLock(); loadKids(); loadBg();
     if (r.draft && !input.value) { input.value = r.draft; input.oninput(); } // 다시 로드된 화면 — 쓰던 글을 되살린다 (치던 중이면 그대로)
     replayHistory(r.history, first ? r.summary : null);
     loadInputHistory();
@@ -1564,6 +1599,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     if (m.event === 'session.event' && m.params.id === current) { if (!attaching) render(m.params, true); }
     else if (m.event === 'session.changed' && m.params.id === current) { info = m.params; setTitle(info.title); syncInspect(); renderMode(); renderSide(); paintVendor(); paintLock(); }
     else if (m.event === 'session.children' && m.params.id === current) paintKids(m.params.children);
+    else if (m.event === 'session.bg' && m.params.id === current) paintBg(m.params.tasks);
     else if (m.event === 'session.queue' && m.params.id === current) paintQueue(m.params.items);
     else if (m.event === 'session.restored' && m.params.id === current) restoreInput(m.params.text, m.params.attachments);
     else if (m.event === 'core.replaced') { loadCommands(); promptBusy = false; loadPlugins(); } // 옛 core 에서 받은 명령 목록을 새 core 의 것으로 — serve 가 다시 붙은 뒤에 알린다

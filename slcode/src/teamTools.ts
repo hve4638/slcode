@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import { bgTools } from './background.js';
 
 /** setTimeout 의 상한 — SDK 는 MCP 도구 시간 제한을 이 값으로 자른다 (SDK 0.3.282 실측) */
 const NO_LIMIT_MS = 2147483647;
@@ -129,7 +130,8 @@ export function teamTools(o: TeamToolsOptions) {
   return [subagent, cont] as const;
 }
 
-export function teamMcp(o: TeamToolsOptions): McpSdkServerConfigWithInstance {
+/** MCP 서버 slcode — 팀원 도구는 team 일 때만, background 도구(background.bgTools, ticket slcode-background-run-tool)는 모든 Claude 세션에 */
+export function slcodeMcp(o: TeamToolsOptions, team: boolean): McpSdkServerConfigWithInstance {
   // alwaysLoad — Agent 도구처럼 늘 보이게 (도구 검색 뒤로 미루지 않는다)
-  return createSdkMcpServer({ name: 'slcode', tools: [...teamTools(o)], alwaysLoad: true, timeout: NO_LIMIT_MS });
+  return createSdkMcpServer({ name: 'slcode', tools: [...(team ? teamTools(o) : []), ...bgTools(o)], alwaysLoad: true, timeout: NO_LIMIT_MS });
 }

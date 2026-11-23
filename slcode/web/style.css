@@ -1225,3 +1225,19 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
   .prpanel .plugs { max-height: 240px; padding-right: 0; border-right: 0; border-bottom: 1px solid var(--acf-line); }
   .prpanel .pd { padding: 12px 0 0; }
 }
+
+/* background 작업 (ticket slcode-background-run-tool) — 입력창 위 따로 된 줄과 사이드바 절. 에이전트가 일하는 것이 아니므로 맥동하지 않는 초록 점 */
+.acf .runline .dot.bg, .acf .side .tasks .dot.bg { background: var(--acf-ok); animation: none; }
+.acf .bgit { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 7px; color: var(--acf-fg); min-width: 0; font-size: 12px; }
+.acf .bgit:hover { background: var(--acf-soft); }
+.acf .bgit .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.acf .bgit .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
+.acf .bgit .dim { color: var(--acf-muted); white-space: nowrap; flex: none; }
+.acf .bgit .cmd { flex: 1; min-width: 0; color: var(--acf-muted); font-family: var(--acf-mono); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: none; padding: 0; }
+.acf .bgit a { color: var(--acf-accent); text-decoration: none; flex: none; }
+.acf .bgit a:hover { text-decoration: underline; }
+.acf .bgit .bgstop { flex: none; font: inherit; font-size: 11px; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--acf-line); background: var(--acf-bg); color: var(--acf-fg); cursor: pointer; }
+.acf .bgit .bgstop:hover:not(:disabled) { border-color: var(--acf-err); color: var(--acf-err); }
+.acf .side .tasks.bgtasks .bgit { border: 1px solid var(--acf-line); border-radius: 10px; padding: 7px 10px; background: var(--acf-panel); flex-wrap: wrap; }
+.acf .side .tasks.bgtasks .bgit .cmd { flex-basis: 100%; order: 9; }
+.acf .side .tasks.bgtasks .bgit a { display: inline; border: 0; padding: 0; background: none; color: var(--acf-accent); }

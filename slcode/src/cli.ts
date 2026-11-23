@@ -34,7 +34,7 @@ import { findAgent, listAgents, type AgentDef } from './teamAgents.js';
 import { createWorktree, removeWorktree, worktreeLoss, type Loss } from './worktree.js';
 import { summarize } from './activity.js';
 import type { Worktree } from './worktree.js';
-import { FILES, PERMISSION_MODES, TEAM_PRESETS, type ApprovalRequest, type LoggedEvent, type Methods, type SessionInfo } from './protocol.js';
+import { FILES, PERMISSION_MODES, TEAM_PRESETS, type ApprovalRequest, type BgTask, type LoggedEvent, type Methods, type SessionInfo } from './protocol.js';
 
 type Flags = { port?: string; host?: string; stdio?: boolean; vendor?: string; mode?: string; title?: string; model?: string; effort?: string; profile?: string; env?: string[]; param?: string[]; since?: string; tail?: string; turn?: string; dir?: string; raw?: boolean; 'no-inspect'?: boolean; all?: boolean; force?: boolean; json?: boolean; remember?: boolean; from?: string; unset?: string[]; re?: string; timeout?: string; answer?: string; 'no-web'?: boolean; web?: boolean; takeover?: boolean; version?: boolean; help?: boolean; 'from-start'?: boolean; to?: string[]; remove?: boolean; name?: string; options?: string; subagent?: boolean; teammate?: boolean; detached?: boolean; lazy?: boolean; wait?: boolean; agent?: string; cwd?: string; worktree?: string; self?: boolean; key?: string };
 
@@ -122,6 +122,13 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
                                  커밋하지 않은 변경이 있거나 브랜치가 부모 브랜치(slcodeparent)에 반영되지 않았으면 거절하고 확인 키를 보인다.
                                  그 작업을 버리려면 --key <키> 로 다시 친다 — 그사이 무엇이든 바뀌면 키도 바뀐다.
                                  --json 이면 결과를 JSON 으로: {removed, path, branch} · 이미 지웠으면 already · 거절이면 {removed: false, reasons, key}
+background 실행 (세션 안의 에이전트가 친다 — Claude 세션은 같은 일을 하는 BackgroundRun·BackgroundStop 도구도 있다)
+* bg run [-n <설명>] [--cwd <folder>] -- <명령>
+                                 명령을 시간 제한 없이 띄우고 작업 id 와 출력 파일(stdout·stderr)을 두 줄로 출력한다. 폴더를 빼면 지금 폴더.
+                                 -- 뒤 낱말이 하나면 그대로 셸 명령('python3 -m http.server 8080'), 여럿이면 셸이 나눈 낱말 그대로.
+                                 Esc(중지)에는 살고 세션을 닫으면 꺼진다. 스스로 끝나면 이 세션이 <slcode-message from="bg:<id>" kind="exited"> 를 받는다
+* bg stop <id>                   프로세스 그룹에 SIGTERM, 5초 안에 끝나지 않으면 SIGKILL. 끝난 꼴을 출력한다 (메시지는 오지 않는다)
+* bg list                        이 세션의 작업 — id·상태·시작 시각·설명·명령·출력 파일
 에이전트 플러그인 (Claude·Codex 세션에 싣는다. 바꾼 설정은 새 세션부터, 떠 있는 세션은 사이드바의 다시 싣기로 — Codex 는 skill 만)
   plugin add <folder>            slcode-plugin.json(애드온은 slcode-addon.json)이 있는 원본 폴더를 설치한다. 같은 내용이면 아무것도 하지 않는다
   plugin remove <name> [--cascade]
@@ -273,6 +280,30 @@ async function stdinPrompt(): Promise<string | undefined> {
     process.stdin.on('data', (d: string) => { clearTimeout(idle); buf += d; });
     process.stdin.on('end', () => { clearTimeout(idle); resolve(buf.trim() || undefined); });
   });
+}
+/** `slcode bg run|stop|list` (ticket slcode-background-run-tool, 사용자 결정 2026-11-23) — 자기 세션 core 가 프로세스를 맡는다.
+ *  run 의 명령은 `--` 뒤 낱말이 하나면 그대로 셸 명령, 여럿이면 셸이 나눈 낱말을 따옴표로 감싸 잇는다. 설명이 -d 가 아니라 -n 인 것은 -d 가 --detached 라서 */
+async function bg(rest: string[]) {
+  const sid = inSession();
+  const [sub, ...args] = rest;
+  const how = (t: BgTask) => t.endedAt === undefined ? 'running' : t.code != null ? `exited ${t.code}` : t.signal ? `killed ${t.signal}` : 'ended (code unknown)';
+  const { client } = await liveClient(sid);
+  try {
+    if (sub === 'run') {
+      if (!args.length) usage('bg run [-n <description>] [--cwd <folder>] -- <command>');
+      const q = (w: string) => `'${w.replace(/'/g, `'\\''`)}'`;
+      const command = args.length === 1 ? args[0] : args.map(q).join(' ');
+      const t = await client.request('session.bgRun', { id: sid, command, description: flags.name ?? '', cwd: path.resolve(flags.cwd ?? '.') });
+      console.log(`${t.id}\n${t.output}`);
+    } else if (sub === 'stop') {
+      if (args.length !== 1) usage('bg stop <id>');
+      const t = await client.request('session.bgStop', { id: sid, task: args[0] });
+      console.log(`background task ${t.id} ${t.stoppedBy ? 'stopped, ' : ''}${how(t)}. Output: ${t.output}`);
+    } else if (sub === 'list') {
+      const { tasks } = await client.request('session.bgList', { id: sid });
+      console.log(tasks.length ? tasks.map((t) => `${t.id}  ${how(t)}  ${new Date(t.startedAt).toISOString()}  ${t.description || '-'}  ${t.command}  ${t.output}`).join('\n') : '(no background tasks)');
+    } else usage('bg run|stop|list');
+  } finally { client.close(); }
 }
 /** `slcode team new` (ticket slcode-team-agent, 사용자 결정 2026-11-07~08) — 세션 안의 모델이 Bash 로 친다. 그 세션(리더)의 core 에 팀원을 청하고 id 를 출력하고 바로 끝난다.
  *  관계 프리셋(--subagent·--teammate·--detached, 생략하면 teammate)이 관여 옵션의 기본값을 채우고 -o 의 JSON 이 그 위에 얹힌다. 주지 않은 값은 리더를 따른다(core).
@@ -727,6 +758,7 @@ try {
       await resumeLog(log, ['raw', 'no-inspect', 'no-web', 'dir']); // --title·--mode 는 위 기록(meta)에 들어가 카드 세션에도 간다
       break;
     }
+    case 'bg': { await bg(rest); break; } // background 실행 (ticket slcode-background-run-tool) — 세션 안 전용
     case 'team': { // 팀원 (ticket slcode-team-agent) — 세션 안 전용
       if (rest[0] === 'clean-worktree') { await teamCleanWorktree(rest.slice(1)); break; }
       if (rest[0] !== 'new') usage('team new [--cwd <folder> | --worktree [name]] [--subagent|--teammate|--detached] [--agent A] [-n name] [-m model] [-e effort] [--mode M] [-o JSON] [-- <instructions>] | team clean-worktree <teammate> | --self [--key K]');

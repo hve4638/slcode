@@ -376,6 +376,14 @@ export type Methods = {
   'session.reply': { params: { id: string; re: string; text: string }; result: { id: string; to: string } };
   /** Claude Code 세션(등록 이름)에 한 통 — 이 세션의 core 가 자기 소켓을 from 으로 보낸다 (claudePeer.ts, ticket slcode-claude-peer-relay). 없는 이름은 no_session */
   'session.peerSend': { params: { id: string; to: string; text: string }; result: { id: string; to: string } };
+  // ---- background 실행 (ticket slcode-background-run-tool, 사용자 결정 2026-11-23) — 세션 안의 `slcode bg` 가 자기 세션 소켓으로 부른다. 프로세스는 core 밖(따로 된 프로세스 그룹)이고 교체한 core 가 이어 맡는다
+  /** 명령을 시간 제한 없이 띄운다 — 출력은 output 파일, 스스로 끝나면 이 세션이 메일 from="bg:<id>" kind="exited" 를 받는다. cwd 를 주지 않으면 세션 폴더 */
+  'session.bgRun': { params: { id: string; command: string; description?: string; cwd?: string }; result: BgTask };
+  /** 프로세스 그룹에 SIGTERM, 5초 안에 끝나지 않으면 SIGKILL — 끝난 기록을 돌려준다(메일은 없다). 이미 끝났으면 그 기록, 없는 작업은 bad_request.
+   *  by 는 기록의 stoppedBy — 화면의 중지 단추는 user, 없으면 agent(`slcode bg stop`·BackgroundStop) */
+  'session.bgStop': { params: { id: string; task: string; by?: 'user' }; result: BgTask };
+  /** 이 세션의 작업 전부 (시작 순) */
+  'session.bgList': { params: { id: string }; result: { tasks: BgTask[] } };
   // ---- 팀원 세션 (ticket slcode-team-agent, 사용자 결정 2026-11-07~08) — 리더 core 가 팀원 core 를 띄우고, link 팀원은 소유한다
   /** 리더 세션 안의 `slcode team new` 가 부른다 — 팀원을 띄우고(link 면 소유하고) id 를 돌려준다. vendor·model·effort·mode 는 주지 않으면 리더를 따른다(모델·effort 는 벤더가 같을 때만).
    *  team 은 관여 옵션 — 빠진 키는 teammate 프리셋 값. 이 세션이 팀원을 만들지 못하면(meta.noTeam) team_disabled. */
@@ -448,6 +456,8 @@ export type Broadcasts = {
   'session.restored': { id: string; text: string; attachments: Attachment[] };
   /** 이 세션이 소유한 자식 목록·대기 승인이 바뀌었다 (ticket slcode-subagent-sessions) */
   'session.children': { id: string; children: ChildView[] };
+  /** 이 세션의 background 작업 전부 (session.bgList 와 같은 꼴) — 작업이 생기거나 끝날 때 (ticket slcode-background-run-tool) */
+  'session.bg': { id: string; tasks: BgTask[] };
   /** 소유권을 빼앗긴 연결에만 — 새 소유자의 pid (protocol 3) */
   'core.owner': { pid: number | null };
   /** 내려가는 core 가 연결을 끊기 직전에 모든 연결에 — 새 core 의 pid·version. 받은 쪽은 닫힘이 아니라 같은 소켓에 다시 붙기로 다룬다 (3단계). 화면은 serve 중계가 새 core 에 다시 붙은 뒤에 받는다 */
@@ -459,6 +469,10 @@ export type Broadcasts = {
 export type EventName = keyof Broadcasts;
 
 /** 봉투 — body 는 문자열 또는 JSON. kind 는 message·ask·reply. via 는 실제로 넘긴 쪽 (보내는 CLI 가 자동으로: from 과 다른 세션 id 또는 outside) */
+/** background 작업 하나 (background.ts, ticket slcode-background-run-tool) — 디스크 기록 bg/<id>.json 에 출력 파일 경로(output)·크기(size)를 붙인 것.
+ *  pid 는 감싸는 sh 의 pid 이자 프로세스 그룹 id. 끝나면 endedAt 과 code(exit code, 모르면 null)·signal(exit 파일 없이 시그널로 죽었을 때). stoppedBy 는 slcode 가 끈 까닭 */
+export type BgTask = { id: string; command: string; description: string; cwd: string; pid: number; startedAt: number; endedAt?: number; code?: number | null; signal?: string | null; stoppedBy?: 'agent' | 'user' | 'close'; output: string; /** 출력 파일 크기(바이트) — 알려 줄 때의 값 */ size: number };
+
 export type Mail = { id: string; from: string; to: string; ts: number; kind: string; body: unknown; /** 답장이 가리키는 원 메시지 id (kind=reply) */ re?: string; via?: string; /** 받는 세션이 idle 이 된 뒤에 넣는다 — 없으면 받는 즉시 (ticket slcode-team-agent) */ lazy?: boolean };
 
 export type RequestFrame = { id: number | string; method: string; params?: unknown };

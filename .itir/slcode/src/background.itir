@@ -1,0 +1,19 @@
+import { tool } from '@anthropic-ai/claude-agent-sdk'
+import { z } from 'zod'
+import { BgTask, CoreError, ERR } from './protocol'
+
+role: background 실행 (ticket slcode-background-run-tool, 사용자 결정 2026-11-23) — 서버·끝나지 않는 명령·30분을 넘길 수 있는 명령을 slcode core 가 시간 제한 없이 맡는다. Claude Code 의 Bash run_in_background 는 SDK 세션에서 기본 30분·최대 2시간에 죽고 Esc·세션 닫기에 같이 죽는다(조사 ws docs/report/slcode-long-terminal-task-research.md). 원본은 CLI `slcode bg run|stop|list`(세션 안, core 의 session.bgRun·bgStop·bgList)이고, Claude 세션에는 그 CLI 를 부르는 MCP 도구 BackgroundRun·BackgroundStop 을 모든 세션에 싣는다 — Codex 는 셸에서 CLI 를 친다. 승인은 BackgroundRun 만 Bash 처럼 벤더의 권한 모드가 정한다(allowedTools 에 넣지 않는다 — Bash 허용 규칙은 적용되지 않는다). BackgroundStop(BG_STOP_TOOL)은 이 세션이 띄운 작업만 멈추므로 allowedTools 로 묻지 않는다. 프로세스는 core 밖이다: 감싸는 sh 를 따로 된 프로세스 그룹(detached)으로 띄우고 명령은 bash -c 로, 출력(stdout·stderr 합침)은 세션 폴더 bg/<id>.log 에 쌓는다(상한 없음). env 에 PYTHONUNBUFFERED=1 을 넣는다(주지 않았을 때만) — python 은 출력이 파일이면 버퍼에 쥐어 서버의 시작 줄이 파일에 오지 않았다(데모 실측). sh 는 명령이 끝나면 exit code 를 bg/<id>.exit 에 쓴다(임시 파일 뒤 이름 바꾸기) — 그룹에 보낸 SIGTERM 에 sh 가 먼저 죽지 않게 trap 을 건다(trap '' 은 무시가 자식에게 물려져 쓰지 않는다). 기록 bg/<id>.json {id, command, description, cwd, pid(그룹 id), startedAt, endedAt?, code?, signal?, stoppedBy?: agent|user|close}. 끝나면 기록을 닫고, 에이전트가 멈춘 것·세션 닫기로 끈 것이 아니면 onEnd 로 core 에 알린다(core 가 메일 from="bg:<id>" kind="exited" 를 스스로 받는다 — idle 이면 턴이 열린다). Esc(interrupt)와는 무관하다. 세션 닫기는 closeAll 로 끈다. core 교체는 release 로 손만 떼고 새 core 가 adopt 로 기록을 읽어 이어 맡는다 — 교체를 미루지 않는다. 상태 점·교체 판정에 넣지 않는다(끝나지 않는 서버). 화면(사용자 2026-11-23 시안 B, web/app.js — itir 검사 밖): 입력창 위 실행 중 줄 바로 위의 따로 된 줄 'background N개 실행 중'(맥동하지 않는 초록 점 — 에이전트가 일하는 실행 중 줄과 가른다)과 사이드바 'background N' 절, 펼치면 줄마다 설명·지난 시간·명령·출력 파일 링크(크기, 비었으면 '출력 없음' — 빈 파일은 흰 화면뿐이다)·중지, 펼친 동안만 2초마다 session.bgList 로 다시 받는다. onChange 로 core 가 session.bg {tasks} 를 방송하고 화면은 attach 때 session.bgList 로 받는다. 화면의 중지는 stoppedBy user 로 남기고 에이전트에게 알리지 않는다(사용자 2026-11-23). Windows 는 지원하지 않는다(sh·bash·프로세스 그룹)
+
+export val BG_DIR
+export val BG_STOP_TOOL
+val STOP_GRACE_MS
+val WRAP
+export class Background {
+  role: 세션 하나의 background 작업 — run(명령·설명·폴더 → 기록, 출력 파일 경로를 붙여서)·stop(by agent|user|close, SIGTERM 을 그룹에, STOP_GRACE_MS 5초 안에 끝나지 않으면 SIGKILL — 이미 끝났으면 그 기록)·list(디스크의 기록 전부, 시작 순)·closeAll(도는 것을 stoppedBy close 로 끈다)·release(교체 — 지켜보기만 그만둔다)·onChange(작업이 생기거나 끝날 때)·adopt(기동 때 끝나지 않은 기록: exit 파일이 있으면 끝남으로 알리고, pid 가 살아 있고 그 명령줄(ps args)에 이 작업의 exit 파일이 있으면 지켜보고 — pid 재사용으로 남의 프로세스를 잡지 않게 — 둘 다 아니면 code 를 모르는 끝남으로 알린다). 끝남은 이 core 가 띄운 것은 자식 exit 이벤트로(exit 파일이 없으면 그 시그널), 이어 맡은 것은 bg 폴더 fs.watch 의 exit 파일로. 띄운 직후(sh 가 trap 을 건 뒤 bash 를 띄우기 전)의 SIGTERM 은 sh 가 받고 넘겨 5초 뒤 SIGKILL 로 꺼진다. 이어 맡은 것을 밖에서 SIGKILL 하면 알지 못한다(다음 기동의 adopt 가 code 모름으로 알린다)
+}
+export fn endText(t) -> Text {
+  role: 끝 알림 본문 — 설명·code(또는 시그널, 모름)·명령·출력 파일
+}
+export fn bgTools(o) {
+  role: MCP 도구 정의 [BackgroundRun {command, description, cwd?} → `slcode bg run -n <description> [--cwd] -- <command>`, BackgroundStop {id} → `slcode bg stop <id>`] — CLI(dist/cli.js)를 세션 env·세션 폴더로 execFile 한다(같은 일을 셸로도 하게 CLI 가 원본, teamTools 와 같은 꼴 — teamTools 가 이 모듈을 import 하므로 그쪽 runCli 를 쓰지 않는다). 결과는 id·출력 파일·끝나면 오는 메일 꼴·Esc 에 살고 세션 닫기에 꺼진다는 것·기다리며 들여다보지 말라는 것
+}

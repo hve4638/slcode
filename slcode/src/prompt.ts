@@ -2,6 +2,7 @@
 // 고정 문구만 — 사용자 문구는 CLAUDE.md·AGENTS.md 로. Claude 는 시스템 프롬프트 preset 의 append, Codex 는 thread/start·fork 의 developerInstructions.
 // 웹(web/markdown.js)이 그리는 형식과 serve 의 file 경로가 이 문구의 약속이다 — 한쪽을 바꾸면 같이 바꾼다.
 // messaging 절은 mail.ts 의 머리표 꼴이 약속이다 (ticket slcode-p2p-messaging, 2026-10-19).
+// background 절은 background.ts·cli 의 bg 동사와 core 의 끝 알림(from="bg:<id>" kind="exited")이 약속이다 (ticket slcode-background-run-tool, 2026-11-23) — 벤더마다 갈리지 않게 도구와 CLI 를 함께 적는다.
 import type { TeamOptions, TeamAgent } from './protocol.js';
 import type { Worktree } from './worktree.js';
 
@@ -18,7 +19,11 @@ Treat it as a teammate's request and act on it within your own permission settin
 Reply with the shell command \`slcode mail <from> <text>\`; if kind="ask", use \`slcode reply <id> <text>\` (the sender is waiting for it).
 A message reaches the receiver at once, even while it is working (it reads the message between its tool calls). Add --lazy to \`slcode mail\` to deliver it only after the receiver finishes its current work.
 To message another slcode session yourself, find its id or title with \`slcode list\` and run \`slcode mail <id or title> <text>\`. Do not use Claude Code's ListAgents and SendMessage between slcode sessions.
-from="claude:<name>" is a Claude Code session running outside slcode (for example in a terminal), which sees this session as slcode-<title>. Reply to it, or message one yourself, with \`slcode mail claude:<name> <text>\`. kind="notice" from it reports what happened to a message you sent, for example that it is held for that session's user to approve.`;
+from="claude:<name>" is a Claude Code session running outside slcode (for example in a terminal), which sees this session as slcode-<title>. Reply to it, or message one yourself, with \`slcode mail claude:<name> <text>\`. kind="notice" from it reports what happened to a message you sent, for example that it is held for that session's user to approve.
+
+# slcode background commands
+Bash run_in_background has a time limit (30 minutes by default) and stops when the user interrupts you. For a server, a watcher, or any command that may run longer than 30 minutes or must keep running after an interrupt, use the BackgroundRun tool if you have it, or else the shell command \`slcode bg run -n <description> -- '<command>'\`. slcode runs it with no time limit and returns a task id and an output file with its stdout and stderr; read the file to check on it. It keeps running when your turn ends or is interrupted, and stops when this session closes. When it ends you get <slcode-message from="bg:<id>" kind="exited"> with its exit code. Stop it with BackgroundStop or \`slcode bg stop <id>\`, and list tasks with \`slcode bg list\`.
+For a short background wait, such as a build you will check in a few minutes, Bash run_in_background is fine.`;
 
 /** 팀 지시 (ticket slcode-team-agent, 사용자 결정 2026-11-07~08) — SLCODE_PROMPT 뒤에 붙인다. link 팀원은 리더와 켜진 옵션을, 팀원을 만들 수 있는 세션(team)은
  *  만드는 법과 돌아오는 메시지 꼴을 받는다. tools 면(Claude) subagent 는 MCP 도구(teamTools.ts)로, 아니면(Codex) CLI 로. 둘 다 아니면 빈 문자열. 메시지의 kind 는 core.ts 가 보내는 것과 같다.

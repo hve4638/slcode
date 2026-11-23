@@ -25,7 +25,8 @@ import { CLAUDE_PREFIX, peerDir, peerName, startPeer } from './claudePeer.js';
 import { ANSWERED, Children, teamOf, teamOptionsError } from './children.js';
 import { familyPrompt } from './prompt.js';
 import { listAgents } from './teamAgents.js';
-import { TEAM_TOOL_NAMES, teamMcp } from './teamTools.js';
+import { TEAM_TOOL_NAMES, slcodeMcp } from './teamTools.js';
+import { Background, BG_DIR, BG_STOP_TOOL, endText } from './background.js';
 import { blockInspect, CODEX_ROUTE, codexArgs, codexUpstream, inspectBlocked, inspectEnv, keepsFirstParty, sdkVersion, startInspect, turnCalls, upstreamOf, type InspectProxy } from './inspect.js';
 import { InspectStore, maybeSweep } from './inspectDb.js';
 import { Activity } from './activity.js';
@@ -187,6 +188,10 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   const canTeam = !logFile.meta.noTeam;
   const shell = Object.fromEntries(Object.entries(SDK_ENV).filter(([k]) => !k.toUpperCase().startsWith(PARAM_ENV) && k !== 'SLCODE_PARENT_ID'));
   const env: NodeJS.ProcessEnv = withBinPath({ ...shell, ...logFile.meta.env, ...Object.fromEntries(Object.entries(params).map(([k, v]) => [PARAM_ENV + k, v])), SLCODE_SESSION_ID: logFile.meta.id, ...(parentId ? { SLCODE_PARENT_ID: parentId } : {}) }, PKG);
+  // background 실행 (ticket slcode-background-run-tool, 사용자 결정 2026-11-23) — 명령은 벤더 env 로. 스스로 끝나면 메일로 스스로 받는다 (idle 이면 턴이 열린다).
+  // 교체 때는 손만 떼고(release) 새 core 가 이어 맡는다(adopt). 닫기에는 끈다
+  const bgs: Background = new Background({ dir: path.join(logFile.dir, BG_DIR), env, log, onEnd: (t) => take(newMail({ from: `bg:${t.id}`, to: sid, kind: 'exited', body: endText(t) })),
+    onChange: () => { if (!closed) broadcast('session.bg', { id: sid, tasks: bgs.list() }); } }); // 화면의 background 표시
   // inspect (ticket slcode-inspect-proxy·slcode-inspect-default-on) — 켜져 있으면 벤더를 띄우기 전에 proxy 를 세우고 벤더 env 의 ANTHROPIC_BASE_URL 을 그리로.
   // 기록은 세션 폴더 inspect/inspect.db. proxy 를 띄운 core 는 3일마다 상태 폴더의 꺼진 세션 raw 를 정리한다 (기록이 늘어나는 것은 proxy 가 떠 있을 때뿐)
   const inspectDir = path.join(logFile.dir, 'inspect');
@@ -286,8 +291,11 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     : new ClaudeSession({
       log: logFile, env: firstEnv, resume: logFile.meta.vendorSessionId, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, ...(agent ? { agent } : {}), ...(load ? { load } : {}), ...(prompt ? { prompt } : {}), ...(hooks ? { hooks: hooks.sdkHooks() } : {}),
       family: familyPrompt({ team: canTeam, leader: parentId, options: team(), tools: canTeam, agent: logFile.meta.agent, agents: canTeam ? listAgents(cwd, P.dir) : [], worktree: logFile.meta.worktree, parentBranch: wtParent }),
-      // 팀원 도구(Subagent·ContinueSubagent)는 팀원을 만들 수 있는 Claude 세션에만 — 도구는 이 판의 CLI 를 부른다. Agent 도구처럼 승인을 묻지 않는다 (사용자 2026-11-08)
-      ...(canTeam ? { mcpServers: () => ({ slcode: teamMcp({ cli: path.join(PKG, 'dist', 'cli.js'), env, cwd }) }), allowedTools: [...TEAM_TOOL_NAMES] } : {}),
+      // MCP 서버 slcode — 도구는 이 판의 CLI 를 부른다. 팀원 도구(Subagent·ContinueSubagent)는 팀원을 만들 수 있는 세션에만, Agent 도구처럼 승인을 묻지 않는다 (사용자 2026-11-08).
+      // background 도구는 모든 Claude 세션에 — BackgroundRun 은 Bash 처럼 권한 모드대로 승인을 묻고 (ticket slcode-background-run-tool, 사용자 2026-11-23),
+      // BackgroundStop 은 이 세션이 띄운 작업만 멈추므로 묻지 않는다
+      mcpServers: () => ({ slcode: slcodeMcp({ cli: path.join(PKG, 'dist', 'cli.js'), env, cwd }, canTeam) }),
+      allowedTools: [...(canTeam ? TEAM_TOOL_NAMES : []), BG_STOP_TOOL],
       ...(parentId && team()?.endWithAnswer ? { noAsk: true } : {}),
     });
   // 연 표지를 열 때의 훅 기록보다 먼저 — 화면은 이것을 만나면 마지막 턴 뒤의 앞선 열 때 알림(바꾸기 전 프로필·벤더의 것 등)을 지운다
@@ -633,6 +641,13 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     'session.signal': (_c, p) => { mine(p?.id); if (!activity.signal(p.strength, p.what)) throw new CoreError(ERR.badRequest, 'strength weak|strong and what [a-z0-9-]{1,32}'); return { ok: true }; },
     'session.activity': (_c, p) => { mine(p?.id); return activity.result(typeof p.from === 'number' ? p.from : undefined); },
     // ---- 메시징 (ticket slcode-p2p-messaging, 2026-10-19)
+    'session.bgRun': (_c, p) => {
+      mine(p?.id);
+      if (typeof p.command !== 'string') throw new CoreError(ERR.badRequest, 'command required');
+      return bgs.run(p.command, typeof p.description === 'string' ? p.description : '', typeof p.cwd === 'string' && p.cwd ? path.resolve(cwd, p.cwd) : cwd);
+    },
+    'session.bgStop': (_c, p) => { mine(p?.id); return bgs.stop(String(p.task ?? ''), p.by === 'user' ? 'user' : 'agent'); },
+    'session.bgList': (_c, p) => { mine(p?.id); return { tasks: bgs.list() }; },
     'session.deliver': (_c, p) => {
       mine(p?.id);
       const m = p.mail;
@@ -1002,6 +1017,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   function syncPeer() { peer.sync(peerName(logFile.meta.title, sid), mailCalm() ? 'idle' : 'busy'); }
   session.onEvent((e) => { if (e.ev.kind === 'session.state') syncPeer(); });
   void children.adoptLive(); // 교체 전의 core 가 띄운 켜진 link 팀원
+  bgs.adopt(); // 교체 전의 core(또는 죽은 core)가 띄운 background 작업
 
   // ---- 수명
   let resolveDone!: () => void;
@@ -1023,9 +1039,11 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     let deadline: NodeJS.Timeout | undefined;
     // 리더 닫힘 정리 (ticket slcode-team-worktree) — 팀원이 닫히기를 기다려 worktree 를 지우는 일은 벤더 닫기와 함께
     const cleaned = children.cleanWorktrees();
+    const stopped = bgs.closeAll(); // background 작업은 끈다 (사용자 결정 2026-11-23)
     await Promise.race([session.close(reason), new Promise<void>((r) => { deadline = setTimeout(() => { log(`vendor did not close in ${CLOSE_DEADLINE_MS / 1000}s — leaving it`); r(); }, CLOSE_DEADLINE_MS); })]);
     clearTimeout(deadline);
     await cleaned;
+    await stopped;
     await hooks?.close(); // worker 와 hook.exec 가 띄운 프로세스 그룹도
     await inspect?.close();
     if (sweeper) clearInterval(sweeper);
@@ -1069,6 +1087,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     clearTimeout(deadline);
     await hooks?.close(); // 상태는 파일에 있다 — 새 core 가 이어 쓴다
     children.release(); // 새 core 가 다시 소유한다 (Children.adoptLive)
+    bgs.release(); // background 작업도 새 core 가 이어 맡는다 (Background.adopt)
     await inspect?.close();
     if (sweeper) clearInterval(sweeper);
     store?.close();
