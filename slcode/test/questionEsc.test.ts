@@ -277,7 +277,12 @@ test('웹: 키보드만으로 — 질문은 ↓ 로 Chat about this 에 가서 E
     q = await req;
     await b.until(`document.activeElement === ${card}`, '질문 카드에 포커스');
     // 카드 밖을 눌러도 키는 카드로 (사용자 2026-11-08) — 피드 빈 곳을 누르면 카드에 포커스, 포커스가 빠져 있어도 ↓·Esc 는 카드가 받는다
-    const pt = await b.ev(`(() => { const r = document.querySelector('.feed').getBoundingClientRect(); return { x: r.left + 4, y: r.top + 4 }; })()`);
+    // 빈 곳은 고른다 — 피드는 부드럽게 스크롤해 왼쪽 위 모서리에도 메시지의 아이콘 버튼이 지나간다(전체 실행에서 BUTTON.ico 를 누른 실패). 스크롤이 멈춘 뒤 누를 거리가 아닌 점
+    await b.until(`new Promise((r) => { const f = document.querySelector('.feed'), s = f.scrollTop; requestAnimationFrame(() => requestAnimationFrame(() => r(f.scrollTop === s))); })`, '피드 스크롤이 멈춤');
+    const pt = await b.ev(`(() => { const r = document.querySelector('.feed').getBoundingClientRect();
+      for (let y = r.top + 4; y < r.bottom - 4; y += 4) { const e = document.elementFromPoint(r.left + 4, y); if (e && !e.closest('a, button, label, summary, [tabindex], [role=button], input, textarea')) return { x: r.left + 4, y }; }
+      return null; })()`);
+    assert.ok(pt, '피드에 빈 곳이 있다');
     for (const type of ['mousePressed', 'mouseReleased']) await b.send('Input.dispatchMouseEvent', { type, ...pt, button: 'left', clickCount: 1 });
     const hit = await b.ev(`(() => { const e = document.elementFromPoint(${pt.x}, ${pt.y}); return e ? e.tagName + '.' + e.className : ''; })()`);
     await b.until(`document.activeElement === ${card}`, `빈 곳을 누르면 카드로 (누른 곳 ${hit}, 선택 ${await b.ev(`getSelection().isCollapsed`)})`);

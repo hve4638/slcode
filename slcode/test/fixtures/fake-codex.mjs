@@ -12,6 +12,10 @@ import fs from 'node:fs';
 import readline from 'node:readline';
 import WebSocket from 'ws';
 if (process.env.FAKE_CODEX_ENV) fs.writeFileSync(process.env.FAKE_CODEX_ENV, JSON.stringify({ PATH: process.env.PATH, SLCODE_SESSION_ID: process.env.SLCODE_SESSION_ID, CORE_X: process.env.CORE_X, se: Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith('SE_'))), sp: Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith('SLCODE_PARAM_'))), args: process.argv.slice(2) }));
+// FAKE_CODEX_TERM_WAIT 면 SIGTERM·stdin 닫힘을 받아도 그 파일에 적힌 pid 가 없어질 때까지 내려가지 않는다 — core 교체 중 벤더를 내리는 사이에 일을 끼운다 (ticket slcode-flaky-tests)
+let termWait = null;
+const holdExit = () => { termWait ??= setInterval(() => { try { process.kill(Number(fs.readFileSync(process.env.FAKE_CODEX_TERM_WAIT, 'utf8')), 0); } catch { process.exit(0); } }, 20); };
+if (process.env.FAKE_CODEX_TERM_WAIT) { process.on('SIGTERM', holdExit); process.stdin.on('end', holdExit); }
 const argBase = process.argv.join(' ').match(/openai_base_url="([^"]+)"/)?.[1] ?? null;
 /** 요청 하나 — response.completed 까지 받은 이벤트의 response id */
 const call = (ws, msg) => new Promise((resolve, reject) => {

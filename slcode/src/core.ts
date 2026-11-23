@@ -1017,7 +1017,6 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   function syncPeer() { peer.sync(peerName(logFile.meta.title, sid), mailCalm() ? 'idle' : 'busy'); }
   session.onEvent((e) => { if (e.ev.kind === 'session.state') syncPeer(); });
   void children.adoptLive(); // 교체 전의 core 가 띄운 켜진 link 팀원
-  bgs.adopt(); // 교체 전의 core(또는 죽은 core)가 띄운 background 작업
 
   // ---- 수명
   let resolveDone!: () => void;
@@ -1072,6 +1071,8 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   }
   async function replace(pkg: string) {
     retiring = true; closed = true;
+    // background 작업은 지금 놓는다 — closed 뒤에 끝난 것은 take 가 버리는데 기록은 끝남으로 남아 새 core 도 알리지 않았다 (ticket slcode-flaky-tests). 놓으면 새 core 가 exit 파일로 알린다
+    bgs.release();
     disarmOwnerGrace();
     activity.handoff(); // 새 core 가 이어 적는다 — 세션 꺼짐이 아니다
     log(`replacing this core with ${pkg}`);
@@ -1087,7 +1088,6 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     clearTimeout(deadline);
     await hooks?.close(); // 상태는 파일에 있다 — 새 core 가 이어 쓴다
     children.release(); // 새 core 가 다시 소유한다 (Children.adoptLive)
-    bgs.release(); // background 작업도 새 core 가 이어 맡는다 (Background.adopt)
     await inspect?.close();
     if (sweeper) clearInterval(sweeper);
     store?.close();
@@ -1108,6 +1108,9 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     for (const s of socks) s.end();
     resolveDone();
   }
+  // 교체 전의 core(또는 죽은 core)가 띄운 background 작업. 이미 끝난 것은 여기서 바로 메일 → session.send → onEvent 가 retire 를 읽으므로
+  // 그 선언 뒤에 둔다 — 앞에 두면 TDZ 로 기동이 죽어 resume·교체가 실패하고 끝 알림이 사라졌다 (ticket slcode-flaky-tests)
+  bgs.adopt();
   if (earlyExit) { await close(earlyExit); throw new CoreError('vendor_exit', earlyExit); }
   armOwnerGrace();
   return { sock: sockPath, session: session.info(), close, done };
