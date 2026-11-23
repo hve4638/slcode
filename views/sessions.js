@@ -25,7 +25,7 @@ const LABEL = { running: 'Running', asking: 'Waiting for approval', new: 'Finish
 const STYLE = `
 :root{--sb-fg:var(--vscode-sideBar-foreground,var(--vscode-foreground,#ccc));--desc:var(--vscode-descriptionForeground,#9d9d9d);--hover:var(--vscode-list-hoverBackground,#2a2d2e);
 --selbg:var(--vscode-list-inactiveSelectionBackground,#37373d);--focus:var(--vscode-focusBorder,#0078d4);--icon:var(--vscode-icon-foreground,#c5c5c5);
---st-run:var(--vscode-charts-blue,#3794ff);--st-ask:var(--vscode-charts-yellow,#cca700);--st-new:var(--vscode-charts-green,#89d185);--st-idle:var(--vscode-disabledForeground,#8b8b8b)}
+--st-run:var(--vscode-charts-blue,#3794ff);--st-new:var(--vscode-charts-green,#89d185);--st-idle:var(--vscode-disabledForeground,#8b8b8b)}
 .l,.l *{box-sizing:border-box}
 .l{font:13px system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--sb-fg);position:relative;padding-bottom:8px}
 .l svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex:none}
@@ -65,7 +65,6 @@ const STYLE = `
 .vm{width:12px;height:12px;display:grid;place-items:center;opacity:.85}.vm svg{width:12px;height:12px}
 .g{display:inline-block;border-radius:50%}
 .g.running{width:8px;height:8px;background:var(--st-run);animation:pulse 1.6s ease-in-out infinite}
-.g.asking{width:12px;height:12px;background:var(--st-ask);display:grid;place-items:center}.g.asking svg{width:12px;height:12px}
 .g.new{width:8px;height:8px;background:var(--st-new)}
 .g.idle{width:7px;height:7px;border:1.5px solid var(--st-idle);opacity:.8}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
@@ -82,9 +81,9 @@ const mid = (t, n = 28) => (t.length <= n ? t : t.slice(0, 9) + '…' + t.slice(
 const ago = (ms) => { const m = Math.floor(ms / 60e3); return m < 1 ? 'now' : m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h` : `${Math.floor(m / 1440)}d`; };
 /** 점의 종류 — 활동 기록이 없는 옛 세션은 쉬는 중(봄) */
 const kind = (s) => (s.state === 'running' || s.state === 'asking' ? s.state : s.state === 'idle' && s.seen === false ? 'new' : 'idle');
+/** 승인 대기는 그리지 않는다 — superlite notify 의 노란 점(카드 탭·세션 탭)으로만 보인다 (ticket slcode-attach-pending-approval-dot, 사용자 2026-11-23) */
 function glyph(k) {
-  if (k === 'asking') return '<span class="g asking"><svg viewBox="0 0 12 12"><path d="M6 3v3.6" stroke="#1e1e1e" stroke-width="1.6" stroke-linecap="round"/><circle cx="6" cy="8.7" r=".9" fill="#1e1e1e"/></svg></span>';
-  return `<span class="g ${k}"></span>`;
+  return k === 'asking' ? '' : `<span class="g ${k}"></span>`;
 }
 
 /** @param {HTMLElement} el @param {import('@superlite/plugin').ViewCtx} ctx */
@@ -156,8 +155,8 @@ export function mount(el, ctx) {
       <span><div class="t1">${name}</div>${line2}</span>
       <span class="meta"><span class="vm" title="${esc(s.vendor)}">${VENDOR[s.vendor] ?? ''}</span><span class="tm">${t}</span></span></button>`;
   }
-  /** 접힌 묶음의 요약 점 — superlite 탭 요약과 같이 승인 대기·안 본 완료만 */
-  const sumDot = (l) => (l.some((s) => kind(s) === 'asking') ? glyph('asking') : l.some((s) => kind(s) === 'new') ? glyph('new') : '');
+  /** 접힌 묶음의 요약 점 — 안 본 완료만 */
+  const sumDot = (l) => (l.some((s) => kind(s) === 'new') ? glyph('new') : '');
 
   function draw() {
     for (const b of root.querySelectorAll('.seg button')) { b.classList.toggle('on', b.dataset.scope === scope); b.setAttribute('aria-checked', String(b.dataset.scope === scope)); }

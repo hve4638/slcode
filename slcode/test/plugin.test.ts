@@ -386,7 +386,7 @@ function fakeEl(tag = 'div'): any {
 }
 const textOf = (el: any): string => [el.textContent, ...el.children.map(textOf)].join(' ');
 async function mountCard(state: unknown, hostImpl: (method: string, ...a: unknown[]) => unknown = async () => 'cmd') {
-  const opens: any[] = [], notes: string[] = [], failed: unknown[][] = [], sent: unknown[][] = [];
+  const opens: any[] = [], notes: string[] = [], failed: unknown[][] = [], sent: unknown[][] = [], reqs: any[] = [];
   let onMsg: (m: unknown) => void = () => {};
   const g = globalThis as any;
   const saved = { document: g.document, window: g.window };
@@ -401,13 +401,13 @@ async function mountCard(state: unknown, hostImpl: (method: string, ...a: unknow
     main: { call: async (_: string, method: string, ...a: unknown[]) => { if (method === 'failed') failed.push(a); return hostImpl(method, ...a); } },
     services: {
       onMessage: (_: string, cb: typeof onMsg) => { onMsg = cb; return () => {}; },
-      send: async () => {},
+      send: async (_: string, m: unknown) => { reqs.push(m); },
       open: async () => { const conn: any = { close: async () => {}, closers: [] as ((e: string | null) => void)[], onClose(cb: (e: string | null) => void) { conn.closers.push(cb); } }; opens.push(conn); return conn; },
     },
   };
   (cardMod.default ?? cardMod).mount(el, ctx);
   await tick();
-  return { el, opens, notes, sent, failed, msg: (m: unknown) => onMsg(m), exit: async (e: string | null = '서비스 종료') => { for (const cb of opens.at(-1).closers) cb(e); await tick(); }, restore: async () => { (cardMod.default ?? cardMod).unmount(); await tick(); g.document = saved.document; g.window = saved.window; } };
+  return { el, opens, notes, sent, failed, reqs, msg: (m: unknown) => onMsg(m), exit: async (e: string | null = '서비스 종료') => { for (const cb of opens.at(-1).closers) cb(e); await tick(); }, restore: async () => { (cardMod.default ?? cardMod).unmount(); await tick(); g.document = saved.document; g.window = saved.window; } };
 }
 
 test('카드: {fatal} 을 내고 끝나면 다시 띄우지 않고 그 오류와 다시 시도를 보인다, slcode.new 동사에도 실패로 알린다', async () => {
@@ -515,6 +515,24 @@ test('카드 알림 (ticket slcode-notify-presets): 살아 있으면 idle, 도�
     assert.deepEqual(drain(), [['notify', 'Finished', { color: 'green', id: 'done' }], ['notify', 'Idle', { preset: 'idle', id: 'idle', duration: 180 }], ['clear', 'running']]);
     c.msg({ event: 'session.closed', params: {} });
     assert.deepEqual(drain(), [['clear', undefined]]);
+  } finally { await c.restore(); }
+});
+
+test('카드 알림 (ticket slcode-attach-pending-approval-dot): 붙을 때 이미 기다리는 요청마다 노란 알림을 같은 id 로 다시 보낸다', async () => {
+  const c = await mountCard({ key: 'k', id: 'sess-1' });
+  try {
+    c.msg({ url: null, id: 'sess-1', sock: '/s' });
+    await tick();
+    const attach = c.reqs.find((m) => m.method === 'session.attach');
+    assert.ok(attach, '세션에 붙는다');
+    c.sent.splice(0);
+    c.msg({ id: attach.id, result: { info: { state: 'idle', title: 't' }, pending: [
+      { requestId: 'r1', name: 'AskUserQuestion', input: { questions: [{ question: '어느 쪽?' }] } },
+      { requestId: 'r2', name: 'Bash', input: {} },
+    ] } });
+    await tick();
+    const asks = c.sent.filter((s) => s[0] === 'notify' && (s[2] as any)?.color === 'yellow');
+    assert.deepEqual(asks, [['notify', '어느 쪽?', { color: 'yellow', id: 'ask:r1' }], ['notify', 'Permission: Bash', { color: 'yellow', id: 'ask:r2' }]]);
   } finally { await c.restore(); }
 });
 

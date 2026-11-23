@@ -137,10 +137,14 @@ export function mount(el, ctx) {
     if (event === 'session.closed') { c.state = 'exited'; dot(); countLive(); return; }
     if (event !== 'session.event') return;
     const ev = p.ev;
-    if (ev.kind === 'approval.requested') void ctx.notify(ev.name === 'AskUserQuestion' ? ev.input?.questions?.[0]?.question || 'Question' : `Permission: ${ev.name}`, { color: 'yellow', id: `ask:${ev.requestId}` });
+    if (ev.kind === 'approval.requested') ask(ev);
     else if (ev.kind === 'approval.resolved') void ctx.notify.clear(`ask:${ev.requestId}`);
     else if (ev.kind === 'session.state') { c.state = ev.state; dot(); if (ev.state === 'running') void ctx.notify.clear('done'); }
     else if (ev.kind === 'turn.end' && ev.ok && !ev.interrupted) void ctx.notify('Finished', { color: 'green', id: 'done' });
+  }
+  /** 질문·권한 확인 한 건의 노란 알림 — 요청마다 id 가 고정이라 다시 보내면 그 줄을 덮어쓴다 */
+  function ask(q) {
+    void ctx.notify(q.name === 'AskUserQuestion' ? q.input?.questions?.[0]?.question || 'Question' : `Permission: ${q.name}`, { color: 'yellow', id: `ask:${q.requestId}` });
   }
   // 상자의 줄 (사용자 2026-11-21) — 터미널 claude·codex 와 같게 턴 끝남은 green, 질문·권한 확인은 yellow. 오류·중단으로 끝난 턴은 올리지 않는다.
   // 끝남은 카드마다 한 줄(id done)이고 다시 돌기 시작하면 비활성이 된다, 질문은 요청마다 한 줄이고 다른 곳에서 답해도 비활성이 된다. attach 는 since FAR 라 카드를
@@ -416,6 +420,8 @@ export function mount(el, ctx) {
       const r = await request('session.attach', { id: c.id, since: FAR });
       c.state = r.info.state; c.title = r.info.title;
       applyTitle(); dot();
+      // 알림 기록은 창마다 메모리에 있다 — 나중에 연 창·새로 고친 창은 요청이 뜬 순간을 놓쳤으므로 붙을 때 기다리는 요청을 다시 알린다 (ticket slcode-attach-pending-approval-dot)
+      for (const q of r.pending) ask(q);
       if (c.seen) { c.seen = false; seenNow(); void ctx.setState({ key: c.key, id: c.id }); }
     } catch { /* 닫히는 중 — onClose 가 처리 */ }
   }
