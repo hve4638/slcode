@@ -189,7 +189,7 @@ export function activate(api) {
   /** `slcode list` 행 — all 이면 꺼진 세션까지 */
   async function list(all = false) {
     const [bin, dir] = await Promise.all([resolveBin(), dirOpt()]);
-    const r = await api.proc.run(`${bin.cmd} list${all ? ' --all' : ''}${dir}`);
+    const r = await api.proc.run(`${bin.cmd} list --json${all ? ' --all' : ''}${dir}`);
     if (r.code !== 0) throw new Error(r.stderr.trim() || `exit ${r.code}`);
     return JSON.parse(r.stdout || '[]');
   }

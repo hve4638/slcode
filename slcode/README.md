@@ -10,7 +10,7 @@ slcode resume [<s>] | continue [folder] # 닫은 세션을 이어간다. <s> 가
 slcode import <벤더 세션 id>             # Claude Code·Codex 세션을 복제해 이어받는다 (원본은 그대로, 이전 대화도 보인다). export 뒤 벤더에서 이어 간 세션이면 늘어난 턴을 붙인다
 slcode export <s>                       # 그 세션을 벤더에서 이어 갈 명령을 찍는다 (cd <폴더> && claude --resume <id> | codex resume <id>)
 slcode new --host 0.0.0.0 --port 8798   # 밖으로 열면 URL 에 토큰이 붙는다 (기본 127.0.0.1·남는 포트·토큰 없음). --no-web 은 소켓만 (--host·--port 와 같이 못 쓴다)
-slcode list [--all] | rename <s> <title> | close <s> [--force] | delete <s>
+slcode list [--all] [--json] | rename <s> <title> | close <s> [--force] | delete <s>
 slcode prompt <s> <text> | interrupt <s>
 slcode status <s> | pending <s> | last <s> [--turn N] | log <s> [--since N] [--tail N]   # 조회: 평문 기본, --json
 slcode respond <s> <req> allow|deny [--remember] | respond <s> <req> --answer <text> | respond <s> <req> --json '<updatedInput>'

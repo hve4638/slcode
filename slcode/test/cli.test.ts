@@ -84,11 +84,34 @@ test('꺼진 세션: status·pending·last --turn·log --tail 은 로그 파일�
   const amb = await run(dir, ['status', 'alpha']); assert.equal(amb.code, 2); assert.match(amb.stderr, /ambiguous title "alpha": aaaa1111 \(\/x\), bbbb2222 \(\/y\)/);
   assert.equal((await run(dir, ['status', 'bbbb2222'])).code, 0, 'id 로는 된다');
   // list 는 live 만(우체국 없음 = 전부 꺼짐) / --all
-  assert.deepEqual(JSON.parse((await run(dir, ['list'])).stdout), []);
-  assert.deepEqual(JSON.parse((await run(dir, ['list', '--all'])).stdout).map((r: any) => r.id), ['aaaa1111', 'bbbb2222']);
+  assert.deepEqual(JSON.parse((await run(dir, ['list', '--json'])).stdout), []);
+  assert.deepEqual(JSON.parse((await run(dir, ['list', '--all', '--json'])).stdout).map((r: any) => r.id), ['aaaa1111', 'bbbb2222']);
   // rename 은 꺼진 세션도 meta 만
   assert.deepEqual(JSON.parse((await run(dir, ['rename', 'bbbb2222', 'beta'])).stdout), { ok: true, stored: true });
   assert.equal((await run(dir, ['status', 'alpha'])).code, 0, '이제 유일하다');
+});
+
+test('list 평문: id·벤더·상태·제목(없으면 -)·폴더, 팀원은 leader <id>, 세션 안이면 자기 줄 끝에 <- you — --json 은 행 배열 (ticket slcode-list-self-unclear)', async () => {
+  const dir = tmp('slcode-cli-');
+  assert.equal((await run(dir, ['list'])).stdout, '(no live sessions)\n');
+  assert.equal((await run(dir, ['list', '--all'])).stdout, '(no sessions)\n');
+  const sd = corePaths(dir).sessionsDir;
+  const make = (id: string, title: string | null, updatedAt: number, extra = {}) => EventLog.create(sd, { id, vendor: 'claude', cwd: '/work/proj', title, vendorSessionId: null, createdAt: 1, updatedAt, permissionMode: 'auto', raw: false, ...extra }).close();
+  make('aaaa1111', 'orchestrator', 1);
+  make('bbbb2222', null, 2, { vendor: 'codex' });
+  make('cccc3333', 'worker-1', 3, { parent: { id: 'aaaa1111', kind: 'child' } });
+  make('dddd4444', 'copy', 4, { parent: { id: 'aaaa1111', kind: 'fork', seq: 1 } });
+  const lines = (await run(dir, ['list', '--all'], { SLCODE_SESSION_ID: 'cccc3333' })).stdout.split('\n');
+  assert.deepEqual(lines, [
+    'aaaa1111  claude  closed  orchestrator  /work/proj',
+    'bbbb2222  codex   closed  -             /work/proj',
+    'cccc3333  claude  closed  worker-1      /work/proj  leader aaaa1111  <- you',
+    'dddd4444  claude  closed  copy          /work/proj',
+    '',
+  ]);
+  assert.doesNotMatch((await run(dir, ['list', '--all'])).stdout, /<- you/, '세션 밖이면 자기 표시가 없다');
+  const rows = JSON.parse((await run(dir, ['list', '--all', '--json'], { SLCODE_SESSION_ID: 'cccc3333' })).stdout);
+  assert.deepEqual(rows.map((r: any) => [r.id, r.me ?? false]), [['aaaa1111', false], ['bbbb2222', false], ['cccc3333', true], ['dddd4444', false]]);
 });
 
 test('mail: 켜진 세션에만 — 꺼진 세션은 없는 이름과 같은 no session(exit 1); from·via 는 자동, --re 는 답장; post·inbox 동사는 없다', async (t) => {
@@ -144,7 +167,8 @@ test('살아 있는 세션: new 는 동사 이름 폴더도 폴더로, resume �
   await sleep(500);
   const st = JSON.parse((await run(dir, ['status', 'live1', '--json'])).stdout);
   assert.equal(st.live, true); assert.equal(st.id, meta.id); assert.equal(st.turns, 0);
-  assert.deepEqual(JSON.parse((await run(dir, ['list'])).stdout).map((r: any) => [r.id, r.live]), [[meta.id, true]]);
+  assert.deepEqual(JSON.parse((await run(dir, ['list', '--json'])).stdout).map((r: any) => [r.id, r.live]), [[meta.id, true]]);
+  assert.match((await run(dir, ['list'], { SLCODE_SESSION_ID: meta.id })).stdout, new RegExp(`^${meta.id}  claude  \\S+ +live1  ${work}  <- you\n$`), '살아 있는 세션은 상태 칸에 지금 상태');
   const rs = await run(dir, ['respond', meta.id, 'zzz', 'deny']); assert.equal(rs.code, 1); assert.match(rs.stderr, /not open .* nothing pending/);
   const bad = await run(dir, ['respond', meta.id, 'zzz', 'maybe']); assert.equal(bad.code, 2, 'allow|deny 외는 usage');
   // resume 이 살아 있는 세션이면 웹 주소를 찍고 끝난다 — --no-web 세션은 웹이 없다는 안내 한 줄
@@ -161,10 +185,10 @@ test('살아 있는 세션: new 는 동사 이름 폴더도 폴더로, resume �
   a.child.kill('SIGINT');
   assert.equal(await a.exit, 0);
   assert.match(a.err.join(''), new RegExp(`To continue: slcode resume ${meta.id}`));
-  assert.deepEqual(JSON.parse((await run(dir, ['list'])).stdout), [], '닫힌 세션은 list 에서 빠진다');
+  assert.deepEqual(JSON.parse((await run(dir, ['list', '--json'])).stdout), [], '닫힌 세션은 list 에서 빠진다');
   const closedAt = EventLog.open(corePaths(dir).sessionsDir, meta.id)!.meta.closedAt;
   assert.ok(closedAt && Date.now() - closedAt < 10000, '닫힌 시각을 남긴다');
-  assert.equal(JSON.parse((await run(dir, ['list', '--all'])).stdout)[0].closedAt, closedAt);
+  assert.equal(JSON.parse((await run(dir, ['list', '--all', '--json'])).stdout)[0].closedAt, closedAt);
   // 꺼진 세션의 resume 은 다시 띄운다
   const b = start(dir, ['resume', meta.id, '--no-web']);
   assert.equal(await b.out, sock);
@@ -232,7 +256,7 @@ test('close --force: 응답하는 세션은 정상 종료, 멈춘 세션(core �
   assert.equal(ok.code, 0, ok.stderr); assert.deepEqual(JSON.parse(ok.stdout), { ok: true, killed: false });
   assert.equal(await a.exit, 0);
   // 세션은 core 가 쥔다 — 우체국이 아는 pid 가 core 다 (serve 와 다른 프로세스)
-  const corePid = JSON.parse((await run(dir, ['list'])).stdout).find((r: any) => r.title === 'force2').pid;
+  const corePid = JSON.parse((await run(dir, ['list', '--json'])).stdout).find((r: any) => r.title === 'force2').pid;
   assert.ok(corePid && corePid !== b.child.pid, 'core 는 serve 와 다른 프로세스');
   t.after(() => { try { process.kill(corePid, 'SIGKILL'); } catch {} });
   process.kill(corePid, 'SIGSTOP'); // 소켓은 커널이 받아 주지만 응답이 없다

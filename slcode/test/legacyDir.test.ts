@@ -36,7 +36,7 @@ function run(h: Home, args: string[]): Promise<{ code: number; stdout: string; s
   return new Promise((resolve) => execFile(process.execPath, ['--import', TSX, CLI, ...args], { env: h.env }, (e, stdout, stderr) => resolve({ code: (e as { code?: number } | null)?.code ?? 0, stdout, stderr })));
 }
 type Row = { id: string; live: boolean; title: string | null; cwd: string };
-const list = async (h: Home, extra: string[] = []): Promise<Row[]> => JSON.parse((await run(h, ['list', '--all', ...extra])).stdout);
+const list = async (h: Home, extra: string[] = []): Promise<Row[]> => JSON.parse((await run(h, ['list', '--all', '--json', ...extra])).stdout);
 async function until(f: () => boolean | Promise<boolean>, ms = 15000) { const t0 = Date.now(); while (!(await f()) && Date.now() - t0 < ms) await sleep(100); assert.ok(await f(), 'timed out'); }
 /** serve 를 띄우고 떠 있는 동안 fn */
 async function serving(h: Home, args: string[], id: () => Promise<string | undefined>, fn: (id: string) => Promise<void>) {

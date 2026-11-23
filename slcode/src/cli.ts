@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 단독 실행 진입점 — 동사 하나를 받아 한 번 부르고 끝난다. 인자 없는 slcode 는 도움말만 (ticket slcode-verbs, 사용자 확정 2026-10-02).
-//   세션 수명  new [folder] | resume [<s>] | continue [folder] | import <벤더 세션 id> | export <s> | list [--all] | rename <s> <title> | close <s> | delete <s>
+//   세션 수명  new [folder] | resume [<s>] | continue [folder] | import <벤더 세션 id> | export <s> | list [--all] [--json] | rename <s> <title> | close <s> | delete <s>
 //   대화       prompt <s> <text> | interrupt <s>
 //   조회       status <s> | pending <s> | last <s> [--turn N] | log <s> [--since N] [--tail N]      — 평문 기본, --json 이면 같은 내용을 JSON 으로
 //   응답       respond <s> <req> allow|deny [--remember] | respond <s> <req> --answer <text> | respond <s> <req> --json '<updatedInput>'
@@ -75,7 +75,8 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
                                  마지막으로 끝난 턴까지 복제한다 (진행 중인 턴은 넣지 않는다). 세션 안에서 <s> 를 빼면 지금 세션.
                                  제목은 생략 시 "<원본 이름> (forked)" (둘째부터 "(forked N)"). 세션 안이고 superlite 밖이면 id 만 출력한다 (slcode resume <id> 로 연다)
   export <s>                     그 세션을 벤더 하네스에서 이어 갈 명령을 출력 (cd <폴더> && claude --resume <id> | codex resume <id>)
-  list [--all]                   살아 있는 세션 (--all 은 꺼진 세션까지)
+  list [--all] [--json]          살아 있는 세션 — 줄마다 id·벤더·상태·제목·폴더, 팀원은 leader <id>, 세션 안이면 자기 줄 끝에 <- you
+                                 (--all 은 꺼진 세션까지, --json 이면 JSON)
   rename <s> <title> | close <s> [--force] | delete <s>
                                  --force 는 3초 안에 닫히지 않으면 세션 프로세스를 kill 한다
 대화
@@ -797,7 +798,13 @@ try {
       const now = (m: (typeof stored)[number]) => { const a = summarize(new EventLog(P.sessionsDir, m).dir); return { state: a?.state ?? null, stateSince: a?.stateSince ?? null, seen: a?.seen ?? true }; };
       const rows = stored.map((m) => ({ id: m.id, vendor: m.vendor, cwd: m.cwd, title: m.title, createdAt: m.createdAt, updatedAt: m.updatedAt ?? m.createdAt, closedAt: m.closedAt ?? null, parent: m.parent ?? null, ...(m.worktree ? { worktree: m.worktree } : {}), live: live.has(m.id), pid: live.get(m.id) ?? null, ...(live.has(m.id) ? now(m) : {}), ...(m.id === me ? { me: true } : {}) }))
         .sort((a, b) => a.updatedAt - b.updatedAt);
-      print(flags.all ? rows : rows.filter((r) => r.live));
+      const shown = flags.all ? rows : rows.filter((r) => r.live);
+      if (flags.json) { print(shown); break; }
+      // 평문 (ticket slcode-list-self-unclear, 사용자 결정 2026-11-23) — id·벤더·상태·제목·폴더, 팀원(parent child)은 leader <id>, 자기 줄 끝에 <- you. fork 는 따로 적지 않는다
+      if (!shown.length) { console.log(flags.all ? '(no sessions)' : '(no live sessions)'); break; }
+      const cells = shown.map((r) => [r.id, r.vendor, r.live ? (r.state ?? '-') : 'closed', r.title || '-', r.cwd, [r.parent?.kind === 'child' ? `leader ${r.parent.id}` : '', r.me ? '<- you' : ''].filter(Boolean).join('  ')]);
+      const width = cells[0].map((_, i) => Math.max(...cells.map((c) => c[i].length)));
+      console.log(cells.map((c) => c.map((v, i) => v.padEnd(width[i])).join('  ').trimEnd()).join('\n'));
       break;
     }
     case 'rename': {

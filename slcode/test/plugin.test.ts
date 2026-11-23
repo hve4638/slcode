@@ -130,7 +130,7 @@ async function withMain(files: Record<string, string>, opts: Parameters<typeof f
 }
 const listed = (files: Record<string, string>, opts: Parameters<typeof fakeApi>[1] = {}) =>
   withMain(files, opts, async ({ exposed }) => { await exposed.host.list(false).catch(() => {}); });
-const LIST = "proc '/remote/cache/slcode/abc123/bin/slcode' list";
+const LIST = "proc '/remote/cache/slcode/abc123/bin/slcode' list --json";
 
 test('main: manifest 가 없으면 조건 안 최신 release 를 받아 deploy 경로의 bin/slcode 를 쓴다', async () => {
   const calls = await listed({ 'plugin.json': PLUGIN_JSON });
@@ -168,7 +168,7 @@ test('main: 받은 zip 의 manifest 가 고른 release 와 맞지 않으면 실�
 
 test('main: 설정 bin 이 있으면 받지 않고 그 명령을 쓴다', async () => {
   const calls = await listed({ 'plugin.json': PLUGIN_JSON }, { settings: { bin: '/opt/slcode/bin/slcode' } });
-  assert.ok(calls.includes('proc /opt/slcode/bin/slcode list'));
+  assert.ok(calls.includes('proc /opt/slcode/bin/slcode list --json'));
   assert.ok(!calls.some((c) => c === 'platform' || c.startsWith('github ') || c.startsWith('fetch ')));
 });
 
@@ -541,7 +541,7 @@ const BIN = '/opt/slcode'; // 설정 bin 은 셸에 그대로
 const rows = (live: boolean) => JSON.stringify([{ id: 'w1', live }, { id: 'other', live: true }]);
 
 test('exports.close: 켜진 세션은 slcode close 뒤 메인 창부터 카드가 있는 창을 찾을 때까지 closeCard, 결과 {ok, card}', async () => {
-  const calls = await withMain({ 'plugin.json': PLUGIN_JSON }, { settings: { bin: '/opt/slcode' }, run: (c) => (c.includes(' list --all') ? { code: 0, stdout: rows(true), stderr: '' } : undefined), windows: { wa: false, wmain: false, wb: true, wc: true } }, async ({ exports }) => {
+  const calls = await withMain({ 'plugin.json': PLUGIN_JSON }, { settings: { bin: '/opt/slcode' }, run: (c) => (c.includes(' list --json --all') ? { code: 0, stdout: rows(true), stderr: '' } : undefined), windows: { wa: false, wmain: false, wb: true, wc: true } }, async ({ exports }) => {
     assert.deepEqual(await exports.close('w1'), { ok: true, card: true });
   });
   assert.ok(calls.includes(`proc ${BIN} close 'w1'`));
@@ -550,17 +550,17 @@ test('exports.close: 켜진 세션은 slcode close 뒤 메인 창부터 카드�
 });
 
 test('exports.close: 이미 꺼진 세션은 close 없이 성공(already) — 카드 닫기 요청은 건다, 카드를 연 창이 없으면 card false', async () => {
-  const calls = await withMain({ 'plugin.json': PLUGIN_JSON }, { settings: { bin: '/opt/slcode' }, run: (c) => (c.includes(' list --all') ? { code: 0, stdout: rows(false), stderr: '' } : undefined), windows: { wa: true } }, async ({ exports }) => {
+  const calls = await withMain({ 'plugin.json': PLUGIN_JSON }, { settings: { bin: '/opt/slcode' }, run: (c) => (c.includes(' list --json --all') ? { code: 0, stdout: rows(false), stderr: '' } : undefined), windows: { wa: true } }, async ({ exports }) => {
     assert.deepEqual(await exports.close('w1'), { ok: true, already: true, card: true });
   });
   assert.ok(!calls.some((c) => c.includes(' close ')));
-  await withMain({ 'plugin.json': PLUGIN_JSON }, { settings: { bin: '/opt/slcode' }, run: (c) => (c.includes(' list --all') ? { code: 0, stdout: rows(false), stderr: '' } : undefined) }, async ({ exports }) => {
+  await withMain({ 'plugin.json': PLUGIN_JSON }, { settings: { bin: '/opt/slcode' }, run: (c) => (c.includes(' list --json --all') ? { code: 0, stdout: rows(false), stderr: '' } : undefined) }, async ({ exports }) => {
     assert.deepEqual(await exports.close('w1'), { ok: true, already: true, card: false });
   });
 });
 
 test('exports.close: 없는 세션·close 실패는 reject', async () => {
-  await withMain({ 'plugin.json': PLUGIN_JSON }, { settings: { bin: '/opt/slcode' }, run: (c) => (c.includes(' list --all') ? { code: 0, stdout: rows(true), stderr: '' } : c.includes(' close ') ? { code: 1, stdout: '', stderr: '[slcode] boom\n' } : undefined) }, async ({ exports }) => {
+  await withMain({ 'plugin.json': PLUGIN_JSON }, { settings: { bin: '/opt/slcode' }, run: (c) => (c.includes(' list --json --all') ? { code: 0, stdout: rows(true), stderr: '' } : c.includes(' close ') ? { code: 1, stdout: '', stderr: '[slcode] boom\n' } : undefined) }, async ({ exports }) => {
     await assert.rejects(exports.close('nope'), /^Error: no session nope$/);
     await assert.rejects(exports.close('w1'), /\[slcode\] boom/);
   });
@@ -568,10 +568,10 @@ test('exports.close: 없는 세션·close 실패는 reject', async () => {
 
 test('exports.list: slcode list (live 만, 설정 dir) 의 행을 그대로 돌려준다, 실패는 stderr 로 reject (ticket slcode-plugin-list-reveal-export)', async () => {
   const live = JSON.stringify([{ id: 'w1', state: 'idle', live: true }]);
-  const calls = await withMain({ 'plugin.json': PLUGIN_JSON }, { settings: { bin: '/opt/slcode', dir: '/d' }, run: (c) => (c.endsWith(" list --dir '/d'") ? { code: 0, stdout: live, stderr: '' } : undefined) }, async ({ exports }) => {
+  const calls = await withMain({ 'plugin.json': PLUGIN_JSON }, { settings: { bin: '/opt/slcode', dir: '/d' }, run: (c) => (c.endsWith(" list --json --dir '/d'") ? { code: 0, stdout: live, stderr: '' } : undefined) }, async ({ exports }) => {
     assert.deepEqual(await exports.list(), [{ id: 'w1', state: 'idle', live: true }]);
   });
-  assert.deepEqual(calls.filter((c) => c.startsWith('proc ')), [`proc ${BIN} list --dir '/d'`], '--all 없이, 캐시 없이 한 번');
+  assert.deepEqual(calls.filter((c) => c.startsWith('proc ')), [`proc ${BIN} list --json --dir '/d'`], '--all 없이, 캐시 없이 한 번');
   await withMain({ 'plugin.json': PLUGIN_JSON }, { settings: { bin: '/opt/slcode' }, run: () => ({ code: 1, stdout: '', stderr: 'boom\n' }) }, async ({ exports }) => {
     await assert.rejects(exports.list(), /^Error: boom$/);
   });
