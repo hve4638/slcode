@@ -191,3 +191,40 @@ test('웹: 입력창 위 휠은 넘치지 않을 때만 대화를 스크롤하�
     Object.assign(process.env, saved);
   }
 });
+
+test('웹: 펼친 background 목록은 긴 명령이어도 입력창 폭 안에 머물고, 명령은 말줄임으로 잘리며 중지 버튼이 보인다 (ticket slcode-bg-row-overflow)', { skip: !chrome && 'chrome 없음', timeout: 120000 }, async (t) => {
+  const b = await openChrome(chrome!).catch((e: Error) => e);
+  if (b instanceof Error) { t.skip(b.message); return; }
+  const api = await fakeApi();
+  const saved = { ...process.env };
+  for (const k of Object.keys(process.env)) if (k.startsWith('CLAUDE') || k.startsWith('ANTHROPIC')) delete process.env[k];
+  Object.assign(process.env, { HOME: tmp('slcode-bgrow-home-'), ANTHROPIC_API_KEY: 'sk-ant-api03-FAKEKEYFAKEKEY', ANTHROPIC_BASE_URL: api.url, SLCODE_GRACE_SECS: '1' });
+  const { serveSession } = await import('../src/serve.ts');
+  const { connectSession } = await import('../src/client.ts');
+  const h = await serveSession({ dir: tmp('slcode-bgrow-'), cwd: tmp('slcode-bgrow-work-'), web: true, permissionMode: 'default' });
+  const c = await connectSession(h.sock);
+  try {
+    await b.send('Emulation.setDeviceMetricsOverride', { width: 1000, height: 700, deviceScaleFactor: 1, mobile: false });
+    await b.send('Page.navigate', { url: h.url });
+    await b.until(`document.querySelector('.pill')?.textContent === '대기'`, '화면');
+    const long = `sleep 30; ./scripts/run_batch.sh ${'experiments/full-sonnet5_5.py revision/sysprompt/all500_261124.txt '.repeat(4)}--resume`;
+    const task = await c.request('session.bgRun', { id: h.session.id, command: long, description: 'full 조건 500건 풀이 (Sonnet 5.5, 워커 32개)' });
+    await b.until(`!!document.querySelector('.bgline:not([hidden]) button.sum')`, 'background 줄');
+    await b.ev(`document.querySelector('.bgline button.sum').click()`);
+    await b.until(`!!document.querySelector('.bgline .list .bgstop')`, '펼친 목록');
+    const m = await b.ev(`(() => { const r = (s) => document.querySelector(s).getBoundingClientRect(), box = r('.composer .box'), cmd = document.querySelector('.bgline .cmd');
+      return { box: [box.left, box.right], list: [r('.bgline .list').left, r('.bgline .list').right], stop: r('.bgline .bgstop').right, cut: cmd.scrollWidth > cmd.clientWidth, page: document.documentElement.scrollWidth - innerWidth }; })()`);
+    assert.deepEqual(m.list, m.box, '목록은 입력창과 같은 폭');
+    assert.ok(m.stop <= m.box[1], `중지 버튼이 입력창 폭 안에 (${m.stop} > ${m.box[1]})`);
+    assert.ok(m.cut, '명령은 말줄임으로 잘린다');
+    assert.equal(m.page, 0, '가로로 넘치지 않는다');
+    await c.request('session.bgStop', { id: h.session.id, task: task.id });
+  } finally {
+    c.close();
+    await b.close().catch(() => {});
+    await h.close('test');
+    api.srv.close();
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+    Object.assign(process.env, saved);
+  }
+});
