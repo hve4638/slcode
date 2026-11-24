@@ -114,7 +114,8 @@ export function mountAgentFront(root, transport, opts = {}) {
   const input = h('textarea', { rows: 1 });
   // 슬래시 명령 강조 층 (ticket slcode-slash-command-highlight) — textarea 위에 같은 글을 같은 자리에 투명하게 그리고 명령 낱말만 칠한다.
   // 글·IME 조합·선택은 textarea 가 그대로 그린다. 크기는 textarea 를 덮어 따라가고, 스크롤만 맞춘다
-  const inputHl = h('div', { class: 'input-hl', 'aria-hidden': 'true' });
+  // 층은 넘치면 스크롤 상자라 Chrome 이 Tab 자리로 친다 — 보이지 않는 곳으로 포커스가 가지 않게 뺀다 (ticket slcode-input-wheel-tab)
+  const inputHl = h('div', { class: 'input-hl', 'aria-hidden': 'true', tabindex: '-1' });
   input.addEventListener('scroll', () => { inputHl.scrollTop = input.scrollTop; });
   const sendBtn = h('button', { class: 'send primary', title: '전송', disabled: '', onclick: () => send() });
   const stopBtn = h('button', { class: 'stop primary', title: '중단', onclick: () => current && rpc('session.interrupt', { id: current }) });
@@ -1798,6 +1799,8 @@ export function mountAgentFront(root, transport, opts = {}) {
       if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && !e.isComposing && resolveSlash(input.value.trim()) === input.value.trim() && !commands.some((c) => c.name.toLowerCase() === input.value.trim().slice(1).toLowerCase()))) { e.preventDefault(); slashPick(items[slashSel]); return; }
       if (e.key === 'Escape') { e.preventDefault(); slashMenu.hidePopover(); return; }
     }
+    // Tab·Shift+Tab 은 포커스를 입력창 밖으로 옮기지 않고 아무것도 하지 않는다 (ticket slcode-input-wheel-tab, 사용자 2026-11-24). 목록이 열려 있으면 위에서 후보를 넣었다
+    if (e.key === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey) { e.preventDefault(); return; }
     if (hist.key(e)) { e.preventDefault(); argRes = null; argSeq++; if (slashMenu.matches(':popover-open')) slashMenu.hidePopover(); return; }
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (slashMenu.matches(':popover-open')) slashMenu.hidePopover(); send(); } else if (e.key === 'Escape' && !busy.hidden && current) { e.preventDefault(); esc.reset(); rpc('session.interrupt', { id: current }); } else if (e.key === 'Escape' && !e.isComposing) { e.preventDefault(); onEscape(); } };
   // 높이를 재려고 잠깐 기본 높이로 줄이면 그동안 피드가 늘어 scrollTop 이 그 높이의 바닥으로 깎인 채 남는다 — 재고 나서 자리를 되돌린다 (ticket slcode-scroll-follow-fixes)
@@ -1805,6 +1808,13 @@ export function mountAgentFront(root, transport, opts = {}) {
   function fitInput() { const top = feed.scrollTop; input.style.height = ''; input.style.height = Math.min(input.scrollHeight, 220) + 'px'; jump(follow ? feed.scrollHeight : top); }
   input.oninput = () => { fitInput(); paintInputHl(); canSend(); if (!hist.nav) { slashSel = 0; argQuery(); slashDraw(); } saveDraft(); };
   input.addEventListener('mousedown', () => hist.unpin());
+  // 입력창이 넘치지 않으면 그 위의 휠은 대화를 스크롤한다. 넘치면 브라우저대로 입력창만 — 끝에 닿아도 대화로 넘기지 않는다 (ticket slcode-input-wheel-tab, 사용자 2026-11-24).
+  // instant: feed 의 scroll-behavior smooth 로 매 휠마다 애니메이션을 다시 걸면 도중 위치에서 다시 시작해 거리가 줄어든다. 줄 단위(Firefox 마우스 휠)는 16px 로 친다
+  input.addEventListener('wheel', (e) => {
+    if (e.ctrlKey || input.scrollHeight > input.clientHeight) return;
+    const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? feed.clientHeight : 1;
+    feed.scrollBy({ top: e.deltaY * k, behavior: 'instant' });
+  }, { passive: true });
   // Esc 두 번 (ticket slcode-rewind-esc-picker, 사용자 2026-11-03, Claude Code 2.1.316 실측) — 글이 있으면 비운다(지운 글은 기록에 남고 Ctrl+Z 로 돌아온다). 첫 번째 누름의 안내 문구는 두지 않는다 (사용자 2026-11-03).
   // 빈 입력이면 되돌리기 창을 연다. 턴 중 Esc 는 위에서 중단만 하고 판정을 지운다 — 두 번 눌러도 창은 열리지 않는다 (session.rewind 는 idle 에서만 된다)
   const esc = escGate();

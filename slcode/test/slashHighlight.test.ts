@@ -131,3 +131,63 @@ test('웹: 입력창·말풍선 맨 앞의 아는 슬래시 명령만 강조한�
     Object.assign(process.env, saved);
   }
 });
+
+// 입력창 휠·Tab (ticket slcode-input-wheel-tab, 사용자 2026-11-24) — 같은 입력창이라 이 파일의 도우미를 쓴다.
+// 넘치지 않는 입력창 위의 휠은 대화를 스크롤하고, 넘치면 입력창만(끝에 닿아도 대화로 넘기지 않는다). Tab·Shift+Tab 은 포커스를 옮기지 않는다
+test('웹: 입력창 위 휠은 넘치지 않을 때만 대화를 스크롤하고, Tab·Shift+Tab 은 포커스를 입력창에 둔다', { skip: !chrome && 'chrome 없음', timeout: 120000 }, async (t) => {
+  const b = await openChrome(chrome!).catch((e: Error) => e);
+  if (b instanceof Error) { t.skip(b.message); return; }
+  const api = await fakeApi();
+  const saved = { ...process.env };
+  for (const k of Object.keys(process.env)) if (k.startsWith('CLAUDE') || k.startsWith('ANTHROPIC')) delete process.env[k];
+  Object.assign(process.env, { HOME: tmp('slcode-wheel-home-'), ANTHROPIC_API_KEY: 'sk-ant-api03-FAKEKEYFAKEKEY', ANTHROPIC_BASE_URL: api.url, SLCODE_GRACE_SECS: '1' });
+  const { serveSession } = await import('../src/serve.ts');
+  const h = await serveSession({ dir: tmp('slcode-wheel-'), cwd: tmp('slcode-wheel-work-'), web: true, permissionMode: 'default' });
+  const st = `(() => { const f = document.querySelector('.feed'), i = document.querySelector('textarea'); return { feed: Math.round(f.scrollTop), input: Math.round(i.scrollTop), focused: document.activeElement === i, caret: i.selectionStart, value: i.value }; })()`;
+  const wheel = async (deltaY: number) => {
+    const c = await b.ev(`(() => { const r = document.querySelector('textarea').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+    await b.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: c.x, y: c.y, deltaX: 0, deltaY });
+    await b.ev(`new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))`); // 휠은 다음 프레임에 처리된다
+  };
+  const tab = async (shift: boolean) => {
+    for (const type of ['rawKeyDown', 'keyUp']) await b.send('Input.dispatchKeyEvent', { type, key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, modifiers: shift ? 8 : 0 });
+  };
+  try {
+    await b.send('Page.navigate', { url: h.url });
+    await b.until(`document.querySelector('.pill')?.textContent === '대기'`, '화면');
+    // 대화를 넘치게 하고 중간에 둔다 — 바닥에서 위로 올려야 맨 아래 따라가기가 풀린다
+    const frame = `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))`;
+    await b.ev(`(() => { const f = document.querySelector('.feed'); f.append(Object.assign(document.createElement('div'), { style: 'height: 3000px' })); f.scrollTo({ top: f.scrollHeight, behavior: 'instant' }); })()`);
+    await b.ev(frame);
+    await b.ev(`document.querySelector('.feed').scrollTo({ top: 1000, behavior: 'instant' })`);
+    await b.ev(frame);
+    assert.equal((await b.ev(st)).feed, 1000);
+    await wheel(-300);
+    assert.equal((await b.ev(st)).feed, 700, '넘치지 않는 입력창 위의 휠은 대화를 올린다');
+    await wheel(200);
+    assert.equal((await b.ev(st)).feed, 900);
+
+    await b.ev(`(() => { const i = document.querySelector('textarea'); i.value = Array.from({ length: 40 }, (_, k) => 'line ' + k).join('\\n'); i.oninput(); i.scrollTop = i.scrollHeight; })()`);
+    const full = await b.ev(st);
+    assert.ok(full.input > 0, '입력창이 넘친다');
+    await wheel(-100);
+    assert.deepEqual([(await b.ev(st)).feed, (await b.ev(st)).input], [full.feed, full.input - 100], '넘친 입력창은 자기만 스크롤한다');
+    await wheel(-100000);
+    await wheel(-300);
+    assert.deepEqual([(await b.ev(st)).feed, (await b.ev(st)).input], [full.feed, 0], '맨 위에 닿아도 대화로 넘기지 않는다');
+
+    await b.ev(`(() => { const i = document.querySelector('textarea'); i.focus(); i.setSelectionRange(3, 3); })()`);
+    const before = await b.ev(st);
+    await tab(false);
+    assert.deepEqual(await b.ev(st), before, 'Tab 은 포커스·글·커서를 그대로 둔다');
+    await tab(true);
+    assert.deepEqual(await b.ev(st), before, 'Shift+Tab 도');
+    assert.equal(await b.ev(`document.querySelector('.input-hl').tabIndex`), -1, '보이지 않는 강조 층은 Tab 자리가 아니다');
+  } finally {
+    await b.close().catch(() => {});
+    await h.close('test');
+    api.srv.close();
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+    Object.assign(process.env, saved);
+  }
+});
