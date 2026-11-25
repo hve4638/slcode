@@ -5,7 +5,7 @@
 // 본문이 auth-fail 이면 인증 실패 턴을 흉내 낸다. FAKE_CODEX_IGNORE_INTERRUPT 면 turn/interrupt 에 답하지 않는다 (느린 종료 — slcode 는 2초 기다린다)
 // inspect (ticket slcode-inspect-codex): config/read 는 -c openai_base_url 을 sessionFlags 층, FAKE_CODEX_USER_BASE 를 user 층으로 답한다.
 // 본문이 ws 면 -c 로 받은 주소(없으면 FAKE_CODEX_USER_BASE)의 /responses 에 WebSocket 으로 response.create 둘(둘째는 previous_response_id 로 증분)을 보내고 끝난 뒤 턴을 마친다.
-// no-call 이면 API 를 부르지 않고 성공한 턴으로 마친다
+// no-call 이면 API 를 부르지 않고 성공한 턴으로 마친다. tools 면 명령 성공·실패, 파일 변경, MCP 도구 항목을 내고 마친다
 // FAKE_CODEX_LOST 면 thread/resume 이 rollout 없음으로 실패한다 (턴 없는 thread·지워진 기록, ticket slcode-resume-empty-claude)
 // FAKE_CODEX_ENV 면 기동 때 받은 PATH·SLCODE_SESSION_ID·CORE_X·인자를 그 파일에 JSON 으로 남긴다 (ticket slcode-session-bin-path, 에이전트 플러그인 env·MCP 인자는 slcode-agent-plugin-codex). SE_* 는 se 에 모은다 (세션 env, ticket slcode-new-session-env), SLCODE_PARAM_* 는 sp 에 (세션 인자, ticket slcode-agent-plugin-part-when)
 import fs from 'node:fs';
@@ -82,6 +82,18 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       if (process.env.FAKE_CODEX_MAIL_DONE && text.startsWith('<slcode-message')) {
         notify('item/agentMessage/delta', { threadId: thread.id, turnId: 't-1', itemId: 'msg-1', delta: 'read' });
         notify('turn/completed', { threadId: thread.id, turn: { id: 't-1', status: 'completed', error: null, durationMs: 1, items: [] } });
+        return;
+      }
+      if (text === 'tools') { // 도구 줄 (toolCard.test.ts) — 명령 성공·실패, 파일 변경, 다른 MCP 도구를 승인 없이 차례로
+        const items = [
+          { type: 'commandExecution', id: 'cx-ok', command: 'echo hi', cwd: thread.cwd, status: 'completed', exitCode: 0, aggregatedOutput: 'hi' },
+          { type: 'commandExecution', id: 'cx-bad', command: 'false', cwd: thread.cwd, status: 'failed', exitCode: 1, aggregatedOutput: '' },
+          { type: 'fileChange', id: 'fc-1', status: 'completed', changes: [{ path: `${thread.cwd}/a.txt`, kind: { type: 'add' }, diff: '' }, { path: `${thread.cwd}/b.txt`, kind: { type: 'update', move_path: null }, diff: '' }] },
+          { type: 'mcpToolCall', id: 'mcp-1', server: 'srv', tool: 'look', arguments: { q: 1 }, status: 'completed', result: { content: [] } },
+        ];
+        for (const item of items) { notify('item/started', { threadId: thread.id, turnId: 't-1', item: { ...item, status: 'inProgress' } }); notify('item/completed', { threadId: thread.id, turnId: 't-1', item }); }
+        notify('item/agentMessage/delta', { threadId: thread.id, turnId: 't-1', itemId: 'msg-1', delta: 'done' });
+        notify('turn/completed', { threadId: thread.id, turn: { id: 't-1', status: 'completed', error: null, durationMs: 3, items: [] } });
         return;
       }
       if (text === 'ws' || text === 'no-call') {

@@ -257,14 +257,18 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .tool summary { display: flex; align-items: center; gap: 8px; padding: 7px 12px; cursor: pointer; list-style: none; }
 .acf .tool summary::-webkit-details-marker { display: none; }
 .acf .tool summary:hover { background: var(--acf-soft); }
-.acf .tool .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--acf-muted); flex: none; }
-.acf .tool.running .dot { background: var(--acf-accent); animation: acf-blink 1s steps(2) infinite; }
-.acf .tool.ok .dot { background: var(--acf-ok); } .acf .tool.err .dot { background: var(--acf-err); }
+/* 도구 아이콘 (ticket slcode-tool-card-polish) — 색 없이 흐린 글자색, 실행 중 깜박. 실패는 아이콘이 아니라 줄 오른쪽 끝의 빨간 글자(.fail, 사용자 2026-11-25) */
+.acf .tool summary .ic { display: inline-flex; flex: none; color: var(--acf-muted); }
+.acf .tool summary .ic svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.acf .tool summary .fail { flex: none; color: var(--acf-err); font-family: var(--acf-mono); font-size: 12px; }
+.acf .tool.running summary .ic { color: var(--acf-fg); animation: acf-tool-pulse 1.2s ease-in-out infinite; }
+@keyframes acf-tool-pulse { 50% { opacity: .25; } }
 .acf .tool .name { font-weight: 600; flex: none; }
+.acf .tool .name .srv { font-weight: 400; color: var(--acf-muted); }
 .acf .tool .arg { color: var(--acf-muted); font-family: var(--acf-mono); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
 .acf .tool .detail { border-top: 1px solid var(--acf-line); padding: 10px 12px 12px; display: grid; gap: 6px; }
 .acf .tool .detail pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; background: var(--acf-soft); border-radius: 8px; padding: 8px 10px; font-size: 12px; }
-.acf .tool.err .detail pre:last-of-type { color: var(--acf-err); }
+.acf .tool.err .detail > .res > pre { color: var(--acf-err); }
 /* 서브에이전트 작업 — Agent 도구 카드 안: 상태 줄(종류·토큰·도구 수·경과·마지막 도구·요약) + 중첩 피드 (2026-09-30) */
 .acf .tool .tstat { font-size: 12px; display: grid; gap: 2px; }
 .acf .tool .tstat .dim { color: var(--acf-muted); font-family: var(--acf-mono); }
@@ -272,6 +276,37 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .tool .sub { display: flex; flex-direction: column; gap: 8px; border-left: 2px solid var(--acf-line); padding-left: 10px; font-size: 13px; }
 .acf .tool .sub:empty { display: none; }
 .acf .tool .detail .lbl { font-size: 12px; font-weight: 600; color: var(--acf-muted); }
+/* 펼친 모양 — 아는 도구는 정돈된 입력(명령·경로·diff·할 일), 오른쪽 위 단추로 JSON 원문과 오간다 */
+.acf .tool .detail { position: relative; }
+.acf .tool .detail > .rawtg { position: absolute; top: 6px; right: 8px; width: 24px; height: 24px; border: 0; border-radius: 6px; background: none; color: var(--acf-muted); cursor: pointer; display: grid; place-items: center; opacity: .6; }
+.acf .tool .detail > .rawtg:hover, .acf .tool .detail > .rawtg[aria-pressed="true"] { opacity: 1; background: var(--acf-soft); }
+.acf .tool .detail > .rawtg svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.acf .tool .detail > .tv, .acf .tool .detail > .raw { display: grid; gap: 6px; min-width: 0; }
+.acf .tool .detail > .tv, .acf .tool .detail > .tv ~ .raw { padding-right: 26px; }
+.acf .tool .detail > .tv ~ .raw, .acf .tool .detail.showraw > .tv { display: none; }
+.acf .tool .detail.showraw > .raw { display: grid; }
+.acf .tool .detail > .res { display: grid; gap: 6px; min-width: 0; }
+.acf .tool .detail:has(> .tv):not(.showraw) > .res > .lbl:not(.err) { display: none; }
+.acf .tool.quiet.ok .detail:not(.showraw) > .res { display: none; }
+.acf .tool .tv-note { color: var(--acf-muted); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.acf .tool .tv-path { font-family: var(--acf-mono); font-size: 12px; overflow-wrap: anywhere; }
+.acf .tool .tv-path .x { color: var(--acf-muted); margin-left: 8px; font-family: var(--acf-sans); }
+.acf .tool .detail pre.tv-cmd { color: var(--acf-fg); }
+.acf .tool .tv-kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 10px; font-size: 12px; }
+.acf .tool .tv-kv .k { color: var(--acf-muted); }
+.acf .tool .tv-kv .v { font-family: var(--acf-mono); overflow-wrap: anywhere; }
+.acf .tool .detail pre.tv-diff { padding: 6px 0; }
+.acf .tool .tv-diff span { display: block; padding: 0 10px; }
+.acf .tool .tv-diff .add { background: color-mix(in srgb, var(--acf-ok) 16%, transparent); }
+.acf .tool .tv-diff .del { background: color-mix(in srgb, var(--acf-err) 16%, transparent); }
+.acf .tool .tv-files { display: grid; gap: 2px; font-family: var(--acf-mono); font-size: 12px; }
+.acf .tool .tv-files .tv-kind { display: inline-block; min-width: 4.5em; color: var(--acf-muted); }
+.acf .tool .tv-files .p { overflow-wrap: anywhere; }
+.acf .tool .tv-todo { margin: 0; padding: 0; list-style: none; display: grid; gap: 3px; font-size: 13px; }
+.acf .tool .tv-todo li { padding-left: 1.5em; position: relative; }
+.acf .tool .tv-todo li::before { content: "○"; position: absolute; left: 0; color: var(--acf-muted); }
+.acf .tool .tv-todo li.in_progress { font-weight: 600; } .acf .tool .tv-todo li.in_progress::before { content: "◐"; color: var(--acf-fg); }
+.acf .tool .tv-todo li.completed { color: var(--acf-muted); text-decoration: line-through; } .acf .tool .tv-todo li.completed::before { content: "✓"; text-decoration: none; }
 
 /* 승인·질문 카드 */
 /* 카드 외곽 E안 (사용자 2026-09-28): 중립 테두리 + 왼쪽 3px 띠 — 질문은 파랑, 승인은 주황.

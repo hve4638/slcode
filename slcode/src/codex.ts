@@ -88,7 +88,7 @@ export function toolResult(item: any): { ok: boolean; summary: string } {
   const ok = status === 'completed' && (item.exitCode == null || item.exitCode === 0) && item.error == null && item.success !== false;
   let summary = '';
   if (item.type === 'commandExecution') summary = item.aggregatedOutput ?? (item.exitCode != null ? `exit ${item.exitCode}` : '');
-  else if (item.type === 'fileChange') summary = (item.changes ?? []).map((c: any) => `${c.kind} ${c.path}`).join('\n');
+  else if (item.type === 'fileChange') summary = (item.changes ?? []).map((c: any) => `${c.kind?.type ?? c.kind} ${c.path}`).join('\n'); // kind 는 { type: add|delete|update } (app-server PatchChangeKind)
   else if (item.type === 'mcpToolCall') summary = item.error?.message ?? JSON.stringify(item.result ?? '').slice(0, 400);
   else if (item.type === 'dynamicToolCall') summary = (item.contentItems ?? []).map((c: any) => c.text ?? `[${c.type}]`).join('');
   else summary = status;

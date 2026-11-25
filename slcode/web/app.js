@@ -10,6 +10,7 @@ import { activityPanel } from './activity.js';
 import { escGate, inputHistory } from './inputkeys.js';
 import { rewindPicker } from './rewind.js';
 import { translateButton } from './translate.js';
+import { failLabel, toolIcon, toolLabel, toolName, toolView } from './tools.js';
 
 const STATE_LABEL = { starting: '시작 중', idle: '대기', running: '실행 중', requires_action: '응답 필요', exited: '종료', disconnected: '연결 끊김' };
 const h = (tag, attrs = {}, ...children) => {
@@ -29,6 +30,7 @@ function toolArg(name, input) {
   for (const k of ARG_KEYS) if (input[k] && typeof input[k] === 'string') return input[k];
   if (Array.isArray(input.questions)) return input.questions.map((q) => q?.question).filter(Boolean).join(' · ');
   if (Array.isArray(input.changes)) return input.changes.map((c) => c?.path).filter(Boolean).join(' · '); // Codex 파일 변경(codex.ts toolOf)
+  if (Array.isArray(input.todos)) { const cur = input.todos.find((d) => d?.status === 'in_progress'); return [`${input.todos.filter((d) => d?.status === 'completed').length}/${input.todos.length}`, cur?.content].filter(Boolean).join(' · '); } // TodoWrite — 완료 수·진행 중인 일 (ticket slcode-tool-card-polish)
   const keys = Object.keys(input);
   return keys.length ? `${keys[0]}: ${short(JSON.stringify(input[keys[0]]), 80)}` : '';
 }
@@ -678,12 +680,40 @@ export function mountAgentFront(root, transport, opts = {}) {
     shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
     layers: '<path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>',
     gear: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+    // 도구 줄 아이콘(tools.js TOOL_ICONS) — lucide, 비슷한 도구는 한 모양 (ticket slcode-tool-card-polish, 사용자 2026-11-25)
+    term: '<path d="M12 19h8"/><path d="m4 17 6-6-6-6"/>', // lucide terminal
+    file: '<path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/>', // lucide file
+    pen: '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>', // lucide pencil
+    search: '<path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/>', // lucide search
+    globe: '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>', // lucide globe
+    listChecks: '<path d="M13 5h8"/><path d="M13 12h8"/><path d="M13 19h8"/><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/>', // lucide list-checks
+    bot: '<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>', // lucide bot
+    circleHelp: '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>', // lucide circle-help
+    plug: '<path d="M12 22v-5"/><path d="M15 8V2"/><path d="M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z"/><path d="M9 8V2"/>', // lucide plug
+    wrench: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"/>', // lucide wrench
   };
   /** hook.message() 의 icon(slcode-plugin hookApi.MESSAGE_ICONS) → ICONS 이름 */
   const NOTE_ICONS = { bell: 'bell', flag: 'flag', info: 'info', alert: 'triangleAlert', check: 'circleCheck', star: 'star', zap: 'zap', shield: 'shield' };
   const icon = (name) => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.innerHTML = ICONS[name]; return s; };
   const iconBtn = (name, title, onclick) => h('button', { class: 'ico', title, 'aria-label': title, onclick }, icon(name));
   const acts = (...btns) => h('div', { class: 'acts' }, ...btns);
+  // 도구 줄 (ticket slcode-tool-card-polish, 사용자 2026-11-25) — 도구 아이콘(실행 중 깜박)·화면 이름·인자 한 줄, 실패면 줄 오른쪽 끝에 빨간 'exit N'·'실패'. 다른 MCP 는 흐린 '서버 · ' 뒤에 도구.
+  // 펼치면 아는 도구는 정돈된 입력(tools.js toolView), 오른쪽 위 단추로 JSON 원문(입력·결과 라벨)과 오간다. 모르는 도구는 JSON 그대로. input 이 없으면(task 카드) 입력 칸이 없다
+  function toolCard(name, arg, input, ic = toolIcon(name)) {
+    const t = toolName(name), view = input === undefined ? null : toolView(h, name, input);
+    const detail = h('div', { class: 'detail' });
+    if (input !== undefined) {
+      const raw = h('div', { class: 'raw' }, h('div', { class: 'lbl' }, '입력'), h('pre', {}, JSON.stringify(input, null, 2)));
+      if (view) {
+        const tg = h('button', { class: 'rawtg', title: 'JSON 원문', 'aria-label': 'JSON 원문', 'aria-pressed': 'false', onclick: () => tg.setAttribute('aria-pressed', detail.classList.toggle('showraw')) }, icon('raw'));
+        detail.append(tg, h('div', { class: 'tv' }, ...view.nodes), raw);
+      } else detail.append(raw);
+    }
+    const d = h('details', { class: `tool running${view?.quiet ? ' quiet' : ''}` }, h('summary', {}, h('span', { class: 'ic' }, icon(ic)),
+      h('span', { class: 'name' }, t.server ? h('span', { class: 'srv' }, `${t.server} · `) : null, t.name), h('span', { class: 'arg' }, arg)), detail);
+    d._detail = detail;
+    return d;
+  }
   function editName() {
     if (!current) return;
     const inp = h('input', { class: 'title-edit', value: info?.title ?? '', placeholder: DEFAULT_NAME });
@@ -844,11 +874,10 @@ export function mountAgentFront(root, transport, opts = {}) {
       }
       case 'tool.start': {
         const sc = scopeOf(ev.parent);
-        if (!ev.parent) setBusy(ev.name === 'Agent' ? '에이전트 실행 중' : `${ev.name} 실행 중`);
+        if (!ev.parent) setBusy(ev.name === 'Agent' ? '에이전트 실행 중' : `${toolLabel(ev.name)} 실행 중`);
         endText(sc);
-        const detail = h('div', { class: 'detail' }, h('div', { class: 'lbl' }, '입력'), h('pre', {}, JSON.stringify(ev.input, null, 2)));
-        const d = push(h('details', { class: 'tool running' }, h('summary', {}, h('span', { class: 'dot' }), h('span', { class: 'name' }, ev.name), h('span', { class: 'arg' }, toolArg(ev.name, ev.input))), detail), sc);
-        d._detail = detail; tools.set(ev.toolUseId, d);
+        const d = push(toolCard(ev.name, toolArg(ev.name, ev.input), ev.input), sc);
+        tools.set(ev.toolUseId, d);
         if (ev.parent) toolParent.set(ev.toolUseId, ev.parent);
         break;
       }
@@ -856,14 +885,13 @@ export function mountAgentFront(root, transport, opts = {}) {
         // 서브에이전트 작업 — 띄운 Agent 도구 카드 안에 상태 줄 + 중첩 피드. 도구 카드가 없으면(백그라운드 등) 독립 카드
         let d = ev.toolUseId && tools.get(ev.toolUseId);
         if (!d) {
-          const detail = h('div', { class: 'detail' });
-          d = push(h('details', { class: 'tool running' }, h('summary', {}, h('span', { class: 'dot' }), h('span', { class: 'name' }, ev.agentType ?? 'task'), h('span', { class: 'arg' }, ev.description)), detail));
-          d._detail = detail; if (ev.toolUseId) tools.set(ev.toolUseId, d);
+          d = push(toolCard(ev.agentType ?? 'task', ev.description, undefined, 'bot'));
+          if (ev.toolUseId) tools.set(ev.toolUseId, d);
         }
         if (ev.toolUseId) scopeOf(ev.toolUseId); else if (!d._task) { d._task = h('div', { class: 'tstat' }); d._detail.append(d._task); }
         const u = ev.usage;
         if (ev.agentType) d._agent = ev.agentType; // ended 알림엔 종류·설명이 비어 온다 (2026-09-30 실측)
-        const stat = [d._agent, ev.background ? '백그라운드' : null, u ? `${fmtTok(u.tokens)} · 도구 ${u.toolUses} · ${(u.durationMs / 1000).toFixed(0)}s` : null, ev.phase === 'progress' ? ev.lastTool : null].filter(Boolean).join(' · ');
+        const stat = [d._agent, ev.background ? '백그라운드' : null, u ? `${fmtTok(u.tokens)} · 도구 ${u.toolUses} · ${(u.durationMs / 1000).toFixed(0)}s` : null, ev.phase === 'progress' && ev.lastTool ? toolLabel(ev.lastTool) : null].filter(Boolean).join(' · ');
         d._task.replaceChildren(h('span', { class: 'dim' }, stat), ...(ev.summary ? [h('div', { class: 'sum' }, ev.summary)] : [])); // replaceChildren 은 null 을 글자로 넣는다 (B 워커 지적 2026-09-30)
         if (ev.phase === 'ended') { const sc = ev.toolUseId && subs.get(ev.toolUseId); if (sc) endText(sc); tasks.delete(ev.taskId); }
         else { const prev = tasks.get(ev.taskId)?.ev; tasks.set(ev.taskId, { card: d, ev: { ...prev, ...ev, agentType: d._agent ?? null, description: prev?.description || ev.description, summary: ev.summary ?? (ev.phase === 'progress' ? ev.description : null) } }); } // progress 의 description 은 지금 하는 일 — 요약 자리에
@@ -873,7 +901,8 @@ export function mountAgentFront(root, transport, opts = {}) {
       case 'tool.end': {
         const d = tools.get(ev.toolUseId);
         if (!ev.parent) setBusy('작업 중');
-        if (d) { d.classList.remove('running'); d.classList.add(ev.ok ? 'ok' : 'err'); d._detail.append(h('div', { class: 'lbl' }, ev.ok ? '결과' : '오류'), h('pre', {}, ev.summary || '—')); }
+        if (d) { d.classList.remove('running'); d.classList.add(ev.ok ? 'ok' : 'err'); if (!ev.ok) d.querySelector(':scope > summary > .arg').after(h('span', { class: 'fail' }, failLabel(ev.summary)));
+          d._detail.append(h('div', { class: 'res' }, h('div', { class: `lbl${ev.ok ? '' : ' err'}` }, ev.ok ? '결과' : '오류'), h('pre', {}, ev.summary || '—'))); }
         break;
       }
       case 'approval.requested': endText(); renderCard(ev); break;
@@ -958,10 +987,10 @@ export function mountAgentFront(root, transport, opts = {}) {
     const parentCard = req.toolUseId && toolParent.has(req.toolUseId) ? tools.get(toolParent.get(req.toolUseId)) : null;
     const from = parentCard ? h('span', { class: 'from' }, `${parentCard._agent ?? 'Agent'} 서브에이전트`) : null;
     // 칩 줄 없이 — 승인은 도구 이름, 질문은 서브에이전트 출처가 있을 때만 머리 줄 (사용자 2026-11-08)
-    const card = h('div', { class: isQ ? 'card ask' : 'card' }, !isQ || from ? h('div', { class: 'head' }, isQ ? null : h('span', {}, req.name), from) : null);
+    const card = h('div', { class: isQ ? 'card ask' : 'card' }, !isQ || from ? h('div', { class: 'head' }, isQ ? null : h('span', {}, toolLabel(req.name)), from) : null);
     if (isQ) buildQuestion(card, req); else buildApproval(card, req);
     cards.set(req.requestId, card);
-    const mark = push(h('div', { class: `mark pending${isQ ? ' ask' : ''}`, onclick: () => showDock(card) }, h('span', { class: 'kind' }, isQ ? '질문' : '승인'), h('span', { class: 'what' }, `${parentCard ? `${parentCard._agent ?? 'Agent'} · ` : ''}${isQ ? `${req.input?.questions?.length ?? 1}개` : `${req.name} ${toolArg(req.name, req.input)}`}`), h('span', { class: 'res' })));
+    const mark = push(h('div', { class: `mark pending${isQ ? ' ask' : ''}`, onclick: () => showDock(card) }, h('span', { class: 'kind' }, isQ ? '질문' : '승인'), h('span', { class: 'what' }, `${parentCard ? `${parentCard._agent ?? 'Agent'} · ` : ''}${isQ ? `${req.input?.questions?.length ?? 1}개` : `${toolLabel(req.name)} ${toolArg(req.name, req.input)}`}`), h('span', { class: 'res' })));
     card._mark = mark;
     if (replaying) return card;
     showDock();
@@ -1225,7 +1254,7 @@ export function mountAgentFront(root, transport, opts = {}) {
         rpc('session.childApprove', { id: current, child: k.id, requestId: req.requestId, decision }).catch((e) => { for (const b of row.querySelectorAll('button')) b.disabled = false; push(h('div', { class: 'meta err' }, e.message)); });
       };
       row.append(h('span', { class: 'kind' }, isQ ? '질문' : '승인'), h('span', { class: 'who' }, `팀원 ${famName(k)}`),
-        h('span', { class: 'what' }, isQ ? '부모 모델이 답합니다' : `${req.name} ${toolArg(req.name, req.input)}`), h('span', { class: 'gap' }),
+        h('span', { class: 'what' }, isQ ? '부모 모델이 답합니다' : `${toolLabel(req.name)} ${toolArg(req.name, req.input)}`), h('span', { class: 'gap' }),
         ...(isQ ? [] : [h('button', { class: 'primary', onclick: decide('allow') }, '허용'), h('button', { onclick: decide('deny') }, '거부')]),
         famGo(k, 'kid-open', '열기'));
       rows.push(row);
