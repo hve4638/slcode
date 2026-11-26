@@ -13,6 +13,8 @@ import { corePaths } from './paths.js';
 import { loopbackAllowed, pluginMethod, PLUGIN_METHODS, WEB_DIR, withPageAttrs } from './serve.js';
 import { promptMethod, PROMPT_METHODS, type PromptMethod } from './promptMethods.js';
 import { profileMethod, PROFILE_METHODS, type ProfileMethod } from './profileMethods.js';
+import { providerMethod, PROVIDER_METHODS, type ProviderMethod } from './providerMethods.js';
+import { providerOpenError } from './provider.js';
 import type { SettingsKind } from './protocol.js';
 
 /** at 은 마지막 활동 — 꺼진 세션은 꺼진 시각, 떠 있는 세션은 활동 기록의 마지막 상태 변화(없으면 마지막 턴) */
@@ -45,7 +47,8 @@ export function startPageHtml(dir: string, kind: SettingsKind, cwd: string | nul
       .replace('<script type="module" src="./start.js"></script>', () => [
         `${read('plugins.js').replace('export function pluginsPanel', 'function pluginsPanel')}\nglobalThis.slcodePlugins = { pluginsPanel };`,
         `${read('prompt.js').replace('export function promptPanel', 'function promptPanel')}\nglobalThis.slcodePrompt = { promptPanel };`,
-        `${read('profiles.js').replace('export function profilesPanel', 'function profilesPanel')}\nglobalThis.slcodeProfiles = { profilesPanel };`, read('start.js'),
+        `${read('profiles.js').replace('export function profilesPanel', 'function profilesPanel')}\nglobalThis.slcodeProfiles = { profilesPanel };`,
+        `${read('providers.js').replace('export function providersPanel', 'function providersPanel')}\nglobalThis.slcodeProviders = { providersPanel };`, read('start.js'),
       ].map((js) => `<script type="module">${js.replace(/<\/script/gi, '<\\/script')}</script>`).join('\n'));
   }
   return html;
@@ -67,7 +70,7 @@ export function startServer(dir: string, cwd: string): { server: http.Server; ch
       if (url.startsWith('/s/')) { res.writeHead(302, { location: '/', connection: 'close' }); res.end(); return; } // 세션 주소를 연 탭이 시작 화면으로 돌아왔다 (ticket slcode-web-session-url)
       if (url === '/' || url === '/index.html') { send(200, 'text/html; charset=utf-8', startPageHtml(dir, 'web', cwd, false)); return; }
       const f = url.slice(1);
-      if (f === 'style.css' || f === 'start.js' || f === 'plugins.js' || f === 'prompt.js' || f === 'profiles.js') { send(200, f.endsWith('.css') ? 'text/css' : 'text/javascript', fs.readFileSync(path.join(WEB_DIR, f), 'utf8')); return; }
+      if (f === 'style.css' || f === 'start.js' || f === 'plugins.js' || f === 'prompt.js' || f === 'profiles.js' || f === 'providers.js') { send(200, f.endsWith('.css') ? 'text/css' : 'text/javascript', fs.readFileSync(path.join(WEB_DIR, f), 'utf8')); return; }
       send(404, 'text/plain', 'not found'); return;
     }
     if (req.method !== 'POST' || !url.startsWith('/api/')) { send(404, 'text/plain', 'not found'); return; }
@@ -80,6 +83,7 @@ export function startServer(dir: string, cwd: string): { server: http.Server; ch
         if ((PLUGIN_METHODS as readonly string[]).includes(action)) { json(200, await pluginMethod(dir, action as (typeof PLUGIN_METHODS)[number], a)); return; } // 에이전트 플러그인 관리 (ticket slcode-agent-plugin-ui)
         if ((PROMPT_METHODS as readonly string[]).includes(action)) { json(200, await promptMethod(dir, cwd, action as PromptMethod, a)); return; } // system prompt 편집 창 (ticket slcode-profile-system-prompt)
         if ((PROFILE_METHODS as readonly string[]).includes(action)) { json(200, await profileMethod(dir, action as ProfileMethod, a)); return; } // 프로필 관리 (ticket slcode-profile-manager)
+        if ((PROVIDER_METHODS as readonly string[]).includes(action)) { json(200, await providerMethod(dir, action as ProviderMethod, a)); return; } // 프로바이더 관리 (ticket slcode-custom-provider)
         switch (action) {
           case 'list': json(200, await startList(dir, cwd)); return;
           case 'go': {
@@ -88,6 +92,8 @@ export function startServer(dir: string, cwd: string): { server: http.Server; ch
               // 이 폴더의 꺼진 세션만 — 떠 있는 세션은 그 화면이 따로 있다
               const m = (await startList(dir, cwd)).here.find((x) => x.id === a.resume && !x.live);
               if (!m) { json(400, { error: `no closed session ${a.resume} in ${cwd}` }); return; }
+              // custom 세션은 프로바이더가 그대로일 때만 — 여기서 거르지 않으면 core 가 띄우다 던지고 시작 화면 프로세스가 끝난다 (ticket slcode-custom-provider)
+              { const meta = EventLog.list(corePaths(dir).sessionsDir).find((x) => x.id === m.id); const why = meta && providerOpenError(dir, meta); if (why) { json(400, { error: why }); return; } }
               picked = true; choose({ resume: m.id }); json(200, {}); return;
             }
             if (a.new !== true) { json(400, { error: 'go {new: true} or {resume: <id>}' }); return; }

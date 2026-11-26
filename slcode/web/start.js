@@ -47,7 +47,7 @@ function ago(t) {
 const base = (p) => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
 
 const RECENT = 6; // 목록마다 처음에 이만큼 — 나머지는 '모두 보기'
-const state = { list: null, open: { here: false, all: false }, error: null, busy: null, plugins: null, prompt: null, profiles: null };
+const state = { list: null, open: { here: false, all: false }, error: null, busy: null, plugins: null, prompt: null, profiles: null, providers: null };
 
 async function load() {
   try { state.list = await call('list'); state.error = null; }
@@ -160,6 +160,13 @@ async function openProfiles() {
   draw();
   state.profiles.load();
 }
+/** 프로바이더 관리 (ticket slcode-custom-provider, 사용자 결정 2026-11-25) — 프로필 관리와 같은 꼴. 모듈을 읽는 길은 openPlugins 와 같다 */
+async function openProviders() {
+  const { providersPanel } = globalThis.slcodeProviders ?? await import('./providers.js');
+  state.providers = providersPanel(call);
+  draw();
+  state.providers.load();
+}
 /** system prompt 편집 창 (ticket slcode-profile-system-prompt → slcode-prompt-library) — 프로필 화면의 system prompt 탭에서 그 프롬프트로 연다. ‹ 는 프로필 화면의 그 탭으로 */
 async function openPrompt(name) {
   const { promptPanel } = globalThis.slcodePrompt ?? await import('./prompt.js');
@@ -184,6 +191,12 @@ function draw() {
       state.profiles.el));
     return;
   }
+  if (state.providers) {
+    root.replaceChildren(el('style', {}, STYLE), el('div', { class: 'st pl' },
+      el('div', { class: 'phead' }, el('button', { class: 'more', title: '시작 화면', on: { click: () => { state.providers = null; draw(); } } }, '‹'), el('h1', {}, '프로바이더'), el('span', { class: 'grow' }), state.providers.status),
+      state.providers.el));
+    return;
+  }
   if (state.plugins) {
     root.replaceChildren(el('style', {}, STYLE), el('div', { class: 'st pl' },
       el('div', { class: 'phead' }, el('button', { class: 'more', title: '시작 화면', on: { click: () => { state.plugins = null; draw(); } } }, '‹'), el('h1', {}, '에이전트 플러그인')),
@@ -196,7 +209,7 @@ function draw() {
     state.busy ? el('div', { class: 'busy' }, `${state.busy} — 여는 중…`) : null,
     l ? el('div', { class: 'cols' }, column('here', pathHead(l.cwd), l.cwd, l.here, true, false), column('all', 'all sessions', null, l.all, false, true)) : null,
     state.error ? el('div', { class: 'err' }, state.error) : null,
-    el('div', { class: 'tools' }, el('button', { class: 'more', on: { click: () => void openPlugins() } }, '에이전트 플러그인'), el('button', { class: 'more', on: { click: () => void openProfiles() } }, '프로필'))));
+    el('div', { class: 'tools' }, el('button', { class: 'more', on: { click: () => void openPlugins() } }, '에이전트 플러그인'), el('button', { class: 'more', on: { click: () => void openProfiles() } }, '프로필'), el('button', { class: 'more', on: { click: () => void openProviders() } }, '프로바이더'))));
 }
 
 draw();

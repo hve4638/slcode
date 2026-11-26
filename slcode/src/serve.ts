@@ -26,6 +26,7 @@ import { CoreError, ERR, FILES, type SessionInfo, type SettingsKind, type Settin
 import { inspectBlocked } from './inspect.js';
 import { forkSession } from './fork.js';
 import { cleanInspect, inspectUsage } from './inspectDb.js';
+import { providerMethod, PROVIDER_METHODS } from './providerMethods.js';
 import { listPlugins, scriptWarnings } from 'slcode-plugin/agentPlugins';
 
 export const WEB_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'web');
@@ -37,7 +38,7 @@ const TYPES: Record<string, string> = {
 /** 화면 연결(웹·stdio)에서는 부를 수 없는 제어 메서드 — 소유권·웹 주소 등록(토큰이 붙은 url 을 돌려준다)·core 교체는 serve 의 제어 연결만 */
 const CONTROL_ONLY = new Set(['core.own', 'serve.register', 'core.retire']);
 /** serve 가 답하는 메서드 (ServeMethods) — core 로 넘기지 않는다 */
-const SERVE_METHODS = new Set(['settings.get', 'settings.set', 'serve.info', 'serve.sessions', 'update.run', 'serve.restart', 'start.back', 'inspect.usage', 'inspect.clean', 'web.files', 'file.get', 'file.resolve', 'serve.fork']);
+const SERVE_METHODS = new Set(['settings.get', 'settings.set', 'serve.info', 'serve.sessions', 'update.run', 'serve.restart', 'start.back', 'inspect.usage', 'inspect.clean', 'web.files', 'file.get', 'file.resolve', 'serve.fork', ...PROVIDER_METHODS]);
 /** 프레임의 요청·응답 id — 앞머리만 본다 (첨부가 실린 큰 프레임을 해석하지 않게). 화면·core 는 id 를 맨 앞에 쓴다 ({id, method, params}·{id, result}). 아니면 null */
 const idOf = (line: string): string | null => /^\{"id":(-?\d+|"(?:[^"\\]|\\.)*")[,}]/.exec(line)?.[1] ?? null;
 /** 인증 전 줄 세워 둘 수 있는 요청 수 — 인증 안 된 원격 클라이언트가 serve 메모리를 키우지 못하게 */
@@ -384,6 +385,8 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
           if (what !== 'old' && what !== 'compact' && what !== 'all') throw new CoreError(ERR.badRequest, 'inspect.clean what must be old, compact or all');
           return cleanInspect(P.sessionsDir, what, Date.now(), log);
         }
+        // 프로바이더 관리 (ticket slcode-custom-provider) — 모델 메뉴의 "프로바이더 관리". 시작 화면과 같은 요청이다 (providerMethods.ts)
+        case 'provider.list': case 'provider.save': case 'provider.remove': case 'provider.models': return providerMethod(P.dir, m.method, m.params);
       }
     };
     answer().then((result) => send(JSON.stringify({ id: m.id, result })), (e) => send(JSON.stringify({ id: m.id, error: { code: (e as CoreError).code, message: (e as Error).message } })));

@@ -1,0 +1,10 @@
+import { fetchModels, getProvider, publicKey, publicProvider, readKeys, readProviders, removeKey, removeProvider, saveKey, saveProvider, TEMPLATES } from './provider'
+import { CoreError, ERR } from './protocol'
+
+role: 프로바이더 관리 화면의 요청 (ticket slcode-custom-provider, 사용자 결정 2026-11-25: 시작 화면의 "프로바이더" 단추, 프로필 관리와 같은 꼴) — 웹 시작 화면은 startPage 의 api/, superlite 카드 시작 화면은 `slcode start-call`, 대화 화면(모델 메뉴의 "프로바이더 관리")은 serve 가 답한다. 화면은 web/providers.js 하나다. 키는 내보내지 않는다(publicProvider).
+
+export val PROVIDER_METHODS
+type ProviderMethod
+export fn providerMethod(dir, method, params) {
+  role: provider.list → {providers(키 없이), keys(키 관리 — 값 없이 끝 4자와 쓰는 프로바이더), templates}. provider.save {provider} — key 를 빼면 지금 키를 남긴다, key 를 주면 직접 넣은 키, keyRef 를 주면 키 관리의 그 키. provider.remove {id}. provider.keySave {key: {id?, name, value?}} → {key(값 없이)}. provider.keyRemove {id} — 쓰는 프로바이더가 있으면 거절. provider.models {provider} — 저장한 id 면 저장한 키로, 아직 저장하지 않은 값이면 준 값으로 목록을 받는다. 오류는 badRequest 로
+}

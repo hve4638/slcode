@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { ClaudeSession } from './session.js';
 import { CodexSession, codexRunnable } from './codex.js';
-import { PARAM_ENV, sessionEnvError, sessionParamsError, type AgentSession, type Command } from './base.js';
+import { CLAUDE_EFFORTS, PARAM_ENV, sessionEnvError, sessionParamsError, type AgentSession, type Command } from './base.js';
 import { EventLog, historyPage, outline, promptTurns, summarize, type SessionMeta, type SessionParent } from './eventLog.js';
 import { isLoopback, reachable, sockAlive, spawnCore } from './live.js';
 import { BUILD, PKG, VERSION, replacing, replacingMark } from './client.js';
@@ -34,6 +34,7 @@ import { claudeLoad, DEFAULT_PROFILE, getProfile, listProfiles, profileSummary, 
 import { promptOption } from './promptCapture.js';
 import { latestVersion, promptNames, sessionPrompt, type PromptRef } from './promptLibrary.js';
 import { claudeSessionExists } from './vendor.js';
+import { claudeConnection, claudeThinking, codexProviderArgs, codexProviderEnv, getProvider, providerOpenError, readProviders, type Provider } from './provider.js';
 import { agentPaths, currentBuilds, loadSessionPlugins, reloadSessionPlugins, unlinkSessionPlugins, type Loaded, type SessionPlugins } from 'slcode-plugin/agentPlugins';
 import { HookRunner, type LoadedCommand } from 'slcode-plugin/hookRunner';
 import { commandTable, completeInput, fullName, resolveCommand } from './pluginCommands.js';
@@ -100,6 +101,8 @@ export type CoreOptions = {
   prompt?: string;
   /** 새 세션의 벤더 — 기본 claude. 이어받는 세션은 meta.vendor 를 따른다 */
   vendor?: 'claude' | 'codex';
+  /** 새 세션의 custom provider id (ticket slcode-custom-provider) — meta.provider 로 남긴다. vendor 는 그 프로바이더의 엔진이어야 한다 */
+  provider?: string;
   /** 새 세션의 시작 프로필 이름 (ticket slcode-session-profile) — meta.profile 로 남긴다. 없으면 default. 이어받는 세션은 meta 를 따른다 */
   profile?: string;
   /** 시작 화면에서 연 새 세션 — meta.fromStart 로 남긴다 */
@@ -157,10 +160,14 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     if (opts.profile !== undefined && !getProfile(opts.profile, P.dir)) throw new CoreError(ERR.badRequest, `no profile ${opts.profile} (slcode profile list)`);
     for (const k of Object.keys(opts.env ?? {})) { const why = sessionEnvError(k); if (why) throw new CoreError(ERR.badRequest, why); }
     { const why = sessionParamsError(opts.params ?? {}); if (why) throw new CoreError(ERR.badRequest, why); }
+    // custom provider (ticket slcode-custom-provider) — 벤더는 그 프로바이더의 엔진. 지금은 리더의 프로바이더를 물려받는 팀원만 이 길로 온다 (화면은 session.setVendor)
+    const prov = opts.provider !== undefined ? getProvider(P.dir, opts.provider) : null;
+    if (opts.provider !== undefined && !prov) throw new CoreError(ERR.badRequest, `no provider ${opts.provider}`);
+    if (prov && opts.vendor && opts.vendor !== prov.vendor) throw new CoreError(ERR.badRequest, `provider ${prov.id} runs on ${prov.vendor}, not ${opts.vendor}`);
     const meta: SessionMeta = {
-      id: randomUUID().slice(0, 8), vendor: opts.vendor ?? 'claude', cwd: opts.cwd, title: opts.title ?? null,
+      id: randomUUID().slice(0, 8), vendor: prov?.vendor ?? opts.vendor ?? 'claude', cwd: opts.cwd, title: opts.title ?? null, ...(prov ? { provider: prov.id } : {}),
       vendorSessionId: null, createdAt: Date.now(), permissionMode: opts.permissionMode ?? 'auto', raw: opts.raw ?? false,
-      ...(opts.model ? { model: opts.model } : {}), ...(opts.effort ? { effort: opts.effort } : {}), ...(opts.inspect ? { inspect: true } : {}),
+      ...(opts.model || prov?.models[0] ? { model: opts.model || prov!.models[0] } : {}), ...(opts.effort && (!prov || prov.features.effort) ? { effort: opts.effort } : {}), ...(opts.inspect ? { inspect: true } : {}),
       ...(opts.profile && opts.profile !== DEFAULT_PROFILE ? { profile: opts.profile } : {}), ...(opts.fromStart ? { fromStart: true } : {}),
       // system prompt 는 만들 때 프로필이 고른 프롬프트의 최신 판을 적는다 — 그 뒤 새 판이 생겨도 이 세션은 올리기 전까지 그대로 (ticket slcode-prompt-library)
       ...((): { prompt?: PromptRef } => { const r = promptRefOf(sessionProfile(opts.profile, P.dir).profile.claude.prompt, P.dir); return r ? { prompt: r } : {}; })(),
@@ -174,6 +181,10 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     logFile = EventLog.create(P.sessionsDir, meta);
   }
   const cwd = logFile.meta.cwd;
+  // custom provider (ticket slcode-custom-provider, 사용자 결정 2026-11-25) — 띄울 때마다 providers.json 의 지금 값. 지웠거나 엔진이 바뀌었으면 열지 않는다:
+  // 공식 계정으로 몰래 넘어가 다른 곳에 대화를 보내지 않게
+  { const why = providerOpenError(P.dir, logFile.meta); if (why) throw new CoreError(ERR.badRequest, why); }
+  const provider: Provider | null = logFile.meta.provider ? getProvider(P.dir, logFile.meta.provider) : null;
   // 벤더 자식(과 그 Bash 도구가 띄우는 명령)이 자기 세션을 알게 — 세션 안의 `slcode mail/check/ask/reply` 가 이걸 읽는다 (사용자 확정 2026-10-02).
   // 그 `slcode` 는 이 판이다 (withBinPath). 세션 env(meta.env, ticket slcode-new-session-env)는 셸에서 물려받은 값 위·SLCODE_SESSION_ID 아래 —
   // 벤더를 다시 띄우는 길(rewind·reopen·교체)과 Codex env 가 모두 이 값에서 시작한다. 에이전트 플러그인 manifest env 는 그 위에 얹힌다
@@ -209,11 +220,14 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   const userBase = new Promise<string | null>((r) => (gotBase = r));
   let watching = false; // codex 감시 — proxy 를 세웠고 아직 성공한 턴이 없다
   const startProxy = async () => {
-    const blocked = codex ? null : inspectBlocked(blockedFile);
+    const blocked = codex || provider ? null : inspectBlocked(blockedFile);
     if (blocked) throw new Error(`inspect is blocked for this Claude Code (Agent SDK ${blocked}): it does not treat the proxy as first party, so prompt caching and other features would be lost`);
     store ??= InspectStore.open(inspectDir);
     if (!inspect) {
-      inspect = codex
+      // custom 세션은 프로바이더 주소로 넘긴다 — 내부 플래그를 넣지 않으므로 1st party 감시도 없다
+      inspect = provider
+        ? await startInspect(store, provider.baseUrl, { log })
+        : codex
         ? await startInspect(store, async (req) => codexUpstream(await userBase, req.headers), { prefix: CODEX_ROUTE, log })
         : await startInspect(store, upstreamOf(env), { watch: keepsFirstParty(env), onLost: firstPartyLost, log });
       watching = codex;
@@ -222,13 +236,16 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     return inspect;
   };
   const vendorEnv = async () => {
-    if (!logFile.meta.inspect || codex) return env;
+    if (!logFile.meta.inspect || codex || provider) return env;
     return inspectEnv(env, (await startProxy()).url);
   };
+  // custom 세션의 연결 (provider.ts) — 주소는 inspect 면 proxy. Claude 는 ClaudeSession 의 connection, Codex 는 -c model_providers 인자
+  const providerUrl = async () => (logFile.meta.inspect ? (await startProxy()).url : provider!.baseUrl);
+  const connection = async () => (provider && !codex ? claudeConnection(provider, logFile.meta.model, await providerUrl()) : undefined);
   // codex — 에이전트 플러그인의 MCP(-c mcp_servers…)는 inspect 를 바꿔 다시 띄울 때도 함께 (agent 는 아래에서 채운다)
   // codex 명령의 PATH 는 띄운 PATH 로 고정 (codexPathArgs) — inspect 를 바꿔 다시 띄울 때도
   const codexBaseArgs = () => [...(agent?.codex.args ?? []), ...codexPathArgs(codexEnv())];
-  const vendorArgs = async () => [...(codex ? codexBaseArgs() : []), ...(logFile.meta.inspect && codex ? codexArgs((await startProxy()).url) : [])];
+  const vendorArgs = async () => [...(codex ? codexBaseArgs() : []), ...(codex && provider ? codexProviderArgs(provider, await providerUrl()) : []), ...(logFile.meta.inspect && codex && !provider ? codexArgs((await startProxy()).url) : [])];
   /** 지난 기록을 읽는 DB — 켠 적 없는 세션엔 만들지 않는다 */
   const readStore = () => {
     if (!store && InspectStore.exists(inspectDir)) {
@@ -276,20 +293,22 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   hooks?.openSession(openSource, { cwd, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode ?? null, vendorSessionId: logFile.meta.vendorSessionId ?? null });
   // codex 는 프로세스 env 로 — manifest env 와 PATH 앞의 플러그인 bin/ (Claude 는 ClaudeSession 이 agent.env 를 얹는다)
   const codexEnv = (): NodeJS.ProcessEnv => {
-    if (!agent) return env;
+    const keyed = provider ? { ...env, ...codexProviderEnv(provider) } : env; // custom 세션의 키·추가 env (provider.ts)
+    if (!agent) return keyed;
     const key = (process.platform === 'win32' && Object.keys(env).find((k) => k.toUpperCase() === 'PATH')) || 'PATH';
-    return { ...env, ...agent.env, ...(agent.codex.bin.length ? { [key]: [...agent.codex.bin, ...(env[key] ? [env[key]] : [])].join(path.delimiter) } : {}) };
+    return { ...keyed, ...agent.env, ...(agent.codex.bin.length ? { [key]: [...agent.codex.bin, ...(env[key] ? [env[key]] : [])].join(path.delimiter) } : {}) };
   };
   // 첫 기동에서 못 켜면(이 SDK 에서 막힘·node:sqlite 없음) 끄고 띄운다 — 사유는 세션이 생긴 뒤 기록에 남긴다
-  let firstEnv = env, firstArgs: string[] = [], inspectFailed: string | null = null;
-  try { firstEnv = await vendorEnv(); firstArgs = await vendorArgs(); } catch (e) { logFile.updateMeta({ inspect: false }); inspectFailed = (e as Error).message; }
-  if (inspectFailed && codex) firstArgs = codexBaseArgs();
+  let firstEnv = env, firstArgs: string[] = [], firstConn: Record<string, string> | undefined, inspectFailed: string | null = null;
+  try { firstEnv = await vendorEnv(); firstArgs = await vendorArgs(); firstConn = await connection(); } catch (e) { logFile.updateMeta({ inspect: false }); inspectFailed = (e as Error).message; }
+  if (inspectFailed) { firstArgs = await vendorArgs(); firstConn = await connection(); } // meta.inspect 를 끈 뒤라 proxy 없이
   // worktree 의 가른 브랜치 (git config slcodeparent) — 지시문의 사실 (ticket slcode-team-worktree-self)
   const wtNow = logFile.meta.worktree, wtParent = wtNow && !wtNow.removedAt ? parentBranch(wtNow) : null;
   const session: AgentSession = codex
     ? new CodexSession({ log: logFile, env: codexEnv(), permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, args: firstArgs, onConfig: (base) => gotBase(base), skillRoots: agent?.codex.roots ?? [], instructions: agent?.append ?? '', family: familyPrompt({ team: canTeam, leader: parentId, options: team(), tools: false, agent: logFile.meta.agent, agents: canTeam ? listAgents(cwd, P.dir) : [], worktree: logFile.meta.worktree, parentBranch: wtParent }) })
     : new ClaudeSession({
-      log: logFile, env: firstEnv, resume: logFile.meta.vendorSessionId, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, ...(agent ? { agent } : {}), ...(load ? { load } : {}), ...(prompt ? { prompt } : {}), ...(hooks ? { hooks: hooks.sdkHooks() } : {}),
+      log: logFile, env: firstEnv, resume: logFile.meta.vendorSessionId, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, ...(agent ? { agent } : {}),
+      ...(firstConn && provider ? { connection: firstConn, thinking: claudeThinking(provider) } : {}), ...(load ? { load } : {}), ...(prompt ? { prompt } : {}), ...(hooks ? { hooks: hooks.sdkHooks() } : {}),
       family: familyPrompt({ team: canTeam, leader: parentId, options: team(), tools: canTeam, agent: logFile.meta.agent, agents: canTeam ? listAgents(cwd, P.dir) : [], worktree: logFile.meta.worktree, parentBranch: wtParent }),
       // MCP 서버 slcode — 도구는 이 판의 CLI 를 부른다. 팀원 도구(Subagent·ContinueSubagent)는 팀원을 만들 수 있는 세션에만, Agent 도구처럼 승인을 묻지 않는다 (사용자 2026-11-08).
       // background 도구는 모든 Claude 세션에 — BackgroundRun 은 Bash 처럼 권한 모드대로 승인을 묻고 (ticket slcode-background-run-tool, 사용자 2026-11-23),
@@ -344,7 +363,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     if (switching) throw new CoreError(ERR.badRequest, 'inspect is already being switched');
     switching = true;
     logFile.updateMeta({ inspect: on });
-    try { if (s instanceof CodexSession) await s.reopen(await vendorArgs()); else await s.reopen(await vendorEnv()); }
+    try { if (s instanceof CodexSession) await s.reopen(await vendorArgs()); else await s.reopen(await vendorEnv(), await connection()); }
     catch (e) { logFile.updateMeta({ inspect: !on }); if (on) { await inspect?.close(); inspect = null; } throw new CoreError(ERR.badRequest, (e as Error).message); }
     finally { switching = false; }
     if (!on) { await inspect?.close(); inspect = null; if (sweeper) { clearInterval(sweeper); sweeper = null; } }
@@ -480,20 +499,45 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       if (!p.origin) activity.sent(); // 메시지 턴(origin mail 등)은 사람이 보낸 것이 아니다
       return { ok: true, state: s.state };
     },
-    'session.models': (_c, p) => mine(p?.id).models(),
+    // custom provider (ticket slcode-custom-provider) — 모델 메뉴의 custom 칸에 보일 프로바이더들을 늘 함께. custom 세션의 목록은 그 프로바이더에 저장한 모델(지금 값)이다
+    'session.models': async (_c, p) => {
+      const s = mine(p?.id);
+      const providers = readProviders(P.dir).map((x) => ({ id: x.id, name: x.name, vendor: x.vendor, models: x.models }));
+      if (!provider) return { ...(await s.models()), provider: null, providers };
+      const now = getProvider(P.dir, provider.id) ?? provider;
+      const efforts = now.features.effort ? (codex ? ['low', 'medium', 'high'] : CLAUDE_EFFORTS) : [];
+      const cur = logFile.meta.model ?? now.models[0] ?? null;
+      return {
+        current: cur, effort: now.features.effort ? logFile.meta.effort ?? null : null, provider: { id: now.id, name: now.name }, providers,
+        models: [...new Set([...now.models, ...(cur ? [cur] : [])])].map((m) => ({ value: m, resolvedModel: m, displayName: m, description: now.name, efforts })),
+      };
+    },
     'session.setModel': async (_c, p) => { if (typeof p?.model !== 'string' || !p.model) throw new CoreError(ERR.badRequest, 'model required'); await mine(p.id).setModel(p.model); return { ok: true }; },
-    'session.setEffort': async (_c, p) => { if (typeof p?.effort !== 'string' || !p.effort) throw new CoreError(ERR.badRequest, 'effort required'); await mine(p.id).setEffort(p.effort); return { ok: true }; },
+    'session.setEffort': async (_c, p) => {
+      if (typeof p?.effort !== 'string' || !p.effort) throw new CoreError(ERR.badRequest, 'effort required');
+      if (provider && !(getProvider(P.dir, provider.id) ?? provider).features.effort) throw new CoreError(ERR.badRequest, `provider ${provider.id} does not take effort (turn it on in the provider's details)`);
+      await mine(p.id).setEffort(p.effort); return { ok: true };
+    },
     'session.setVendor': async (_c, p) => {
       const s = mine(p?.id);
       if (p.vendor !== 'claude' && p.vendor !== 'codex') throw new CoreError(ERR.badRequest, 'vendor claude|codex');
-      if (p.vendor === logFile.meta.vendor) return { ok: true };
+      // custom provider (ticket slcode-custom-provider) — 프로바이더를 고르면 그 엔진·모델로. 같은 프로바이더 안의 모델은 core 를 다시 띄우지 않는다
+      const prov = p.provider ? getProvider(P.dir, p.provider) : null;
+      if (p.provider && !prov) throw new CoreError(ERR.badRequest, `no provider ${p.provider}`);
+      if (prov && prov.vendor !== p.vendor) throw new CoreError(ERR.badRequest, `provider ${prov.id} runs on ${prov.vendor}, not ${p.vendor}`);
+      const model = prov ? p.model || prov.models[0] : undefined;
+      if (prov && !model) throw new CoreError(ERR.badRequest, `provider ${prov.id} has no model — add one in its settings`);
+      if (p.vendor === logFile.meta.vendor && (prov?.id ?? null) === (logFile.meta.provider ?? null)) {
+        if (model && model !== logFile.meta.model) await s.setModel(model);
+        return { ok: true };
+      }
       const check = () => beforeFirst(s, 'vendor');
       check();
       // 설치돼 있지 않은 codex 로 바꾸면 새 core 의 벤더 기동이 실패해 세션이 닫힌다 — 띄워 보고 못 뜨면 그대로 둔다
       if (p.vendor === 'codex') { const why = await codexRunnable(env); if (why) throw new CoreError(ERR.badRequest, `codex is not available: ${why}`); }
       check(); // 띄워 보는 사이 턴이 들어왔을 수 있다
       // 벤더 세션·모델·effort 는 옛 벤더의 것이다 — 새 벤더 기본으로 (undefined 는 meta 파일에서 빠진다)
-      logFile.updateMeta({ vendor: p.vendor, vendorSessionId: null, model: undefined, effort: undefined });
+      logFile.updateMeta({ vendor: p.vendor, provider: prov?.id, vendorSessionId: null, model, effort: undefined });
       log(`vendor switched to ${p.vendor} — replacing this core`);
       void replace(PKG); // retiring 을 바로 세운다. 이 응답은 연결이 끝나기 전에 나간다
       return { ok: true };
@@ -700,10 +744,11 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       { const why = teamOptionsError(options); if (why) throw new CoreError(ERR.badRequest, why); }
       if (p.worktree !== undefined && (typeof p.worktree?.path !== 'string' || path.resolve(p.worktree.path) !== path.resolve(p.cwd))) throw new CoreError(ERR.badRequest, 'worktree.path must be the cwd');
       // 주지 않은 벤더·모델·effort·권한 모드는 리더를 따른다 — 모델·effort 는 벤더가 같을 때만 (사용자 결정 5-1·3)
+      // custom 세션의 팀원은 벤더를 주지 않으면 리더의 프로바이더도 따른다 (ticket slcode-custom-provider)
       const vendor = p.vendor ?? logFile.meta.vendor;
       const same = vendor === logFile.meta.vendor;
       const id = await children.spawn({
-        cwd: p.cwd, vendor, title: p.title, model: p.model ?? (same ? s.model ?? undefined : undefined), effort: p.effort ?? (same ? s.effort ?? undefined : undefined),
+        cwd: p.cwd, vendor, ...(p.vendor === undefined && logFile.meta.provider ? { provider: logFile.meta.provider } : {}), title: p.title, model: p.model ?? (same ? s.model ?? undefined : undefined), effort: p.effort ?? (same ? s.effort ?? undefined : undefined),
         permissionMode: p.mode ?? logFile.meta.permissionMode ?? undefined, profile: p.profile, env: p.env, params: p.params, prompt: p.prompt, raw: opts.raw, team: options, ...(p.agent ? { agent: p.agent } : {}), ...(p.worktree ? { worktree: p.worktree } : {}),
         ...(logFile.meta.inspect ? { inspect: true } : {}),
       });

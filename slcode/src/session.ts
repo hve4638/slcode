@@ -3,11 +3,14 @@
 // 승인(canUseTool)은 Deferred 로 무기한 기다린다 — interrupt·close·프로세스 종료만 cancelled 로 푼다 (사용자 결정 2026-09-26).
 import { query, type Options, type Query, type SDKMessage, type SDKUserMessage, type PermissionResult, type PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import type { AgentCommandEvent, AgentHookEvent, ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, RewindPreview, Usage, Limits, LimitWindow, McpStatus } from './protocol.js';
 import { EventLog, unrewound } from './eventLog.js';
 import { AgentSession, CLAUDE_EFFORTS, effortMisfit, type ApproveOpts, type Command } from './base.js';
 import { SLCODE_PROMPT } from './prompt.js';
 import type { ClaudeLoad } from './profiles.js';
+import { withoutConnection } from './provider.js';
 
 /** push 와 비동기 순회를 잇는 무한 큐 — streaming input 의 프롬프트 공급원 */
 class AsyncQueue<T> implements AsyncIterable<T> {
@@ -64,7 +67,20 @@ export type SessionOptions = {
   noAsk?: boolean;
   /** 승인 없이 쓰는 도구 — 팀원 도구는 Claude 의 Agent 도구처럼 묻지 않는다 (사용자 2026-11-08) */
   allowedTools?: string[];
+  /** custom provider 의 연결 env (provider.claudeConnection, ticket slcode-custom-provider) — 있으면 env·플러그인·프로필 env 의 연결 값을 지우고 이것을 맨 위에,
+   *  같은 값을 플래그 settings.env 에도 (~/.claude/settings.json 의 env 가 프로세스 env 를 덮는다). inspect 토글로 주소가 바뀌면 reopen 이 새 값을 준다 */
+  connection?: Record<string, string>;
+  /** custom provider 의 thinking (provider.claudeThinking) — 없으면 adaptive */
+  thinking?: Options['thinking'];
 };
+
+/** custom provider 세션의 플래그 settings 파일 — 키가 들어 있어 0600 (providers.json 과 같은 권한) */
+function connectionSettings(dir: string, settings: object): string {
+  const file = path.join(dir, 'vendor-settings.json');
+  fs.writeFileSync(file, JSON.stringify(settings), { mode: 0o600 });
+  fs.chmodSync(file, 0o600);
+  return file;
+}
 
 export function summarize(content: unknown): string {
   if (typeof content === 'string') return content.slice(0, 400);
@@ -306,12 +322,12 @@ export class ClaudeSession extends AgentSession {
   /** 보냈지만 아직 turn.end 가 오지 않은 턴 수 — idle 경계에서도 다음 턴이 줄 서 있을 수 있다 (CLI 가 곧 집어간다) */
   get queued(): number { return this.turnUuids.length; }
 
-  async reopen(env: NodeJS.ProcessEnv) {
+  async reopen(env: NodeJS.ProcessEnv, connection?: Record<string, string>) {
     await this.restart;
     if (this.state !== 'idle' && this.state !== 'starting') throw new Error('reopen needs an idle session');
     // 줄 선 턴이 있으면 옛 프로세스와 함께 사라진다 (그 턴의 turn.end 가 오지 않는다) — 그 턴이 끝난 뒤에
     if (this.queued) throw new Error('reopen needs an idle session with no queued turn');
-    this.opts = { ...this.opts, env };
+    this.opts = { ...this.opts, env, ...(connection ? { connection } : {}) };
     this.restarting = true;
     // 큐를 먼저 바꾼다 — 옛 프로세스가 내려가는 사이에 온 프롬프트는 새 큐에 쌓여 새 프로세스가 받는다 (옛 생성기의 대기자가 삼키지 않게)
     this.input = new AsyncQueue();
@@ -360,7 +376,7 @@ export class ClaudeSession extends AgentSession {
     // 플러그인 session.json 위에 프로필의 CLAUDE.md 빼기 — 플러그인이 정한 것과 합친다
     const excludes = [...((opts.agent?.settings?.claudeMdExcludes as string[] | undefined) ?? []), ...(opts.load?.claudeMdExcludes ?? [])];
     // Remote Control 은 늘 자동으로 켜지 않는다 — 사용자 설정을 끈 프로필이면 ~/.claude 의 false 가 안 실려 계정 기본값으로 켜질 수 있다 (사용자 결정 2026-10-30)
-    const settings = { ...opts.agent?.settings, ...(excludes.length ? { claudeMdExcludes: excludes } : {}), remoteControlAtStartup: false };
+    const settings = { ...opts.agent?.settings, ...(excludes.length ? { claudeMdExcludes: excludes } : {}), remoteControlAtStartup: false, ...(opts.connection ? { env: { ...(opts.agent?.settings?.env as object | undefined), ...opts.connection } } : {}) };
     // slcode 고정 지시, 그 뒤에 팀 지시와 에이전트 플러그인의 지시문 (ticket slcode-append-system-prompt·slcode-agent-plugin)
     const append = [SLCODE_PROMPT, opts.family, opts.agent?.append].filter(Boolean).join('\n\n');
     const q = query({
@@ -372,7 +388,7 @@ export class ClaudeSession extends AgentSession {
         includeHookEvents: true,
         forwardSubagentText: true,      // 서브에이전트의 텍스트·thinking 도 parent_tool_use_id 를 달고 온다 — 작업 카드 안에 중첩해 그린다
         agentProgressSummaries: true,   // task_progress 에 한 줄 진행 요약 (약 30초마다 짧은 포크, 비용은 작다)
-        thinking: { type: 'adaptive', display: 'summarized' },
+        thinking: opts.thinking ?? { type: 'adaptive', display: 'summarized' },
         // slcode 지시를 기본 프롬프트 뒤에.
         // 프로필이 프롬프트를 고쳤으면 조립한 글을 보내고 slcode 지시는 CLI 의 append 플래그로 — SDK 는 직접 준 프롬프트에 append 를 받지 않고,
         // 플래그로 주면 정체성 한 줄이 preset 때와 같다 (SDK 0.3.322 실측, ticket slcode-profile-system-prompt)
@@ -382,7 +398,8 @@ export class ClaudeSession extends AgentSession {
         extraArgs: { 'system-prompt-snapshot': 'off', ...(opts.prompt ? { 'append-system-prompt': append } : {}) },
         // slcode 에이전트 플러그인 — 세션 폴더의 링크 경로를 <이름>@inline 으로 싣는다. 사용자 설정·설치 기록은 건드리지 않는다
         ...(opts.agent?.plugins.length ? { plugins: opts.agent.plugins } : {}),
-        settings: settings as any,
+        // custom provider 면 파일로 — SDK 는 객체를 --settings <JSON> 명령줄 인자로 넘겨 키가 ps 에 보인다 (2026-11-25 실측). 세션 폴더에 0600 으로, 띄울 때마다 새로 쓴다
+        settings: opts.connection ? connectionSettings(this.log.dir, settings) : settings as any,
         ...(opts.hooks ? { hooks: opts.hooks } : {}),
         ...(opts.mcpServers ? { mcpServers: opts.mcpServers() } : {}),
         ...(opts.noAsk ? { disallowedTools: ['AskUserQuestion'] } : {}),
@@ -393,7 +410,10 @@ export class ClaudeSession extends AgentSession {
         // IS_SANDBOX=1 을 늘 얹는다 — uid 0 이면 CLI 가 이것 없이는 아래 skip 플래그나 bypass 모드만으로 첫 턴 전에 exit 1 한다 (CLI 2.1.282, 2026-10-08 실측, 값은 '1' 만).
         // root 에서도 bypass 를 쓰게 Claude Code 의 이 안전 장치를 slcode 가 끈다 (사용자 결정 2026-10-09).
         // CLAUDE_CODE_DISABLE_ARTIFACT=1 도 늘 — 셸의 같은 값은 STRIP_ENV(CLAUDE_*)가 지우므로 여기서 다시 넣는다 (사용자 결정 2026-10-30)
-        env: { ...(opts.env ?? process.env), ...opts.agent?.env, ...opts.load?.env, IS_SANDBOX: '1', CLAUDE_CODE_DISABLE_ARTIFACT: '1' },
+        // custom provider 면 어디서 온 연결 값이든 지우고 프로바이더 값을 맨 위에 (provider.ts, ticket slcode-custom-provider)
+        env: opts.connection
+          ? { ...withoutConnection({ ...(opts.env ?? process.env), ...opts.agent?.env, ...opts.load?.env }), ...opts.connection, IS_SANDBOX: '1', CLAUDE_CODE_DISABLE_ARTIFACT: '1' }
+          : { ...(opts.env ?? process.env), ...opts.agent?.env, ...opts.load?.env, IS_SANDBOX: '1', CLAUDE_CODE_DISABLE_ARTIFACT: '1' },
         ...(permissionMode ? { permissionMode: permissionMode as any } : {}),
         allowDangerouslySkipPermissions: true, // bypassPermissions 로 바꿀 수 있게 (그 자체로 우회하지 않는다 — 모드는 위 permissionMode)
         ...(this.log.meta.model ? { model: this.log.meta.model } : {}),

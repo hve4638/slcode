@@ -1283,3 +1283,109 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .side .tasks.bgtasks .bgit { border: 1px solid var(--acf-line); border-radius: 10px; padding: 7px 10px; background: var(--acf-panel); flex-wrap: wrap; }
 .acf .side .tasks.bgtasks .bgit .cmd { flex-basis: 100%; order: 9; }
 .acf .side .tasks.bgtasks .bgit a { display: inline; border: 0; padding: 0; background: none; color: var(--acf-accent); }
+/* 프로바이더 관리 (ticket slcode-custom-provider, web/providers.js) — 꼴은 프로필 관리(.prpanel)를 따른다. 넓은 칸·모델 칩·목록 받기·템플릿 고르기만 더한다 */
+.prpanel.prv .mono { font-family: var(--acf-mono, ui-monospace, monospace); }
+.prpanel.prv input.val.wide { width: 300px; }
+.prpanel.prv input.val.mono { font: 12px var(--acf-mono, ui-monospace, monospace); }
+.prpanel.prv textarea.env { display: block; width: 100%; max-width: 520px; padding: 6px 8px; border: 1px solid var(--acf-line); border-radius: 6px; background: var(--acf-bg); color: inherit; font: 12px/1.5 var(--acf-mono, ui-monospace, monospace); resize: vertical; }
+.prpanel.prv .note { margin: 6px 0 0; font-size: 12px; line-height: 18px; color: var(--acf-muted); }
+.prpanel.prv .note.err { color: var(--acf-err); }
+.prpanel.prv .seg { display: inline-flex; flex-shrink: 0; gap: 2px; padding: 2px; border-radius: 7px; background: var(--acf-soft); }
+.prpanel.prv .seg button { height: 24px; padding: 0 10px; border: 0; border-radius: 5px; background: transparent; color: var(--acf-muted); font-size: 12px; }
+.prpanel.prv .seg button[aria-pressed=true] { background: var(--acf-bg); color: var(--acf-fg); box-shadow: 0 1px 2px var(--acf-shadow); cursor: default; }
+.prpanel.prv .seg button:disabled:not([aria-pressed=true]) { opacity: .4; cursor: not-allowed; }
+.prpanel.prv .row.kv { gap: 8px; }
+.prpanel.prv .add { margin-top: 4px; }
+.prpanel.prv .chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 0 10px; }
+.prpanel.prv .chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 2px 0 9px; border-radius: 12px; background: var(--acf-soft); font-size: 12px; }
+.prpanel.prv .chip .meta, .prpanel.prv .fetch .meta { font-size: 11px; color: var(--acf-muted); }
+.prpanel.prv .addrow { display: flex; gap: 8px; align-items: center; }
+.prpanel.prv .fetch { margin-top: 10px; max-width: 520px; border: 1px solid var(--acf-line); border-radius: 8px; padding: 8px; }
+.prpanel.prv .fetch input.val { width: 100%; }
+.prpanel.prv .fetch .opts { max-height: 260px; overflow-y: auto; margin-top: 6px; }
+.prpanel.prv .fetch label { display: flex; align-items: center; gap: 8px; padding: 3px 4px; font-size: 12px; border-radius: 5px; cursor: pointer; }
+.prpanel.prv .fetch label:hover { background: var(--acf-soft); }
+.prpanel.prv .fetch .ctx { margin-left: auto; font-variant-numeric: tabular-nums; }
+.prpanel.prv .pdetail > .none + .btn { margin-top: 4px; }
+.prpanel.prv dialog.wide { width: min(560px, calc(100vw - 32px)); }
+/* 키 칸과 키 관리 (사용자 2026-11-26) — 칸 옆 열쇠 단추, 키 관리의 키를 쓰면 칸에 그 이름이 또렷하게 */
+/* 키 칸 = 칸(안 오른쪽에 지우기 ×) + 칸 옆 네모 열쇠 단추. 둘을 합친 너비가 주소 칸과 같다 */
+.prpanel.prv .keyctl { display: flex; align-items: center; gap: 6px; width: 300px; flex: none; }
+.prpanel.prv .keyctl .kfield { position: relative; flex: 1; min-width: 0; display: flex; }
+.prpanel.prv .keyctl .kfield input.val.wide { width: 100%; padding-right: 30px; }
+.prpanel.prv .keyctl .kclr { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 20px; height: 20px; border-radius: 5px; }
+.prpanel.prv .keyctl .kbtn { flex: none; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 1px solid var(--acf-line); border-radius: 6px; background: var(--acf-bg); color: var(--acf-muted); cursor: pointer; }
+.prpanel.prv .keyctl .kbtn:hover { background: var(--acf-soft); color: var(--acf-fg); }
+.prpanel.prv .keyctl .kbtn[aria-pressed=true] { color: var(--acf-fg); }
+.prpanel.prv .keyctl .kbtn svg.i { width: 14px; height: 14px; }
+.prpanel.prv dialog .acts .btn { display: inline-flex; align-items: center; gap: 5px; }
+.prpanel.prv dialog .acts .btn svg.i { width: 12px; height: 12px; stroke-width: 2; margin-left: -2px; }
+.prpanel.prv dialog .acts .grow { flex: 1; }
+.prpanel.prv input.val.ref:disabled { opacity: 1; background: var(--acf-soft); color: var(--acf-muted); border-color: transparent; cursor: default; } /* 키 관리의 키를 쓰는 중 — 못 누르는 칸으로 보이게 */
+.prpanel.prv dialog .klist { display: flex; flex-direction: column; gap: 2px; margin: 0 0 12px; }
+.prpanel.prv dialog .klist > p { margin: 4px 0; }
+.prpanel.prv dialog .kitem { display: flex; align-items: center; gap: 4px; min-height: 34px; padding-right: 2px; border-radius: 6px; }
+.prpanel.prv dialog .kitem:hover, .prpanel.prv dialog .kitem.on { background: var(--acf-soft); }
+.prpanel.prv dialog .kitem > .nm { padding-left: 10px; font-weight: 600; }
+.prpanel.prv dialog .kitem input { flex: 1; margin-right: 4px; }
+.prpanel.prv dialog .kpick { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border: 0; border-radius: 6px; background: none; color: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.prpanel.prv dialog .kpick:disabled { cursor: default; opacity: 1; }
+.prpanel.prv dialog .kpick .nm { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.prpanel.prv dialog .kpick .tail { font-size: 12px; color: var(--acf-muted); }
+.prpanel.prv dialog .kpick .used { margin-left: auto; font-size: 12px; color: var(--acf-muted); white-space: nowrap; }
+.prpanel.prv dialog .kitem .kdel:not(:disabled) { color: var(--acf-err); }
+.prpanel.prv dialog .kitem .tbtn.ico { width: 26px; height: 26px; }
+.prpanel.prv dialog .kitem .tbtn.ico:disabled { opacity: .35; cursor: default; background: none; }
+.prpanel.prv .tgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-bottom: 14px; }
+.prpanel.prv .tcard { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 6px 9px; border: 1px solid var(--acf-line); border-radius: 7px; background: none; text-align: left; }
+.prpanel.prv .tcard:hover { background: var(--acf-soft); }
+.prpanel.prv .tcard .nm { font-size: 13px; font-weight: 600; } .prpanel.prv .tcard .sub { font-size: 11px; color: var(--acf-muted); }
+.prpanel.prv .tcard.own { flex-direction: row; align-items: center; gap: 10px; width: 100%; padding: 9px 11px; margin-bottom: 14px; border-style: dashed; }
+.prpanel.prv .tcard.own .plus { position: relative; flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--acf-soft); }
+/* 글꼴의 '+' 는 위아래로 치우친다 — 두 막대로 그려 원의 한가운데에 */
+.prpanel.prv .tcard.own .plus::before, .prpanel.prv .tcard.own .plus::after { content: ''; position: absolute; left: 50%; top: 50%; width: 11px; height: 1.5px; border-radius: 1px; background: currentColor; transform: translate(-50%, -50%); }
+.prpanel.prv .tcard.own .plus::after { transform: translate(-50%, -50%) rotate(90deg); }
+.prpanel.prv .tlabel { margin: 0 0 6px; font-size: 11px; color: var(--acf-muted); }
+/* 대화 화면의 프로바이더 관리 창 — 설정 창 꼴, 관리 화면이 들어가게 넓게 */
+.acf dialog.settings.prvdlg { width: min(960px, calc(100vw - 24px)); }
+.acf dialog.settings.prvdlg > header .pstat { margin-right: 8px; font-size: 12px; color: var(--acf-muted); }
+.acf dialog.settings.prvdlg > header .pstat.err { color: var(--acf-err); } .acf dialog.settings.prvdlg > header .pstat.ok { color: var(--acf-ok); }
+.acf dialog.settings.prvdlg .body { padding-bottom: 8px; }
+.acf dialog.settings.prvdlg .prpanel .prbody { min-height: 480px; }
+/* 모델 메뉴 custom 칸 — 프로바이더 이름 줄 */
+.acf .menu.acf-models .grp { display: flex; align-items: center; gap: 6px; padding: 8px 10px 2px; font-size: 12px; color: var(--acf-muted); }
+.acf .menu.acf-models .grp .eng { padding: 0 6px; border: 1px solid var(--acf-line); border-radius: 8px; font-size: 10.5px; }
+/* 설정 창 꼴(h2 늘이기·절 사이 선·흐린 h3)이 관리 화면 안으로 새지 않게 */
+.acf dialog.settings.prvdlg .prpanel .phd h2 { flex: 0 1 auto; font-size: 16px; }
+.acf dialog.settings.prvdlg .prpanel section { padding: 0; }
+.acf dialog.settings.prvdlg .prpanel section + section { border-top: 0; }
+.acf dialog.settings.prvdlg .prpanel section > h3 { margin: 0 0 4px; font-size: 14px; color: var(--acf-fg); }
+/* 설정 창의 테마 견본(.sw)과 .acf button 의 둥근 모서리가 관리 화면의 스위치·탭에 입혀지지 않게 */
+.acf dialog.settings.prvdlg .prpanel .sw { display: block; width: 32px; height: 28px; padding: 0; gap: 0; border: 0; border-radius: 0; background: transparent; }
+.acf dialog.settings.prvdlg .prpanel .tab { border-radius: 0; }
+.acf dialog.settings.prvdlg .prpanel .row.kv { justify-content: flex-start; } /* 설정 창의 .row 양끝 정렬이 헤더 줄(이름·값·빼기)을 벌리지 않게 — 시작 화면과 같은 줄 */
+.acf dialog.settings.prvdlg .prpanel .sw:hover, .acf dialog.settings.prvdlg .prpanel .tab:hover { background: transparent; }
+/* 대화 메시지의 아이콘 줄(.acf .acts — 평소 투명)이 관리 화면 확인 창의 단추 줄에 입혀지지 않게 */
+.acf .prpanel dialog .acts { opacity: 1; margin: 4px 0 0; font-size: inherit; }
+.acf .prpanel dialog .acts button.btn { padding: 0 12px; font-size: 12px; }
+/* 프로바이더 머리 — 이름 옆 연필(올렸을 때만, 대화 화면 제목과 같다), 맨 오른쪽 빨간 휴지통 (사용자 2026-11-26) */
+/* 아이콘은 글자 기준선에 맞춘다 — 줄 가운데에 맞추면 글꼴마다 글자가 줄 안에서 앉는 높이가 달라 어긋난다(Segoe UI 에서 1px 남짓 뜬다). top 1.5px 이 대문자 가운데에 맞춘 값이다 */
+.prpanel.prv .phd { align-items: baseline; }
+.prpanel.prv .phd .nmbox { display: flex; align-items: baseline; gap: 4px; min-width: 0; }
+.prpanel.prv .phd button.ico { position: relative; top: 1.5px; width: 26px; height: 26px; flex: none; padding: 0; border: 0; border-radius: 6px; background: transparent; display: grid; place-items: center; cursor: pointer; }
+.prpanel.prv .phd button.ico svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.prpanel.prv .phd button.ed { opacity: 0; color: color-mix(in srgb, var(--acf-muted) 55%, transparent); }
+.prpanel.prv .phd .nmbox:hover button.ed, .prpanel.prv .phd button.ed:focus-visible { opacity: 1; }
+.prpanel.prv .phd button.ed:hover { background: var(--acf-soft); color: var(--acf-muted); }
+.prpanel.prv .phd button.del { color: var(--acf-err); }
+.prpanel.prv .phd button.del:hover { background: color-mix(in srgb, var(--acf-err) 12%, transparent); }
+.prpanel.prv .phd input.name-edit { width: 260px; max-width: 100%; height: 28px; padding: 0 6px; border: 1px solid var(--acf-line); border-radius: 6px; background: var(--acf-bg); color: inherit; font-family: inherit; font-size: 16px; font-weight: 600; }
+/* 글자 대신 쓰는 아이콘 — 상자 가운데에 놓는다 (사용자 2026-11-26) */
+.prpanel.prv svg.i { flex: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.prpanel.prv .add, .prpanel.prv .btn.solid { display: inline-flex; align-items: center; gap: 6px; }
+.prpanel.prv .add svg.i, .prpanel.prv .btn.solid svg.i { width: 13px; height: 13px; stroke-width: 2; margin-left: -2px; }
+.prpanel.prv .tbtn.ico { display: inline-grid; place-items: center; width: 18px; height: 18px; padding: 0; border-radius: 4px; }
+.prpanel.prv .tbtn.ico:hover { background: var(--acf-soft); }
+.prpanel.prv .tbtn.ico svg.i { width: 12px; height: 12px; }
+.prpanel.prv .pane .add { margin-left: -10px; } /* + 가 칸 제목의 왼쪽 끝에 오게 — 올렸을 때 바탕만 밖으로 나간다 */
+.prpanel.prv .chips > .desc { font-size: 12px; line-height: 24px; color: var(--acf-muted); }

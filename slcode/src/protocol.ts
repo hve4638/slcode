@@ -30,6 +30,8 @@ export const FILES = {
   /** inspect 전체 정리 — 마지막 정리 시각과 정리하는 core 의 잠금 (inspectDb.ts maybeSweep) */
   inspectSweep: 'inspect-sweep.json',
   inspectSweepLock: 'inspect-sweep.lock',
+  /** custom provider — 브라우저·superlite 카드·CLI 가 같이 쓰는 하나, 키가 들어 있어 0600 (provider.ts, ticket slcode-custom-provider) */
+  providers: 'providers.json',
 } as const;
 
 export type Vendor = 'claude' | 'codex';
@@ -297,14 +299,17 @@ export type Methods = {
   /** 사람이 보낸 글(origin 없음)이 `/<명령>` 이고 에이전트 플러그인 명령이면 턴 없이 그 명령을 돌린다 — command 는 그 결과 (ticket slcode-agent-plugin-command) */
   'session.send': { params: { id: string; text: string; origin?: string; attachments?: Attachment[]; /** 리더의 기다림 표지 (childCall wait) — 이 지시가 연 턴의 답(kind=result)에 re 로 붙는다 */ ref?: string }; result: { ok: true; state: SessionState; command?: { plugin: string; name: string; outcome: 'ok' | 'error' | 'timeout'; error: string | null } | { plugin: string; name: string; queued: true } } };
   /** 벤더가 고를 수 있는 모델 목록과 지금 모델·effort */
-  'session.models': { params: { id: string }; result: { current: string | null; effort: string | null; models: { value: string; resolvedModel?: string; displayName: string; description: string; efforts?: string[] }[] } };
+  /** provider·providers (ticket slcode-custom-provider) — provider 는 custom 세션의 지금 프로바이더, providers 는 모델 메뉴의 custom 칸에 보일 프로바이더들.
+   *  custom 세션의 models 는 프로바이더에 저장한 모델이고, 기능 표시에 effort 가 없으면 efforts 가 비어 있다 */
+  'session.models': { params: { id: string }; result: { current: string | null; effort: string | null; models: { value: string; resolvedModel?: string; displayName: string; description: string; efforts?: string[] }[]; provider?: { id: string; name: string } | null; providers?: { id: string; name: string; vendor: Vendor; models: string[] }[] } };
   /** 다음 턴부터 쓸 모델 — meta 에 남아 --resume 뒤에도 유지 */
   'session.setModel': { params: { id: string; model: string }; result: { ok: true } };
   /** 다음 턴부터 쓸 effort (low·medium·high·xhigh·max, 모델마다 efforts 로 가능한 값) — 세션 한정 설정층(SDK applyFlagSettings)이라 설정 파일엔 안 남고 meta 에 남아 --resume 뒤에도 유지 */
   'session.setEffort': { params: { id: string; effort: string }; result: { ok: true } };
   /** 세션의 벤더를 바꾼다 — 첫 메시지(turn.start) 전에만, 아니면 bad_request. 같은 세션 id 로 core 를 새 벤더로 다시 띄운다(core.replaced 뒤 중계가 다시 붙는다).
-   *  모델·effort 는 새 벤더 기본으로 비운다. codex 실행 파일이 뜨지 않으면 바꾸지 않고 bad_request (ticket slcode-vendor-model-picker, 사용자 결정 2026-10-23) */
-  'session.setVendor': { params: { id: string; vendor: Vendor }; result: { ok: true } };
+   *  모델·effort 는 새 벤더 기본으로 비운다. codex 실행 파일이 뜨지 않으면 바꾸지 않고 bad_request (ticket slcode-vendor-model-picker, 사용자 결정 2026-10-23).
+   *  provider 를 주면 그 프로바이더의 model 로 (vendor 는 그 프로바이더의 엔진), 주지 않거나 null 이면 공식 계정 (ticket slcode-custom-provider) */
+  'session.setVendor': { params: { id: string; vendor: Vendor; provider?: string | null; model?: string }; result: { ok: true } };
   /** 진행 턴 중단 — 대기 항목(session.queue)도 거둬 session.restored 로 화면 입력창에 돌려준다 (ticket slcode-queued-message-bubble) */
   'session.interrupt': { params: { id: string }; result: { ok: true } };
   /** 대기 항목 하나를 빼서 그 글·첨부를 돌려준다 — 화면이 입력창에 넣는다. 이미 처리되기 시작했으면 bad_request */
@@ -429,6 +434,12 @@ export type ServeMethods = {
   'inspect.usage': { params: Record<string, never>; result: InspectUsage };
   /** inspect 캐시 정리 — old: 오래된 캐시 제거, compact: 압축(하루 지난 raw), all: 모든 캐시 제거. 떠 있는 세션은 뺀다. 결과는 정리 뒤의 미리보기 */
   'inspect.clean': { params: { what: 'old' | 'compact' | 'all' }; result: InspectUsage };
+  /** 프로바이더 관리 (ticket slcode-custom-provider) — 모델 메뉴의 "프로바이더 관리" 가 여는 창. 시작 화면은 startPage api/·`slcode start-call` 로 같은 요청을 보낸다 (providerMethods.ts).
+   *  키는 내보내지 않는다 — hasKey·keyTail 만. save 에 key 를 빼면 지금 키를 남긴다. models 는 프로바이더의 모델 목록 API 를 부른다 */
+  'provider.list': { params: Record<string, never>; result: { providers: Record<string, unknown>[]; templates: Record<string, unknown> } };
+  'provider.save': { params: { provider: Record<string, unknown> }; result: { provider: Record<string, unknown> } };
+  'provider.remove': { params: { id: string }; result: { removed: boolean } };
+  'provider.models': { params: { provider: Record<string, unknown> }; result: { models: { id: string; name?: string; context?: number }[] } };
   /** 카드 모드 화면 파일 (ticket slcode-card-svc-token-dead) — superlite 플러그인이 받아 카드 문서에 그린다(card.js, 옛 플러그인은 card.html 을 sandbox iframe 에). html 은 card.html
    *  (index.html 처럼 data-theme·version·build·kind 를 넣은), files 는 web/ 의 .js·.css 전부 (상대 경로 → 내용) */
   'web.files': { params: Record<string, never>; result: { html: string; files: Record<string, string> } };

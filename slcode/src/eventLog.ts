@@ -39,6 +39,8 @@ export type SessionMeta = {
   inspect?: boolean;
   /** 에이전트 플러그인의 세션 단위 설정 값 — 플러그인 이름별 {parts, options}. 기본 설정·프로필 위에 덮는다 (자리만 — 채우는 명령·화면은 아직 없다) */
   agentPlugins?: Record<string, { parts?: Record<string, boolean>; options?: Record<string, boolean | string | number> } | undefined>;
+  /** custom provider id (ticket slcode-custom-provider) — vendor 는 그 프로바이더의 엔진. 띄울 때마다 providers.json 의 지금 값을 읽고, 없으면 열지 않는다 */
+  provider?: string;
   /** 세션 시작 프로필 이름 (ticket slcode-session-profile) — 없으면 default. 띄울 때마다(resume 포함) 그 프로필의 지금 값을 읽는다 */
   profile?: string;
   /** 이 세션이 쓰는 system prompt 와 그 판 (ticket slcode-prompt-library) — 세션을 만들 때 프로필이 고른 프롬프트의 최신 판을 적는다. 프로필의 다른 값과 달리

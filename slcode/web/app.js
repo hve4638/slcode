@@ -10,6 +10,7 @@ import { activityPanel } from './activity.js';
 import { escGate, inputHistory } from './inputkeys.js';
 import { rewindPicker } from './rewind.js';
 import { translateButton } from './translate.js';
+import { providersPanel } from './providers.js';
 import { failLabel, toolIcon, toolLabel, toolName, toolView } from './tools.js';
 
 const STATE_LABEL = { starting: '시작 중', idle: '대기', running: '실행 중', requires_action: '응답 필요', exited: '종료', disconnected: '연결 끊김' };
@@ -161,20 +162,28 @@ export function mountAgentFront(root, transport, opts = {}) {
   const keyOf = (m, id) => [m?.displayName, m?.resolvedModel, m?.value, id].join(' ').toLowerCase();
   const paintModel = () => { modelLbl.textContent = effortNow ? `${modelName} · ${effortNow}` : modelName; };
   // 벤더 토글 — 첫 메시지 전에만 바꾼다(session.setVendor: 같은 세션 id 로 core 를 새 벤더로 다시 띄운다). 그 뒤엔 지금 벤더만 칠한 채 흐리게 둔다
+  // custom (ticket slcode-custom-provider, 사용자 결정 2026-11-25) — 셋째 칸. 누르면 프로바이더별로 묶인 모델을 보이고, 모델을 고르면 그 프로바이더의 엔진으로 바꾼다.
+  // claude·codex 칸은 지금처럼 누르면 공식 계정으로 바꾼다. segTab 은 메뉴가 열린 동안 custom 칸을 보고 있는지 (닫으면 지금 세션의 칸으로)
   const vendorSeg = h('div', { class: 'vendor' });
-  let turned = false, switching = null; // turned: 이 세션에 첫 메시지가 들어갔다, switching: 바꾸는 중인 벤더
+  let turned = false, switching = null, segTab = null, models = null; // turned: 이 세션에 첫 메시지가 들어갔다, switching: 바꾸는 중인 벤더·프로바이더 이름, models: 마지막 session.models
+  const tabNow = () => segTab ?? (models?.provider ? 'custom' : info?.vendor ?? 'claude');
+  const prvDlg = h('dialog', { class: 'settings prvdlg', onclose: () => { if (current) void loadModels(); } }); // 프로바이더 관리 창 — openProviders
+  closeOnBackdrop(prvDlg);
   function paintVendor() {
-    const cur = switching ?? info?.vendor ?? 'claude', locked = turned || !!switching;
+    const cur = switching ? (switching.custom ? 'custom' : switching.name) : tabNow(), locked = turned || !!switching;
     vendorSeg.classList.toggle('locked', locked);
-    vendorSeg.title = turned ? '첫 메시지 뒤에는 벤더를 바꿀 수 없습니다' : switching ? `${switching} 로 바꾸는 중…` : '';
-    vendorSeg.replaceChildren(...['claude', 'codex'].map((v) => h('button', { class: 'seg', 'aria-pressed': String(v === cur), 'aria-disabled': String(locked), onclick: () => switchVendor(v) }, v)));
+    vendorSeg.title = turned ? '첫 메시지 뒤에는 벤더를 바꿀 수 없습니다' : switching ? `${switching.name} 로 바꾸는 중…` : '';
+    vendorSeg.replaceChildren(...['claude', 'codex', 'custom'].map((v) => h('button', { class: 'seg', 'aria-pressed': String(v === cur), 'aria-disabled': String(locked), onclick: () => (v === 'custom' ? showCustom() : switchVendor(v)) }, v)));
   }
-  function switchVendor(v) {
-    if (turned || switching || !current || v === (info?.vendor ?? 'claude')) return;
-    switching = v; paintVendor();
-    modelMenu.replaceChildren(vendorSeg, h('div', { class: 'note' }, `${v} 로 바꾸는 중…`));
+  function showCustom() { if (turned || switching || !models) return; segTab = 'custom'; renderModels(); }
+  modelMenu.addEventListener('toggle', (e) => { if (e.newState === 'closed' && segTab) { segTab = null; if (models) renderModels(); } });
+  /** prov 를 주면 그 프로바이더의 model 로 (엔진은 prov.vendor), 아니면 공식 계정의 v */
+  function switchVendor(v, prov = null, model) {
+    if (turned || switching || !current || (v === (info?.vendor ?? 'claude') && (prov?.id ?? null) === (models?.provider?.id ?? null))) return;
+    switching = { name: prov?.name ?? v, custom: !!prov }; segTab = null; paintVendor();
+    modelMenu.replaceChildren(vendorSeg, h('div', { class: 'note' }, `${switching.name} 로 바꾸는 중…`));
     // 응답 뒤 core 가 바뀐다 — 그 사이 보낸 요청은 serve 의 중계가 새 core 에 다시 보낸다. 모델 목록은 새 벤더가 뜬 뒤에 온다
-    rpc('session.setVendor', { id: current, vendor: v })
+    rpc('session.setVendor', { id: current, vendor: v, ...(prov ? { provider: prov.id, model } : {}) })
       .then(() => { loadStatus(); loadCommands(); loadMcp(); loadPlugins(); return loadModels(); })
       .catch((e) => { push(h('div', { class: 'meta err' }, e.message)); return loadModels(); })
       .finally(() => { switching = null; paintVendor(); });
@@ -407,7 +416,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     h('header', { class: 'hdr' }, nameRow, famBtn, famMenu, pill, bootEl, h('span', { class: 'gap' }), updBtn, gearBtn, sideBtn),
     center,
     side,
-    settingsUi.el,
+    settingsUi.el, prvDlg,
   );
   root.append(el);
 
@@ -1171,7 +1180,7 @@ export function mountAgentFront(root, transport, opts = {}) {
       status?.repo && h('span', { class: 'grp where' }, icon('branch'), h('span', { class: 'name' }, status.repo, status.branch ? h('span', { class: 'dim' }, ` (${status.branch})`) : '')),
       lims.length && h('span', { class: 'grp' }, ...lims),
       ctx && grp('box', h('span', { title: `${fmtTok(ctx.tokens)} / ${fmtTok(ctx.max)}` }, 'ctx ', h('b', { class: ctxLevel(ctx.pct, settings.context) }, `${Math.round(ctx.pct)}%`))),
-      h('span', { class: 'grp cost', onmouseenter: fit }, icon('coin'), h('span', {}, usage.turns && !costKnown ? '—' : usage.cost ? `$${usage.cost.toFixed(2)}` : '$0'), tok), // 턴이 있는데 비용을 모르면(가격표에 없는 Codex 모델) —
+      !models?.provider && h('span', { class: 'grp cost', onmouseenter: fit }, icon('coin'), h('span', {}, usage.turns && !costKnown ? '—' : usage.cost ? `$${usage.cost.toFixed(2)}` : '$0'), tok), // 턴이 있는데 비용을 모르면(가격표에 없는 Codex 모델) —
     ].filter(Boolean));
   }
   // ---- 같은 가족의 세션 (ticket slcode-web-session-url) — 웹은 링크(같은 탭, Ctrl+클릭은 새 탭), 카드는 플러그인에 그 카드로 옮겨 달라고 한다
@@ -1689,6 +1698,10 @@ export function mountAgentFront(root, transport, opts = {}) {
   async function loadModels() {
     // 옛 core(재기동 전) 는 session.models 가 없어 에러가 온다 — 빈 알약을 남기지 말고 숨긴다 (2026-09-27 실측)
     let r; try { r = await rpc('session.models', { id: current }); } catch { modelBtn.style.display = 'none'; return; }
+    models = r; renderModels();
+  }
+  function renderModels() {
+    const r = { ...models, models: models.models.map((m) => ({ ...m })) };
     // 세션 모델이 [1m](1M 컨텍스트) 변형이면 CLI 가 버전 없는 5개 목록(Fable / Sonnet / Opus (1M context) …)을 준다 (2026-09-27 실측).
     // 표시 이름에 숫자가 없으면 모델 id 에서 버전을 뽑아 첫 단어 뒤에 붙인다: claude-fable-5-1 → Fable 5.1, claude-haiku-4-5-20251001 → Haiku 4.5
     const base = (v) => (v ?? '').replace(/\[.*\]$/, '');
@@ -1700,8 +1713,10 @@ export function mountAgentFront(root, transport, opts = {}) {
     // 지금 모델 찾기는 core 의 effortMisfit 과 같다 — 모르면(첫 턴 전) default
     const cur = r.current == null ? r.models.find((m) => m.value === 'default')
       : r.models.find((m) => m.value === r.current) ?? r.models.find((m) => m.value !== 'default' && base(m.resolvedModel) === base(r.current));
-    modelName = cur?.displayName ?? r.current ?? '모델'; modelKey = keyOf(cur, r.current); effortNow = r.effort; paintModel(); renderSide(); // 상단 요약의 모델 이름
-    modelBtn.style.display = r.models.length ? '' : 'none';
+    modelName = cur?.displayName ?? r.current ?? '모델'; modelKey = keyOf(cur, r.current); effortNow = r.effort;
+    if (r.provider) modelName = `${r.provider.name} · ${modelName}`; // custom 세션 — 알약에 프로바이더 이름 (ticket slcode-custom-provider)
+    paintModel(); renderSide(); renderStat(); // 상단 요약의 모델 이름. 비용 칸은 custom 세션에서 숨는다 — Claude Code 가 모르는 모델을 Anthropic 가격으로 셈한다 (ticket slcode-custom-provider)
+    modelBtn.style.display = r.models.length || r.provider || r.providers?.length ? '' : 'none';
     // effort 슬라이더 — 단계는 고른 모델의 efforts(core 가 준다: Claude 는 supportedEffortLevels, 없으면 CLAUDE_EFFORTS · Codex 는 모델의 목록). 비었으면 없다
     // ChatGPT 꼴 (사용자 2026-09-27): 위에 단계 이름, 아래 range 한 칸 = 한 단계. 놓으면 session.setEffort (다음 턴부터)
     const efforts = cur?.efforts ?? [];
@@ -1728,7 +1743,31 @@ export function mountAgentFront(root, transport, opts = {}) {
     const more = h('div', { class: 'more' }, ...rest.map(item));
     if (modelMenu.querySelector('.more.open')) more.classList.add('open'); // 다시 그려도 펼친 채로
     paintVendor();
+    if (tabNow() === 'custom') { modelMenu.replaceChildren(vendorSeg, ...customItems(r, cur, item), (r.provider && effortBox) || ''); return; } // 공식 세션에서 custom 칸을 볼 때는 지금 모델의 effort 를 감춘다
     modelMenu.replaceChildren(vendorSeg, ...top.map(item), h('button', { class: 'item toggle', onclick: () => more.classList.toggle('open') }, '더 많은 모델'), more, effortBox ?? '');
+  }
+  /** custom 칸 — 프로바이더마다 이름 줄 + 모델. 지금 프로바이더의 모델은 session.setModel(item), 다른 프로바이더의 모델은 그 엔진으로 바꾼다(첫 메시지 전만).
+   *  맨 아래 "프로바이더 관리" 는 시작 화면과 같은 관리 창을 연다 */
+  function customItems(r, cur, item) {
+    const mine = r.provider?.id ?? null;
+    const groups = (r.providers ?? []).filter((p) => !turned || p.id === mine);
+    const out = [];
+    for (const p of groups) {
+      out.push(h('div', { class: 'grp' }, h('span', {}, p.name), h('span', { class: 'eng' }, p.vendor)));
+      if (p.id === mine) { out.push(...r.models.map(item)); continue; }
+      if (!p.models.length) out.push(h('div', { class: 'note' }, '모델이 없습니다 — 프로바이더 관리에서 넣습니다'));
+      out.push(...p.models.map((m) => h('button', { class: 'item', 'aria-checked': 'false', onclick: () => switchVendor(p.vendor, p, m) }, m)));
+    }
+    if (!groups.length) out.push(h('div', { class: 'note' }, '추가한 프로바이더가 없습니다'));
+    out.push(h('button', { class: 'item toggle', onclick: () => { modelMenu.hidePopover(); openProviders(); } }, '프로바이더 관리'));
+    return out;
+  }
+  // 프로바이더 관리 창 (ticket slcode-custom-provider) — 시작 화면의 것과 같은 panel. 요청은 serve 가 답한다. 닫으면 모델 메뉴를 다시 읽는다
+  function openProviders() {
+    const panel = providersPanel((m, p) => rpc(m, p ?? {}));
+    prvDlg.replaceChildren(h('header', {}, h('h2', {}, '프로바이더'), panel.status, h('button', { class: 'ghost x', title: '닫기', 'aria-label': '닫기', onclick: () => prvDlg.close() }, '✕')), h('div', { class: 'body' }, panel.el));
+    prvDlg.showModal();
+    void panel.load();
   }
 
   // ---- 작성창

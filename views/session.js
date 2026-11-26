@@ -543,6 +543,8 @@ export function mount(el, ctx) {
     'slcode.start.translate': ({ text, fresh }) => tr.translate(String(text), { fresh: !!fresh }).then((pairs) => ({ pairs })),
     // 프로필 관리 (ticket slcode-profile-manager)
     ...Object.fromEntries(['list', 'add', 'set', 'remove', 'rename'].map((m) => [`slcode.start.profile.${m}`, ({ type, id, ...params }) => host('startCall', `profile.${m}`, params)])),
+    // 프로바이더 관리 (ticket slcode-custom-provider)
+    ...Object.fromEntries(['list', 'save', 'remove', 'models'].map((m) => [`slcode.start.provider.${m}`, ({ type, id, ...params }) => host('startCall', `provider.${m}`, params)])),
     'slcode.back': backToStart,
     // 같은 가족의 세션으로 (ticket slcode-web-session-url) — renderer 가 그 세션의 카드로 옮긴다. 다른 터미널·다른 superlite 세션 탭에 있어도 찾아가고, 카드가 없으면 이 카드 옆에 연다
     'slcode.goto': (d) => { void ctx.post({ type: 'goto', id: String(d.target) }); return {}; },

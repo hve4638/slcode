@@ -30,6 +30,7 @@ import { randomUUID } from 'node:crypto';
 import { pluginCommand } from 'slcode-plugin/cli';
 import { addProfile, getProfile, listProfiles, removeProfile, renameProfile, setProfile, type Profile } from './profiles.js';
 import { profileMethod, PROFILE_METHODS, type ProfileMethod } from './profileMethods.js';
+import { providerMethod, PROVIDER_METHODS, type ProviderMethod } from './providerMethods.js';
 import { findAgent, listAgents, type AgentDef } from './teamAgents.js';
 import { createWorktree, removeWorktree, worktreeLoss, type Loss } from './worktree.js';
 import { summarize } from './activity.js';
@@ -157,7 +158,7 @@ background 실행 (세션 안의 에이전트가 친다 — Claude 세션은 같
   profile rename <old> <new>     이름을 바꾼다 — 옛 이름(그 이름의 세션·--profile)은 새 이름으로 이어진다
   profile list [--json]
   start-page [folder] [--json]   superlite 카드의 시작 화면 html, --json 이면 그 목록 (플러그인이 쓴다)
-  start-call <method> [<json>]   superlite 카드 시작 화면의 요청 (plugins.list|check|set|export, prompt.list|create|remove|get|fetch|save [--cwd F], profile.list|add|set|remove|rename, 플러그인이 쓴다)
+  start-call <method> [<json>]   superlite 카드 시작 화면의 요청 (plugins.list|check|set|export, prompt.list|create|remove|get|fetch|save [--cwd F], profile.list|add|set|remove|rename, provider.list|save|remove|models|keySave|keyRemove, 플러그인이 쓴다)
   discard <s>                    시작 화면에서 연 빈 세션(첫 메시지 전)을 닫고 지운다 — 카드의 '시작 화면으로' (플러그인이 쓴다, new --from-start 로 연 세션)
 공통: --dir D (SLCODE_DIR 대체), --help, --version [--json] (--json 이면 {"version","build"} — build 는 dist/cli.js 의 mtime)`;
 
@@ -985,7 +986,8 @@ try {
       // prompt.* 는 system prompt 편집 창 (ticket slcode-profile-system-prompt) — 폴더는 --cwd(카드가 연 폴더), 없으면 지금 폴더
       if ((PROMPT_METHODS as readonly string[]).includes(method)) { print(await promptMethod(P.dir, path.resolve(flags.cwd ?? '.'), method as PromptMethod, params ? JSON.parse(params) : {})); break; }
       if ((PROFILE_METHODS as readonly string[]).includes(method)) { print(await profileMethod(P.dir, method as ProfileMethod, params ? JSON.parse(params) : {})); break; } // 프로필 관리 (ticket slcode-profile-manager)
-      if (!(PLUGIN_METHODS as readonly string[]).includes(method)) usage(`start-call <${[...PLUGIN_METHODS, ...PROMPT_METHODS, ...PROFILE_METHODS].join('|')}> [<json>]`);
+      if ((PROVIDER_METHODS as readonly string[]).includes(method)) { print(await providerMethod(P.dir, method as ProviderMethod, params ? JSON.parse(params) : {})); break; } // 프로바이더 관리 (ticket slcode-custom-provider)
+      if (!(PLUGIN_METHODS as readonly string[]).includes(method)) usage(`start-call <${[...PLUGIN_METHODS, ...PROMPT_METHODS, ...PROFILE_METHODS, ...PROVIDER_METHODS].join('|')}> [<json>]`);
       print(await pluginMethod(P.dir, method as (typeof PLUGIN_METHODS)[number], params ? JSON.parse(params) : {}));
       break;
     }
