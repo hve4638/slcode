@@ -288,10 +288,10 @@ test('claude: 가져온 원본이 판으로 저장되고, 세션은 그 판을 �
     assert.deepEqual((await turn(h.sock, id, 'four')).current, null);
     const vendor = api.systems.at(-1)!.join('\n\n');
     assert.ok(vendor.includes(off.text));
-    // 저장 원본에 채운 메모리 경로가 Claude Code 가 스스로 넣는 것과 같다
+    // auto memory 를 끈다 — 벤더 기본에도, 가져온 판에도 메모리 절이 없다 (ticket slcode-claude-auto-memory-off)
     const mem = (t: string) => t.match(/\S*\/projects\/[^\s/`]+\/memory\//)?.[0];
-    assert.ok(mem(vendor), "벤더 기본에 메모리 절이 있다");
-    assert.equal(mem(back), mem(vendor));
+    assert.equal(mem(vendor), undefined, '벤더 기본에 메모리 절이 없다');
+    assert.equal(mem(back), undefined, '가져온 판에 메모리 절이 없다');
     { const c = await connectSession(h.sock); await c.request('session.close', { id }).catch(() => {}); c.close(); }
   } finally {
     api.srv.close(); api.srv.closeAllConnections();

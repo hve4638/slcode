@@ -59,7 +59,7 @@ export async function capturePrompt(o: CaptureOptions): Promise<Capture> {
         cwd: o.cwd, systemPrompt, persistSession: false, abortController: ac, extraArgs: { 'system-prompt-snapshot': 'off', ...(append ? { 'append-system-prompt': append } : {}) },
         settingSources: o.load?.settingSources ?? ['user', 'project', 'local'],
         ...(o.load?.skills ? { skills: o.load.skills } : {}), ...(o.model ? { model: o.model } : {}),
-        env: { ...inspectEnv(o.env, url), ...o.load?.env, IS_SANDBOX: '1', CLAUDE_CODE_DISABLE_ARTIFACT: '1' },
+        env: { ...inspectEnv(o.env, url), ...o.load?.env, IS_SANDBOX: '1', CLAUDE_CODE_DISABLE_ARTIFACT: '1', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' },
       },
     });
     return (async () => { for await (const _ of q) { /* 응답은 쓰지 않는다 */ } })();

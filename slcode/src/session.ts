@@ -418,10 +418,11 @@ export class ClaudeSession extends AgentSession {
       // IS_SANDBOX=1 을 늘 얹는다 — uid 0 이면 CLI 가 이것 없이는 아래 skip 플래그나 bypass 모드만으로 첫 턴 전에 exit 1 한다 (CLI 2.1.282, 2026-10-08 실측, 값은 '1' 만).
       // root 에서도 bypass 를 쓰게 Claude Code 의 이 안전 장치를 slcode 가 끈다 (사용자 결정 2026-10-09).
       // CLAUDE_CODE_DISABLE_ARTIFACT=1 도 늘 — 셸의 같은 값은 STRIP_ENV(CLAUDE_*)가 지우므로 여기서 다시 넣는다 (사용자 결정 2026-10-30)
+      // CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 도 늘 — auto memory(# Memory 절·MEMORY.md·메모리 쓰기·autoDream)를 끈다. 세션 내용이 전역 메모리에 쓰이지 않게 (사용자 결정 2026-11-25, CLI 2.1.322 확인)
       // custom provider 면 어디서 온 연결 값이든 지우고 프로바이더 값을 맨 위에 (provider.ts, ticket slcode-custom-provider)
       env: conn
-        ? { ...withoutConnection({ ...(opts.env ?? process.env), ...opts.agent?.env, ...opts.load?.env }), ...conn, IS_SANDBOX: '1', CLAUDE_CODE_DISABLE_ARTIFACT: '1' }
-        : { ...(opts.env ?? process.env), ...opts.agent?.env, ...opts.load?.env, IS_SANDBOX: '1', CLAUDE_CODE_DISABLE_ARTIFACT: '1' },
+        ? { ...withoutConnection({ ...(opts.env ?? process.env), ...opts.agent?.env, ...opts.load?.env }), ...conn, IS_SANDBOX: '1', CLAUDE_CODE_DISABLE_ARTIFACT: '1', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' }
+        : { ...(opts.env ?? process.env), ...opts.agent?.env, ...opts.load?.env, IS_SANDBOX: '1', CLAUDE_CODE_DISABLE_ARTIFACT: '1', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' },
       ...(this.log.meta.model ? { model: this.log.meta.model } : {}),
     };
   }
