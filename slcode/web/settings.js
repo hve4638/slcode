@@ -92,10 +92,10 @@ export function settingsDialog(h, set, end, rpc, translator) {
   lo.onchange = hi.onchange = () => save({ context: { yellow: +lo.value, red: +hi.value } });
   const ctxBody = h('div', { class: 'ctxbody' }, range);
 
-  // 새 세션 inspect (사용자 2026-10-19) — 이 입구에서 여는 새 세션(Claude·Codex)의 시작값. 떠 있는 세션은 사이드바의 inspect 로 켜고 끈다.
+  // 새 세션 inspect (사용자 2026-10-19) — 이 입구에서 여는 새 세션(Claude·Codex)의 시작값. 떠 있는 세션은 헤더의 inspect 스위치로 켜고 끈다 (이 값이 켜져 있을 때만 보인다, ticket slcode-sidebar-revamp).
   // 내부 플래그가 듣지 않는 SDK 로 기록돼 있으면(serve.info inspectBlocked) 끄고 사유를 보인다
   const insp = h('input', { type: 'checkbox', role: 'switch', onchange: () => save({ inspect: insp.checked }) });
-  const inspNote = h('p', { class: 'note' }, '새로 여는 세션이 API 요청·응답을 세션 폴더에 기록합니다. 지금 세션은 사이드바에서 켜고 끕니다.');
+  const inspNote = h('p', { class: 'note' }, '새로 여는 세션이 API 요청·응답을 세션 폴더에 기록합니다. 켜 두면 세션 화면 위쪽의 inspect 스위치로 세션마다 켜고 끕니다.');
   let inspBlocked = null;
 
   // 새 세션 팀원 (ticket slcode-team-agent, 사용자 2026-11-07) — 이 입구에서 여는 새 세션의 모델이 slcode team new 로 팀원을 띄울 수 있는지. 기본 켜짐, 떠 있는 세션은 바뀌지 않는다

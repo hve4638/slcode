@@ -23,7 +23,7 @@ import { corePaths, ensureDir, readOrCreateToken, sessionDir } from './paths.js'
 import { formatMail, newMail, parseMails, sendMail, sessionMeta } from './mail.js';
 import { CLAUDE_PREFIX, peerDir, peerName, startPeer } from './claudePeer.js';
 import { ANSWERED, Children, teamOf, teamOptionsError } from './children.js';
-import { familyPrompt } from './prompt.js';
+import { familyPrompt, SLCODE_PROMPT } from './prompt.js';
 import { listAgents } from './teamAgents.js';
 import { TEAM_TOOL_NAMES, slcodeMcp } from './teamTools.js';
 import { Background, BG_DIR, BG_STOP_TOOL, endText } from './background.js';
@@ -32,13 +32,17 @@ import { InspectStore, maybeSweep } from './inspectDb.js';
 import { Activity } from './activity.js';
 import { claudeLoad, DEFAULT_PROFILE, getProfile, listProfiles, profileSummary, sessionProfile } from './profiles.js';
 import { promptOption } from './promptCapture.js';
+import { labelSystem, listHooks, listStyles, originOf, type LoadSources } from './preview.js';
+import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '@anthropic-ai/claude-agent-sdk';
+import { readScripts } from 'slcode-plugin/agentHooks';
+import { BUILD_FILES } from 'slcode-plugin/agentBuild';
 import { latestVersion, promptNames, sessionPrompt, type PromptRef } from './promptLibrary.js';
 import { claudeSessionExists } from './vendor.js';
 import { claudeConnection, claudeThinking, codexProviderArgs, codexProviderEnv, getProvider, providerOpenError, readProviders, type Provider } from './provider.js';
 import { agentPaths, currentBuilds, loadSessionPlugins, reloadSessionPlugins, unlinkSessionPlugins, type Loaded, type SessionPlugins } from 'slcode-plugin/agentPlugins';
 import { HookRunner, type LoadedCommand } from 'slcode-plugin/hookRunner';
 import { commandTable, completeInput, fullName, resolveCommand } from './pluginCommands.js';
-import { CoreError, ERR, FILES, PERMISSION_MODES, PROTOCOL_VERSION, TEAM_PRESETS, type AgentCommandEvent, type AgentHookEvent, type ApprovalRequest, type Attachment, type LoggedEvent, type Mail, type QueueItem, type MethodName, type TeamOptions, type TeamAgent, type Methods, type RequestFrame, type SessionInfo } from './protocol.js';
+import { CoreError, ERR, FILES, PERMISSION_MODES, PROTOCOL_VERSION, TEAM_PRESETS, type AgentCommandEvent, type AgentHookEvent, type ApprovalRequest, type Attachment, type LoggedEvent, type Mail, type QueueItem, type MethodName, type TeamOptions, type TeamAgent, type Methods, type RequestFrame, type SessionInfo, type CoreEventBody, type PreviewBlock } from './protocol.js';
 import { parentBranch, type Worktree } from './worktree.js';
 
 /** 벤더 자식(claude CLI·codex)에 넘기지 않을 env — 워커 Claude 세션 안에서 띄우면 그 세션의 표식(CLAUDECODE·CLAUDE_CODE_SESSION_ID·
@@ -304,12 +308,14 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   if (inspectFailed) { firstArgs = await vendorArgs(); firstConn = await connection(); } // meta.inspect 를 끈 뒤라 proxy 없이
   // worktree 의 가른 브랜치 (git config slcodeparent) — 지시문의 사실 (ticket slcode-team-worktree-self)
   const wtNow = logFile.meta.worktree, wtParent = wtNow && !wtNow.removedAt ? parentBranch(wtNow) : null;
+  // 팀 지시 — Codex 는 팀원 도구가 없다 (tools false)
+  const family = familyPrompt({ team: canTeam, leader: parentId, options: team(), tools: !codex && canTeam, agent: logFile.meta.agent, agents: canTeam ? listAgents(cwd, P.dir) : [], worktree: logFile.meta.worktree, parentBranch: wtParent });
   const session: AgentSession = codex
-    ? new CodexSession({ log: logFile, env: codexEnv(), permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, args: firstArgs, onConfig: (base) => gotBase(base), skillRoots: agent?.codex.roots ?? [], instructions: agent?.append ?? '', family: familyPrompt({ team: canTeam, leader: parentId, options: team(), tools: false, agent: logFile.meta.agent, agents: canTeam ? listAgents(cwd, P.dir) : [], worktree: logFile.meta.worktree, parentBranch: wtParent }) })
+    ? new CodexSession({ log: logFile, env: codexEnv(), permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, args: firstArgs, onConfig: (base) => gotBase(base), skillRoots: agent?.codex.roots ?? [], instructions: agent?.append ?? '', family })
     : new ClaudeSession({
       log: logFile, env: firstEnv, resume: logFile.meta.vendorSessionId, permissionMode: opts.permissionMode ?? logFile.meta.permissionMode, raw: opts.raw, ...(agent ? { agent } : {}),
       ...(firstConn && provider ? { connection: firstConn, thinking: claudeThinking(provider) } : {}), ...(load ? { load } : {}), ...(prompt ? { prompt } : {}), ...(hooks ? { hooks: hooks.sdkHooks() } : {}),
-      family: familyPrompt({ team: canTeam, leader: parentId, options: team(), tools: canTeam, agent: logFile.meta.agent, agents: canTeam ? listAgents(cwd, P.dir) : [], worktree: logFile.meta.worktree, parentBranch: wtParent }),
+      family,
       // MCP 서버 slcode — 도구는 이 판의 CLI 를 부른다. 팀원 도구(Subagent·ContinueSubagent)는 팀원을 만들 수 있는 세션에만, Agent 도구처럼 승인을 묻지 않는다 (사용자 2026-11-08).
       // background 도구는 모든 Claude 세션에 — BackgroundRun 은 Bash 처럼 권한 모드대로 승인을 묻고 (ticket slcode-background-run-tool, 사용자 2026-11-23),
       // BackgroundStop 은 이 세션이 띄운 작업만 멈추므로 묻지 않는다
@@ -622,6 +628,39 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       const cur = logFile.meta.prompt ?? null;
       return { current: cur, latest: cur ? latestVersion(P.dir, cur.name) : null, failed: promptFailed, prompts: promptNames(P.dir).map((name) => ({ name, latest: latestVersion(P.dir, name) ?? 0 })) };
     },
+    // 세션 구성 (ticket slcode-sidebar-revamp) — 사이드바에서 여는 창. system prompt 는 slcode 가 넣은 글을 찾아 출처를 단다
+    'session.promptPreview': async (_c, p) => {
+      const s = mine(p?.id);
+      const cur = logFile.meta.prompt;
+      const ours = [
+        { source: 'slcode' as const, text: SLCODE_PROMPT }, { source: 'team' as const, text: family }, { source: 'plugin' as const, text: agent?.append ?? '' },
+        ...(prompt ?? []).filter((t) => t !== SYSTEM_PROMPT_DYNAMIC_BOUNDARY).map((text) => ({ source: 'prompt' as const, text })),
+      ];
+      const tag = (b: PreviewBlock): PreviewBlock => (b.source === 'prompt' && cur ? { ...b, name: cur.name, version: cur.version } : b);
+      if (s instanceof CodexSession) return { blocks: [{ source: 'vendor', text: null }, ...ours.filter((o) => o.source !== 'prompt' && o.text.trim()).map((o) => ({ source: o.source, text: o.text.trim() }))], context: [] };
+      try { const { system, context } = await (s as ClaudeSession).systemPreview(); return { blocks: labelSystem(system, ours).map(tag), context }; }
+      catch (e) { throw new CoreError(ERR.badRequest, (e as Error).message); }
+    },
+    'session.sources': async (_c, p) => {
+      const s = mine(p?.id);
+      if (codex) return { supported: false, hooks: [], skills: [], agents: [], memory: [], styles: [] };
+      const ready = [...s.log.all].reverse().find((e) => e.ev.kind === 'session.ready')?.ev as Extract<CoreEventBody, { kind: 'session.ready' }> | undefined;
+      const vEnv = { ...env, ...agent?.env, ...load?.env };
+      const src: LoadSources = {
+        settingSources: load?.settingSources ?? ['user', 'project', 'local'],
+        configDir: path.resolve(vEnv.CLAUDE_CONFIG_DIR || path.join(vEnv.HOME || os.homedir(), '.claude')), cwd,
+        plugins: ready?.plugins ?? [], agent: agentLoaded.map((l) => l.name),
+        scripts: agentLoaded.map((l) => ({ plugin: l.name, regs: readScripts(path.join(agentPaths(P.dir).build, l.build, BUILD_FILES.scripts)).flatMap((x) => x.regs?.claude ?? []) })),
+      };
+      // 스킬·서브에이전트는 session.ready 의 이름마다 — Claude Code 가 출처를 주지 않은 것은 내장(내장 서브에이전트는 주지 않는다). 플러그인 스킬은 'a:b' 로 온다
+      const got = await s.sources(), ag = src.agent;
+      const of = (list: NonNullable<typeof got>['skills'], names: string[]) => names.map((name) => {
+        const k = list.find((x) => x.name === name || (x.plugin && `${x.plugin}:${x.name}` === name));
+        return k ? { name, source: originOf(k.source, k.plugin, ag), plugin: k.plugin, path: k.path } : { name, source: 'builtin' as const, plugin: null, path: null };
+      });
+      return { supported: true, hooks: listHooks(src), skills: got ? of(got.skills, ready?.skills ?? []) : [], agents: got ? of(got.agents, ready?.agents ?? []) : [],
+        memory: (got?.memory ?? []).map((m) => ({ path: m.path, source: originOf(m.type, null, ag) })), styles: listStyles(src) };
+    },
     // 바꾸면 세션에 적고 core 를 다시 띄운다(같은 대화를 resume). 턴 중이면 끝난 뒤에 — core.retire 와 같은 길
     'session.setSystemPrompt': (conn, p) => {
       mine(p?.id);
@@ -692,6 +731,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     },
     'session.bgStop': (_c, p) => { mine(p?.id); return bgs.stop(String(p.task ?? ''), p.by === 'user' ? 'user' : 'agent'); },
     'session.bgList': (_c, p) => { mine(p?.id); return { tasks: bgs.list() }; },
+    'session.bgTail': (_c, p) => { mine(p?.id); return bgs.tail(String(p.task ?? ''), Number(p.from) || 0, typeof p.before === 'number' ? p.before : undefined); },
     'session.deliver': (_c, p) => {
       mine(p?.id);
       const m = p.mail;

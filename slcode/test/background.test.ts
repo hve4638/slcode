@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
-import { Background, endText } from '../src/background.ts';
+import { Background, BG_TAIL_MAX, endText } from '../src/background.ts';
 import { connectSession, PKG } from '../src/client.ts';
 import { sockAlive } from '../src/live.ts';
 import { EventLog } from '../src/eventLog.ts';
@@ -31,6 +31,33 @@ function bgs(dir: string) {
   const b = new Background({ dir, env: process.env, log: () => {}, onEnd: (t) => ended.push(t) });
   return { b, ended };
 }
+
+test('Background.tail: 받은 위치 뒤만, 많으면 끝 BG_TAIL_MAX 만, 잘린 UTF-8 글자는 앞뒤에서 뺀다 (화면의 출력 창)', async () => {
+  const dir = path.join(tmp('slcode-bg-'), 'bg');
+  const { b, ended } = bgs(dir);
+  const t = b.run('true', '', os.tmpdir());
+  await until(() => ended.length);
+  const log = t.output;
+  fs.writeFileSync(log, 'ab');
+  assert.deepEqual(b.tail(t.id), { start: 0, end: 2, text: 'ab' });
+  fs.appendFileSync(log, Buffer.concat([Buffer.from('c가'), Buffer.from('나').subarray(0, 2)])); // '나' 를 덜 썼다
+  assert.deepEqual(b.tail(t.id, 2), { start: 2, end: 6, text: 'c가' }, '덜 쓴 글자는 다음에');
+  fs.appendFileSync(log, Buffer.from('나').subarray(2));
+  assert.deepEqual(b.tail(t.id, 6), { start: 6, end: 9, text: '나' });
+  // 많으면 끝만 — 앞이 글자 중간에서 잘리면 그 조각을 뺀다
+  fs.writeFileSync(log, 'x' + '가'.repeat(BG_TAIL_MAX)); // 1 + 3*MAX 바이트
+  const r = b.tail(t.id, 0);
+  const size = 1 + 3 * BG_TAIL_MAX;
+  assert.equal(r.end, size); assert.ok(r.start > size - BG_TAIL_MAX && r.start <= size - BG_TAIL_MAX + 2);
+  assert.match(r.text, /^가+$/); assert.equal(Buffer.byteLength(r.text), r.end - r.start);
+  assert.deepEqual(b.tail(t.id, size), { start: size, end: size, text: '' });
+  // 앞부분 — before 앞 BG_TAIL_MAX 안에서 줄 머리부터
+  fs.writeFileSync(log, 'a'.repeat(BG_TAIL_MAX) + '\nline1\nline2\n');
+  const at = BG_TAIL_MAX + 1;
+  assert.deepEqual(b.tail(t.id, 0, at + 6), { start: at, end: at + 6, text: 'line1\n' }, '잘린 첫 줄은 뺀다');
+  assert.deepEqual(b.tail(t.id, 0, 3), { start: 0, end: 3, text: 'aaa' }, '파일 머리면 그대로');
+  assert.throws(() => b.tail('../x'), /no background task/);
+});
 
 test('Background: 끝나면 exit code 와 출력 파일로 알리고 기록을 닫는다', async () => {
   const dir = path.join(tmp('slcode-bg-'), 'bg');

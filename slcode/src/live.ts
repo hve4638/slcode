@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import { EventLog, type SessionMeta, type SessionParent } from './eventLog.js';
 import { connectSession, PKG } from './client.js';
 import { corePaths, ensureDir } from './paths.js';
-import { CoreError, ERR, type SessionInfo } from './protocol.js';
+import { CoreError, ERR, type SessionInfo, type Vendor } from './protocol.js';
 import type { CoreOptions } from './core.js';
 
 export const isLoopback = (host: string) => ['127.0.0.1', 'localhost', '::1'].includes(host);
@@ -38,7 +38,7 @@ export async function closedSessions(sessionsDir: string, cwd: string): Promise<
   return out.sort((a, b) => closedTime(b) - closedTime(a));
 }
 
-export type FamilySession = { id: string; title: string | null; parent: SessionParent | null; live: boolean; sock: string };
+export type FamilySession = { id: string; title: string | null; vendor: Vendor; parent: SessionParent | null; live: boolean; sock: string };
 /** 세션과 그 자손 — 부모 다음에 자식이 오는 순서(형제는 만든 순서), 맨 앞이 그 세션. 없는 세션이면 빈 목록 (ticket slcode-web-session-url).
  *  up 이면 부모를 따라 맨 위까지 올라간 세션부터 (superlite 카드 — 주소가 없어 잘못 들어갈 일이 없고, 자식 카드에서 부모로 돌아가야 한다) */
 export async function familySessions(sessionsDir: string, id: string, up = false): Promise<FamilySession[]> {
@@ -53,7 +53,7 @@ export async function familySessions(sessionsDir: string, id: string, up = false
   if (root) walk(root);
   return Promise.all(tree.map(async (m) => {
     const sock = new EventLog(sessionsDir, m).sockPath;
-    return { id: m.id, title: m.title ?? null, parent: m.parent ?? null, live: await sockAlive(sock), sock };
+    return { id: m.id, title: m.title ?? null, vendor: m.vendor, parent: m.parent ?? null, live: await sockAlive(sock), sock };
   }));
 }
 

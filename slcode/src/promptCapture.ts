@@ -24,29 +24,33 @@ const SSE = ([
   ['message_stop', {}],
 ] as const).map(([t, d]) => `event: ${t}\ndata: ${JSON.stringify({ type: t, ...d })}\n\n`).join('');
 
-export async function capturePrompt(o: CaptureOptions): Promise<Capture> {
-  const got: { preset?: string[]; custom?: string[] } = {};
-  let done!: () => void;
-  const both = new Promise<void>((r) => (done = r));
+type Msg = { role?: string; content?: string | { type?: string; text?: string }[] };
+/** 가짜 Messages API — 본 요청의 system 글들과 messages 를 onMain 에 넘기고 짧게 답한다. 본 요청만: 제목 짓기 같은 곁 요청은 도구가 없다 */
+async function fakeApi(onMain: (sys: string[], messages: Msg[]) => void): Promise<{ srv: http.Server; url: string }> {
   const srv = http.createServer((req, res) => {
     let body = '';
     req.on('data', (c) => (body += c));
     req.on('end', () => {
       if (req.method !== 'POST' || !req.url?.startsWith('/v1/messages')) { res.writeHead(404, { 'content-type': 'application/json' }).end('{"type":"error","error":{"type":"not_found_error","message":"capture"}}'); return; }
       if (req.url.includes('count_tokens')) { res.writeHead(200, { 'content-type': 'application/json' }).end('{"input_tokens":1}'); return; }
-      let j: { system?: { text?: string }[]; tools?: unknown[] } = {};
+      let j: { system?: { text?: string }[]; tools?: unknown[]; messages?: Msg[] } = {};
       try { j = JSON.parse(body); } catch { /* 본문이 아니면 아래에서 그냥 답한다 */ }
-      // 본 요청만 — 제목 짓기 같은 곁 요청은 도구가 없다
-      if (Array.isArray(j.system) && j.tools?.length) {
-        const sys = j.system.map((s) => s.text ?? '');
-        got[sys.some((t) => t.startsWith(SENTINEL)) ? 'custom' : 'preset'] ??= sys;
-        if (got.preset && got.custom) done();
-      }
+      if (Array.isArray(j.system) && j.tools?.length) onMain(j.system.map((s) => s.text ?? ''), j.messages ?? []);
       res.writeHead(200, { 'content-type': 'text/event-stream' }).end(SSE);
     });
   });
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()));
-  const url = `http://127.0.0.1:${(srv.address() as { port: number }).port}`;
+  return { srv, url: `http://127.0.0.1:${(srv.address() as { port: number }).port}` };
+}
+
+export async function capturePrompt(o: CaptureOptions): Promise<Capture> {
+  const got: { preset?: string[]; custom?: string[] } = {};
+  let done!: () => void;
+  const both = new Promise<void>((r) => (done = r));
+  const { srv, url } = await fakeApi((sys) => {
+    got[sys.some((t) => t.startsWith(SENTINEL)) ? 'custom' : 'preset'] ??= sys;
+    if (got.preset && got.custom) done();
+  });
   const ac = new AbortController();
   const run = (systemPrompt: Options['systemPrompt'], append?: string) => {
     const q = query({
@@ -89,4 +93,38 @@ export async function capturePrompt(o: CaptureOptions): Promise<Capture> {
 export function promptOption(composed: string[]): string[] {
   const fixed = composed.length > 1 ? composed[0] : '', rest = (composed.length > 1 ? composed.slice(1) : composed).filter((t) => t !== '').join('\n\n');
   return fixed ? [fixed, SYSTEM_PROMPT_DYNAMIC_BOUNDARY, rest] : [rest];
+}
+
+/** system 은 system 글들, context 는 같은 요청의 messages 에 Claude Code 가 넣은 글 — 첫 사용자 메시지의 system-reminder(CLAUDE.md 등)와
+ *  그 뒤 system 역할 메시지(Environment·output style·MCP 안내·스킬 목록 등), 보낸 순서대로. 우리가 친 글(PROBE)은 뺀다 */
+export type SystemCapture = { system: string[]; context: string[] };
+const PROBE = 'x';
+
+/** 세션의 query 옵션(ClaudeSession.loadOptions) 그대로 Claude Code 를 한 번 돌려 첫 본 요청의 system 글들과 messages 에 붙은 글을 받는다 (ticket slcode-sidebar-revamp, 세션 구성).
+ *  요금·대화 기록 없음. 사용자 훅이 이 실행에서 돌지 않게 끈다 — 그래서 SessionStart 훅이 넣는 글은 context 에 없다.
+ *  SDK 0.3.322 실측(2026-11-26): output style·MCP 안내는 system 이 아니라 첫 사용자 메시지 뒤 system 역할 메시지에 들어간다 */
+export async function captureSystem(options: Options, timeoutMs = 60000): Promise<SystemCapture> {
+  let got: SystemCapture | null = null;
+  let done!: () => void;
+  const first = new Promise<void>((r) => (done = r));
+  const { srv, url } = await fakeApi((system, messages) => {
+    const texts = (m: Msg) => (typeof m.content === 'string' ? [m.content] : (m.content ?? []).filter((b) => b.type === 'text').map((b) => b.text ?? ''));
+    got ??= { system, context: messages.flatMap(texts).filter((t) => t !== PROBE && t.trim()) };
+    done();
+  });
+  const ac = new AbortController();
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const q = query({ prompt: PROBE, options: { ...options, persistSession: false, abortController: ac, settings: { ...(options.settings as object | undefined), disableAllHooks: true } as any, env: inspectEnv(options.env ?? process.env, url) } });
+    const run = (async () => { for await (const _ of q) { /* 응답은 쓰지 않는다 */ } })().then(() => { throw new Error('Claude Code ended before sending a request'); });
+    const timeout = new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error('timed out waiting for Claude Code')), timeoutMs); });
+    await Promise.race([first, run, timeout]);
+  } catch (e) {
+    if (!got) throw new Error(`could not read the system prompt: ${(e as Error).message}`);
+  } finally {
+    clearTimeout(timer);
+    ac.abort();
+    srv.close(); srv.closeAllConnections();
+  }
+  return got!;
 }

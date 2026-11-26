@@ -85,17 +85,8 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 /* 헤더 — 세션 이름·상태 … 세션 종료·사이드바 버튼. 왼쪽 레일(2026-09-27)에서 옮겼고 폭이 좁아도 숨지 않는다, 이름만 잘린다 (사용자 2026-10-13) */
 .acf > .hdr { grid-row: 1; grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; padding: 6px 10px 6px 16px; border-bottom: 1px solid var(--acf-line); min-width: 0; }
 .acf .hdr .gap { flex: 1; }
-.acf .fam-chip { flex: none; border: 1px solid var(--acf-line); border-radius: 999px; background: transparent; color: var(--acf-muted); padding: 1px 9px; font-size: 12px; cursor: pointer; }
-.acf .fam-chip:hover { background: var(--acf-soft); }
 .acf .fam-back { color: var(--acf-accent); text-decoration: none; }
 .acf .fam-back:hover { text-decoration: underline; }
-.acf .fam-row { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 8px; color: inherit; text-decoration: none; font-size: 13px; min-width: 0; }
-.acf .fam-row:hover { background: var(--acf-soft); }
-.acf .fam-row.cur { font-weight: 600; background: var(--acf-soft); }
-.acf .fam-row.off { color: var(--acf-muted); }
-.acf .fam-indent { flex: none; }
-.acf .fam-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.acf .fam-tag { flex: none; font-size: 11px; color: var(--acf-muted); border: 1px solid var(--acf-line); border-radius: 6px; padding: 0 5px; }
 .acf .hdr .pill { flex: none; }
 .acf .hdr .boot { flex: none; font-family: var(--acf-mono); font-size: 12px; color: var(--acf-muted); white-space: nowrap; }
 .acf .hdr .title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
@@ -671,62 +662,33 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 
 /* 사이드바 — 섹션마다 접히는 카드 (A안, 사용자 2026-09-28). 안쪽 목록 details 는 쉐브론·개수 배지 */
 /* 기본은 닫힘, 헤더 버튼으로 연다 (사용자 2026-10-13) */
-.acf .side { grid-row: 2; grid-column: 2; overflow-y: auto; padding: 14px 12px; font-size: 13px; display: flex; flex-direction: column; gap: 8px; min-height: 0; border-left: 1px solid var(--acf-line); }
+.acf .side { grid-row: 2; grid-column: 2; overflow-y: auto; padding: 14px 12px; font-size: 13px; display: flex; flex-direction: column; gap: 0; min-height: 0; border-left: 1px solid var(--acf-line); }
 .acf:not(.side-open) .side { display: none; }
 /* 상단 요약 — claude 상태줄과 같은 정보 (폴더·repo/브랜치·플랜 리밋·컨텍스트·모델·비용), 아이콘은 외곽선 SVG (사용자 2026-09-30) */
 .acf .side .top { display: flex; flex-direction: column; gap: 5px; padding: 2px 4px 8px; font-size: 12px; font-family: var(--acf-mono); }
 .acf .side .top .row { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--acf-fg); }
 .acf .side .top .row > svg { width: 15px; height: 15px; flex: none; color: var(--acf-muted); fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-/* 실행 중 서브에이전트 목록 — 있을 때만, 접히지 않는다 (2026-09-30) */
-.acf .side .tasks { display: flex; flex-direction: column; gap: 6px; padding: 4px 4px 8px; font-size: 12px; }
-.acf .side .tasks h4 { margin: 0 0 2px; font-size: 12px; font-weight: 600; color: var(--acf-muted); }
-.acf .side .tasks a { color: inherit; text-decoration: none; display: grid; grid-template-columns: 8px 1fr; column-gap: 8px; align-items: baseline; cursor: pointer; border: 1px solid var(--acf-line); border-radius: 10px; padding: 7px 10px; background: var(--acf-panel); }
-.acf .side .tasks a:hover { background: var(--acf-soft); }
-.acf .side .tasks .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--acf-accent); animation: acf-blink 1s steps(2) infinite; align-self: center; grid-row: 1; }
-.acf .side .tasks .name { font-weight: 600; }
-.acf .side .tasks .desc, .acf .side .tasks .dim, .acf .side .tasks .sum { grid-column: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.acf .side .tasks .dim { color: var(--acf-muted); font-family: var(--acf-mono); font-size: 11px; }
-.acf .side .tasks .sum { color: var(--acf-muted); white-space: normal; }
-.acf .side details summary { list-style: none; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 6px; }
-.acf .side details summary::-webkit-details-marker { display: none; }
-.acf .side details.sec { border: 1px solid var(--acf-line); border-radius: 10px; background: var(--acf-panel); }
-.acf .side details.sec > summary { padding: 7px 12px; border-radius: 10px; }
-.acf .side details.sec > summary:hover h4 { color: var(--acf-fg); }
-.acf .side details.sec[open] > summary { border-bottom: 1px solid var(--acf-line); border-radius: 10px 10px 0 0; margin-bottom: 8px; }
-.acf .side details.sec > summary h4 { margin: 0; font-size: 12px; font-weight: 600; color: var(--acf-muted); }
-.acf .side details.sec > summary svg { width: 14px; height: 14px; margin-left: auto; flex: none; color: var(--acf-muted); fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; transform: rotate(-90deg); transition: transform .15s; }
-.acf .side details.sec[open] > summary svg { transform: none; }
-.acf .side details.sec > summary .badge { font-size: 11px; color: var(--acf-warn); border: 1px solid currentColor; border-radius: 999px; padding: 0 6px; line-height: 1.4; }
-.acf .side details.sec > .body { padding: 0 12px 10px; }
-.acf .side .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; }
-.acf .side .kv .k { color: var(--acf-muted); }
-.acf .side .kv .v { font-family: var(--acf-mono); font-size: 12px; overflow-wrap: anywhere; }
-.acf .side .plugs button { margin-top: 8px; }
-.acf .side .plugs select { display: block; width: 100%; margin-top: 8px; height: 26px; padding: 0 4px; border: 1px solid var(--acf-line); border-radius: 6px; background: var(--acf-bg); color: inherit; font: inherit; font-size: 12px; }
-/* 세션 id 의 복사 버튼은 id 에 올렸을 때만 (사용자 2026-10-09) */
-.acf .side .kv .idv { display: inline-flex; align-items: center; gap: 4px; }
-.acf .side .kv .idv button.ico { width: 20px; height: 20px; flex: none; padding: 0; border: 0; background: transparent; color: var(--acf-muted); border-radius: 6px; display: grid; place-items: center; opacity: 0; }
-.acf .side .kv .idv:hover button.ico, .acf .side .kv .idv button.ico:focus-visible { opacity: 1; }
-.acf .side .kv .idv button.ico:hover { background: var(--acf-soft); color: var(--acf-fg); }
-.acf .side .kv .idv button.ico svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.acf .side details.list summary { padding: 3px 6px; margin: 0 -6px; border-radius: 6px; }
-.acf .side details.list summary:hover { background: var(--acf-soft); }
-.acf .side details.list summary::before { content: ""; width: 12px; height: 12px; flex: none; background: currentColor; opacity: .55; transition: transform .15s;
-  -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>') center/contain no-repeat;
-          mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>') center/contain no-repeat; }
-.acf .side details.list[open] summary::before { transform: rotate(90deg); }
-.acf .side details.list summary .n { margin-left: auto; font-size: 11px; color: var(--acf-muted); background: var(--acf-soft); border-radius: 999px; padding: 0 7px; font-family: var(--acf-mono); }
-.acf .side details.list ul { margin: 2px 0 4px; padding-left: 18px; list-style: none; font-family: var(--acf-mono); font-size: 12px; color: var(--acf-muted); max-height: 160px; overflow: auto; }
-.acf .side details.list li { padding: 1px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.acf .side details.list .mcpf { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 4px; }
-.acf .side details.list .mcpf .nm { overflow: hidden; text-overflow: ellipsis; }
-.acf .side details.list .mcpf button.ico { width: 20px; height: 20px; padding: 0; border: 0; background: transparent; color: var(--acf-muted); border-radius: 6px; display: grid; place-items: center; cursor: pointer; }
-.acf .side details.list .mcpf button.ico:hover:not(:disabled) { background: var(--acf-soft); color: var(--acf-fg); }
-.acf .side details.list .mcpf button.ico:disabled { opacity: .4; cursor: default; }
-.acf .side details.list .mcpf button.ico svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.acf .side details.list .mcpf .why { grid-column: 1 / -1; white-space: normal; overflow-wrap: anywhere; font-size: 11px; opacity: .8; padding-left: 8px; }
-.acf .side .pend { display: grid; gap: 4px; }
-.acf .side .pend a { cursor: pointer; }
+/* 사이드바 (ticket slcode-sidebar-revamp, 사용자 2026-11-26) — 고정 글 줄, 할 일 줄, 가로줄로 나눈 활동 기록과 '세션 구성' 한 줄. 접는 칸·상자 없음 */
+.acf .side .top .row .v { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acf .side .top .row > svg.lg { stroke: none; fill: #D97757; }
+.acf .side .top .row > svg.lg.codex { fill: var(--acf-muted); }
+.acf .side .top .row button.ico { margin-left: auto; width: 20px; height: 20px; flex: none; padding: 0; border: 0; background: transparent; color: var(--acf-muted); border-radius: 6px; display: grid; place-items: center; opacity: 0; }
+.acf .side .top .row:hover button.ico, .acf .side .top .row button.ico:focus-visible { opacity: 1; }
+.acf .side .top .row button.ico:hover { background: var(--acf-soft); color: var(--acf-fg); }
+.acf .side .top .row button.ico svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.acf .side .top button.row.go { border: 0; background: none; padding: 0; font: inherit; text-align: left; cursor: pointer; }
+.acf .side .top button.row.go:hover .v { text-decoration: underline; text-underline-offset: 2px; }
+.acf .side .top .row.go.warn, .acf .side .top .row.go.warn > svg { color: var(--acf-warn); }
+.acf .side .top .row.go.err, .acf .side .top .row.go.err > svg { color: var(--acf-err); }
+.acf .side hr { border: 0; border-top: 1px solid var(--acf-line); margin: 0; flex: none; }
+.acf .side .act-sec { padding: 10px 4px 12px; }
+.acf .side .act-sec .sh { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.acf .side .act-sec h4 { margin: 0; font-size: 12px; font-weight: 600; color: var(--acf-muted); flex: 1; }
+.acf .side .open-pv { display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 4px; border: 0; background: none; color: var(--acf-fg); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.acf .side .open-pv:hover { background: var(--acf-soft); }
+.acf .side .open-pv .t { flex: 1; }
+.acf .side .open-pv .n.bad { color: var(--acf-err); font-size: 12px; }
+.acf .side .open-pv svg { width: 14px; height: 14px; flex: none; color: var(--acf-muted); fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; transform: rotate(-90deg); }
 .acf .side .empty { color: var(--acf-muted); }
 /* 우편 턴 — 왼쪽, 흐릿한 카드. 에이전트 간 통신이라 눈에 띄지 않게: 강조색 없음, 옅은 테두리, 흐린 글자 (사용자 2026-09-27) */
 .acf .mail { align-self: stretch; display: flex; flex-direction: column; gap: 6px; opacity: .7; }
@@ -849,8 +811,8 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .st-active, .acf .st-on { --c: var(--acf-ok); }
 .acf .st-afk { --c: color-mix(in srgb, var(--acf-muted) 35%, transparent); }
 .acf .st-exited, .acf .st-off { --c: var(--acf-muted); }
-.acf .side details.sec > summary .act-more { font: 11px var(--acf-sans); color: var(--acf-muted); background: transparent; border: 1px solid var(--acf-line); border-radius: 999px; padding: 0 8px; line-height: 1.6; cursor: pointer; }
-.acf .side details.sec > summary .act-more:hover { color: var(--acf-fg); background: var(--acf-soft); }
+.acf .side .act-sec .act-more { font: 11px var(--acf-sans); color: var(--acf-muted); background: transparent; border: 1px solid var(--acf-line); border-radius: 999px; padding: 0 8px; line-height: 1.6; cursor: pointer; }
+.acf .side .act-sec .act-more:hover { color: var(--acf-fg); background: var(--acf-soft); }
 .acf .act-now { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; margin-bottom: 6px; }
 .acf .act-now b { font-weight: 600; }
 .acf .act-dim { color: var(--acf-muted); font-size: 11px; }
@@ -1041,19 +1003,6 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .kid-ask .kind { font-weight: 600; }
 .acf .kid-ask .who { white-space: nowrap; }
 .acf .kid-ask .what { color: var(--acf-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; font-family: var(--acf-mono, monospace); }
-/* 실행 중 줄 (ticket slcode-running-agents-above-input) — 입력 상자 바로 위, 사이드바 "에이전트 N" 절의 요약. 누르면 그 위로 목록이 펼쳐진다 */
-.acf .composer > .runline { max-width: 780px; margin: 0 auto 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--acf-muted); min-width: 0; }
-.acf .composer > .runline[hidden] { display: none; }
-.acf .runline .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--acf-accent); animation: acf-blink 1s steps(2) infinite; flex: none; }
-.acf .runline button.sum { display: inline-flex; align-items: center; gap: 7px; background: none; border: 0; padding: 3px 6px; border-radius: 8px; color: inherit; font: inherit; cursor: pointer; }
-.acf .runline button.sum:hover { background: var(--acf-soft); color: var(--acf-fg); }
-.acf .runline button.sum svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; transform: rotate(180deg); }
-.acf .runline button.sum.open svg { transform: none; }
-.acf .runline .list { flex-basis: 100%; min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 4px; border: 1px solid var(--acf-line); border-radius: 10px; background: var(--acf-panel); }
-.acf .runline a.it { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 7px; color: var(--acf-fg); text-decoration: none; cursor: pointer; min-width: 0; }
-.acf .runline a.it:hover { background: var(--acf-soft); }
-.acf .runline a.it .name { font-weight: 600; white-space: nowrap; }
-.acf .runline a.it .desc { color: var(--acf-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 
 /* system prompt 편집 창 (web/prompt.js, ticket slcode-profile-system-prompt) — 시작 화면 안. 테두리 없는 평평한 목록(사용자 2026-11-17: 카드 꼴은 간격이 어긋나고 장식이 많았다).
    블록 한 줄은 [설명 … 상태 글자 · 동작 · 크기 · 스위치], 그 아래가 그 자리에서 고치는 글. 왼쪽 선은 .body 의 12px 하나, 세로 간격은 4px 배수:
@@ -1267,6 +1216,144 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
   .prpanel .plugs { max-height: 240px; padding-right: 0; border-right: 0; border-bottom: 1px solid var(--acf-line); }
   .prpanel .pd { padding: 12px 0 0; }
 }
+
+/* 헤더 inspect 스위치 (ticket slcode-sidebar-revamp, 사용자 2026-11-25) — 상태 칸 옆. 설정의 새 세션 inspect 를 켰거나 이 세션이 켜져 있을 때만 */
+.acf .hdr button.insp { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px 0 8px; border-radius: 999px; border: 1px solid var(--acf-line); background: transparent; color: var(--acf-muted); font-size: 12px; }
+.acf .hdr button.insp[hidden] { display: none; }
+.acf .hdr button.insp:hover:not(:disabled) { background: var(--acf-soft); }
+.acf .hdr .insp .sw { position: relative; width: 22px; height: 12px; border-radius: 6px; background: var(--acf-soft); border: 1px solid var(--acf-line); }
+.acf .hdr .insp .sw::after { content: ""; position: absolute; top: 1px; left: 1px; width: 8px; height: 8px; border-radius: 50%; background: var(--acf-muted); transition: left .12s; }
+.acf .hdr .insp.on { color: var(--acf-accent); border-color: color-mix(in srgb, var(--acf-accent) 45%, var(--acf-line)); }
+.acf .hdr .insp.on .sw { background: color-mix(in srgb, var(--acf-accent) 30%, transparent); border-color: var(--acf-accent); }
+.acf .hdr .insp.on .sw::after { left: 11px; background: var(--acf-accent); }
+@container (max-width: 520px) { .acf .hdr .insp .lb { display: none; } }
+
+/* 입력창 위 알약 (ticket slcode-sidebar-revamp, 사용자 2026-11-25 — Paseo 참고 후보 C). "세션 N ▾" 은 늘, "N 실행 중" 은 있을 때만. 목록은 알약 위로 연다 */
+.acf .composer > .wk { position: relative; max-width: 780px; margin: 0 auto 8px; display: flex; gap: 6px; min-width: 0; }
+.acf .wk .pl { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px 0 10px; border-radius: 999px; border: 1px solid var(--acf-line); background: var(--acf-panel); color: var(--acf-muted); font-size: 13px; white-space: nowrap; }
+.acf .wk .pl:hover, .acf .wk .pl.open { background: var(--acf-soft); color: var(--acf-fg); }
+.acf .wk .pl .rd { width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid currentColor; display: grid; place-items: center; }
+.acf .wk .pl .rd::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.acf .wk .pl.calm .rd::after { background: transparent; }
+.acf .wk .pl.busy .rd { color: var(--acf-accent); }
+.acf .wk a.pl.back { gap: 6px; padding: 0 12px 0 8px; color: var(--acf-fg); text-decoration: none; min-width: 0; flex: 0 1 auto; }
+.acf .wk a.pl.back svg { width: 14px; height: 14px; flex: none; fill: none; stroke: var(--acf-muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transform: rotate(90deg); }
+.acf .wk a.pl.back .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.acf .wk .pl.busy .rd::after { animation: acf-blink 1.2s ease-in-out infinite; }
+.acf .wk .pop { position: absolute; bottom: calc(100% + 6px); left: 0; width: min(560px, 100%); max-height: 60vh; overflow-y: auto; padding: 5px; border: 1px solid var(--acf-line); border-radius: 12px; background: var(--acf-panel); box-shadow: 0 10px 30px var(--acf-shadow); z-index: 5; font-size: 13px; }
+.acf .wk .pop .gh { padding: 8px 10px 3px; font-size: 11px; font-weight: 600; color: var(--acf-muted); }
+.acf .wk .pop .r { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; column-gap: 9px; align-items: center; padding: 6px 8px; border-radius: 8px; color: inherit; text-decoration: none; cursor: pointer; }
+.acf .wk .pop div.r.cur { cursor: default; }
+.acf .wk .pop .r:hover { background: var(--acf-soft); }
+.acf .wk .pop .r.cur { background: color-mix(in srgb, var(--acf-soft) 60%, transparent); }
+.acf .wk .pop .r .ic { grid-row: 1 / 3; display: grid; place-items: center; color: var(--acf-muted); }
+.acf .wk .pop .r .t { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--acf-fg); }
+.acf .wk .pop .r.off .t { color: var(--acf-muted); }
+.acf .wk .pop .r .t .tag { margin-left: 6px; font-size: 11px; color: var(--acf-muted); border: 1px solid var(--acf-line); border-radius: 5px; padding: 0 4px; }
+.acf .wk .pop .r .s { grid-column: 2; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--acf-muted); font-size: 12px; }
+.acf .wk .pop .r .s .warn { color: var(--acf-warn); }
+.acf .wk .pop .r .s code { font-size: 11.5px; background: none; padding: 0; }
+.acf .wk .pop .r .act { grid-column: 3; grid-row: 1 / 3; display: flex; align-items: center; gap: 2px; }
+.acf .wk .pop .r .act a, .acf .wk .pop .r .act button, .acf .wk .pop .r .act .dim { height: 26px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: var(--acf-muted); font-size: 12px; display: grid; place-items: center; text-decoration: none; white-space: nowrap; }
+.acf .wk .pop .r .act a:hover, .acf .wk .pop .r .act button:hover:not(:disabled) { background: var(--acf-panel); color: var(--acf-fg); }
+.acf .wk .pop .r .act .bgstop { min-width: 26px; padding: 0; border: 1px solid var(--acf-line); background: var(--acf-bg, var(--acf-panel)); color: var(--acf-fg); cursor: pointer; }
+.acf .wk .pop .r .act .bgstop:hover:not(:disabled) { color: var(--acf-err); border-color: color-mix(in srgb, var(--acf-err) 50%, var(--acf-line)); background: color-mix(in srgb, var(--acf-err) 8%, var(--acf-panel)); }
+.acf .wk .pop .r .act .bgstop:disabled { cursor: default; color: var(--acf-muted); }
+.acf .wk .pop .r .act .bgstop.arm, .acf .wk .pop .r .act .bgstop:disabled { padding: 0 8px; } /* 아이콘만일 때는 정사각형, 글자가 들어가면 옆으로 넓힌다 */
+.acf .wk .bgstop.arm { color: var(--acf-err) !important; border-color: var(--acf-err) !important; background: color-mix(in srgb, var(--acf-err) 14%, transparent) !important; font-weight: 600; }
+/* background 출력 창 (bgterm.js) — 알약 줄 위 오른쪽에 뜨는 작은 검은 창 */
+.acf .wk .tw { position: absolute; bottom: calc(100% + 6px); right: 0; width: min(640px, 100%); height: min(280px, 45vh); display: flex; flex-direction: column; border: 1px solid var(--acf-line); border-radius: 10px; background: #0b0c0e; box-shadow: 0 10px 30px var(--acf-shadow); z-index: 4; overflow: hidden; }
+.acf .wk .tw[hidden] { display: none; }
+.acf .wk .tw .th { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 6px 0 10px; border-bottom: 1px solid #23262b; background: #15171a; font-size: 12.5px; color: #c9ccd1; flex: none; user-select: none; touch-action: none; }
+.acf .wk .tw.min { height: auto !important; }
+.acf .wk .tw.min .sc, .acf .wk .tw.min .rz { display: none; }
+.acf .wk .tw.min .th { border-bottom: 0; }
+.acf .wk .tw .rz { position: absolute; right: 0; bottom: 0; touch-action: none; }
+.acf .wk .tw .rz.r { top: 0; bottom: 14px; width: 5px; cursor: ew-resize; }
+.acf .wk .tw .rz.b { left: 0; right: 14px; height: 5px; cursor: ns-resize; }
+.acf .wk .tw .rz.c { width: 14px; height: 14px; cursor: nwse-resize; background: linear-gradient(135deg, transparent 52%, #7a808a 52% 60%, transparent 60% 72%, #7a808a 72% 80%, transparent 80%); }
+.acf .wk .tw.size-r, .acf .wk .tw.size-r * { cursor: ew-resize; user-select: none; }
+.acf .wk .tw.size-b, .acf .wk .tw.size-b * { cursor: ns-resize; user-select: none; }
+.acf .wk .tw.size-c, .acf .wk .tw.size-c * { cursor: nwse-resize; user-select: none; }
+.acf .wk .tw .th .term { color: var(--acf-ok); display: grid; }
+.acf .wk .tw .th .term svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.acf .wk .tw .th .t { min-width: 0; flex: 0 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #e6e8eb; }
+.acf .wk .tw .th .st { flex: none; color: #8b9098; white-space: nowrap; }
+.acf .wk .tw .th .st.run { color: var(--acf-ok); }
+.acf .wk .tw .th .act { margin-left: auto; display: flex; align-items: center; gap: 2px; flex: none; }
+.acf .wk .tw .th .act button { height: 24px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: #8b9098; font-size: 12px; display: grid; place-items: center; text-decoration: none; white-space: nowrap; cursor: pointer; }
+.acf .wk .tw .th .act button:hover { background: #23262b; color: #e6e8eb; }
+.acf .wk .tw .sc { flex: 1; min-height: 0; overflow: auto; scrollbar-width: thin; scrollbar-color: #3a3e45 transparent; padding: 8px 10px; font: 12px/1.45 var(--acf-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
+.acf .wk .tw pre { margin: 0; padding: 0; background: none; color: #d7dae0; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+.acf .wk .tw .more, .acf .wk .tw .empty { color: #6b7079; }
+.acf .wk .tw .empty { font-style: italic; }
+.acf .wk .pop .r .act svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; }
+.acf .wk .pop .r .term { color: var(--acf-ok); display: grid; }
+.acf .wk .pop .r .term svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+/* 벤더 로고 + 오른쪽 아래 상태 점 — 작업 중 맥동·승인 대기·대기·꺼짐 */
+.acf .vi { position: relative; width: 18px; height: 18px; display: grid; place-items: center; }
+.acf .vi .lg { width: 16px; height: 16px; }
+.acf .lg.claude { fill: #D97757; }
+.acf .lg.codex { fill: var(--acf-fg); }
+.acf .r.off .vi .lg { opacity: .45; }
+.acf .vi .bd { position: absolute; right: -3px; bottom: -3px; width: 7px; height: 7px; border-radius: 50%; border: 2px solid var(--acf-panel); box-sizing: content-box; }
+.acf .vi .bd.work { background: var(--acf-accent); animation: acf-blink 1.2s ease-in-out infinite; }
+.acf .vi .bd.pend { background: var(--acf-warn); }
+.acf .vi .bd.idle { background: var(--acf-muted); }
+.acf .vi .bd.off { width: 4px; height: 4px; background: var(--acf-panel); border: 1.5px solid var(--acf-muted); }
+
+/* 세션 구성 (ticket slcode-sidebar-revamp, 사용자 2026-11-26) — 사이드바 한 줄로 여는 창(preview.js). 위에 지시문 | AGENTS.md | 기능 탭, 왼쪽 목록(줄 끝 출처를 누르면 그 출처만), 오른쪽 고른 줄의 정보 */
+.acf dialog.pvd { width: min(1080px, 95vw); height: min(700px, 88vh); padding: 0; border: 1px solid var(--acf-line); border-radius: 14px; background: var(--acf-bg); color: var(--acf-fg); font: 14px/1.5 var(--acf-sans); overflow: hidden; }
+.acf dialog.pvd[open] { display: flex; flex-direction: column; }
+.acf dialog.pvd::backdrop { background: rgba(0,0,0,.5); }
+.acf .pvd > header { display: flex; align-items: center; gap: 16px; height: 48px; padding: 0 12px 0 18px; border-bottom: 1px solid var(--acf-line); flex: none; }
+.acf .pvd > header h2 { margin: 0; font-size: 15px; }
+.acf .pvd > header .x { margin-left: auto; }
+.acf .pvd .tabs { display: flex; gap: 4px; }
+.acf .pvd .tabs button { border: 0; background: none; color: var(--acf-muted); font: inherit; font-size: 13.5px; padding: 5px 10px; border-radius: 7px; cursor: pointer; }
+.acf .pvd .tabs button:hover { color: var(--acf-fg); }
+.acf .pvd .tabs button[aria-current=true] { background: var(--acf-soft); color: var(--acf-fg); font-weight: 600; }
+.acf .pvc { flex: 1; min-height: 0; display: grid; grid-template-columns: 340px minmax(0, 1fr); }
+.acf .pvl { min-height: 0; overflow-y: auto; padding: 6px 8px 16px; display: flex; flex-direction: column; gap: 1px; border-right: 1px solid var(--acf-line); }
+.acf .pvl .gl { padding: 14px 10px 4px; font-size: 12px; color: var(--acf-muted); }
+.acf .pvl .gl:first-child, .acf .pvl .filter + .gl { padding-top: 6px; }
+.acf .pvl .gl:not(:first-child) { margin-top: 6px; border-top: 1px solid var(--acf-line); }
+.acf .pvd .it { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px; border: 0; border-radius: 8px; background: none; color: var(--acf-fg); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.acf .pvd .it:hover { background: var(--acf-soft); }
+.acf .pvd .it[aria-current=true] { background: var(--acf-soft); font-weight: 600; }
+.acf .pvd .it .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acf .pvd .it .sz { font-size: 12px; font-weight: 400; color: var(--acf-muted); white-space: nowrap; }
+.acf .pvd .it .bad { font-size: 12px; font-weight: 400; color: var(--acf-err); }
+.acf .pvl .it .tag { max-width: 45%; overflow: hidden; text-overflow: ellipsis; font-size: 12px; font-weight: 400; color: var(--acf-muted); white-space: nowrap; }
+.acf .pvl .it .tag:hover { color: var(--acf-fg); text-decoration: underline; }
+.acf .pvl .filter { display: flex; align-items: center; gap: 8px; margin: 2px 2px 4px; padding: 4px 4px 4px 10px; border-radius: 8px; background: var(--acf-soft); font-size: 12.5px; }
+.acf .pvl .filter button { margin-left: auto; }
+.acf .pvl .empty, .acf .pvb .empty { padding: 6px 10px; color: var(--acf-muted); font-size: 13px; }
+.acf .pvb .empty { padding: 0; }
+.acf .pvl .empty.err, .acf .pvb .empty.err { color: var(--acf-err); }
+.acf .pvb { min-height: 0; overflow-y: auto; padding: 16px 20px 24px; display: flex; flex-direction: column; gap: 12px; }
+.acf .pvb h3 { margin: 0; font-size: 15px; overflow-wrap: anywhere; }
+.acf .pvb .tx { flex: none; position: relative; }
+.acf .pvb .tx > .trbtn { position: absolute; top: 6px; right: 6px; }
+.acf .pvb .tx > pre { padding-right: 34px; }
+.acf .pvb pre { flex: none; margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--acf-panel); font: 12.5px/1.55 var(--acf-mono); font-variant-ligatures: none; white-space: pre-wrap; word-break: break-word; }
+.acf .pvb .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 13px; }
+.acf .pvb .kv .k { color: var(--acf-muted); }
+.acf .pvb .kv .v { overflow-wrap: anywhere; white-space: pre-line; }
+.acf .pvb .kv code { font: 12px var(--acf-mono); color: var(--acf-muted); background: none; padding: 0; }
+.acf .pvb .files { display: flex; flex-direction: column; padding: 4px 0; border-top: 1px solid var(--acf-line); border-bottom: 1px solid var(--acf-line); }
+.acf .pvb .files .it { padding: 4px 8px; }
+.acf .pvb .files .it .nm { font-family: var(--acf-mono); font-size: 12.5px; }
+.acf .pvb .names { columns: 2; font-size: 13px; } .acf .pvb .names div { padding: 1px 0; }
+.acf .pvb button.by { align-self: flex-start; }
+.acf .pvb .plugs { display: flex; flex-direction: column; gap: 8px; }
+.acf .pvb .plugs button { align-self: flex-start; }
+.acf .pvb .plugs select { display: block; width: min(320px, 100%); height: 28px; padding: 0 6px; border: 1px solid var(--acf-line); border-radius: 6px; background: var(--acf-panel); color: inherit; font: inherit; font-size: 13px; }
+.acf .pvb .mcpf { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 13px; }
+.acf .pvb .mcpf .st { color: var(--acf-muted); } .acf .pvb .mcpf.bad .st { color: var(--acf-err); }
+.acf .pvb .mcpf button { display: inline-flex; align-items: center; gap: 6px; }
+.acf .pvb .mcpf button svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.acf .pvb .mcpf .why { flex-basis: 100%; white-space: normal; overflow-wrap: anywhere; font-size: 12px; color: var(--acf-muted); }
 
 /* background 작업 (ticket slcode-background-run-tool) — 입력창 위 따로 된 줄과 사이드바 절. 에이전트가 일하는 것이 아니므로 맥동하지 않는 초록 점 */
 .acf .runline .dot.bg, .acf .side .tasks .dot.bg { background: var(--acf-ok); animation: none; }

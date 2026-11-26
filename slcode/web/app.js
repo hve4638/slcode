@@ -3,10 +3,12 @@
 // 화면 하나 = 세션 하나 (사용자 결정 2026-09-25/26): 세션 id 는 opts.sessionId(웹 주소 /s/<id>), 없으면 서버에 server.info 로 묻는다. 서버 하나는 메인 세션과 그 자손을 다룬다 (ticket slcode-web-session-url).
 // 세션 목록·새 세션은 이 화면에 없다 — 새 세션은 새 `slcode` 명령(또는 superlite 의 새 카드).
 // transport = { request(method, params), onEvent(fn), onStatus(fn) } (rpc.js 표면).
-import { fileLink, renderMarkdown } from './markdown.js';
+import { renderMarkdown } from './markdown.js';
 import { DEFAULTS, applySettings, closeOnBackdrop, ctxLevel, settingsDialog } from './settings.js';
 import { inspectDialog } from './inspect.js';
 import { activityPanel } from './activity.js';
+import { previewDialog } from './preview.js';
+import { bgTerm } from './bgterm.js';
 import { escGate, inputHistory } from './inputkeys.js';
 import { rewindPicker } from './rewind.js';
 import { translateButton } from './translate.js';
@@ -107,7 +109,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   }
   paintUpd();
   let settings = DEFAULTS;
-  const setSettings = (s) => { settings = s; applySettings(s); settingsUi.update(s); renderStat(); };
+  const setSettings = (s) => { settings = s; applySettings(s); settingsUi.update(s); renderStat(); paintInsp(); };
   const feed = h('div', { class: 'feed' });
   const liveCol = h('div', { class: 'col' });
   let col = liveCol; // 옛 턴을 그릴 땐 임시 div 로 바꿨다가 앞에 붙인다
@@ -364,14 +366,13 @@ export function mountAgentFront(root, transport, opts = {}) {
   // 팀원 세션 (ticket slcode-team-agent, 사용자 2026-11-08) — kidAsks: 리더의 입력창 위 "팀원" 승인 줄, lockOver: 입력 제어 중인 팀원의 흐린 입력 상자 위 자물쇠 (paintLock·paintKids).
   // kidAsks 는 composer 밖(dock 위)에 둔다 — 리더 자신의 승인 카드가 composer 를 가려도 남는다
   const kidAsks = h('div', { class: 'kid-asks', hidden: '' });
-  // 실행 중 줄 (ticket slcode-running-agents-above-input, 사용자 2026-11-11) — 사이드바 "에이전트 N" 절의 요약. 사이드바를 닫아도 입력 상자 바로 위(큐 아래)에 남는다. 승인 카드가 입력창 자리에 뜨면 같이 가려진다
-  const runLine = h('div', { class: 'runline', hidden: '' });
-  // background 작업 줄 (ticket slcode-background-run-tool, 사용자 2026-11-23 시안 B) — 실행 중 줄 바로 위의 따로 된 줄. 에이전트가 쉬는 동안에도 남으므로
-  // 맥동하지 않는 초록 점으로 실행 중 줄(에이전트가 일함)과 가른다. 누르면 그 위로 목록이 펼쳐진다
-  const bgLine = h('div', { class: 'runline bgline', hidden: '' });
+  // 입력창 위 알약 줄 (ticket slcode-sidebar-revamp) — 세션 목록과 실행 중(에이전트·팀원·background). 채우는 쪽은 paintWk. 승인 카드가 입력창 자리에 뜨면 같이 가려진다
+  const wk = h('div', { class: 'wk' });
+  // background 출력 창 (사용자 2026-11-25) — 알약 줄 위에 뜬다. icon·ago 는 아래에서 정의된다
+  const term = bgTerm(h, (m, p) => rpc(m, p), { icon: (n) => icon(n), ago: (ms) => ago(ms) });
   const lockOver = h('div', { class: 'lockover', hidden: '' });
   const box = h('div', { class: 'box' }, inputHint, chips, h('div', { class: 'field' }, input, inputHl), h('div', { class: 'row' }, addBtn, modeBtn, modeMenu, h('span', { class: 'gap' }), modelBtn, modelMenu, stopBtn, sendBtn), slashMenu, filePick, lockOver);
-  const composer = h('div', { class: 'composer' }, queueTray, bgLine, runLine, box, stat);
+  const composer = h('div', { class: 'composer' }, queueTray, wk, box, stat);
   const side = h('aside', { class: 'side' });
   const dock = h('div', { class: 'dock' });
   // 실행 중 표시 — 피드 맨 끝(내 요청 바로 아래)에 한 줄: 맥동 점 · 지금 하는 일 · 경과. state 가 running 일 때만, 새 항목이 와도 늘 마지막 (사용자 2026-09-30)
@@ -405,15 +406,20 @@ export function mountAgentFront(root, transport, opts = {}) {
   }
   boot('connecting');
   // 맨 위 헤더 = 세션 이름·상태 … 설정·사이드바 버튼, 폭이 좁아도 늘 보인다 (사용자 2026-10-13). 전엔 왼쪽 레일이라 1100px 아래에서 숨었다
-  // 관련 세션 메뉴 — 헤더의 세션 이름 옆, 가족이 있을 때만 (ticket slcode-web-session-url, 사용자 2026-11-05: 사이드바는 기본으로 닫혀 있어 어느 화면에서든 보이는 헤더로). 채우는 쪽은 paintFamily
-  const famMenu = h('div', { class: 'menu fam-menu', popover: '' });
-  const famBtn = h('button', { class: 'fam-chip', hidden: '' });
-  famBtn.popoverTargetElement = famMenu;
-  famMenu.ontoggle = () => { if (famMenu.matches(':popover-open')) { const r = famBtn.getBoundingClientRect(); famMenu.style.left = `${r.left}px`; famMenu.style.top = `${r.bottom + 6}px`; opts.preload?.(family.sessions.filter((x) => x.live && x.id !== current).map((x) => x.id)); } };
+  // inspect 스위치 — 헤더 상태 칸 옆 (ticket slcode-sidebar-revamp, 사용자 2026-11-25. 전엔 사이드바 '세션' 칸). 설정의 '새 세션 inspect' 를 켰거나 이 세션이 켜져 있을 때만 보인다.
+  // 누르면 확인 창(askInspect) — 켜고 끄면 벤더를 같은 대화로 다시 띄운다(대기 중일 때만). 값은 session.changed 로 온다
+  const inspBtn = h('button', { class: 'insp', hidden: '', onclick: () => { if (info) askInspect(!info.inspect); } }, h('span', { class: 'sw' }), h('span', { class: 'lb' }, 'inspect'));
+  function paintInsp() {
+    inspBtn.hidden = !info || (!settings.inspect && !info.inspect);
+    if (inspBtn.hidden) return;
+    inspBtn.classList.toggle('on', !!info.inspect);
+    inspBtn.disabled = !(info.state === 'idle' || info.state === 'starting');
+    inspBtn.title = `inspect ${info.inspect ? '켬' : '끔'} — 누르면 ${info.inspect ? '끕니다' : '켭니다'}. ${info.vendor === 'codex' ? 'Codex' : 'Claude'} 를 같은 대화로 다시 띄웁니다 (대기 중일 때만)`;
+  }
   const center = h('div', { class: 'main' }, feed, kidAsks, dock, composer);
   center.addEventListener('pointerdown', () => el.classList.remove('peek'));
   el.append(
-    h('header', { class: 'hdr' }, nameRow, famBtn, famMenu, pill, bootEl, h('span', { class: 'gap' }), updBtn, gearBtn, sideBtn),
+    h('header', { class: 'hdr' }, nameRow, pill, inspBtn, bootEl, h('span', { class: 'gap' }), updBtn, gearBtn, sideBtn),
     center,
     side,
     settingsUi.el, prvDlg,
@@ -424,6 +430,10 @@ export function mountAgentFront(root, transport, opts = {}) {
   // 활동 기록 (ticket slcode-activity-state) — 사이드바 칸과 모달, 이 화면의 사람 행동 신호
   const act = activityPanel(h, rpc, { getId: () => current, root: el, feed, input });
   el.append(act.dialog);
+  // 세션 구성 (ticket slcode-sidebar-revamp) — 사이드바의 한 줄로 여는 창. 모델을 바꾸면 system prompt 를 다시 받는다
+  const pv = previewDialog(h, rpc, () => ({ id: current, ready, vendor: info?.vendor ?? ready?.vendor, key: `${current}|${modelKey}`,
+    mcp: mcpList(), agentPlugins: plugs?.plugins.map((p) => p.name) ?? [], translator: opts.translator, parts: { prompt: promptPart, plugins: plugPart, mcp: mcpPart } }));
+  el.append(pv.dialog);
   let family = null, refused = null; // 같은 가족의 세션(serve.sessions), 주소가 가리켰지만 열지 못한 세션
   let current = null, lastSeq = 0, curSeq = 0, replaying = false, info = null, ready = null, connected = false, exitNote = null;
   // 스트리밍 상태는 범위마다 — 본문(main)과 서브에이전트(부모 tool_use id)마다 따로 (2026-09-30, 작업 카드)
@@ -441,7 +451,6 @@ export function mountAgentFront(root, transport, opts = {}) {
   const sentFiles = new Map(); // 이름 → dataUrl: 이 화면에서 보낸 이미지의 미리보기 (로그엔 이름만 남는다)
   const usage = { turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
   let costBase = 0, costLast = 0, costKnown = false; // SDK total_cost_usd 는 프로세스 누계 — --resume 뒤 0 부터 다시 시작하므로 줄어드는 경계에서 기준선에 합친다
-  let hooks = 0, lastHook = '';
   let status = null; // session.status — 브랜치·플랜 리밋. attach 와 turn.end 때 한 번씩 (폴링 없음)
   function tally(ev) { // 사용량 누계 — 옛 턴은 그리기 전에 미리 센다
     usage.turns++;
@@ -667,6 +676,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     branch: '<line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
     fork: '<circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/>',
     box: '<path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>',
+    hash: '<path d="M4 9h16"/><path d="M4 15h16"/><path d="M10 3 8 21"/><path d="M16 3l-2 18"/>', // lucide hash — 사이드바의 세션 id
     cpu: '<rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/>',
     coin: '<circle cx="12" cy="12" r="10"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><path d="M12 18V6"/>',
     mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
@@ -703,6 +713,13 @@ export function mountAgentFront(root, transport, opts = {}) {
   };
   /** hook.message() 의 icon(slcode-plugin hookApi.MESSAGE_ICONS) → ICONS 이름 */
   const NOTE_ICONS = { bell: 'bell', flag: 'flag', info: 'info', alert: 'triangleAlert', check: 'circleCheck', star: 'star', zap: 'zap', shield: 'shield' };
+  // 벤더 로고 (ticket slcode-sidebar-revamp, 사용자 2026-11-25) — 세션 목록 행의 벤더 표지와 사이드바의 벤더 세션 id 줄에만 쓴다(Orca·Paseo 처럼). 모양·색은 바꾸지 않는다.
+  // Claude: simple-icons 16.38.1 claude.svg (CC0, 상표는 Anthropic), OpenAI: @lobehub/icons-static-svg 1.106.0 openai.svg (MIT, 상표는 OpenAI). Codex 세션은 OpenAI 로고
+  const LOGOS = {
+    claude: 'm4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z',
+    codex: 'M9.205 8.658v-2.26c0-.19.072-.333.238-.428l4.543-2.616c.619-.357 1.356-.523 2.117-.523 2.854 0 4.662 2.212 4.662 4.566 0 .167 0 .357-.024.547l-4.71-2.759a.797.797 0 00-.856 0l-5.97 3.473zm10.609 8.8V12.06c0-.333-.143-.57-.429-.737l-5.97-3.473 1.95-1.118a.433.433 0 01.476 0l4.543 2.617c1.309.76 2.189 2.378 2.189 3.948 0 1.808-1.07 3.473-2.76 4.163zM7.802 12.703l-1.95-1.142c-.167-.095-.239-.238-.239-.428V5.899c0-2.545 1.95-4.472 4.591-4.472 1 0 1.927.333 2.712.928L8.23 5.067c-.285.166-.428.404-.428.737v6.898zM12 15.128l-2.795-1.57v-3.33L12 8.658l2.795 1.57v3.33L12 15.128zm1.796 7.23c-1 0-1.927-.332-2.712-.927l4.686-2.712c.285-.166.428-.404.428-.737v-6.898l1.974 1.142c.167.095.238.238.238.428v5.233c0 2.545-1.974 4.472-4.614 4.472zm-5.637-5.303l-4.544-2.617c-1.308-.761-2.188-2.378-2.188-3.948A4.482 4.482 0 014.21 6.327v5.423c0 .333.143.571.428.738l5.947 3.449-1.95 1.118a.432.432 0 01-.476 0zm-.262 3.9c-2.688 0-4.662-2.021-4.662-4.519 0-.19.024-.38.047-.57l4.686 2.71c.286.167.571.167.856 0l5.97-3.448v2.26c0 .19-.07.333-.237.428l-4.543 2.616c-.619.357-1.356.523-2.117.523zm5.899 2.83a5.947 5.947 0 005.827-4.756C22.287 18.339 24 15.84 24 13.296c0-1.665-.713-3.282-1.998-4.448.119-.5.19-.999.19-1.498 0-3.401-2.759-5.947-5.946-5.947-.642 0-1.26.095-1.88.31A5.962 5.962 0 0010.205 0a5.947 5.947 0 00-5.827 4.757C1.713 5.447 0 7.945 0 10.49c0 1.666.713 3.283 1.998 4.448-.119.5-.19 1-.19 1.499 0 3.401 2.759 5.946 5.946 5.946.642 0 1.26-.095 1.88-.309a5.96 5.96 0 004.162 1.713z',
+  };
+  const logo = (vendor) => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('class', `lg ${vendor}`); s.innerHTML = `<path${vendor === 'codex' ? ' fill-rule="evenodd"' : ''} d="${LOGOS[vendor] ?? LOGOS.claude}"/>`; return s; };
   const icon = (name) => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.innerHTML = ICONS[name]; return s; };
   const iconBtn = (name, title, onclick) => h('button', { class: 'ico', title, 'aria-label': title, onclick }, icon(name));
   const acts = (...btns) => h('div', { class: 'acts' }, ...btns);
@@ -792,7 +809,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   const forkBtn = (endSeq) => iconBtn('fork', '이 응답까지 복제', () => fork(endSeq));
   const inspectBtn = (endSeq) => { const b = iconBtn('inspect', '이 턴의 API 호출 보기', () => inspectUi.open(current, endSeq)); b.classList.add('insp'); return b; };
   const syncInspect = () => el.classList.toggle('inspectable', info?.inspect != null);
-  // 사이드바 inspect 토글의 확인 창 (사용자 2026-10-19, ticket slcode-inspect-default-on) — 켜고 끄면 벤더를 다시 띄워 다음 호출의 캐시가 깨질 수 있다
+  // 헤더 inspect 스위치의 확인 창 (사용자 2026-10-19, ticket slcode-inspect-default-on) — 켜고 끄면 벤더를 다시 띄워 다음 호출의 캐시가 깨질 수 있다
   let inspectTo = false;
   const inspectMsg = h('p', {});
   const confirmInspect = h('dialog', { class: 'confirm' }, inspectMsg, h('div', { class: 'btns' },
@@ -940,19 +957,19 @@ export function mountAgentFront(root, transport, opts = {}) {
       case 'session.state': setState(ev.state); if (live) act.refresh(); break;
       // 마지막 턴 뒤의 열 때 알림(main.openNodes)은 다시 열리면 지운다 — 기록을 다시 그릴 때(앞 페이지 포함)도 같은 규칙
       case 'session.opened': main.inTurn = false; for (const n of main.openNodes ?? []) n.remove(); main.openNodes = []; break;
-      case 'session.ready': ready = ev; mcp = null; renderMode(); renderSide(); if (live) loadMcp(); break;
+      case 'session.ready': ready = ev; mcp = null; renderMode(); if (live) pv.reset(); renderSide(); if (live) loadMcp(); break;
       case 'plugins.reloaded': {
         endText();
         push(h('div', { class: 'notice' }, ['에이전트 플러그인 다시 실음', ...ev.plugins.map((p) => `${p.name} ${p.version}`), ev.removed.length ? `뗌 ${ev.removed.join(', ')}` : null].filter(Boolean).join(' · ')));
         if (ev.later.length) push(h('div', { class: 'meta' }, `새 세션부터 적용: ${ev.later.map((l) => `${l.name} ${l.what.map((w) => LATER[w] ?? w).join('·')}`).join(', ')}`));
         if (live && ready) { ready = { ...ready, plugins: ev.sdk.plugins, slashCommands: ev.sdk.commands, agents: ev.sdk.agents, mcp: ev.sdk.mcp }; mcp = null; renderSide(); }
-        if (live) loadCommands(); // 다시 실은 플러그인의 명령
+        if (live) { loadCommands(); pv.reset(); } // 다시 실은 플러그인의 명령, 바뀐 훅
         break;
       }
       case 'session.imported': // 표지는 옮겨 온 대화 뒤에 선다 (사용자 2026-10-15: 짧게). slcode 복제본의 표지는 복제 지점 (ticket slcode-session-fork)
         push(ev.fork && info?.parent?.kind === 'fork' ? forkMark(info.parent.id) : h('div', { class: 'notice' }, `imported from ${ev.vendor} (${ev.vendorSessionId.slice(0, 8)})`)); break;
       case 'context.compacted': endText(); push(h('div', { class: 'notice' }, `컨텍스트 압축${ev.preTokens ? ` · ${fmtTok(ev.preTokens)}` : ''}`)); break;
-      case 'hook': if (live) { hooks++; lastHook = `${ev.event} ${ev.phase}`; } break;
+      case 'hook': break;
       case 'agent.hook': { // 에이전트 플러그인 js/ts 훅 (ticket slcode-agent-plugin-hooks) — 한 일이 있을 때만 그린다 (사용자 2026-10-30, 프로토타입 D)
         const who = (x) => `${ev.plugin} · ${x}`;
         if (ev.phase === 'ready') { for (const x of ev.errors) push(h('div', { class: 'meta err', title: who('스크립트') }, `${ev.plugin} 훅: ${x}`)); break; }
@@ -1138,8 +1155,6 @@ export function mountAgentFront(root, transport, opts = {}) {
     renderSide();
   }
 
-  // ---- 사이드바 — 맨 위는 늘 보이는 요약(폴더·브랜치·리밋·비용), 아래는 섹션마다 접히는 카드로 기본 접힘. 다시 그려도 접힘은 남긴다 (사용자 2026-09-28 A안, 2026-09-29 기본 접힘)
-  const folded = new Set(['session', 'pending', 'usage', 'loaded', 'hooks']);
   const fmtReset = (iso) => { // 남은 기간 — claude 상태줄과 같은 꼴 (55m · 4h55m · 2d10h)
     if (!iso) return '';
     const m = Math.max(0, Math.round((new Date(iso) - Date.now()) / 6e4));
@@ -1188,21 +1203,9 @@ export function mountAgentFront(root, transport, opts = {}) {
   const famGo = (s, cls, ...kids) => h('a', { class: cls, href: viaHost ? '#' : `s/${encodeURIComponent(s.id)}`, onclick: (e) => {
     if (!viaHost && (!opts.navigate || e.ctrlKey || e.metaKey || e.shiftKey)) return; // 새 탭·새 창은 브라우저 몫
     e.preventDefault();
-    if (famMenu.matches(':popover-open')) famMenu.hidePopover();
+    closePop();
     if (viaHost) hostPost({ type: 'slcode.goto', target: s.id }); else opts.navigate(s.id);
   } }, ...kids);
-  function famRows() {
-    const depth = new Map();
-    return family.sessions.map((s) => {
-      const d = depth.has(s.parent?.id) ? depth.get(s.parent.id) + 1 : 0;
-      depth.set(s.id, d);
-      return famGo(s, `fam-row${s.id === current ? ' cur' : ''}${s.live ? '' : ' off'}`,
-        h('span', { class: 'fam-indent', style: `width:${d * 14}px` }),
-        h('span', { class: 'fam-name' }, famName(s)),
-        s.id === family.main ? h('span', { class: 'fam-tag' }, '메인') : s.parent ? h('span', { class: 'fam-tag' }, s.parent.kind === 'fork' ? '복제' : '팀원') : null,
-        s.live ? null : h('span', { class: 'fam-tag' }, '꺼짐'));
-    });
-  }
   // 복제본의 복제 지점 표지 (ticket slcode-session-fork, 사용자 2026-11-08) — forked from <원본 이름> (<원본 id>), id 는 가족 메뉴와 같은 링크.
   // 이름은 가족 목록에서 — 목록이 표지보다 늦게 오면 받은 뒤 다시 그린다. 이름이 없는 세션은 id 만
   const forkMarks = new Set();
@@ -1213,9 +1216,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   function forkMark(pid) { const el = h('div', { class: 'notice' }); el._pid = pid; paintForkMark(el); forkMarks.add(el); return el; }
   function paintFamily() {
     for (const el of forkMarks) paintForkMark(el);
-    const many = (family?.sessions.length ?? 0) > 1;
-    famBtn.hidden = !many;
-    if (many) { famBtn.textContent = `세션 ${family.sessions.length} ▾`; famBtn.title = '관련 세션'; famMenu.replaceChildren(...famRows()); }
+    paintWk();
   }
   async function loadFamily() {
     let r;
@@ -1279,134 +1280,185 @@ export function mountAgentFront(root, transport, opts = {}) {
     if (!me) pill.textContent = '열 수 없음'; // 그 세션이 끝난 것이 아니다
     if (refused === id) return; // 다시 붙을 때마다 쌓이지 않게
     refused = id;
+    paintWk(); // 부모로 돌아가는 알약
     const main = family.sessions.find((s) => s.id === family.main);
     push(h('div', { class: 'meta err fam-refused' }, me ? `꺼진 세션입니다: ${famName(me)}` : `이 화면에서 열 수 없는 세션입니다: ${id}`, ' ', main ? famGo(main, 'fam-back', `메인 세션 열기 (${famName(main)})`) : null));
   }
 
-  // ---- 실행 중 줄 (ticket slcode-running-agents-above-input) — 벤더 서브에이전트(tasks)와 작업 중인 팀원(session.children 의 state)을 센다
+  // ---- 입력창 위 알약 (ticket slcode-sidebar-revamp, 사용자 2026-11-25 — Paseo 의 "● 4 working" 을 참고한 후보 C).
+  // "세션 N ▾" 은 늘 보이고 누르면 이 화면이 갈 수 있는 세션 목록(전엔 헤더의 가족 메뉴), "N 실행 중" 은 벤더 서브에이전트(tasks)·작업 중인 팀원·background 가 있을 때만이고
+  // 누르면 에이전트와 background 를 나눈 목록. 목록은 알약 위로 열리고, 행 아이콘은 벤더 로고 + 오른쪽 아래 상태 점. 사이드바가 열려 있어도 보인다
   const workingKids = () => kids.filter((k) => k.state && k.state !== 'idle' && k.state !== 'exited');
-  const goTask = (card) => { card.open = true; card.scrollIntoView({ block: 'center' }); };
-  // 한 줄 요약 — 누르면 그 위로 항목 목록이 펼쳐지고, 항목은 피드의 그 카드나 팀원 세션으로 간다 (사용자 2026-11-11, 후보 A). 사이드바가 열려 있어도 보인다
-  let runOpen = false;
-  function paintRunning() {
-    const mates = workingKids(), n = tasks.size + mates.length;
-    runLine.hidden = !n;
-    if (!n) { runOpen = false; runLine.replaceChildren(); return; }
-    const sumText = `${[tasks.size ? `에이전트 ${tasks.size}` : null, mates.length ? `팀원 ${mates.length}` : null].filter(Boolean).join(' · ')} 실행 중`;
-    const rows = runOpen ? [h('div', { class: 'list' },
-      ...[...tasks.values()].map(({ card, ev }) => h('a', { class: 'it', onclick: () => goTask(card) }, h('span', { class: 'dot' }), h('span', { class: 'name' }, ev.agentType ?? 'task'), h('span', { class: 'desc' }, ev.description))),
-      ...mates.map((k) => famGo(k, 'it', h('span', { class: 'dot' }), h('span', { class: 'name' }, '팀원'), h('span', { class: 'desc' }, famName(k)))))] : [];
-    runLine.replaceChildren(...rows, h('button', { class: `sum${runOpen ? ' open' : ''}`, onclick: () => { runOpen = !runOpen; paintRunning(); } }, h('span', { class: 'dot' }), h('span', {}, sumText), icon('chevron')));
+  const goTask = (card) => { closePop(); card.open = true; card.scrollIntoView({ block: 'center' }); };
+  let popOpen = null; // 'fam' | 'run' | null
+  const closePop = () => { if (popOpen) { popOpen = null; paintWk(); } };
+  // 목록과 알약 밖을 누르면 닫는다 — 알약 줄의 빈 곳·출력 창도 바깥 (사용자 2026-11-26). 알약은 제 click 으로 여닫는다
+  el.addEventListener('pointerdown', (e) => { const k = e.target.closest?.('.pop, .pl'); if (popOpen && k?.parentNode !== wk) closePop(); });
+  // 목록이 열려 있으면 Esc 는 목록만 닫는다 (사용자 2026-11-26) — 입력창의 중단·비우기·되돌리기로 가지 않게 capture 에서 먼저 받는다
+  document.addEventListener('keydown', (e) => { if (popOpen && e.key === 'Escape' && !e.isComposing && !behind()) { e.preventDefault(); e.stopPropagation(); closePop(); } }, true);
+  const vendorOf = (s) => (s.id === current ? info?.vendor ?? ready?.vendor : s.vendor) ?? 'claude';
+  /** 벤더 로고 + 상태 점(work·pend·idle·off, 없으면 점 없음) */
+  const vic = (vendor, st) => h('span', { class: 'vi' }, logo(vendor), st ? h('span', { class: `bd ${st}` }) : null);
+  const popRow = (tag, attrs, icn, title, sub, ...acts) => h(tag, { ...attrs, class: `r${attrs.class ? ` ${attrs.class}` : ''}` }, h('span', { class: 'ic' }, icn), h('span', { class: 't' }, title), h('span', { class: 's' }, sub), acts.length ? h('span', { class: 'act' }, ...acts) : null);
+  const KIND = { child: '팀원', fork: '복제' };
+  const KID_STATE = { running: ['work', '작업 중'], requires_action: ['pend', '승인 대기'], starting: ['work', '시작 중'], idle: ['idle', '대기'] };
+  function famRow(s) {
+    const me = s.id === current, kid = kids.find((k) => k.id === s.id);
+    const kind = s.id === family?.main ? '메인' : KIND[s.parent?.kind] ?? '';
+    if (me) {
+      const ctx = status?.context;
+      const sub = [modelName || ready?.model, effortNow, modeName(info?.permissionMode ?? ready?.permissionMode), ctx ? `ctx ${fmtTok(ctx.tokens)} / ${fmtTok(ctx.max)} (${Math.round(ctx.pct)}%)` : null].filter(Boolean).join(' · ');
+      return popRow('div', { class: 'cur' }, vic(vendorOf(s)), [famName(s), h('span', { class: 'tag' }, '지금 세션')], sub);
+    }
+    const [st, label] = !s.live ? ['off', '꺼짐'] : kid?.pending.length ? ['pend', '승인 대기'] : kid ? KID_STATE[kid.state] ?? ['idle', ''] : [null, ''];
+    return famGo(s, `r${s.live ? '' : ' off'}`, h('span', { class: 'ic' }, vic(vendorOf(s), st)), h('span', { class: 't' }, famName(s)),
+      h('span', { class: 's' }, [kind, st === 'pend' ? h('span', { class: 'warn' }, label) : label].filter(Boolean).flatMap((x, i) => (i ? [' · ', x] : [x]))));
+  }
+  const taskRow = ({ card, ev }) => {
+    const u = ev.usage;
+    return popRow('a', { onclick: () => goTask(card), title: ev.summary ?? null }, vic(info?.vendor ?? ready?.vendor ?? 'claude', 'work'), `${ev.agentType ?? 'task'} · ${ev.description ?? ''}`,
+      [u ? `${(u.durationMs / 1000).toFixed(0)}s · ${fmtTok(u.tokens)} 토큰` : null, ev.lastTool].filter(Boolean).join(' · ') || '실행 중');
+  };
+  function paintWk() {
+    const mates = workingKids(), bg = bgRunning(), n = tasks.size + mates.length + bg.length;
+    if (popOpen === 'run' && !n) popOpen = null;
+    // 펼친 동안만 2초마다 background 목록을 다시 받는다 — 지난 시간·출력 크기 (생기고 끝나는 것은 session.bg 로 온다)
+    term.sync(bgTasks, current);
+    const tick = popOpen === 'run' && bg.length;
+    if (tick && !bgTick) bgTick = setInterval(() => rpc('session.bgList', { id: current }).then((r) => paintBg(r.tasks, true), () => {}), 2000); else if (!tick && bgTick) { clearInterval(bgTick); bgTick = null; }
+    const sessions = family?.sessions.length ? family.sessions : current ? [{ id: current, title: info?.title ?? null, parent: null, live: true }] : [];
+    const pill = (key, cls, ...kids) => h('button', { class: `pl ${cls}${popOpen === key ? ' open' : ''}`, onclick: () => {
+      popOpen = popOpen === key ? null : key;
+      if (popOpen === 'fam') opts.preload?.(sessions.filter((x) => x.live && x.id !== current).map((x) => x.id));
+      paintWk();
+    } }, ...kids);
+    let pop = null;
+    if (popOpen === 'fam') pop = [famRow(sessions.find((s) => s.id === current) ?? { id: current, title: info?.title, live: true }), ...sessions.filter((s) => s.id !== current).map(famRow)];
+    else if (popOpen === 'run') {
+      const agents = [...[...tasks.values()].map(taskRow), ...mates.map((k) => famRow(sessions.find((s) => s.id === k.id) ?? { id: k.id, title: k.title, parent: { kind: 'child' }, live: true }))];
+      pop = [agents.length ? h('div', { class: 'gh' }, `에이전트 ${agents.length}`) : null, ...agents, bg.length ? h('div', { class: 'gh' }, `background ${bg.length}`) : null, ...bg.map(bgRow)];
+    }
+    // 팀원(자식) 세션은 맨 앞에 부모로 돌아가는 알약 (사용자 2026-11-25, Paseo 처럼). 복제본은 피드의 forked from 표지가 원본으로 간다
+    // 열지 못한 꺼진 팀원 화면(refuseSession)은 info 가 없다 — 관련 세션 목록의 parent 로
+    const par = info?.parent ?? family?.sessions.find((x) => x.id === (current ?? refused))?.parent;
+    const up = par?.kind === 'child' ? sessions.find((x) => x.id === par.id) ?? { id: par.id, title: null } : null;
+    // 출력 창은 떼지 않는다 — 다시 붙이면 스크롤이 맨 위로 간다
+    for (const c of [...wk.children]) if (c !== term.el) c.remove();
+    wk.prepend(...[
+      up ? famGo(up, 'pl back', icon('chevron'), h('span', { class: 'nm' }, famName(up))) : null,
+      pill('fam', 'calm fam-chip', h('span', { class: 'rd' }), `세션 ${sessions.length} ▾`),
+      n ? pill('run', 'busy', h('span', { class: 'rd' }), `${n} 실행 중`) : null,
+      pop ? h('div', { class: 'pop' }, ...pop) : null].filter(Boolean));
+    if (!term.el.parentNode) wk.append(term.el);
   }
 
   // ---- background 작업 (ticket slcode-background-run-tool) — session.bgList·session.bg 로 받는다. 끝난 것은 세지 않는다.
-  // 줄마다 설명(없으면 명령)·지난 시간·명령·출력 파일 링크(크기, 비었으면 '출력 없음' — 빈 파일을 열면 흰 화면뿐이다)·중지. 중지는 화면에서 사람이 끈 것 — 에이전트에게 메시지는 가지 않는다
-  let bgTasks = [], bgOpen = false, bgTick = null;
+  // 행마다 설명(없으면 명령)·지난 시간·로그 크기·명령·중지, 행을 누르면 출력 창(bgterm.js) — 목록은 열린 채로, 바깥을 눌러야 닫힌다. 중지는 화면에서 사람이 끈 것 — 에이전트에게 메시지는 가지 않는다
+  let bgTasks = [], bgTick = null;
   const bgRunning = () => bgTasks.filter((t) => t.endedAt === undefined);
   const fmtBytes = (n) => (n < 1024 ? `${n}B` : n < 1048576 ? `${(n / 1024).toFixed(1)}KB` : `${(n / 1048576).toFixed(1)}MB`);
-  const ago = (ms) => { const s = Math.max(0, Math.floor((Date.now() - ms) / 1000)); return s < 60 ? `${s}초` : s < 3600 ? `${Math.floor(s / 60)}분` : `${Math.floor(s / 3600)}시간 ${Math.floor((s % 3600) / 60)}분`; };
+  const ago = (ms) => { const s = Math.max(0, Math.floor((Date.now() - ms) / 1000)); return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`; }; // 짧게 16h 2m (사용자 2026-11-26)
+  // 중지는 두 번 눌러야 끈다 (사용자 2026-11-25) — 한 번 누르면 빨간 '중지' 로 바뀌고 4초 안에 다시 누르면 끈다. 다른 곳을 누르면 곧바로 네모로 돌아간다.
+  // 목록·출력 창을 다시 그려도 남게 밖에 둔다. 되돌릴 때는 다시 그리지 않고 단추 모양만 바꾼다 — 누른 행이 pointerdown 에 바뀌면 그 click 이 사라진다
+  let armed = null; const stopping = new Set();
+  const stopLook = (b, on) => {
+    b.classList.toggle('arm', on);
+    b.title = on ? '한 번 더 누르면 끕니다' : '중지 — 프로세스 그룹을 끕니다 (SIGTERM, 5초 뒤 SIGKILL)';
+    b.setAttribute('aria-label', on ? '중지 확인' : '중지');
+    b.replaceChildren(on ? '중지' : icon('stop'));
+  };
+  const disarm = () => { clearTimeout(armed?.timer); armed = null; for (const b of el.querySelectorAll('.bgstop.arm')) stopLook(b, false); };
+  el.addEventListener('pointerdown', (e) => { if (armed && !e.target.closest?.('.bgstop.arm')) disarm(); });
+  function bgStopBtn(t) {
+    if (stopping.has(t.id)) return h('button', { class: 'bgstop', disabled: '' }, '끄는 중…');
+    const b = h('button', { class: 'bgstop', onclick: (e) => {
+      e.stopPropagation();
+      if (armed?.task !== t.id) { disarm(); armed = { task: t.id, timer: setTimeout(disarm, 4000) }; return paintWk(); }
+      disarm(); stopping.add(t.id); paintWk();
+      rpc('session.bgStop', { id: current, task: t.id, by: 'user' }).catch((err) => push(h('div', { class: 'meta err' }, err.message))).finally(() => { stopping.delete(t.id); paintWk(); });
+    } });
+    stopLook(b, armed?.task === t.id);
+    return b;
+  }
   function bgRow(t) {
-    const link = fileLink(t.output);
-    const stop = h('button', { class: 'bgstop', title: '프로세스 그룹을 끕니다 (SIGTERM, 5초 뒤 SIGKILL)', onclick: (e) => {
-      e.stopPropagation(); stop.disabled = true; stop.textContent = '끄는 중…';
-      rpc('session.bgStop', { id: current, task: t.id, by: 'user' }).catch((err) => { stop.disabled = false; stop.textContent = '중지'; push(h('div', { class: 'meta err' }, err.message)); });
-    } }, '중지');
-    return h('div', { class: 'it bgit' }, h('span', { class: 'dot bg' }), h('span', { class: 'name' }, t.description || t.command), h('span', { class: 'dim' }, ago(t.startedAt)),
-      t.description ? h('code', { class: 'cmd', title: t.command }, t.command) : h('span', { class: 'cmd' }),
-      t.size ? h('a', { href: link.href, 'data-open': link.open, target: '_blank', rel: 'noopener', title: t.output }, `로그 ${fmtBytes(t.size)}`)
-        : h('span', { class: 'dim', title: `${t.output}\n아직 출력이 없습니다. 프로그램이 출력을 버퍼에 쥐고 있을 수도 있습니다` }, '출력 없음'), stop);
+    return popRow('div', { class: 'bgit', title: '출력 보기', onclick: () => term.open(t, current) }, h('span', { class: 'term' }, icon('term')), t.description || t.command,
+      [ago(t.startedAt), t.size ? `로그 ${fmtBytes(t.size)}` : null, t.description ? h('code', { class: 'cmd', title: t.command }, t.command) : null].filter(Boolean).flatMap((x, i) => (i ? [' · ', x] : [x])),
+      bgStopBtn(t));
   }
   function paintBg(list, tick = false) {
     if (list) bgTasks = list;
-    const run = bgRunning(), n = run.length;
-    if (!n) bgOpen = false;
-    // 펼친 동안만 2초마다 목록을 다시 받는다 — 지난 시간·출력 크기 (생기고 끝나는 것은 session.bg 로 온다)
-    if (bgOpen && !bgTick) bgTick = setInterval(() => rpc('session.bgList', { id: current }).then((r) => paintBg(r.tasks, true), () => {}), 2000); else if (!bgOpen && bgTick) { clearInterval(bgTick); bgTick = null; }
-    bgLine.hidden = !n;
-    bgLine.replaceChildren(...(n ? [...(bgOpen ? [h('div', { class: 'list' }, ...run.map(bgRow))] : []),
-      h('button', { class: `sum${bgOpen ? ' open' : ''}`, onclick: () => { bgOpen = !bgOpen; paintBg(); } }, h('span', { class: 'dot bg' }), h('span', {}, `background ${n}개 실행 중`), icon('chevron'))] : []));
-    if (!tick) renderSide(); // 사이드바 절
+    if (tick) paintWk(); else renderSide(); // renderSide 가 알약도 다시 그린다
   }
   const loadBg = () => rpc('session.bgList', { id: current }).then((r) => paintBg(r.tasks), () => paintBg([]));
 
-  function renderSide() {
-    renderStat(); paintRunning(); // 남은 시간도 사이드바를 다시 그릴 때 같이 다시 잰다
-    side.innerHTML = '';
-    // claude 상태줄과 같은 줄거리 중 💻모델 (폴더·repo·리밋·context·비용은 작성창 아래). 값은 SDK 가 주는 때(attach·turn.end)만 갱신 (사용자 2026-09-30)
-    const row = (name, ...kids) => h('div', { class: 'row' }, icon(name), ...kids);
-    side.append(h('div', { class: 'top' },
-      row('cpu', h('span', {}, modelName || ready?.model || '—')),
-    ));
-    const kv = (rows) => h('div', { class: 'kv' }, ...rows.flatMap(([k, v]) => [h('span', { class: 'k' }, k), h('span', { class: 'v' }, v ?? '—')]));
-    const sec = (key, label, body, extra) => {
-      const d = h('details', { class: 'sec', open: folded.has(key) ? null : '' }, h('summary', {}, h('h4', {}, label), extra ?? '', icon('chevron')), h('div', { class: 'body' }, body));
-      d.addEventListener('toggle', () => { if (d.open) folded.delete(key); else folded.add(key); });
-      return d;
-    };
-    // 활동 기록 — 모델 줄 아래, 기본으로 펼친다 (ticket slcode-activity-state). 칸 안은 activity.js 가 따로 다시 그린다
-    side.append(sec('activity', '활동 기록', act.body, act.more));
-    const mates = workingKids();
-    if (tasks.size || mates.length) side.append(h('div', { class: 'tasks' }, h('h4', {}, `에이전트 ${tasks.size + mates.length}`), ...[...tasks.values()].map(({ card, ev }) => {
-      const u = ev.usage;
-      return h('a', { onclick: () => goTask(card) },
-        h('span', { class: 'dot' }), h('span', { class: 'name' }, ev.agentType ?? 'task'), h('span', { class: 'desc' }, ev.description),
-        h('span', { class: 'dim' }, [u ? `${(u.durationMs / 1000).toFixed(0)}s · ${fmtTok(u.tokens)}` : null, ev.lastTool].filter(Boolean).join(' · ')),
-        ev.summary ? h('span', { class: 'sum' }, ev.summary) : null);
-    }), ...mates.map((k) => famGo(k, '', h('span', { class: 'dot' }), h('span', { class: 'name' }, '팀원'), h('span', { class: 'desc' }, famName(k)),
-      k.pending.length ? h('span', { class: 'dim' }, '승인 대기') : null))));
-    const bgRun = bgRunning();
-    if (bgRun.length) side.append(h('div', { class: 'tasks bgtasks' }, h('h4', {}, `background ${bgRun.length}`), ...bgRun.map(bgRow)));
-    side.append(sec('session', '세션', kv([
-      ['상태', STATE_LABEL[info?.state] ?? ''], ['id', current ? h('span', { class: 'idv' }, current, iconBtn('copy', '세션 id 복사', copyOf(current))) : null],['벤더 세션', info?.vendorSessionId ?? ready?.vendorSessionId], ['권한 모드', modeName(info?.permissionMode ?? ready?.permissionMode)],
-      ['연결', connected ? '연결됨' : '끊김'], ['raw', info?.raw ? '켬' : '끔'],
-      // inspect 토글 — 켜고 끄면 벤더(claude·codex)를 같은 대화로 다시 띄운다 (idle 일 때만). 값은 session.changed 로 온다
-      ...(info ? [['inspect', h('button', { class: 'ghost', title: `켜거나 끄면 ${info.vendor} 를 같은 대화로 다시 띄웁니다 (대기 중일 때만)`, disabled: info.state === 'idle' || info.state === 'starting' ? null : '',
-        onclick: () => askInspect(!info.inspect) }, info.inspect ? '켬' : '끔')]] : []),
-    ])));
-    const pend = [...cards.entries()].filter(([, c]) => !c.classList.contains('resolved'));
-    side.append(sec('pending', '대기 중', pend.length
-      ? h('div', { class: 'pend' }, ...pend.map(([, c]) => h('a', { onclick: () => showDock(c) }, `${c._mark.querySelector('.kind').textContent} · ${c._mark.querySelector('.what').textContent}`)))
-      : h('div', { class: 'empty' }, '없음'), pend.length ? h('span', { class: 'badge' }, String(pend.length)) : ''));
-    side.append(sec('usage', '사용량', kv([
-      ['턴', String(usage.turns)], ['입력', fmtTok(usage.input)], ['캐시 읽기', fmtTok(usage.cacheRead)], ['캐시 쓰기', fmtTok(usage.cacheWrite)], ['출력', fmtTok(usage.output)],
-    ])));
-    const list = (key, label, items, f = (x) => x) => {
-      const d = h('details', { class: 'list', open: folded.has(`+${key}`) ? '' : null }, h('summary', {}, label, h('span', { class: 'n' }, String(items.length))), h('ul', {}, ...items.map((x) => h('li', {}, f(x)))));
-      d.addEventListener('toggle', () => { if (d.open) folded.add(`+${key}`); else folded.delete(`+${key}`); }); // 목록은 기본 접힘
-      return d;
-    };
-    // failed 는 사유(있으면)와 다시 연결 버튼 — 다시 연결은 그 서버 하나만, 세션·대화는 그대로
-    const mcpItem = (m) => m.status !== 'failed' ? `${m.name} (${m.status})` : h('div', { class: 'mcpf' },
-      h('span', { class: 'nm' }, `${m.name} (${mcpBusy === m.name ? '다시 연결 중' : 'failed'})`),
-      h('button', { class: 'ico', title: '다시 연결', 'aria-label': '다시 연결', disabled: mcpBusy ? '' : null, onclick: () => retryMcp(m.name) }, icon('retry')),
+  // ---- 사이드바 (ticket slcode-sidebar-revamp, 사용자 2026-11-26) — 맨 위에 고정한 글 줄(모델·세션 id·벤더 세션 id), 할 일이 있을 때만 붙는 줄,
+  // 가로줄 아래 활동 기록, 그 아래 '세션 구성' 한 줄(누르면 창, preview.js). 접는 칸은 두지 않는다.
+  // 뺀 것: 상태·연결(헤더 알약), 권한 모드(입력창), 사용량(입력창 아래 비용 툴팁), 슬래시 명령(입력창의 / 목록), raw
+  const mcpList = () => mcp ?? ready?.mcp ?? [];
+  const kv = (rows) => h('div', { class: 'kv' }, ...rows.flatMap(([k, v]) => [h('span', { class: 'k' }, k), h('span', { class: 'v' }, v ?? '—')]));
+  // 창 안의 조각 — 쓰는 system prompt 고르기 (ticket slcode-prompt-library). 이 세션이 쓰는 프롬프트·판, 새 판이 있으면 올리기, 다른 프롬프트로 바꾸기. 세션은 스스로 따라가지 않는다(사용자 2026-11-17).
+  // 바꾸면 턴이 끝난 뒤 core 가 같은 대화로 다시 뜨고 다음 턴부터 적용된다. 대화 전체가 캐시를 한 번 새로 쓴다. Codex·옛 core 는 없다
+  function promptPart() {
+    if (!sysp) return null;
+    const cur = sysp.current, newer = cur && sysp.latest != null && sysp.latest > cur.version;
+    return h('div', { class: 'plugs' },
+      // 적용하지 못하고 벤더 기본으로 떴으면 그렇게 보이고 사유는 title 로
+      kv([['쓰는 것', !cur ? '벤더 기본' : sysp.failed ? h('span', { title: sysp.failed }, `벤더 기본 (${cur.name} 적용 못 함)`) : `${cur.name}${sysp.latest == null ? ' (지워짐)' : ''}`],
+        ...(newer ? [['새로 저장됨', h('button', { disabled: promptBusy ? '' : null, onclick: () => setSystemPrompt(cur.name) }, promptBusy ? '턴이 끝나면 적용합니다' : '이 세션에 적용')]] : [])]),
+      sysp.prompts.length ? h('select', { 'aria-label': '다른 프롬프트로 바꾸기', disabled: promptBusy ? '' : null, onchange: (e) => setSystemPrompt(e.target.value || null) },
+        h('option', { value: '', selected: cur ? null : '' }, '벤더 기본'),
+        ...sysp.prompts.map((x) => h('option', { value: x.name, selected: cur?.name === x.name ? '' : null }, x.name))) : null);
+  }
+  // 에이전트 플러그인 — 실은 것과 지금 설정이 다르면 다시 싣기 (다음 턴 전에 적용, 지시문은 새 세션부터). 시작 프로필(ticket slcode-session-profile)은 default 가 아닐 때만 — 실은 플러그인이 없어도(minimal) 보인다
+  const profileOf = () => (plugs?.profile && plugs.profile !== 'default' ? plugs.profile : null);
+  function plugPart() {
+    const profile = profileOf();
+    if (!plugs || !(plugs.plugins.length || plugs.added.length || profile)) return null;
+    const stale = plugs.plugins.some((p) => p.current !== p.build);
+    return h('div', { class: 'plugs' },
+      kv([...(profile ? [['프로필', profile]] : []), ...plugs.plugins.map((p) => [h('span', { title: p.values }, `${p.name} ${p.version}`), p.current == null ? '지워짐' : p.current === p.build ? '최신' : '설정 바뀜']),
+        ...plugs.added.map((n) => [n, '새 세션부터'])]),
+      plugs.plugins.length || plugs.added.length ? h('button', { disabled: !stale || plugBusy || plugs.pending ? '' : null, title: ready?.vendor === 'codex' ? '바뀐 skill 을 이 세션에 다시 싣습니다. MCP·지시문·bin·env 는 새 세션부터 적용됩니다' : '바뀐 part·옵션을 이 세션에 다시 싣습니다. 지시문은 새 세션부터 적용됩니다', onclick: reloadPlugins },
+        plugs.pending ? '턴이 끝나면 다시 싣습니다' : plugBusy ? '다시 싣는 중…' : '다시 싣기') : null);
+  }
+  // MCP 서버 하나 — failed 는 사유(있으면)와 다시 연결 버튼. 다시 연결은 그 서버 하나만, 세션·대화는 그대로
+  function mcpPart(name) {
+    const m = mcpList().find((x) => x.name === name);
+    if (!m) return null;
+    return h('div', { class: `mcpf${m.status === 'failed' ? ' bad' : ''}` },
+      h('span', { class: 'st' }, m.status !== 'failed' ? m.status : mcpBusy === m.name ? '다시 연결 중' : 'failed'),
+      m.status === 'failed' ? h('button', { title: '다시 연결', disabled: mcpBusy ? '' : null, onclick: () => retryMcp(m.name) }, icon('retry'), '다시 연결') : null,
       m.error ? h('div', { class: 'why' }, m.error) : null);
-    // 에이전트 플러그인 — 실은 것과 지금 설정이 다르면 다시 싣기 (다음 턴 전에 적용, 지시문은 새 세션부터)
-    // 시작 프로필(ticket slcode-session-profile)은 default 가 아닐 때만 맨 위 줄로 — 실은 플러그인이 없어도(minimal) 칸을 보인다. 옛 core 는 profile 이 없다
-    const profile = plugs?.profile && plugs.profile !== 'default' ? plugs.profile : null;
-    // system prompt (ticket slcode-prompt-library) — 이 세션이 쓰는 프롬프트·판, 새 판이 있으면 올리기, 다른 프롬프트로 바꾸기. 세션은 스스로 따라가지 않는다(사용자 2026-11-17).
-    // 바꾸면 턴이 끝난 뒤 core 가 같은 대화로 다시 뜨고 다음 턴부터 적용된다. 대화 전체가 캐시를 한 번 새로 쓴다
-    if (sysp) {
-      const cur = sysp.current, newer = cur && sysp.latest != null && sysp.latest > cur.version;
-      side.append(sec('sysPrompt', 'system prompt', h('div', { class: 'plugs' },
-        // 적용하지 못하고 벤더 기본으로 떴으면 그렇게 보이고 사유는 title 로
-        kv([['쓰는 것', !cur ? '벤더 기본' : sysp.failed ? h('span', { title: sysp.failed }, `벤더 기본 (${cur.name} 적용 못 함)`) : `${cur.name}${sysp.latest == null ? ' (지워짐)' : ''}`],
-          ...(newer ? [['새로 저장됨', h('button', { disabled: promptBusy ? '' : null, onclick: () => setSystemPrompt(cur.name) }, promptBusy ? '턴이 끝나면 적용합니다' : '이 세션에 적용')]] : [])]),
-        sysp.prompts.length ? h('select', { 'aria-label': '다른 프롬프트로 바꾸기', disabled: promptBusy ? '' : null, onchange: (e) => setSystemPrompt(e.target.value || null) },
-          h('option', { value: '', selected: cur ? null : '' }, '벤더 기본'),
-          ...sysp.prompts.map((x) => h('option', { value: x.name, selected: cur?.name === x.name ? '' : null }, x.name))) : null)));
-    }
-    if (plugs && (plugs.plugins.length || plugs.added.length || profile)) {
-      const stale = plugs.plugins.some((p) => p.current !== p.build);
-      side.append(sec('agentPlugins', '에이전트 플러그인', h('div', { class: 'plugs' },
-        kv([...(profile ? [['프로필', profile]] : []), ...plugs.plugins.map((p) => [h('span', { title: p.values }, `${p.name} ${p.version}`), p.current == null ? '지워짐' : p.current === p.build ? '최신' : '설정 바뀜']),
-          ...plugs.added.map((n) => [n, '새 세션부터'])]),
-        plugs.plugins.length || plugs.added.length ? h('button', { disabled: !stale || plugBusy || plugs.pending ? '' : null, title: ready?.vendor === 'codex' ? '바뀐 skill 을 이 세션에 다시 싣습니다. MCP·지시문·bin·env 는 새 세션부터 적용됩니다' : '바뀐 part·옵션을 이 세션에 다시 싣습니다. 지시문은 새 세션부터 적용됩니다', onclick: reloadPlugins },
-          plugs.pending ? '턴이 끝나면 다시 싣습니다' : plugBusy ? '다시 싣는 중…' : '다시 싣기') : null)));
-    }
-    side.append(sec('loaded', '로드됨', ready
-      ? h('div', {}, list('tools', '도구', ready.tools), list('skills', '스킬', ready.skills), list('plugins', '플러그인', ready.plugins, (p) => p.name), list('mcp', 'MCP', mcp ?? ready.mcp, mcpItem), list('slash', '슬래시 명령', ready.slashCommands), list('agents', '에이전트', ready.agents))
-      : h('div', { class: 'empty' }, '첫 턴 뒤')));
-    side.append(sec('hooks', '훅', kv([['실행', String(hooks)], ['마지막', lastHook || '—']])));
+  }
+  function renderSide() {
+    renderStat(); paintWk(); paintInsp(); // 남은 시간도 사이드바를 다시 그릴 때 같이 다시 잰다
+    const row = (ico, ...kids) => h('div', { class: 'row' }, ico, ...kids);
+    const idRow = (ico, v, what) => (v ? row(ico, h('span', { class: 'v', title: what }, v), iconBtn('copy', `${what} 복사`, copyOf(v))) : null);
+    // 할 일이 있을 때만 — 누르면 그 자리로(승인 카드) 또는 창의 그 항목으로
+    const go = (cls, ico, text, onclick) => h('button', { class: `row go ${cls}`, onclick }, icon(ico), h('span', { class: 'v' }, text));
+    const vendor = info?.vendor ?? ready?.vendor, profile = profileOf();
+    const failed = mcpList().filter((m) => m.status === 'failed');
+    const pend = [...cards.entries()].filter(([, c]) => !c.classList.contains('resolved'));
+    const cur = sysp?.current, newer = cur && sysp.latest != null && sysp.latest > cur.version;
+    side.replaceChildren(
+      h('div', { class: 'top' },
+        // 💻모델 — claude 상태줄과 같은 줄거리(폴더·repo·리밋·context·비용은 작성창 아래). 값은 SDK 가 주는 때(attach·turn.end)만 갱신 (사용자 2026-09-30)
+        row(icon('cpu'), h('span', { class: 'v' }, modelName || ready?.model || '—')),
+        idRow(icon('hash'), current, '세션 id'),
+        idRow(logo(vendor ?? 'claude'), info?.vendorSessionId ?? ready?.vendorSessionId, vendor === 'codex' ? 'Codex thread id' : 'Claude Code 세션 id'),
+        profile ? row(icon('layers'), h('span', { class: 'v' }, `프로필 ${profile}`)) : null,
+        ...pend.map(([, c]) => go('warn', 'hand', `승인 대기 · ${c._mark.querySelector('.kind').textContent} · ${c._mark.querySelector('.what').textContent}`, () => showDock(c))),
+        failed.length ? go('err', 'triangleAlert', `MCP ${failed.map((m) => m.name).join(', ')} 실패`, () => pv.open('feat', `t${failed[0].name}`)) : null,
+        cur && sysp.failed ? go('err', 'triangleAlert', `system prompt ${cur.name} 적용 못 함`, () => pv.open('prompt', 'sp')) : null,
+        newer ? go('warn', 'info', `system prompt ${cur.name} 새 판`, () => pv.open('prompt', 'sp')) : null,
+        plugs?.plugins.some((p) => p.current !== p.build) ? go('warn', 'info', '에이전트 플러그인 설정 바뀜', () => pv.open('feat', `g${plugs.plugins.find((p) => p.current !== p.build).name}`)) : null),
+      h('hr'),
+      // 활동 기록 (ticket slcode-activity-state) — 칸 안은 activity.js 가 따로 다시 그린다
+      h('div', { class: 'act-sec' }, h('div', { class: 'sh' }, h('h4', {}, '활동 기록'), act.more), act.body),
+      h('hr'),
+      h('button', { class: 'open-pv', onclick: () => pv.open() }, h('span', { class: 't' }, '세션 구성'), failed.length ? h('span', { class: 'n bad' }, 'MCP 실패') : null, icon('chevron')),
+      h('hr'));
+    pv.paint();
   }
 
   // ---- 이력: 마지막 몇 턴만 먼저 그리고, 위로 올리면 앞 턴을 붙인다 (사용자 2026-10-04, 이력 2759건에 1.2s)
@@ -1455,7 +1507,6 @@ export function mountAgentFront(root, transport, opts = {}) {
     backlog = backlog.concat(evs.slice(0, cut));
     if (!summary) for (const e of history) { // 되돌려져 안 그리는 턴도 사용량엔 든다
       if (e.ev.kind === 'turn.end') tally(e.ev);
-      else if (e.ev.kind === 'hook') { hooks++; lastHook = `${e.ev.event} ${e.ev.phase}`; }
       else if (e.ev.kind === 'session.ready') { ready = e.ev; }
     }
     for (const e of evs.slice(cut)) render(e);
@@ -1464,7 +1515,6 @@ export function mountAgentFront(root, transport, opts = {}) {
       const u = summary.usage;
       Object.assign(usage, { turns: summary.turns, input: u.input, output: u.output, cacheRead: u.cacheRead, cacheWrite: u.cacheWrite, cost: summary.costUsd ?? 0 });
       costKnown = summary.costUsd != null; costLast = summary.lastCostUsd ?? 0; costBase = (summary.costUsd ?? 0) - costLast;
-      hooks = summary.hooks; lastHook = summary.lastHook ?? '';
       if (summary.ready) ready = summary.ready;
     }
     lastSeq = Math.max(lastSeq, history.at(-1)?.seq ?? 0);

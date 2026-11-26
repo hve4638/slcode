@@ -6,7 +6,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import readline from 'node:readline';
 import { randomUUID } from 'node:crypto';
 import type { ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, Limits, LimitWindow, McpStatus, RewindPreview, TaskEvent } from './protocol.js';
-import { AgentSession, effortMisfit, type ApproveOpts, type Command, type ContextUsage, type ModelsResult } from './base.js';
+import { AgentSession, effortMisfit, type ApproveOpts, type Command, type ContextUsage, type ModelsResult, type VendorSources } from './base.js';
 import type { EventLog } from './eventLog.js';
 import { SLCODE_PROMPT } from './prompt.js';
 
@@ -482,6 +482,7 @@ export class CodexSession extends AgentSession {
     const u = this.lastUsage; if (!u?.last || !u.modelContextWindow) return null;
     return { tokens: u.last.totalTokens, max: u.modelContextWindow, pct: (u.last.totalTokens / u.modelContextWindow) * 100 };
   }
+  async sources(): Promise<VendorSources> { return null; }
   async mcp(): Promise<McpStatus[]> { return []; }
   async reconnectMcp(): Promise<McpStatus[]> { throw new Error('mcp reconnect is not supported for codex sessions'); }
   async rewind(): Promise<string[] | null> { throw new Error('rewind is not supported for codex sessions'); }

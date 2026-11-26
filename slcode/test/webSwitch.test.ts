@@ -86,7 +86,7 @@ test('웹 세션 전환: 페이지를 새로 읽지 않고 바뀌고, 숨은 화
     await b.until(`document.querySelectorAll('.session-slot').length === 2`, '미리 불러오기');
     await b.until(`[...document.querySelectorAll('.session-slot[inert] .hdr .title')].some((t) => t.textContent === 'kid')`, '자손 화면 준비');
     // 같은 탭 이동 — 같은 문서, 주소가 바뀌고, 입력창에 포커스
-    await b.ev(`[...${visible}.querySelectorAll('.fam-row')].find((a) => a.textContent.includes('kid')).click()`);
+    await b.ev(`[...${visible}.querySelectorAll('.wk .pop a.r')].find((a) => a.textContent.includes('kid')).click()`);
     await b.until(titleIs('kid'), '자손 화면');
     assert.equal(await b.ev(`location.pathname`), `/s/${kid.id}`);
     assert.equal(await b.ev(`window.__sameDocument`), true, '페이지를 새로 읽지 않는다');
@@ -148,8 +148,11 @@ test('웹 복제 (ticket slcode-session-fork): 응답 아래 복제 버튼은 �
     await b.until(shown('A (forked)', 1), '첫 응답까지 복제한 화면');
     const f1 = forks().find((m) => m.title === 'A (forked)')!;
     assert.equal(await b.ev(`location.pathname`), `/s/${f1.id}`);
-    await b.until(`${visible}.querySelector('.fam-chip')?.textContent === '세션 2 ▾'`, '가족 메뉴');
-    assert.deepEqual(await b.ev(`[...${visible}.querySelectorAll('.fam-row')].map((a) => a.textContent)`), ['A메인', 'A (forked)복제']);
+    await b.until(`${visible}.querySelector('.fam-chip')?.textContent === '세션 2 ▾'`, '세션 알약');
+    await b.ev(`${visible}.querySelector('.fam-chip').click()`);
+    // 지금 세션이 맨 위, 다른 세션은 이름과 종류 (ticket slcode-sidebar-revamp)
+    assert.deepEqual(await b.ev(`[...${visible}.querySelectorAll('.wk .pop .r')].map((r) => [r.querySelector('.t').textContent, r.matches('a') ? r.querySelector('.s').textContent : ''])`), [['A (forked)지금 세션', ''], ['A', '메인']]);
+    await b.ev(`${visible}.querySelector('.fam-chip').click()`);
     // 복제 지점 표지 — forked from 원본 이름 (원본 id), id 를 누르면 원본 화면으로
     await b.until(`${visible}.querySelector('.notice')?.textContent === 'forked from A (wsrc0001)'`, '복제 표지');
     await b.ev(`${visible}.querySelector('.notice a.fork-src').click()`);

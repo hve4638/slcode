@@ -63,7 +63,7 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
                                  hook.session.params, 에이전트 프로세스는 env SLCODE_PARAM_<NAME> 으로 읽는다. 물려받은 SLCODE_PARAM_* 는 지운다
                                  --model·--effort·--profile·--env·--param·첫 프롬프트는 새 세션에만 — resume·import·꺼진 세션을 찾은 continue 에 주면 오류
                                  --no-inspect: 설정 창의 '새 세션 inspect' 가 켜져 있어도 끈 채로 시작한다 (resume 이면 켜져 있던 것을 끈다).
-                                 inspect 는 벤더(Claude·Codex)의 API 요청·응답 원본을 세션 폴더 inspect/ 에 남긴다 — 떠 있는 세션은 웹 사이드바에서 켜고 끈다
+                                 inspect 는 벤더(Claude·Codex)의 API 요청·응답 원본을 세션 폴더 inspect/ 에 남긴다 — 떠 있는 세션은 화면 헤더의 inspect 스위치로 켜고 끈다
                                  --stdio: stdin/stdout 을 프레임 연결로 (첫 줄 {"url","id","sock"}, 그 전에 오류로 끝나면 {"fatal"}; superlite 서비스용). resume·continue 도 받는다
                                  resume <s> --stdio --takeover: 살아 있는 세션의 소유권을 빼앗아 붙는다 (카드 핸드오프)
   resume [<s>]                   저장된 세션을 다시 띄운다. <s> 가 없으면 현재 폴더의 꺼진 세션 목록 (superlite 안이면 카드에서 고른다)

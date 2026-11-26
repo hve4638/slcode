@@ -15,6 +15,8 @@ import { CoreError, ERR, type BgTask } from './protocol.js';
 export const BG_DIR = 'bg';
 /** 승인을 묻지 않는 도구 — 이 세션이 띄운 작업만 멈춘다. BackgroundRun 은 Bash 처럼 묻는다 */
 export const BG_STOP_TOOL = 'mcp__slcode__BackgroundStop';
+/** tail 이 한 번에 주는 최대 바이트 — 화면의 출력 창이 이만큼만 쥔다 */
+export const BG_TAIL_MAX = 131072;
 /** stop 의 SIGTERM 뒤 SIGKILL 까지 */
 const STOP_GRACE_MS = 5000;
 /** 감싸는 sh — $1 명령, $2 exit 파일. trap 은 그룹에 보낸 SIGTERM 에 sh 가 먼저 죽지 않고 명령이 끝난 뒤 code 를 쓰게 한다.
@@ -107,6 +109,34 @@ export class Background {
       if (!(await within(1000))) this.ended(id, 'SIGKILL');
     }
     return this.view(this.read(id) ?? { ...l.task, endedAt: Date.now() });
+  }
+
+  /** 출력 파일의 조각 (화면의 출력 창, 사용자 2026-11-25). before 가 없으면 from(바이트) 뒤 — 많으면 끝 BG_TAIL_MAX 만(그때 start > from), 다음 from 은 end.
+   *  before 가 있으면 그 앞 BG_TAIL_MAX 안에서 줄 머리부터(위로 올려 앞부분을 더 볼 때, end = before). 잘린 UTF-8 글자는 앞뒤에서 뺀다 */
+  tail(id: string, from = 0, before?: number): { start: number; end: number; text: string } {
+    if (!/^[0-9a-f]+$/.test(id) || !this.read(id)) throw new CoreError(ERR.badRequest, `no background task ${id}`);
+    let fd: number;
+    try { fd = fs.openSync(this.file(id, 'log'), 'r'); } catch { return { start: 0, end: 0, text: '' }; }
+    try {
+      const size = fs.fstatSync(fd).size;
+      const back = before !== undefined;
+      if (!(from >= 0 && from <= size)) from = 0; // 파일이 줄었다 — 처음부터
+      const stop = back ? Math.min(Math.max(before, 0), size) : size;
+      const start = back ? Math.max(0, stop - BG_TAIL_MAX) : Math.max(from, size - BG_TAIL_MAX);
+      const buf = Buffer.alloc(stop - start);
+      fs.readSync(fd, buf, 0, buf.length, start);
+      let a = 0, b = buf.length;
+      if (back ? start > 0 : start > from) while (a < b && (buf[a] & 0xc0) === 0x80) a++;
+      if (back && start > 0) { const nl = buf.indexOf(10, a); a = nl < 0 ? b : nl + 1; }
+      // 끝의 덜 쓴 글자 — 마지막 머리 바이트가 요구하는 길이보다 짧으면 다음에
+      for (let i = b - 1; i >= a && i >= b - 4; i--) {
+        if ((buf[i] & 0xc0) === 0x80) continue;
+        const need = buf[i] >= 0xf0 ? 4 : buf[i] >= 0xe0 ? 3 : buf[i] >= 0xc0 ? 2 : 1;
+        if (b - i < need) b = i;
+        break;
+      }
+      return { start: start + a, end: start + b, text: buf.subarray(a, b).toString('utf8') };
+    } finally { fs.closeSync(fd); }
   }
 
   list(): BgTask[] {

@@ -140,6 +140,18 @@ export type Usage = { input: number; output: number; cacheRead: number; cacheWri
  *  다음 turn.end 가 이보다 작으면 벤더가 새로 떴고 합계에 이어 붙인다. ready 는 마지막 session.ready 본문 */
 export type HistorySummary = { turns: number; usage: Usage; costUsd: number | null; lastCostUsd: number | null; hooks: number; lastHook: string | null; ready: Extract<CoreEventBody, { kind: 'session.ready' }> | null };
 
+/** system prompt 조각 (session.promptPreview) — vendor: 벤더가 넣은 글, prompt: 프로필이 고른 system prompt(name·version), slcode: slcode 고정 지시, team: 팀 지시, plugin: 에이전트 플러그인 지시문 */
+export type PreviewBlock = { source: 'vendor' | 'prompt' | 'slcode' | 'team' | 'plugin'; text: string | null; name?: string; version?: number };
+/** 훅 한 줄 (session.sources) — source 는 실린 곳(설정 파일 user·project·local, Claude Code 플러그인, slcode 에이전트 플러그인), name 은 플러그인 이름. what 은 명령·프롬프트·URL, 에이전트 플러그인 js 훅은 'js' */
+export type PreviewHook = { event: string; matcher: string | null; what: string; source: 'user' | 'project' | 'local' | 'plugin' | 'agent'; name: string | null };
+/** 기능이 실린 곳 (세션 구성 창) — builtin: Claude Code 안, user·project·local: 그 설정 범위, managed: 관리 정책, plugin: Claude Code 플러그인, agent: slcode 에이전트 플러그인,
+ *  slcode: slcode 가 넣은 것(slcode MCP 등 SDK 옵션으로 준 것), claudeai: claude.ai 커넥터, other: Claude Code 가 준 출처를 모를 때 */
+export type Origin = 'builtin' | 'user' | 'project' | 'local' | 'managed' | 'plugin' | 'agent' | 'slcode' | 'claudeai' | 'other';
+/** 스킬·서브에이전트·output style 하나의 출처 (session.sources) — 스킬·서브에이전트는 session.ready 의 이름마다, 출처는 Claude Code 가 준 것(getContextUsage), 거기 없으면 builtin.
+ *  output style 은 설정 폴더의 파일(user·project). plugin 은 플러그인 이름, path 는 .md 의 절대 경로 — 화면이 file.get·file.list 로 원문·하위 파일을 읽는다 */
+export type PreviewSkill = { name: string; source: Origin; plugin: string | null; path: string | null };
+/** CLAUDE.md 같은 지시 파일 하나 — Claude Code 가 첫 메시지에 원문 그대로, 이 순서대로 붙인다(@ 로 부른 파일도 따로 한 줄) */
+export type PreviewMemory = { path: string; source: Origin };
 /** 요청 목록 한 줄 (ticket slcode-prompt-outline) — turn.start 의 seq·origin·앞 300자(메일 턴은 전부 — 웹이 머리표를 풀어 보낸 이·본문 첫 줄을 보인다)·첨부 이름 */
 export type OutlineItem = { seq: number; origin: string | null; text: string; files: string[] };
 /** 이 세션의 지난 입력 하나 (session.prompts) — 되돌린 턴을 뺀 turn.start 는 전문·시각·그 턴에서 도구로 고친 파일(edits), 에이전트 플러그인 명령은 친 글 그대로(command) */
@@ -190,7 +202,7 @@ export type TaskEvent = {
 /** 이벤트 20종 — 벤더 중립. Codex 어댑터도 같은 kind 를 낸다. parent 는 서브에이전트 안에서 난 이벤트의 부모 tool_use id (없으면 본문) */
 export type CoreEventBody =
   | { kind: 'session.ready'; vendor: Vendor; model: string; cwd: string; vendorSessionId: string; permissionMode: string;
-      tools: string[]; skills: string[]; plugins: { name: string; path: string }[]; mcp: { name: string; status: string }[];
+      tools: string[]; skills: string[]; plugins: { name: string; path: string }[]; mcp: McpStatus[];
       slashCommands: string[]; agents: string[]; version: string | null }
   | { kind: 'session.state'; state: SessionState }
   | { kind: 'turn.start'; text: string; origin: string | null; attachments?: { name: string; mediaType: string; size: number }[] }
@@ -258,7 +270,7 @@ export type SettingsKind = 'web' | 'superlite';
 export type SettingsPatch = Partial<Omit<Settings, 'context'>> & { context?: Partial<Settings['context']> };
 
 /** MCP 서버 하나의 지금 상태 — status 는 connected·failed·needs-auth·pending·disabled, error 는 failed 의 사유 (ticket slcode-mcp-failed-path) */
-export type McpStatus = { name: string; status: string; error?: string };
+export type McpStatus = { name: string; status: string; error?: string; source?: Origin };
 
 /** 플랜 리밋 창 하나 — pct 는 쓴 비율(0-100), resetsAt 은 ISO 8601 */
 export type LimitWindow = { pct: number | null; resetsAt: string | null };
@@ -334,6 +346,14 @@ export type Methods = {
   /** 이 세션의 system prompt (ticket slcode-prompt-library) — current 는 쓰는 프롬프트와 판(null 은 벤더 기본), latest 는 그 프롬프트의 최신 판(지워졌으면 null),
    *  failed 는 기동 때 적용하지 못한 사유(벤더 기본으로 떴다), prompts 는 고를 수 있는 것. Claude 세션만 — Codex 는 bad_request */
   'session.systemPrompt': { params: { id: string }; result: { current: { name: string; version: number } | null; latest: number | null; failed: string | null; prompts: { name: string; latest: number }[] } };
+  /** 이 세션에 들어가는 system prompt 원문 (ticket slcode-sidebar-revamp) — 출처 조각 순서대로. Claude 는 지금 실행의 옵션으로 Claude Code 를 가짜 API 에 한 번 돌려 받은 것
+   *  (실행·모델마다 한 번, 몇 초 걸린다), Codex 는 벤더 기본 글을 알 수 없어 그 자리가 text null 이고 slcode 가 넣는 글만.
+   *  context 는 같은 요청의 messages 에 Claude Code 가 붙인 글(system-reminder·system 역할 메시지 — CLAUDE.md·output style·MCP 안내·스킬 목록 등) 원문, 보낸 순서대로. Codex 는 빈 목록 */
+  'session.promptPreview': { params: { id: string }; result: { blocks: PreviewBlock[]; context: string[] } };
+  /** 이 세션에 실린 것의 출처 (ticket slcode-sidebar-revamp) — 훅(설정 파일·플러그인·에이전트 플러그인 js 훅을 core 가 읽는다), 스킬·서브에이전트·지시 파일(Claude Code 가 준다, 벤더가 안 떠 있으면 빈 목록),
+   *  styles 는 사용자·프로젝트 설정 폴더의 output style 파일(core 가 읽는다).
+   *  Codex 는 supported false */
+  'session.sources': { params: { id: string }; result: { supported: boolean; hooks: PreviewHook[]; skills: PreviewSkill[]; agents: PreviewSkill[]; memory: PreviewMemory[]; styles: PreviewSkill[] } };
   /** 이 세션의 system prompt 를 바꾼다 — name 의 최신 판(null 은 벤더 기본). 같은 판이면 아무것도 하지 않는다. 턴이 끝나면 core 가 같은 대화로 다시 뜬다(core.replaced) */
   'session.setSystemPrompt': { params: { id: string; name: string | null }; result: { ok: true } };
   /** 시작 프로필 — 고를 수 있는 것과 지금 것 (ticket slcode-session-profile). 첫 메시지 전에만 바꾼다 */
@@ -389,6 +409,9 @@ export type Methods = {
   'session.bgStop': { params: { id: string; task: string; by?: 'user' }; result: BgTask };
   /** 이 세션의 작업 전부 (시작 순) */
   'session.bgList': { params: { id: string }; result: { tasks: BgTask[] } };
+  /** 출력 파일의 from(바이트) 뒤 — 많으면 끝 128KB 만(그때 start > from), 다음 from 은 end. before 를 주면 그 앞 128KB 안에서 줄 머리부터(end = before).
+   *  화면의 출력 창이 열린 동안 부른다 (ticket slcode-sidebar-revamp, 사용자 2026-11-25) */
+  'session.bgTail': { params: { id: string; task: string; from?: number; before?: number }; result: { start: number; end: number; text: string } };
   // ---- 팀원 세션 (ticket slcode-team-agent, 사용자 결정 2026-11-07~08) — 리더 core 가 팀원 core 를 띄우고, link 팀원은 소유한다
   /** 리더 세션 안의 `slcode team new` 가 부른다 — 팀원을 띄우고(link 면 소유하고) id 를 돌려준다. vendor·model·effort·mode 는 주지 않으면 리더를 따른다(모델·effort 는 벤더가 같을 때만).
    *  team 은 관여 옵션 — 빠진 키는 teammate 프리셋 값. 이 세션이 팀원을 만들지 못하면(meta.noTeam) team_disabled. */
@@ -419,7 +442,7 @@ export type ServeMethods = {
    *  inspectBlocked 는 inspect 의 내부 플래그가 듣지 않는다고 기록된 SDK 버전 (없으면 null) — 설정 창이 새 세션 inspect 를 막고 사유를 보인다 */
   'serve.info': { params: Record<string, never>; result: { version: string; build: number; pid: number; update: UpdateCheck | null; inspectBlocked?: string | null } };
   /** 이 화면에서 갈 수 있는 세션 (ticket slcode-web-session-url). 웹은 그 serve 의 메인 세션과 자손, 카드는 그 세션이 속한 가족 전체. main 은 그 맨 앞 */
-  'serve.sessions': { params: Record<string, never>; result: { main: string; sessions: { id: string; title: string | null; parent: { id: string; kind: 'child' | 'fork'; seq?: number } | null; live: boolean }[] } };
+  'serve.sessions': { params: Record<string, never>; result: { main: string; sessions: { id: string; title: string | null; vendor: Vendor; parent: { id: string; kind: 'child' | 'fork'; seq?: number } | null; live: boolean }[] } };
   /** 세션 복제 (ticket slcode-session-fork) — id 의 기록을 seq(그 턴의 turn.end)까지, 없으면 마지막으로 끝난 턴까지 복제한 새 세션. 진행 중인 턴은 넣지 않는다.
    *  웹 입구는 그 core 를 띄워 이 serve 가 소유한다(가족 메뉴로 간다). 카드는 저장만 하고 화면이 플러그인에 그 카드를 열어 달라고 한다 */
   'serve.fork': { params: { id: string; seq?: number }; result: { id: string } };
@@ -447,6 +470,8 @@ export type ServeMethods = {
   'file.get': { params: { path: string }; result: { mediaType: string; size: number; data: string } };
   /** 카드 모드에서 링크를 열기 전에 — file.get 과 같은 규칙으로 찾은 실제 파일 경로, 없으면 null. superlite 의 open·download 동사에 이 경로를 넘긴다 (ticket slcode-link-hash-in-filename) */
   'file.resolve': { params: { path: string }; result: { path: string | null } };
+  /** 폴더 아래 파일들 (세션 구성 창의 스킬 하위 파일) — file.get 과 같은 범위, 하위 폴더까지 상대 경로로, 숨김 항목·링크된 폴더는 빼고 FILE_LIST_MAX 개까지 (넘으면 truncated) */
+  'file.list': { params: { path: string }; result: { files: { path: string; size: number }[]; truncated: boolean } };
 };
 
 /** 새 버전 확인 결과 — restart-required 면 새 것의 version·build, failed 면 reason */

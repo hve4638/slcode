@@ -2,12 +2,14 @@
 // SDK 메시지를 protocol.ts 의 벤더 중립 이벤트로 정규화해 EventLog 에 남기고 구독자에게 낸다.
 // 승인(canUseTool)은 Deferred 로 무기한 기다린다 — interrupt·close·프로세스 종료만 cancelled 로 푼다 (사용자 결정 2026-09-26).
 import { query, type Options, type Query, type SDKMessage, type SDKUserMessage, type PermissionResult, type PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
+import { captureSystem, type SystemCapture } from './promptCapture.js';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentCommandEvent, AgentHookEvent, ApprovalDecision, ApprovalRequest, Attachment, CoreEvent, RewindPreview, Usage, Limits, LimitWindow, McpStatus } from './protocol.js';
 import { EventLog, unrewound } from './eventLog.js';
-import { AgentSession, CLAUDE_EFFORTS, effortMisfit, type ApproveOpts, type Command } from './base.js';
+import { AgentSession, CLAUDE_EFFORTS, effortMisfit, type ApproveOpts, type Command, type VendorSources } from './base.js';
+import { originOf } from './preview.js';
 import { SLCODE_PROMPT } from './prompt.js';
 import type { ClaudeLoad } from './profiles.js';
 import { withoutConnection } from './provider.js';
@@ -104,6 +106,7 @@ export class ClaudeSession extends AgentSession {
   /** close(quiet) — core 교체로 내렸다. 끝난 뒤의 exited 도 남기지 않는다 */
   private quiet = false;
   private opts: SessionOptions;
+  private preview: { key: string; p: Promise<SystemCapture> } | null = null;
   private running: Promise<void> = Promise.resolve();
   private restarting = false;
   /** 대화 되돌리기의 뒤에서 도는 재기동 — 옛 프로세스가 내려가고 새 run 이 뜨면 풀린다. 벤더에 묻는 rewind·rewindPreview·reopen·interrupt 가 기다린다 */
@@ -180,10 +183,23 @@ export class ClaudeSession extends AgentSession {
     catch { return null; }
   }
 
-  /** MCP 서버 상태 — SDK mcpServerStatus (failed 면 error 에 사유). 벤더가 안 떠 있으면 [] */
+  /** 실린 스킬·서브에이전트·지시 파일의 출처 — SDK getContextUsage(summary, 토큰 세는 요청 없이). 서브에이전트는 Claude Code 내장이 아닌 것만 온다 */
+  async sources(): Promise<VendorSources> {
+    if (!this.q) return null;
+    try {
+      const c = await this.q.getContextUsage({ detail: 'summary' });
+      return {
+        memory: c.memoryFiles.map((m) => ({ path: m.path, type: m.type })),
+        skills: (c.skills?.skillFrontmatter ?? []).map((k) => ({ name: k.name, source: k.source, plugin: k.pluginName ?? null, path: k.path ?? null })),
+        agents: c.agents.map((a) => ({ name: a.agentType, source: a.source, plugin: a.pluginId?.replace(/@.*$/, '') ?? null, path: a.path ?? null })),
+      };
+    } catch { return null; }
+  }
+
+  /** MCP 서버 상태 — SDK mcpServerStatus (failed 면 error 에 사유, source 는 실린 곳). 벤더가 안 떠 있으면 [] */
   async mcp(): Promise<McpStatus[]> {
     if (!this.q) return [];
-    try { return (await this.q.mcpServerStatus()).map((m) => ({ name: m.name, status: m.status, ...(m.error ? { error: m.error } : {}) })); }
+    try { return (await this.q.mcpServerStatus()).map((m) => ({ name: m.name, status: m.status, ...(m.error ? { error: m.error } : {}), source: originOf(m.source ?? m.scope, null, []) })); }
     catch { return []; }
   }
 
@@ -370,53 +386,78 @@ export class ClaudeSession extends AgentSession {
     this.log.close();
   }
 
-  private async run(opts: SessionOptions) {
-    const resume = opts.resume ?? this.log.meta.vendorSessionId ?? undefined;
-    const permissionMode = opts.permissionMode ?? this.log.meta.permissionMode ?? undefined;
+  /** 무엇을 싣는가 — 작업 폴더·system prompt·플러그인·설정·MCP·도구 제한·로드 범위·env·모델. 실제 실행(run)과 미리 보기(systemPreview)가 같이 쓴다 */
+  /** preview 면 custom provider 의 연결을 싣지 않는다 — 설정 파일의 env 가 가짜 API 주소를 덮어 미리 보기가 실제 프로바이더로 나가지 않게 (captureSystem 이 주소를 바꾼다) */
+  private loadOptions(opts: SessionOptions, preview = false): Options {
     // 플러그인 session.json 위에 프로필의 CLAUDE.md 빼기 — 플러그인이 정한 것과 합친다
     const excludes = [...((opts.agent?.settings?.claudeMdExcludes as string[] | undefined) ?? []), ...(opts.load?.claudeMdExcludes ?? [])];
     // Remote Control 은 늘 자동으로 켜지 않는다 — 사용자 설정을 끈 프로필이면 ~/.claude 의 false 가 안 실려 계정 기본값으로 켜질 수 있다 (사용자 결정 2026-10-30)
-    const settings = { ...opts.agent?.settings, ...(excludes.length ? { claudeMdExcludes: excludes } : {}), remoteControlAtStartup: false, ...(opts.connection ? { env: { ...(opts.agent?.settings?.env as object | undefined), ...opts.connection } } : {}) };
+    const conn = preview ? undefined : opts.connection;
+    const settings = { ...opts.agent?.settings, ...(excludes.length ? { claudeMdExcludes: excludes } : {}), remoteControlAtStartup: false, ...(conn ? { env: { ...(opts.agent?.settings?.env as object | undefined), ...conn } } : {}) };
     // slcode 고정 지시, 그 뒤에 팀 지시와 에이전트 플러그인의 지시문 (ticket slcode-append-system-prompt·slcode-agent-plugin)
     const append = [SLCODE_PROMPT, opts.family, opts.agent?.append].filter(Boolean).join('\n\n');
+    return {
+      cwd: this.cwd,
+      // slcode 지시를 기본 프롬프트 뒤에.
+      // 프로필이 프롬프트를 고쳤으면 조립한 글을 보내고 slcode 지시는 CLI 의 append 플래그로 — SDK 는 직접 준 프롬프트에 append 를 받지 않고,
+      // 플래그로 주면 정체성 한 줄이 preset 때와 같다 (SDK 0.3.322 실측, ticket slcode-profile-system-prompt)
+      systemPrompt: opts.prompt ?? { type: 'preset', preset: 'claude_code', append },
+      // snapshot 을 끈다 — 켜 두면 첫 요청 때 기록한 시스템 프롬프트를 resume 이 그대로 보내 바뀐 지시문이 안 들어가고, import 한 세션은 그쪽 기록이라 위 append 가 빠진다.
+      // SDK 옵션 systemPromptSnapshot:false 는 resume 에 듣지 않아 CLI 플래그로 (CLI 2.1.282 실측, ticket slcode-agent-plugin-instructions-resume, 사용자 결정 2026-11-02)
+      extraArgs: { 'system-prompt-snapshot': 'off', ...(opts.prompt ? { 'append-system-prompt': append } : {}) },
+      // slcode 에이전트 플러그인 — 세션 폴더의 링크 경로를 <이름>@inline 으로 싣는다. 사용자 설정·설치 기록은 건드리지 않는다
+      ...(opts.agent?.plugins.length ? { plugins: opts.agent.plugins } : {}),
+      // custom provider 면 파일로 — SDK 는 객체를 --settings <JSON> 명령줄 인자로 넘겨 키가 ps 에 보인다 (2026-11-25 실측). 세션 폴더에 0600 으로, 띄울 때마다 새로 쓴다
+      settings: conn ? connectionSettings(this.log.dir, settings) : settings as any,
+      ...(opts.mcpServers ? { mcpServers: opts.mcpServers() } : {}),
+      ...(opts.noAsk ? { disallowedTools: ['AskUserQuestion'] } : {}),
+      ...(opts.allowedTools?.length ? { allowedTools: opts.allowedTools } : {}),
+      // 기본은 CLI 와 같은 로드 — user/project/local (스파이크 (a) 실측: 플러그인·스킬·훅·MCP 가 CLI 와 같다). 프로필이 줄이고 skill 을 거른다 (ticket slcode-session-profile)
+      settingSources: opts.load?.settingSources ?? ['user', 'project', 'local'],
+      ...(opts.load?.skills ? { skills: opts.load.skills } : {}),
+      // IS_SANDBOX=1 을 늘 얹는다 — uid 0 이면 CLI 가 이것 없이는 아래 skip 플래그나 bypass 모드만으로 첫 턴 전에 exit 1 한다 (CLI 2.1.282, 2026-10-08 실측, 값은 '1' 만).
+      // root 에서도 bypass 를 쓰게 Claude Code 의 이 안전 장치를 slcode 가 끈다 (사용자 결정 2026-10-09).
+      // CLAUDE_CODE_DISABLE_ARTIFACT=1 도 늘 — 셸의 같은 값은 STRIP_ENV(CLAUDE_*)가 지우므로 여기서 다시 넣는다 (사용자 결정 2026-10-30)
+      // custom provider 면 어디서 온 연결 값이든 지우고 프로바이더 값을 맨 위에 (provider.ts, ticket slcode-custom-provider)
+      env: conn
+        ? { ...withoutConnection({ ...(opts.env ?? process.env), ...opts.agent?.env, ...opts.load?.env }), ...conn, IS_SANDBOX: '1', CLAUDE_CODE_DISABLE_ARTIFACT: '1' }
+        : { ...(opts.env ?? process.env), ...opts.agent?.env, ...opts.load?.env, IS_SANDBOX: '1', CLAUDE_CODE_DISABLE_ARTIFACT: '1' },
+      ...(this.log.meta.model ? { model: this.log.meta.model } : {}),
+    };
+  }
+
+  /** 이 세션이 보내는 system 글들과 messages 에 붙는 글 (ticket slcode-sidebar-revamp, 세션 구성) — 지금 실행의 옵션으로 Claude Code 를 가짜 API 에 한 번 돌려 받는다.
+   *  모델·권한 모드마다 한 번 받아 둔다(모델별 문단, 모드별 안내가 다르다). 요금·대화 기록 없음, 훅은 끄고 돈다 */
+  systemPreview(): Promise<SystemCapture> {
+    const model = this.log.meta.model ?? null, mode = this.log.meta.permissionMode ?? this.opts.permissionMode ?? null;
+    const key = `${model}|${mode}`;
+    if (this.preview?.key !== key) {
+      // 권한 모드와 승인 콜백도 실행처럼 — 콜백이 없으면 Claude Code 가 EnterPlanMode 같은 도구를 빼서 messages 의 도구 목록이 달라진다. 가짜 API 라 도구를 부르지 않는다
+      const p = captureSystem({ ...this.loadOptions(this.opts, true), ...(mode ? { permissionMode: mode as any } : {}), allowDangerouslySkipPermissions: true,
+        canUseTool: async () => ({ behavior: 'deny', message: 'preview' }) });
+      this.preview = { key, p };
+      p.catch(() => { if (this.preview?.p === p) this.preview = null; }); // 실패는 다음에 다시
+    }
+    return this.preview!.p;
+  }
+
+  private async run(opts: SessionOptions) {
+    const resume = opts.resume ?? this.log.meta.vendorSessionId ?? undefined;
+    const permissionMode = opts.permissionMode ?? this.log.meta.permissionMode ?? undefined;
+    this.preview = null; // 이 실행의 옵션으로 다시 받는다
     const q = query({
       prompt: this.input,
       options: {
-        cwd: this.cwd,
+        ...this.loadOptions(opts),
         includePartialMessages: true,
         enableFileCheckpointing: true,
         includeHookEvents: true,
         forwardSubagentText: true,      // 서브에이전트의 텍스트·thinking 도 parent_tool_use_id 를 달고 온다 — 작업 카드 안에 중첩해 그린다
         agentProgressSummaries: true,   // task_progress 에 한 줄 진행 요약 (약 30초마다 짧은 포크, 비용은 작다)
         thinking: opts.thinking ?? { type: 'adaptive', display: 'summarized' },
-        // slcode 지시를 기본 프롬프트 뒤에.
-        // 프로필이 프롬프트를 고쳤으면 조립한 글을 보내고 slcode 지시는 CLI 의 append 플래그로 — SDK 는 직접 준 프롬프트에 append 를 받지 않고,
-        // 플래그로 주면 정체성 한 줄이 preset 때와 같다 (SDK 0.3.322 실측, ticket slcode-profile-system-prompt)
-        systemPrompt: opts.prompt ?? { type: 'preset', preset: 'claude_code', append },
-        // snapshot 을 끈다 — 켜 두면 첫 요청 때 기록한 시스템 프롬프트를 resume 이 그대로 보내 바뀐 지시문이 안 들어가고, import 한 세션은 그쪽 기록이라 위 append 가 빠진다.
-        // SDK 옵션 systemPromptSnapshot:false 는 resume 에 듣지 않아 CLI 플래그로 (CLI 2.1.282 실측, ticket slcode-agent-plugin-instructions-resume, 사용자 결정 2026-11-02)
-        extraArgs: { 'system-prompt-snapshot': 'off', ...(opts.prompt ? { 'append-system-prompt': append } : {}) },
-        // slcode 에이전트 플러그인 — 세션 폴더의 링크 경로를 <이름>@inline 으로 싣는다. 사용자 설정·설치 기록은 건드리지 않는다
-        ...(opts.agent?.plugins.length ? { plugins: opts.agent.plugins } : {}),
-        // custom provider 면 파일로 — SDK 는 객체를 --settings <JSON> 명령줄 인자로 넘겨 키가 ps 에 보인다 (2026-11-25 실측). 세션 폴더에 0600 으로, 띄울 때마다 새로 쓴다
-        settings: opts.connection ? connectionSettings(this.log.dir, settings) : settings as any,
         ...(opts.hooks ? { hooks: opts.hooks } : {}),
-        ...(opts.mcpServers ? { mcpServers: opts.mcpServers() } : {}),
-        ...(opts.noAsk ? { disallowedTools: ['AskUserQuestion'] } : {}),
-        ...(opts.allowedTools?.length ? { allowedTools: opts.allowedTools } : {}),
-        // 기본은 CLI 와 같은 로드 — user/project/local (스파이크 (a) 실측: 플러그인·스킬·훅·MCP 가 CLI 와 같다). 프로필이 줄이고 skill 을 거른다 (ticket slcode-session-profile)
-        settingSources: opts.load?.settingSources ?? ['user', 'project', 'local'],
-        ...(opts.load?.skills ? { skills: opts.load.skills } : {}),
-        // IS_SANDBOX=1 을 늘 얹는다 — uid 0 이면 CLI 가 이것 없이는 아래 skip 플래그나 bypass 모드만으로 첫 턴 전에 exit 1 한다 (CLI 2.1.282, 2026-10-08 실측, 값은 '1' 만).
-        // root 에서도 bypass 를 쓰게 Claude Code 의 이 안전 장치를 slcode 가 끈다 (사용자 결정 2026-10-09).
-        // CLAUDE_CODE_DISABLE_ARTIFACT=1 도 늘 — 셸의 같은 값은 STRIP_ENV(CLAUDE_*)가 지우므로 여기서 다시 넣는다 (사용자 결정 2026-10-30)
-        // custom provider 면 어디서 온 연결 값이든 지우고 프로바이더 값을 맨 위에 (provider.ts, ticket slcode-custom-provider)
-        env: opts.connection
-          ? { ...withoutConnection({ ...(opts.env ?? process.env), ...opts.agent?.env, ...opts.load?.env }), ...opts.connection, IS_SANDBOX: '1', CLAUDE_CODE_DISABLE_ARTIFACT: '1' }
-          : { ...(opts.env ?? process.env), ...opts.agent?.env, ...opts.load?.env, IS_SANDBOX: '1', CLAUDE_CODE_DISABLE_ARTIFACT: '1' },
         ...(permissionMode ? { permissionMode: permissionMode as any } : {}),
         allowDangerouslySkipPermissions: true, // bypassPermissions 로 바꿀 수 있게 (그 자체로 우회하지 않는다 — 모드는 위 permissionMode)
-        ...(this.log.meta.model ? { model: this.log.meta.model } : {}),
         ...(this.log.meta.effort ? { effort: this.log.meta.effort as any } : {}),
         ...(resume ? { resume, ...(this.resumeAt ? { resumeSessionAt: this.resumeAt } : {}) } : {}),
         canUseTool: (toolName, input, { suggestions, toolUseID }) =>
@@ -470,7 +511,7 @@ export class ClaudeSession extends AgentSession {
           this.effort = this.log.meta.effort ?? s.effort ?? null;
           this.emit({
             kind: 'session.ready', vendor: 'claude', model: s.model, cwd: s.cwd, vendorSessionId: s.session_id, permissionMode: s.permissionMode,
-            tools: s.tools ?? [], skills: this.shownSkills(s.skills ?? []), plugins: s.plugins ?? [], mcp: s.mcp_servers ?? [],
+            tools: s.tools ?? [], skills: this.shownSkills(s.skills ?? []), plugins: s.plugins ?? [], mcp: (s.mcp_servers as { name: string; status: string; source?: string }[] ?? []).map((m) => ({ name: m.name, status: m.status, ...(m.source ? { source: originOf(m.source, null, []) } : {}) })),
             slashCommands: s.slash_commands ?? [], agents: s.agents ?? [], version: s.claude_code_version ?? null,
           }, raw);
         } else if (s.subtype === 'session_state_changed') this.emit({ kind: 'session.state', state: s.state }, raw);

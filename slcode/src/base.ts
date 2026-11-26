@@ -8,6 +8,12 @@ export const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 export type ModelsResult = { current: string | null; effort: string | null; models: { value: string; resolvedModel?: string; displayName: string; description: string; efforts?: string[] }[] };
 export type ContextUsage = { tokens: number; max: number; pct: number } | null;
+/** 벤더가 알려 주는 실린 것의 출처 (세션 구성 창) — Claude Code getContextUsage 의 글 그대로. source·type 은 Claude Code 의 출처 글(userSettings·built-in·plugin, User·Project …) */
+export type VendorSources = {
+  memory: { path: string; type: string }[];
+  skills: { name: string; source: string; plugin: string | null; path: string | null }[];
+  agents: { name: string; source: string; plugin: string | null; path: string | null }[];
+} | null;
 /** 슬래시 명령 하나 — builtin·aliases 는 Claude SDK 가 준 것(내장 명령 표시와 별칭), kind 'command' 는 에이전트 플러그인 명령(이름은 <플러그인>:<명령>, ticket slcode-agent-plugin-command) */
 export type Command = { name: string; description: string; argumentHint: string; builtin?: boolean; aliases?: string[]; kind?: 'command'; complete?: boolean };
 /** interrupt — deny 와 함께 턴을 끝낸다 (Claude Code 의 Esc·거절, ticket slcode-question-esc-chat) */
@@ -128,6 +134,8 @@ export abstract class AgentSession {
   abstract commands(): Promise<Command[]>;
   abstract limits(): Promise<Limits>;
   abstract context(): Promise<ContextUsage>;
+  /** 실린 스킬·서브에이전트·지시 파일의 출처 — 벤더가 안 떠 있거나 모르면 null */
+  abstract sources(): Promise<VendorSources>;
   abstract mcp(): Promise<McpStatus[]>;
   abstract reconnectMcp(name: string): Promise<McpStatus[]>;
   abstract interrupt(): Promise<void>;

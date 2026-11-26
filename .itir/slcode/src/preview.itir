@@ -1,0 +1,17 @@
+import { Origin, PreviewBlock, PreviewHook, PreviewSkill } from './protocol'
+
+role: 세션 구성 (ticket slcode-sidebar-revamp, 사용자 2026-11-25·26) — 사이드바 한 줄로 여는 창의 system prompt 출처 나누기, 훅·output style 파일 목록, Claude Code 가 준 출처 글 맞추기. core 의 session.promptPreview·session.sources 가, session.ts 가 MCP 출처에 쓴다
+
+export fn labelSystem(system, known) -> PreviewBlock[] {
+  role: 받은 system 글들에서 slcode 가 넣은 글(slcode 지시·팀 지시·에이전트 플러그인 지시문·프로필 프롬프트)을 찾아 자르고 나머지는 벤더 글. 겹치면 앞서 잡힌 것, 빈 조각은 버린다
+}
+type LoadSources
+export fn listHooks(s) -> PreviewHook[] {
+  role: 실린 설정 범위의 설정 파일(user·project·local), 실린 Claude Code 플러그인의 hooks/hooks.json·plugin.json hooks, 에이전트 플러그인 js 훅 등록(scripts.json regs)을 줄로
+}
+export fn listStyles(s) -> PreviewSkill[] {
+  role: 실린 설정 범위(user·project)의 output-styles/*.md — 이름은 frontmatter name, 없으면 파일 이름. 첫 메시지의 '# Output Style: <이름>' 글의 출처를 화면이 찾는다(플러그인 것은 '<플러그인>:<이름>' 이라 이름으로 안다)
+}
+export fn originOf(raw, plugin, agentPlugins) -> Origin {
+  role: Claude Code 가 준 출처 글(스킬·서브에이전트의 userSettings·built-in·plugin, 지시 파일의 User·Project, MCP 의 sdk·user·project …)을 Origin 으로. plugin 이 에이전트 플러그인 이름이면 agent, sdk·dynamic(SDK 를 부른 쪽이 옵션으로 넣은 MCP)은 slcode, claudeai 는 claude.ai 커넥터, policy·managed·enterprise 는 managed, 모르는 글은 other (사용자 2026-11-26 — 스킬 파일을 이름으로 뒤져 출처를 짐작하던 listSkills 를 대신한다)
+}

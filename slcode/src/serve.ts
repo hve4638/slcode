@@ -38,7 +38,7 @@ const TYPES: Record<string, string> = {
 /** 화면 연결(웹·stdio)에서는 부를 수 없는 제어 메서드 — 소유권·웹 주소 등록(토큰이 붙은 url 을 돌려준다)·core 교체는 serve 의 제어 연결만 */
 const CONTROL_ONLY = new Set(['core.own', 'serve.register', 'core.retire']);
 /** serve 가 답하는 메서드 (ServeMethods) — core 로 넘기지 않는다 */
-const SERVE_METHODS = new Set(['settings.get', 'settings.set', 'serve.info', 'serve.sessions', 'update.run', 'serve.restart', 'start.back', 'inspect.usage', 'inspect.clean', 'web.files', 'file.get', 'file.resolve', 'serve.fork', ...PROVIDER_METHODS]);
+const SERVE_METHODS = new Set(['settings.get', 'settings.set', 'serve.info', 'serve.sessions', 'update.run', 'serve.restart', 'start.back', 'inspect.usage', 'inspect.clean', 'web.files', 'file.get', 'file.list', 'file.resolve', 'serve.fork', ...PROVIDER_METHODS]);
 /** 프레임의 요청·응답 id — 앞머리만 본다 (첨부가 실린 큰 프레임을 해석하지 않게). 화면·core 는 id 를 맨 앞에 쓴다 ({id, method, params}·{id, result}). 아니면 null */
 const idOf = (line: string): string | null => /^\{"id":(-?\d+|"(?:[^"\\]|\\.)*")[,}]/.exec(line)?.[1] ?? null;
 /** 인증 전 줄 세워 둘 수 있는 요청 수 — 인증 안 된 원격 클라이언트가 serve 메모리를 키우지 못하게 */
@@ -174,6 +174,32 @@ export function fileGet(want: unknown): { mediaType: string; size: number; data:
   const size = fs.statSync(f.path).size;
   if (size > FILE_GET_MAX) throw new CoreError(ERR.badRequest, `file too large (${size} bytes)`);
   return { mediaType: f.type, size, data: fs.readFileSync(f.path).toString('base64') };
+}
+
+/** 폴더 아래 파일들 (file.list, 세션 구성 창의 스킬 하위 파일) — file.get 과 같은 범위. 숨김 항목과 링크된 폴더(돌고 도는 링크)는 빼고, 이름의 코드 순서로 FILE_LIST_MAX 개까지 */
+const FILE_LIST_MAX = 200;
+export function fileList(want: unknown): { files: { path: string; size: number }[]; truncated: boolean } {
+  if (typeof want !== 'string' || !path.isAbsolute(want)) throw new CoreError(ERR.badRequest, 'absolute path required');
+  const files: { path: string; size: number }[] = [];
+  let truncated = false;
+  const walk = (rel: string) => {
+    let ents: fs.Dirent[];
+    try { ents = fs.readdirSync(path.join(want, rel), { withFileTypes: true }); } catch { if (!rel) throw new CoreError(ERR.badRequest, 'not a folder'); return; }
+    for (const e of ents.sort((a, b) => (a.name < b.name ? -1 : 1))) { // 코드 순서 — 대문자(SKILL.md·README)가 먼저
+      if (truncated || e.name.startsWith('.')) continue;
+      const r = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) walk(r);
+      else {
+        let st: fs.Stats;
+        try { st = fs.statSync(path.join(want, r)); } catch { continue; }
+        if (!st.isFile()) continue;
+        if (files.length === FILE_LIST_MAX) { truncated = true; continue; }
+        files.push({ path: r, size: st.size });
+      }
+    }
+  };
+  walk('');
+  return { files, truncated };
 }
 
 /** 로컬 파일 — 답변의 마크다운 링크·이미지가 가리키는 절대 경로를 `file?path=` 로 (ticket slcode-append-system-prompt, 사용자 결정 2026-10-17).
@@ -369,6 +395,7 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
         }
         case 'web.files': return webFiles(web, P.dir, kind);
         case 'file.get': return fileGet((m.params as { path?: unknown } | undefined)?.path);
+        case 'file.list': return fileList((m.params as { path?: unknown } | undefined)?.path);
         case 'file.resolve': return fileResolve((m.params as { path?: unknown } | undefined)?.path);
         case 'serve.restart':
           if (!opts.onRestart) throw new CoreError(ERR.badRequest, 'this serve cannot restart itself');
