@@ -4,7 +4,7 @@
 // 세션 목록·새 세션은 이 화면에 없다 — 새 세션은 새 `slcode` 명령(또는 superlite 의 새 카드).
 // transport = { request(method, params), onEvent(fn), onStatus(fn) } (rpc.js 표면).
 import { renderMarkdown } from './markdown.js';
-import { DEFAULTS, applySettings, closeOnBackdrop, ctxLevel, settingsDialog } from './settings.js';
+import { DEFAULTS, applySettings, closeOnBackdrop, ctxLevel, glyph, settingsDialog } from './settings.js';
 import { inspectDialog } from './inspect.js';
 import { activityPanel } from './activity.js';
 import { previewDialog } from './preview.js';
@@ -143,7 +143,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   }
   function addChip(att) {
     pendingFiles.push(att);
-    const chip = h('span', { class: 'chip' }, att.mediaType.startsWith('image/') ? h('img', { src: att.dataUrl }) : null, att.name, h('a', { onclick: () => { pendingFiles.splice(pendingFiles.indexOf(att), 1); chip.remove(); canSend(); } }, '×'));
+    const chip = h('span', { class: 'chip' }, att.mediaType.startsWith('image/') ? h('img', { src: att.dataUrl }) : null, att.name, h('a', { onclick: () => { pendingFiles.splice(pendingFiles.indexOf(att), 1); chip.remove(); canSend(); } }, glyph('x')));
     chips.append(chip);
   }
   // 대기에서 꺼낸 글·첨부를 입력창 앞에 (ticket slcode-queued-message-bubble, 사용자 결정 2026-11-08) — 말풍선을 눌렀을 때, 중단(Esc)으로 거둬졌을 때
@@ -237,19 +237,19 @@ export function mountAgentFront(root, transport, opts = {}) {
   const REVIEW = { approved: '허용', denied: '거부', timedOut: '시간 초과', aborted: '중단' };
   const RISK = { low: '낮음', medium: '보통', high: '높음', critical: '심각' };
   const MODES = [['default', '승인 요청', 'hand'], ['auto', '자동 승인', 'shieldCheck'], ['bypassPermissions', '전체 액세스', 'shieldAlert']];
-  const modeLbl = h('span', {}, '');
   const modeIco = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); modeIco.setAttribute('viewBox', '0 0 24 24');
-  const modeBtn = h('button', { class: 'ghost pill-btn mode' }, modeLbl);
+  const modeBtn = h('button', { class: 'ghost pill-btn mode' });
   const modeMenu = h('div', { class: 'menu acf-mode', popover: '' });
   modeBtn.popoverTargetElement = modeMenu;
-  // 모드별 색(auto 노랑·bypass 빨강, 2026-10-09)은 뺐다 (사용자 2026-10-13). 메뉴는 승인 요청·자동 승인·전체 액세스 셋, 설명 없이 모드별 아이콘만 — 알약도 같은 아이콘 (사용자 2026-10-24) — 이름만 화면용이고 값은 그대로,
+  // 모드별 색(auto 노랑·bypass 빨강, 2026-10-09)을 글자·알약까지 칠했다가 뺐고 (사용자 2026-10-13), 지금은 아이콘만 칠한다 — 자동 승인 노랑·전체 액세스 빨강, 알약과 메뉴 둘 다. 작성창의 알약은 이름·꺾쇠·바탕 없이 아이콘 하나(바탕은 올렸을 때만), 이름은 툴팁 (ticket slcode-mode-icon-color, 사용자 2026-11-26). 메뉴는 승인 요청·자동 승인·전체 액세스 셋, 설명 없이 모드별 아이콘만 — 알약도 같은 아이콘 (사용자 2026-10-24) — 이름만 화면용이고 값은 그대로,
   // 옛 acceptEdits·plan 세션은 core 가 resume 때 auto 로 고쳐 쓴다 (ticket slcode-permission-modes-three)
   const modeName = (v) => MODES.find(([m]) => m === v)?.[1] ?? v;
-  const paintMode = (v) => { modeLbl.textContent = modeName(v); modeIco.innerHTML = ICONS[MODES.find(([m]) => m === v)?.[2] ?? 'shieldCheck']; };
+  const paintMode = (v) => { modeBtn.title = modeName(v); modeBtn.setAttribute('aria-label', `권한 모드: ${modeName(v)}`); modeIco.innerHTML = ICONS[MODES.find(([m]) => m === v)?.[2] ?? 'shieldCheck']; modeIco.setAttribute('class', `m-${v}`); };
+  const modeIcon = (ico, v) => { const s = icon(ico); s.setAttribute('class', `m-${v}`); return s; };
   function renderMode() {
     const cur = info?.permissionMode ?? ready?.permissionMode ?? 'default';
     paintMode(cur);
-    modeMenu.replaceChildren(...MODES.map(([v, label, ico]) => h('button', { class: 'item', 'aria-checked': String(v === cur), onclick: () => { modeMenu.hidePopover(); paintMode(v); rpc('session.setMode', { id: current, mode: v }).catch((e) => { push(h('div', { class: 'meta err' }, e.message)); renderMode(); }); } }, icon(ico), h('span', {}, label))));
+    modeMenu.replaceChildren(...MODES.map(([v, label, ico]) => h('button', { class: 'item', 'aria-checked': String(v === cur), onclick: () => { modeMenu.hidePopover(); paintMode(v); rpc('session.setMode', { id: current, mode: v }).catch((e) => { push(h('div', { class: 'meta err' }, e.message)); renderMode(); }); } }, modeIcon(ico, v), h('span', {}, label))));
   }
   // start: 버튼 왼쪽 끝에 맞춘다 — 왼쪽 아래 권한 모드 메뉴가 오른쪽 끝에 맞추면 화면 왼쪽 밖으로 나간다
   const anchor = (menu, btn, start = false) => () => { if (menu.matches(':popover-open')) { const r = btn.getBoundingClientRect(); menu.style.left = `${start ? r.left : r.right - menu.offsetWidth}px`; menu.style.bottom = `${innerHeight - r.top + 6}px`; } };
@@ -763,7 +763,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   const pencil = iconBtn('pencil', '이름 바꾸기', editName);
   title.addEventListener('dblclick', editName);
   nameRow.append(pencil);
-  sendBtn.append(icon('up')); addBtn.append(icon('plus')); stopBtn.append(icon('stop')); modelBtn.append(icon('chevron')); modeBtn.prepend(modeIco); modeBtn.append(icon('chevron')); sideBtn.append(icon('panel')); gearBtn.append(icon('gear')); jumpBtn.prepend(icon('down'));
+  sendBtn.append(icon('up')); addBtn.append(icon('plus')); stopBtn.append(icon('stop')); modelBtn.append(icon('chevron')); modeBtn.append(modeIco); sideBtn.append(icon('panel')); gearBtn.append(icon('gear')); jumpBtn.prepend(icon('down'));
   // 보낼 게 없거나(빈 입력·첨부 없음) 세션이 끝났으면 보내기 버튼을 비활성처럼 (사용자 2026-09-27)
   // 실행 중엔 보내기 자리에 중단 (사용자 2026-10-09) — 입력이나 첨부가 생기면 다시 보내기, 작업 중에도 보낼 수 있으므로
   const canSend = () => {
@@ -779,7 +779,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     const ta = h('textarea', { style: 'position:fixed;top:0;left:0;opacity:0' }); ta.value = text; host.append(ta); ta.select();
     try { return document.execCommand('copy'); } finally { ta.remove(); }
   }
-  const copyOf = (text) => async (e) => { const b = e.currentTarget; const ok = await copyText(text, b.closest('dialog') ?? document.body); b.replaceChildren(ok ? icon('check') : '✗'); setTimeout(() => b.replaceChildren(icon('copy')), 1200); };
+  const copyOf = (text) => async (e) => { const b = e.currentTarget; const ok = await copyText(text, b.closest('dialog') ?? document.body); b.replaceChildren(icon(ok ? 'check' : 'x')); setTimeout(() => b.replaceChildren(icon('copy')), 1200); };
   const runRewind = (seq, text, conversation, files) => rpc('session.rewind', { id: current, seq, conversation, files }).then(() => { if (conversation) { hist.reset(); input.value = text; input.oninput(); input.focus(); } });
   function rewindBtn(seq, text) {
     const row = acts(iconBtn('copy', '복사', copyOf(text)), iconBtn('rewind', '이 턴부터 되돌리기', () => ask()));
@@ -1167,7 +1167,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   // 작성창 아래 한 줄 — 📁폴더 🌿repo(브랜치) 플랜 리밋(5h·1w 고리·남은 시간) 📦ctx 누적 비용, 묶음 사이는 · 없이 간격만. 사이드바 위에서 옮겼다 (사용자 2026-10-13, 짧은 꼴은 2026-10-14).
   // 폴더는 올리면 전체 경로 복사, repo 는 git 안일 때만. 모르는 리밋·context 는 뺀다. % 는 올리면 작은 툴팁으로 (사용자 2026-09-30).
   // 리밋은 원 안에 5h·1w 를 쓰고 둘레 고리를 12시부터 시계 방향으로 쓴 양만큼 채운다, 60% 이상 노랑·90% 이상 빨강 (ticket slcode-plan-limit-ring, 사용자 2026-11-12 A1안)
-  // 모델별 주간 한도(Fable 등)는 지금 모델에 걸린 것만 1w 뒤에 첫 글자 고리로 — 초기화가 1w 와 같아 남은 시간은 뺀다. 1w 툴팁엔 모델별 한도 모두, 지금 모델 것은 굵게 (ticket slcode-model-scoped-limits, 사용자 2026-11-13 B안)
+  // 모델별 주간 한도(Fable 등)는 지금 모델에 걸린 것만 1w 고리 바로 뒤에 첫 글자 고리로 붙이고, 남은 시간은 그 묶음 뒤에 1w 것 하나 — (1w)(F) 6d4h, 초기화가 1w 와 같다(2026-11-13 실측). 툴팁은 한도 묶음 전체에 하나 — 5h·1w·모델별 한도를 한 줄씩(이름·%·남은 시간), 지금 모델 것은 굵게 (ticket slcode-limit-ring-order, 사용자 2026-11-26; 앞은 slcode-model-scoped-limits 2026-11-13 B안)
   function renderStat() {
     const cwd = info?.cwd ?? ready?.cwd ?? '';
     const ring = (label, pct) => {
@@ -1177,15 +1177,15 @@ export function mountAgentFront(root, transport, opts = {}) {
       return s;
     };
     const pct = (w) => (w.pct != null ? `${Math.round(w.pct)}%` : '—');
-    const lim = (label, w, tip, time = true) => w && h('span', { class: 'lim' },
-      h('span', { class: 'track' }, ring(label, w.pct), tip ?? h('span', { class: 'v' }, pct(w))),
-      time ? h('span', {}, fmtReset(w.resetsAt)) : null);
+    const track = (label, w) => h('span', { class: 'track' }, ring(label, w.pct));
+    const lim = (w, ...tracks) => w && h('span', { class: 'lim' }, ...tracks, h('span', {}, fmtReset(w.resetsAt)));
     const scoped = status?.limits?.scoped ?? []; // 옛 core 엔 없다
     const mine = scoped.filter((s) => modelKey.includes(s.name.toLowerCase()));
     const week = status?.limits?.sevenDay;
-    const weekTip = week && scoped.length ? h('span', { class: 'v rows' }, [['1w', week], ...scoped.map((s) => [s.name, s])].flatMap(([k, w]) => [h('span', { class: mine.includes(w) ? 'cur' : '' }, k), h('span', {}, pct(w)), h('span', {}, fmtReset(w.resetsAt))])) : null;
     const grp = (name, ...kids) => h('span', { class: 'grp' }, icon(name), ...kids);
-    const lims = [lim('5h', status?.limits?.fiveHour), lim('1w', week, weekTip), ...mine.map((s) => lim(s.name.slice(0, 1), s, h('span', { class: 'v' }, `${s.name} ${pct(s)}`), false))].filter(Boolean);
+    const five = status?.limits?.fiveHour;
+    const lims = [lim(five, five && track('5h', five)), lim(week ?? mine[0], week && track('1w', week), ...mine.map((s) => track(s.name.slice(0, 1), s)))].filter(Boolean);
+    const limTip = h('span', { class: 'v rows' }, [['5h', five], ['1w', week], ...scoped.map((s) => [s.name, s])].filter(([, w]) => w).flatMap(([k, w]) => [h('span', { class: mine.includes(w) ? 'cur' : '' }, k), h('span', {}, pct(w)), h('span', {}, fmtReset(w.resetsAt))]));
     const ctx = status?.context;
     // 비용에 올리면 총 소모 토큰 — 리밋처럼 작은 툴팁 (사용자 2026-10-13). 입력 = 캐시 읽기 + 캐시 쓰기 + 그 외.
     // Codex 의 input 은 캐시 읽기를 이미 포함한다 (OpenAI 계열 usage), Claude 의 input 은 캐시를 뺀 나머지다
@@ -1197,7 +1197,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     stat.replaceChildren(...[
       cwd && h('span', { class: 'grp where' }, icon('folder'), h('span', { class: 'name', title: cwd }, cwd.split('/').filter(Boolean).pop() ?? cwd), iconBtn('copy', '전체 경로 복사', copyOf(cwd))),
       status?.repo && h('span', { class: 'grp where' }, icon('branch'), h('span', { class: 'name' }, status.repo, status.branch ? h('span', { class: 'dim' }, ` (${status.branch})`) : '')),
-      lims.length && h('span', { class: 'grp' }, ...lims),
+      lims.length && h('span', { class: 'grp lims' }, ...lims, limTip),
       ctx && grp('box', h('span', { title: `${fmtTok(ctx.tokens)} / ${fmtTok(ctx.max)}` }, 'ctx ', h('b', { class: ctxLevel(ctx.pct, settings.context) }, `${Math.round(ctx.pct)}%`))),
       !models?.provider && h('span', { class: 'grp cost', onmouseenter: fit }, icon('coin'), h('span', {}, usage.turns && !costKnown ? '—' : usage.cost ? `$${usage.cost.toFixed(2)}` : '$0'), tok), // 턴이 있는데 비용을 모르면(가격표에 없는 Codex 모델) —
     ].filter(Boolean));
@@ -1829,7 +1829,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   // 프로바이더 관리 창 (ticket slcode-custom-provider) — 시작 화면의 것과 같은 panel. 요청은 serve 가 답한다. 닫으면 모델 메뉴를 다시 읽는다
   function openProviders() {
     const panel = providersPanel((m, p) => rpc(m, p ?? {}));
-    prvDlg.replaceChildren(h('header', {}, h('h2', {}, '프로바이더'), panel.status, h('button', { class: 'ghost x', title: '닫기', 'aria-label': '닫기', onclick: () => prvDlg.close() }, '✕')), h('div', { class: 'body' }, panel.el));
+    prvDlg.replaceChildren(h('header', {}, h('h2', {}, '프로바이더'), panel.status, h('button', { class: 'ghost x', title: '닫기', 'aria-label': '닫기', onclick: () => prvDlg.close() }, glyph('x'))), h('div', { class: 'body' }, panel.el));
     prvDlg.showModal();
     void panel.load();
   }
@@ -1937,7 +1937,8 @@ export function mountAgentFront(root, transport, opts = {}) {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (slashMenu.matches(':popover-open')) slashMenu.hidePopover(); send(); } else if (e.key === 'Escape' && !busy.hidden && current) { e.preventDefault(); esc.reset(); rpc('session.interrupt', { id: current }); } else if (e.key === 'Escape' && !e.isComposing) { e.preventDefault(); onEscape(); } };
   // 높이를 재려고 잠깐 기본 높이로 줄이면 그동안 피드가 늘어 scrollTop 이 그 높이의 바닥으로 깎인 채 남는다 — 재고 나서 자리를 되돌린다 (ticket slcode-scroll-follow-fixes)
   // 불러온 글로 `/` 메뉴를 열지 않는다 — 위·아래 키를 메뉴가 가져가 다음 기록으로 못 간다. 글을 고치면(nav 풀림) 다시 연다
-  function fitInput() { const top = feed.scrollTop; input.style.height = ''; input.style.height = Math.min(input.scrollHeight, 220) + 'px'; jump(follow ? feed.scrollHeight : top); }
+  // 한 줄이면 높이를 적지 않고 rows=1 의 제 높이에 둔다 — px 로 적어 두면 폭이 좁아져 글꼴이 16px 로 바뀔 때 1px 넘쳐 화살표가 보이고 휠이 대화로 가지 않았다 (ticket slcode-narrow-textarea-overflow)
+  function fitInput() { const top = feed.scrollTop; input.style.height = ''; if (input.scrollHeight > input.clientHeight) input.style.height = Math.min(input.scrollHeight, 220) + 'px'; jump(follow ? feed.scrollHeight : top); }
   input.oninput = () => { fitInput(); paintInputHl(); canSend(); if (!hist.nav) { slashSel = 0; argQuery(); slashDraw(); } saveDraft(); };
   input.addEventListener('mousedown', () => hist.unpin());
   // 입력창이 넘치지 않으면 그 위의 휠은 대화를 스크롤한다. 넘치면 브라우저대로 입력창만 — 끝에 닿아도 대화로 넘기지 않는다 (ticket slcode-input-wheel-tab, 사용자 2026-11-24).

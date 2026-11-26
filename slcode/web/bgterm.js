@@ -2,6 +2,8 @@
 // 뒤로: 받은 위치 뒤만 — 새 출력이 오는 동안은 0.25초, 조용하면 1초까지 늘려 묻는다. 맨 아래를 보고 있으면 화면에는 끝 128K자만 둔다.
 // 앞으로: 맨 위 가까이 올리면 그 앞 조각을 받아 붙인다(1M자까지). 조각은 줄 단위 텍스트 노드 — 새 출력은 덧붙이기만 하고 다 다시 그리지 않는다.
 // 색 등 ANSI 제어 문자는 빼고, 줄 안의 \r 은 그 줄을 덮어쓴 것으로 본다(진행 막대). 아직 줄이 끝나지 않은 꼬리는 따로 두고 받을 때마다 다시 그린다
+import { glyph } from './settings.js';
+
 const KEEP = 131072, MAX_BACK = 1048576;
 const ANSI = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]/g;
 export const termText = (raw) => raw.replace(ANSI, '').split('\n').map((l) => { const s = l.replace(/\r$/, ''); return s.slice(s.lastIndexOf('\r') + 1); }).join('\n');
@@ -95,8 +97,8 @@ export function bgTerm(h, rpc, o) {
     paintSt();
     const tip = folded ? '펼치기' : '접기';
     head.replaceChildren(h('span', { class: 'term' }, o.icon('term')), h('span', { class: 't', title: `${t.command}\n${t.output}` }, t.description || t.command), st,
-      h('span', { class: 'act' }, h('button', { class: 'fold', title: tip, 'aria-label': tip, onclick: () => fold(!folded) }, folded ? '□' : '−'),
-        h('button', { class: 'x', title: '닫기', 'aria-label': '닫기', onclick: close }, '✕')));
+      h('span', { class: 'act' }, h('button', { class: 'fold', title: tip, 'aria-label': tip, onclick: () => fold(!folded) }, glyph(folded ? 'square' : 'minus')),
+        h('button', { class: 'x', title: '닫기', 'aria-label': '닫기', onclick: close }, glyph('x'))));
   }
   function poll() {
     clearTimeout(timer); timer = null;

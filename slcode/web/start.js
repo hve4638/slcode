@@ -34,6 +34,11 @@ const el = (tag, attrs = {}, ...kids) => {
   return n;
 };
 
+// 버튼 아이콘 — settings.js 의 glyph 와 같은 것(Lucide, ISC, 고지는 app.js 의 ICONS 위). 시작 화면 모듈은 따로 실려 거기서 가져오지 못한다.
+// 글자(+ ‹ ›)는 글꼴마다 앉는 높이가 달라 Windows 에서 한글과 어긋났다 (ticket slcode-glyph-icons-to-svg, 사용자 2026-11-26)
+const GLYPHS = { back: '<path d="m15 18-6-6 6-6"/>' };
+const glyph = (name) => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('class', 'gi'); s.setAttribute('aria-hidden', 'true'); s.innerHTML = GLYPHS[name]; return s; };
+
 /** 꺼진 지 얼마나 — 1분 안은 방금 */
 function ago(t) {
   const m = Math.floor((Date.now() - t) / 60000);
@@ -104,7 +109,7 @@ html:not([data-theme*="-"]) .st .go:hover{filter:none;border-color:light-dark(#0
 .st .tools{display:flex;justify-content:center;gap:8px;margin-top:40px}
 .st.pl{max-width:1040px;padding-top:16px}
 .st.pl .phead{display:flex;align-items:center;gap:6px;padding-bottom:10px;border-bottom:1px solid var(--acf-line)}
-.st.pl .phead .more{margin:0;padding:0 8px;font-size:18px;line-height:28px}
+.st.pl .phead .more{margin:0;padding:0 6px;height:28px;font-size:18px}
 .st.pl .pdetail{overflow:visible}
 .st.pl .apply{background:var(--acf-bg)}
 .st.pl h1{margin:0;font-size:15px;font-weight:600;text-align:left;letter-spacing:0}
@@ -181,25 +186,25 @@ function draw() {
   const l = state.list;
   if (state.prompt) {
     root.replaceChildren(el('style', {}, STYLE), el('div', { class: 'st pl sp' },
-      el('div', { class: 'phead' }, el('button', { class: 'more', title: '프로필', on: { click: () => state.prompt.leave(() => { state.prompt = null; draw(); void state.profiles?.show(null, 'prompt'); }) } }, '‹'), el('h1', {}, 'system prompt'), state.prompt.name),
+      el('div', { class: 'phead' }, el('button', { class: 'more', title: '프로필', on: { click: () => state.prompt.leave(() => { state.prompt = null; draw(); void state.profiles?.show(null, 'prompt'); }) } }, glyph('back')), el('h1', {}, 'system prompt'), state.prompt.name),
       state.prompt.el));
     return;
   }
   if (state.profiles) {
     root.replaceChildren(el('style', {}, STYLE), el('div', { class: 'st pl' },
-      el('div', { class: 'phead' }, el('button', { class: 'more', title: '시작 화면', on: { click: () => { state.profiles = null; draw(); } } }, '‹'), el('h1', {}, '프로필'), el('span', { class: 'grow' }), state.profiles.status),
+      el('div', { class: 'phead' }, el('button', { class: 'more', title: '시작 화면', on: { click: () => { state.profiles = null; draw(); } } }, glyph('back')), el('h1', {}, '프로필'), el('span', { class: 'grow' }), state.profiles.status),
       state.profiles.el));
     return;
   }
   if (state.providers) {
     root.replaceChildren(el('style', {}, STYLE), el('div', { class: 'st pl' },
-      el('div', { class: 'phead' }, el('button', { class: 'more', title: '시작 화면', on: { click: () => { state.providers = null; draw(); } } }, '‹'), el('h1', {}, '프로바이더'), el('span', { class: 'grow' }), state.providers.status),
+      el('div', { class: 'phead' }, el('button', { class: 'more', title: '시작 화면', on: { click: () => { state.providers = null; draw(); } } }, glyph('back')), el('h1', {}, '프로바이더'), el('span', { class: 'grow' }), state.providers.status),
       state.providers.el));
     return;
   }
   if (state.plugins) {
     root.replaceChildren(el('style', {}, STYLE), el('div', { class: 'st pl' },
-      el('div', { class: 'phead' }, el('button', { class: 'more', title: '시작 화면', on: { click: () => { state.plugins = null; draw(); } } }, '‹'), el('h1', {}, '에이전트 플러그인')),
+      el('div', { class: 'phead' }, el('button', { class: 'more', title: '시작 화면', on: { click: () => { state.plugins = null; draw(); } } }, glyph('back')), el('h1', {}, '에이전트 플러그인')),
       state.plugins.el));
     return;
   }

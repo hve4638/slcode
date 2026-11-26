@@ -5,8 +5,8 @@
   "main": "main.js",
   "renderer": "renderer.js",
   "views": [
-    { "id": "session", "entry": "views/session.js", "title": "slcode", "icon": "hubot" },
-    { "id": "sessions", "entry": "views/sessions.js", "title": "slcode sessions", "icon": "hubot" }
+    { "id": "session", "entry": "views/session.js", "title": "slcode", "icon": "agent" },
+    { "id": "sessions", "entry": "views/sessions.js", "title": "slcode sessions", "icon": "agent" }
   ],
   "verbs": [
     {

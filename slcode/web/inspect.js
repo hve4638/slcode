@@ -5,7 +5,7 @@
 // 요약·request·response 는 core 가 저장할 때 만든 파싱된 정보(request·response — SSE 는 메시지 하나로)로, raw 탭만 원본으로 그린다 (ticket slcode-inspect-storage).
 // 호출 하나는 카드를 고를 때 받는다 — 요청 하나가 수 MB 다.
 
-import { closeOnBackdrop } from './settings.js';
+import { closeOnBackdrop, glyph } from './settings.js';
 
 const CTX_DEFAULT = 200000; // 컨텍스트 창을 모르는 호출(부수 호출 등)의 막대 끝
 const FREE_KEY = 'slcode.inspect.free'; // request 막대에 남은 공간을 보일지 — 브라우저에 기억한다
@@ -26,7 +26,7 @@ export function inspectDialog(h, rpc, ctxMax, copyBtn, store) {
   const tabs = h('div', { class: 'itabs' });
   const pane = h('div', { class: 'ipane' });
   const dlg = h('dialog', { class: 'inspect' },
-    h('header', {}, title, h('button', { class: 'ghost x', title: '닫기', 'aria-label': '닫기', onclick: () => dlg.close() }, '✕')),
+    h('header', {}, title, h('button', { class: 'ghost x', title: '닫기', 'aria-label': '닫기', onclick: () => dlg.close() }, glyph('x'))),
     h('div', { class: 'ibody' }, list, h('div', { class: 'idetail' }, tabs, pane)));
   closeOnBackdrop(dlg);
   const dim = (t) => h('div', { class: 'dim' }, t);

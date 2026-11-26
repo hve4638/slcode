@@ -3,7 +3,7 @@
 // 왼쪽은 목록, 오른쪽은 고른 줄의 정보. 줄 끝의 출처를 누르면 그 출처의 것만 남는다(플러그인이 무엇을 넣었나도 이것으로).
 // system prompt 글은 session.promptPreview (core 가 Claude Code 를 가짜 API 에 한 번 돌려 받는다 — 몇 초, 요금 없음), 출처·지시 파일은 session.sources, 파일 원문은 file.get, 스킬 하위 파일은 file.list.
 // Claude Code 내장 스킬·도구·서브에이전트는 원문이 Claude Code 안에 있어 이름만, 한 줄로 접는다. 쓰는 프롬프트 고르기·에이전트 플러그인 다시 싣기·MCP 다시 연결은 그 줄의 정보에 app.js 가 만든 조각(parts)을 넣는다.
-import { closeOnBackdrop } from './settings.js';
+import { closeOnBackdrop, glyph } from './settings.js';
 import { translateButton } from './translate.js';
 
 const TABS = [['prompt', '지시문'], ['memory', 'AGENTS.md'], ['feat', '기능']];
@@ -30,7 +30,7 @@ export function previewDialog(h, rpc, get) {
   const pick = new Map(); // 스킬 이름 → 고른 하위 파일(상대 경로)
   const tabs = h('div', { class: 'tabs' }), list = h('div', { class: 'pvl' }), info = h('div', { class: 'pvb' });
   const dialog = h('dialog', { class: 'pvd' },
-    h('header', {}, h('h2', {}, '세션 구성'), tabs, h('button', { class: 'ghost x', title: '닫기', 'aria-label': '닫기', onclick: () => dialog.close() }, '✕')),
+    h('header', {}, h('h2', {}, '세션 구성'), tabs, h('button', { class: 'ghost x', title: '닫기', 'aria-label': '닫기', onclick: () => dialog.close() }, glyph('x'))),
     h('div', { class: 'pvc' }, list, info));
   closeOnBackdrop(dialog);
 
@@ -219,7 +219,7 @@ export function previewDialog(h, rpc, get) {
     const rows = shown.filter((x) => x.k != null);
     const cur = rows.find((x) => x.k === sel.get(tab)) ?? rows[0]; // 고른 것이 없으면 첫 줄
     list.replaceChildren(...[
-      filter ? h('div', { class: 'filter' }, h('span', {}, `출처: ${filter}`), h('button', { class: 'ghost', title: '거르기 풀기', 'aria-label': '거르기 풀기', onclick: () => { filter = null; paint(); } }, '✕')) : null,
+      filter ? h('div', { class: 'filter' }, h('span', {}, `출처: ${filter}`), h('button', { class: 'ghost', title: '거르기 풀기', 'aria-label': '거르기 풀기', onclick: () => { filter = null; paint(); } }, glyph('x'))) : null,
       ...shown.map((x) => (x.sec ? h('div', { class: 'gl' }, x.sec) : x.k == null ? x
         : h('button', { class: 'it', 'aria-current': String(x === cur), onclick: () => { sel.set(tab, x.k); paint(); } },
           h('span', { class: 'nm' }, x.nm), x.side ? h('span', { class: 'sz' }, x.side) : null, x.bad ? h('span', { class: 'bad' }, x.bad) : null,

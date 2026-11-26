@@ -14,6 +14,10 @@ const el = (tag, attrs = {}, ...kids) => {
   n.append(...kids.flat(Infinity).filter((x) => x != null && x !== false));
   return n;
 };
+// 버튼 아이콘 — settings.js 의 glyph 와 같은 것(Lucide, ISC, 고지는 app.js 의 ICONS 위). 시작 화면 모듈은 따로 실려 거기서 가져오지 못한다.
+// 글자(+ ‹ ›)는 글꼴마다 앉는 높이가 달라 Windows 에서 한글과 어긋났다 (ticket slcode-glyph-icons-to-svg, 사용자 2026-11-26)
+const GLYPHS = { plus: '<path d="M5 12h14"/><path d="M12 5v14"/>', next: '<path d="m9 18 6-6-6-6"/>' };
+const glyph = (name) => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('class', 'gi'); s.setAttribute('aria-hidden', 'true'); s.innerHTML = GLYPHS[name]; return s; };
 
 // Claude 로드 설정 — 묶음마다 [출처, 그 출처의 CLAUDE.md]. 설명은 켰을 때 읽는 것. key 는 profile set 의 claude.<key>
 const CLAUDE = [
@@ -77,7 +81,7 @@ export function profilesPanel(call, { openPrompt } = {}) {
 
   // ---------- 탭: 일반 ----------
   function generalTab(r) {
-    const open = (tab) => act('열기 ›', () => go(tab), true);
+    const open = (tab) => act(['열기', glyph('next')], () => go(tab), true);
     return el('div', { class: 'pane' },
       el('section', {}, el('h3', {}, '이 프로필이 싣는 것'),
         el('div', { class: 'grp' }, row({ label: 'Claude 가 읽는 것', desc: claudeLine(r.profile.claude), ctl: open('claude') })),
@@ -211,7 +215,7 @@ export function profilesPanel(call, { openPrompt } = {}) {
       el('div', { class: 'plist' },
         S.rows.map((p) => el('button', { class: 'pitem', 'aria-current': String(p === r), onclick: () => { S.sel = p.name; S.error = null; draw(); } },
           el('span', { class: 'nm' }, p.name), p.builtin ? el('span', { class: 'kind' }, '기본 제공') : null)),
-        el('button', { class: 'add', onclick: () => newDialog(r.name) }, '+ 새 프로필')),
+        el('button', { class: 'add', onclick: () => newDialog(r.name) }, glyph('plus'), '새 프로필')),
       el('div', { class: 'pdetail' },
         el('div', { class: 'phd' }, el('h2', { title: r.name }, r.name),
           r.builtin ? [el('span', { class: 'lock' }, '기본 제공'), el('span', { class: 'grow' }), el('button', { class: 'btn solid', onclick: () => newDialog(r.name) }, '복제해서 고치기')] : null),

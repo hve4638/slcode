@@ -59,7 +59,8 @@ export function activate(api) {
 
   // ---- 사이드바: 세션 목록 (slcode list — 살아 있는 세션만, 사용자 2026-10-04). 목록은 여기서 세어 배지와 사이드바 화면에 같이 준다
   // 활성화·카드 기동/종료·카드 제거 때, 그리고 사이드바가 보이는 동안 몇 초마다(화면의 refresh) 다시 센다 (ticket slcode-sidebar-orca)
-  api.sidebar.register(SIDEBAR, { icon: 'hubot', title: 'slcode', view: SIDEBAR });
+  // 아이콘은 codicon agent — hubot 은 GitHub 마스코트라 바꿨다 (ticket slcode-agent-icon, 사용자 2026-11-27)
+  api.sidebar.register(SIDEBAR, { icon: 'agent', title: 'slcode', view: SIDEBAR });
   async function count() {
     try {
       const [{ rows: all, now }, at] = await Promise.all([host('sidebar'), placement()]);

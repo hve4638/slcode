@@ -17,6 +17,19 @@ const CATS = [['light', '라이트'], ['dark', '다크'], ['other', '기타']];
 /** serve 의 DEFAULT_SETTINGS 와 같다 — 옛 serve(settings.get 이 없다)에 붙었을 때 이것으로 그린다 */
 export const DEFAULTS = { theme: 'system', context: { warn: true, yellow: 30, red: 50 }, inspect: false, team: true };
 
+// 버튼 아이콘 — 닫기·뒤로·더하기·빼기·줄 표시를 글자(✕ ‹ › × +)로 쓰지 않는다. 글자는 글꼴마다 앉는 높이가 달라 Windows 에서 버튼·한글과 어긋났다 (ticket slcode-glyph-icons-to-svg, 사용자 2026-11-26).
+// Lucide(ISC) x·plus·minus·chevron-left·chevron-right·square, 고지는 app.js 의 ICONS 위. 대화 화면의 모듈이 여기서 가져간다. 시작 화면 모듈(start·profiles·prompt)은 따로 실려 제 안에 둔다
+const GLYPHS = {
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  minus: '<path d="M5 12h14"/>',
+  back: '<path d="m15 18-6-6 6-6"/>', // chevron-left
+  next: '<path d="m9 18 6-6-6-6"/>', // chevron-right
+  square: '<rect width="18" height="18" x="3" y="3" rx="2"/>',
+};
+/** 글자 크기(1em)를 따르는 선 아이콘 — style.css svg.gi */
+export const glyph = (name) => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('class', 'gi'); s.setAttribute('aria-hidden', 'true'); s.innerHTML = GLYPHS[name]; return s; };
+
 /** 바깥(배경)을 누르면 닫는다 — 누른 곳과 뗀 곳이 둘 다 배경일 때만. click 은 둘의 공통 조상에서 나므로, 창 안에서 끌다가 밖에서 떼도 target 이 dialog 라 닫혔다 (사용자 2026-10-20) */
 export function closeOnBackdrop(dlg) {
   let down = null, up = null;
@@ -49,7 +62,7 @@ const CLEANS = [
  *  end 는 세션 종료 (확인 창에서 '종료'를 눌렀을 때), rpc 는 serve 요청 (inspect 캐시). h 는 app.js 의 요소 도우미.
  *  translator 는 superlite 카드만 준다 (views/session.js) — 있으면 superlite 하위 창을 둔다 */
 export function settingsDialog(h, set, end, rpc, translator) {
-  const close = h('button', { class: 'ghost x', title: '닫기', 'aria-label': '닫기', onclick: () => dlg.close() }, '✕');
+  const close = h('button', { class: 'ghost x', title: '닫기', 'aria-label': '닫기', onclick: () => dlg.close() }, glyph('x'));
   const err = h('div', { class: 'meta err', hidden: '' });
   /** 설정 한 줄 — [이름 ··· 버튼] (사용자 2026-10-20) */
   const row = (name, control) => h('div', { class: 'row' }, name, control);
@@ -180,13 +193,13 @@ export function settingsDialog(h, set, end, rpc, translator) {
   // 들어가는 줄은 줄 전체가 버튼이고 오른쪽 끝에 지금 값(새 세션 inspect 켜짐·꺼짐)과 › — iOS·macOS 설정의 하위 창 줄과 같은 꼴 (사용자 2026-10-20)
   const inspState = h('span', { class: 'val' });
   const title = h('h2', {}, '설정');
-  const back = h('button', { class: 'ghost x', title: '뒤로', 'aria-label': '뒤로', hidden: '', onclick: () => show('main') }, '‹');
+  const back = h('button', { class: 'ghost x', title: '뒤로', 'aria-label': '뒤로', hidden: '', onclick: () => show('main') }, glyph('back'));
   const mainBody = h('div', { class: 'body' },
     sec('테마', cats, themes),
     h('section', {}, h('label', { class: 'switch' }, h('h3', {}, 'context 경고'), warn), ctxBody),
     h('section', {}, h('label', { class: 'switch' }, h('h3', {}, '새 세션 팀원'), team), teamNote),
-    h('section', { class: 'nav' }, h('button', { class: 'nav', onclick: () => show('inspect') }, h('h3', {}, 'inspect'), h('span', { class: 'go' }, inspState, h('span', { class: 'chev', 'aria-hidden': 'true' }, '›')))),
-    translator ? h('section', { class: 'nav' }, h('button', { class: 'nav', onclick: () => show('superlite') }, h('h3', {}, 'superlite'), h('span', { class: 'go' }, h('span', { class: 'chev', 'aria-hidden': 'true' }, '›')))) : null,
+    h('section', { class: 'nav' }, h('button', { class: 'nav', onclick: () => show('inspect') }, h('h3', {}, 'inspect'), h('span', { class: 'go' }, inspState, glyph('next')))),
+    translator ? h('section', { class: 'nav' }, h('button', { class: 'nav', onclick: () => show('superlite') }, h('h3', {}, 'superlite'), h('span', { class: 'go' }, glyph('next')))) : null,
     endRow,
     err,
     ver);

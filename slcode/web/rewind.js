@@ -1,6 +1,8 @@
 // 되돌리기 창 (ticket slcode-rewind-esc-picker, 사용자 2026-11-03) — Esc 두 번으로 입력창 자리에 뜬다. 꼴과 키는 Claude Code 2.1.316 의 Rewind 실측을 따른다:
 // 목록(오래된 요청이 위, 맨 아래 '지금' 에서 시작, ↑↓·j/k·Home/End, 끝에서 돌지 않음) → Enter → 확인 단계(요청 전문, dry-run 결과, ↑↓ 는 돈다, 숫자는 바로 실행, Esc·취소는 목록으로).
 // 요약 2종은 slcode 에 대응 기능이 없어 뺐다. 파일 수치는 벤더 dry-run 이 누계만 주므로 목록은 이름만, 수치는 확인 단계에만 보인다.
+import { glyph } from './settings.js';
+
 const base = (p) => p.split(/[\\/]/).pop();
 export const editsLabel = (edits) => (!edits.length ? '코드 변경 없음' : edits.length === 1 ? base(edits[0]) : `파일 ${edits.length}개 변경`);
 export const ago = (ms) => {
@@ -36,8 +38,8 @@ export function rewindPicker(h, deps) {
   function paintList() {
     const more = [h('div', { class: 'more up' }), h('div', { class: 'more down' })];
     const rows = h('div', { class: 'rows' }, ...turns.map((t, i) => h('button', { class: 'pt', 'aria-selected': String(i === sel), tabindex: -1, onclick: () => { sel = i; choose(); } },
-      h('span', { class: 'mk' }, i === sel ? '›' : ''), h('span', { class: 'tx' }, h('span', { class: 't' }, deps.head(t)), h('span', { class: 'f' }, editsLabel(t.edits))))),
-      h('button', { class: 'pt now', 'aria-selected': String(sel === turns.length), tabindex: -1, onclick: () => deps.close() }, h('span', { class: 'mk' }, sel === turns.length ? '›' : ''), h('span', { class: 'tx' }, h('span', { class: 't' }, '(지금)'))));
+      h('span', { class: 'mk' }, i === sel ? glyph('next') : ''), h('span', { class: 'tx' }, h('span', { class: 't' }, deps.head(t)), h('span', { class: 'f' }, editsLabel(t.edits))))),
+      h('button', { class: 'pt now', 'aria-selected': String(sel === turns.length), tabindex: -1, onclick: () => deps.close() }, h('span', { class: 'mk' }, sel === turns.length ? glyph('next') : ''), h('span', { class: 'tx' }, h('span', { class: 't' }, '(지금)'))));
     // 줄이 넘치면 위아래로 가려진 수를 보인다 — scrollIntoView 는 카드 iframe 의 바깥까지 굴린다
     const count = () => {
       const all = [...rows.children], top = rows.scrollTop, bot = top + rows.clientHeight;
@@ -62,7 +64,7 @@ export function rewindPicker(h, deps) {
       h('blockquote', {}, h('div', { class: 'q' }, t.text || t.files.join(', ')), h('div', { class: 'at' }, ago(Date.now() - t.at))),
       c.busy ? h('div', { class: 'wait' }, c.busy) : h('div', { class: 'effects' }, ...lines),
       c.preview?.error ? h('div', { class: 'err' }, c.preview.error) : null,
-      c.busy ? null : h('div', { class: 'opts' }, ...c.options.map((x, i) => h('button', { class: 'pt opt', 'aria-selected': String(i === c.sel), tabindex: -1, onclick: () => { c.sel = i; act(); } }, h('span', { class: 'mk' }, i === c.sel ? '›' : ''), h('span', { class: 't' }, `${i + 1}. ${x.label}`)))),
+      c.busy ? null : h('div', { class: 'opts' }, ...c.options.map((x, i) => h('button', { class: 'pt opt', 'aria-selected': String(i === c.sel), tabindex: -1, onclick: () => { c.sel = i; act(); } }, h('span', { class: 'mk' }, i === c.sel ? glyph('next') : ''), h('span', { class: 't' }, `${i + 1}. ${x.label}`)))),
       c.preview?.files?.changed.length && o?.files ? h('div', { class: 'warn' }, '파일은 통째로 되돌아가므로 그 뒤의 다른 변경도 사라집니다. Bash 로 바꾼 다른 파일은 되돌아가지 않습니다.') : null,
       c.busy ? null : h('div', { class: 'keys' }, '↑↓ 고르기 · Enter 실행 · 숫자 바로 실행 · Esc 뒤로')].filter(Boolean));
     el.focus({ preventScroll: true });

@@ -7,7 +7,7 @@
 //   강한 신호 — 입력창에 1초 넘게 입력, Esc, 복사, 글자 선택, 버튼·링크·접기 클릭, 한 묶음 스크롤이 화면 60% 넘게, 스크롤이 응답 시작 근처에서 멈춤.
 //   그 행동의 약한 신호 뒤에(또는 같은 순간에) 낸다. 보냄·답변은 core 가 직접 적는다.
 //   스크롤은 바퀴·터치·키·스크롤바를 잡은 뒤에만 — 새 답변을 따라 내려가는 화면 스스로의 스크롤은 신호가 아니다
-import { closeOnBackdrop } from './settings.js';
+import { closeOnBackdrop, glyph } from './settings.js';
 
 const pad = (n) => String(n).padStart(2, '0');
 
@@ -217,7 +217,7 @@ function activityModal(h) {
 
   const body = h('div', { class: 'body' }), views = h('nav', { class: 'views', 'aria-label': '보기' });
   const dlg = h('dialog', { class: 'settings act-dlg' },
-    h('header', {}, h('h2', {}, '활동 기록'), views, h('button', { class: 'ghost x', title: '닫기', 'aria-label': '닫기', onclick: () => dlg.close() }, '✕')), body);
+    h('header', {}, h('h2', {}, '활동 기록'), views, h('button', { class: 'ghost x', title: '닫기', 'aria-label': '닫기', onclick: () => dlg.close() }, glyph('x'))), body);
   closeOnBackdrop(dlg);
   let D, V = { view: 'days' };
   // 세션은 대개 며칠이라 날짜별(오늘)부터 연다 (사용자 2026-10-27)
@@ -391,7 +391,7 @@ function activityModal(h) {
 
     const btn = (label, ok, fn) => h('button', { type: 'button', class: 'dnav', disabled: ok ? null : '', onclick: fn }, label);
     const nav = h('div', { class: 'd-nav' },
-      btn('‹ 이전 날', i > 0, () => showDay(i - 1)), h('b', {}, mday(day.d)), btn('다음 날 ›', i < D.days.length - 1, () => showDay(i + 1)));
+      btn([glyph('back'), '이전 날'], i > 0, () => showDay(i - 1)), h('b', {}, mday(day.d)), btn(['다음 날', glyph('next')], i < D.days.length - 1, () => showDay(i + 1)));
     const s = day.sum, nS = day.points.filter((p) => p.kind === 'sent').length;
     const sums = h('div', { class: 'big' },
       h('div', {}, h('span', { class: 'k' }, '활성'), h('b', {}, fmtLong(day.on))),

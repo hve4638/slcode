@@ -33,6 +33,11 @@ const ICONS = {
   languages: '<path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/>',
   trash: '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>',
 };
+// 버튼 아이콘 — settings.js 의 glyph 와 같은 것(Lucide, ISC, 고지는 app.js 의 ICONS 위). 시작 화면 모듈은 따로 실려 거기서 가져오지 못한다.
+// 글자(+ ‹ ›)는 글꼴마다 앉는 높이가 달라 Windows 에서 한글과 어긋났다 (ticket slcode-glyph-icons-to-svg, 사용자 2026-11-26)
+const GLYPHS = { plus: '<path d="M5 12h14"/><path d="M12 5v14"/>' };
+const glyph = (name) => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('class', 'gi'); s.setAttribute('aria-hidden', 'true'); s.innerHTML = GLYPHS[name]; return s; };
+
 const icon = (name) => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.innerHTML = ICONS[name]; return s; };
 
 /** call(method, params) → Promise. name 은 처음 열 프롬프트(null 은 벤더 기본) — 프로필 화면의 system prompt 탭이 준다 */
@@ -220,9 +225,9 @@ export function promptPanel(call, { name: first, translator = null } = {}) {
     if (!t || (!t.pairs && !t.error)) return null;
     return el('div', { class: 'trv' }, t.error ? el('div', { class: 'trerr' }, `번역하지 못했습니다: ${t.error}`) : t.pairs.map((p) => el('div', { class: 'trpair' }, el('div', { class: 'tl' }, p.translation))));
   };
-  const ins = (at) => el('div', { class: `ins${items[at]?.kind === 'heading' || items[at - 1]?.kind === 'heading' ? ' bare' : ''}` }, el('button', { onclick: () => add(at) }, '+ 여기에 블록 추가'));
+  const ins = (at) => el('div', { class: `ins${items[at]?.kind === 'heading' || items[at - 1]?.kind === 'heading' ? ' bare' : ''}` }, el('button', { onclick: () => add(at) }, glyph('plus'), '여기에 블록 추가'));
   /** 마지막 블록 아래 — 늘 보인다 (사용자 2026-11-21) */
-  const insEnd = () => el('div', { class: 'ins end' }, el('button', { onclick: () => add(items.length) }, '+ 블록 추가'));
+  const insEnd = () => el('div', { class: 'ins end' }, el('button', { onclick: () => add(items.length) }, glyph('plus'), '블록 추가'));
 
   let sumEl = null;
   function sum() {
@@ -287,7 +292,7 @@ export function promptPanel(call, { name: first, translator = null } = {}) {
       ['pencil', '이름 바꾸기', () => renameDialog(x)],
       ['copy', '복제', () => leave(() => copyDialog(x))],
       ['trash', '삭제', () => removeDialog(x), x.usedBy.length ? `${x.usedBy.join(', ')} 프로필이 쓰고 있어 삭제할 수 없습니다` : null, 'danger']])),
-    el('button', { class: 'add', onclick: () => leave(newDialog) }, '+ 새 시스템 프롬프트'));
+    el('button', { class: 'add', onclick: () => leave(newDialog) }, glyph('plus'), '새 시스템 프롬프트'));
 
   /** 창을 다시 그린다 — 열린 대화상자는 그대로 둔다(읽는 중에 연 대화상자가 닫히지 않게) */
   const paint = (...kids) => { closeMenu(); for (const c of [...root.children]) if (c !== dlg) c.remove(); root.prepend(...kids); };
