@@ -416,7 +416,11 @@ export function mountAgentFront(root, transport, opts = {}) {
     inspBtn.disabled = !(info.state === 'idle' || info.state === 'starting');
     inspBtn.title = `inspect ${info.inspect ? '켬' : '끔'} — 누르면 ${info.inspect ? '끕니다' : '켭니다'}. ${info.vendor === 'codex' ? 'Codex' : 'Claude'} 를 같은 대화로 다시 띄웁니다 (대기 중일 때만)`;
   }
-  const center = h('div', { class: 'main' }, feed, kidAsks, dock, composer);
+  // 입력창 쪽(팀원 승인·승인 카드·입력창)은 피드 아래 칸이 아니라 피드 바닥 위에 겹쳐 놓는다 — 대화가 알약 줄 뒤를 지나 입력 상자 뒤로 들어가 사라진다 (ticket slcode-feed-fade-under-composer, 사용자 2026-11-26: 흐림 없이).
+  // 겹친 높이(--below)만큼 피드 아래 여백을 두어 맨 아래의 글이 가리지 않게 하고, 스크롤바 폭(--sbw)만큼 비켜 스크롤바는 끝까지 보인다.
+  // 배경색은 입력 상자(승인 카드가 떠 있으면 그 카드) 윗변에서 모서리 반지름만큼 내려온 높이(--solid)부터 — 글이 잘리는 선이 상자 뒤에 숨는다
+  const below = h('div', { class: 'below' }, kidAsks, dock, composer);
+  const center = h('div', { class: 'main' }, feed, below);
   center.addEventListener('pointerdown', () => el.classList.remove('peek'));
   el.append(
     h('header', { class: 'hdr' }, nameRow, pill, inspBtn, bootEl, h('span', { class: 'gap' }), updBtn, gearBtn, sideBtn),
@@ -1613,12 +1617,22 @@ export function mountAgentFront(root, transport, opts = {}) {
     nav.hidden = outline.length < 3 || g < 232;
     if (nav.hidden) return;
     const w = Math.min(280, g - 32);
-    nav.style.width = `${w}px`; nav.style.left = `${g - 24 - w}px`; nav.style.setProperty('--h', `${feed.clientHeight - 48}px`);
+    nav.style.width = `${w}px`; nav.style.left = `${g - 24 - w}px`; nav.style.setProperty('--h', `${feed.clientHeight - below.offsetHeight - 48}px`);
   }
-  // 따라가는 중이면 바닥을 다시 맞춘다 (ticket slcode-scroll-follow-fixes) — 입력창·큐가 늘어 피드가 줄 때, 숨었던 카드가 다시 보일 때. 숨은 동안(display:none)은 레이아웃이 없어 바닥으로 내리기가 먹지 않아 그 사이 출력만큼 위에 남는다
-  new ResizeObserver(() => { outlineLayout(); if (follow) jump(feed.scrollHeight); }).observe(feed);
+  // 따라가는 중이면 바닥을 다시 맞춘다 (ticket slcode-scroll-follow-fixes) — 입력창·큐·알약 목록이 늘 때, 창이 바뀔 때, 숨었던 카드가 다시 보일 때. 숨은 동안(display:none)은 레이아웃이 없어 바닥으로 내리기가 먹지 않아 그 사이 출력만큼 위에 남는다.
+  // 입력창 쪽은 피드 위에 겹쳐 있어 늘어도 피드 크기가 그대로다 — 그 높이를 피드 아래 여백(--below)으로 옮기고 같이 맞춘다
+  function fit() {
+    if (!feed.clientHeight) return; // 숨은 카드(display:none) — 잴 것이 없다
+    center.style.setProperty('--below', `${below.offsetHeight}px`);
+    const lid = composer.hidden ? dock.firstElementChild : box;
+    if (lid) below.style.setProperty('--solid', `${lid.getBoundingClientRect().top - below.getBoundingClientRect().top + parseFloat(getComputedStyle(lid).borderTopLeftRadius)}px`);
+    center.style.setProperty('--sbw', `${feed.offsetWidth - feed.clientWidth}px`);
+    outlineLayout(); if (follow) jump(feed.scrollHeight);
+  }
+  const fitting = new ResizeObserver(fit);
+  fitting.observe(feed); fitting.observe(below, { box: 'border-box' });
   // 실제 카드(별도 프로세스 iframe)는 숨을 때 크기 변화가 전달되지 않아 돌아와도 ResizeObserver 가 오지 않는다 — 보일 때 오는 IntersectionObserver 로 맞춘다 (2026-11-03 실측)
-  new IntersectionObserver((es) => { if (follow && es.at(-1).isIntersecting) jump(feed.scrollHeight); }).observe(feed);
+  new IntersectionObserver((es) => { if (es.at(-1).isIntersecting) fit(); }).observe(feed);
   // 지금 항목이 목록 가운데 오게 — 포인터가 목록 위에 있으면 옮기지 않는다(고르려는 항목이 손 밑에서 도망가지 않게). scrollIntoView 는 카드 iframe 의 바깥까지 굴린다
   function centerCur(force = false) {
     const b = navList.children[outlineCur];

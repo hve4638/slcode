@@ -129,6 +129,12 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .jump button.hot { padding: 0 14px 0 10px; background: var(--acf-accent); border-color: var(--acf-accent); color: var(--acf-on-accent); }
 .acf .jump button svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .acf .jump .n:empty { display: none; }
+/* 입력창 쪽(.below)은 피드 바닥 위에 겹친다 (ticket slcode-feed-fade-under-composer, 사용자 2026-11-26: 흐림 없이) — --solid 위는 투명이라 대화가 알약 줄 뒤로 비치고,
+   입력 상자 윗변 모서리 아래(--solid)부터 배경색이라 상자 뒤로 들어간 글은 보이지 않는 곳에서 사라진다. 높이 --below·스크롤바 폭 --sbw·--solid 는 app.js 가 잰다. 피드는 그만큼 아래 여백을 두어 맨 아래 글이 가리지 않는다. 맨 아래로 버튼(sticky)도 그 여백 위에 뜬다 — sticky 는 스크롤 상자의 padding 안쪽을 기준으로 붙는다.
+   빈 자리는 포인터를 통과시켜 그 위의 휠·클릭·선택이 뒤의 대화로 간다 */
+.acf .below { position: absolute; left: 0; right: var(--sbw, 0px); bottom: 0; z-index: 2; background: linear-gradient(to bottom, transparent var(--solid, 0px), var(--acf-bg) var(--solid, 0px)); pointer-events: none; }
+.acf .below > .kid-asks > *, .acf .below > .dock > *, .acf .below > .composer > :not(.wk), .acf .below .wk > * { pointer-events: auto; }
+.acf .main > .feed { padding-bottom: calc(var(--below, 0px) + 8px); scroll-padding-bottom: var(--below, 0px); }
 
 /* 지난 요청 목록 (ticket slcode-prompt-outline) — 대화 열 왼쪽 여백. 자리·폭·높이(--h)와 감춤은 app.js outlineLayout 이 실제 여백으로 정한다 */
 .acf .main { position: relative; }
@@ -644,7 +650,7 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf .user .chips { margin-bottom: 6px; }
 .acf .user .chip { flex-direction: column; align-items: flex-start; max-width: 100%; }
 .acf .user .chip img { max-height: 160px; max-width: 100%; }
-.acf .composer textarea { resize: none; border: 0; outline: 0; background: transparent; color: inherit; font: inherit; line-height: 1.5; max-height: 220px; padding: 4px 6px; }
+.acf .composer textarea { resize: none; border: 0; outline: 0; background: transparent; color: inherit; font: inherit; line-height: 1.5; max-height: 220px; padding: 4px 6px; overscroll-behavior: contain; } /* 입력창이 대화 위에 겹쳐 있어 브라우저 휠이 대화로 넘어간다 — 넘치지 않을 때의 대화 스크롤은 app.js 휠 처리가 하고, 넘칠 때는 끝에 닿아도 넘기지 않는다 (ticket slcode-input-wheel-tab·slcode-feed-fade-under-composer) */
 /* 슬래시 명령 강조 (ticket slcode-slash-command-highlight) — textarea 위에 같은 글·같은 줄바꿈으로 투명하게 겹친 층(app.js inputHl)이 명령 낱말만 칠한다.
    글자색만 바꾼다(배경 칩은 사용자가 빼기로, 2026-11-23). 다크는 Claude Code 의 명령 색 #a4d7ff (사용자 2026-11-23) */
 .acf .composer .field { position: relative; min-width: 0; }
@@ -987,8 +993,8 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 /* 팀원 세션 (ticket slcode-team-agent, 사용자 2026-11-08) — 입력 제어 중인 팀원의 흐린 입력 상자와 자물쇠, 리더의 "팀원" 승인 줄(composer 밖, dock 위) */
 .acf .composer .lockover[hidden] { display: none; }
 .acf .kid-ask .kid-open { color: var(--acf-accent); text-decoration: none; white-space: nowrap; }
-.acf .main > .kid-asks { max-width: 780px; width: calc(100% - 32px); margin: 0 auto 8px; }
-.acf .main > .kid-asks[hidden] { display: none; }
+.acf .below > .kid-asks { max-width: 780px; width: calc(100% - 32px); margin: 0 auto 8px; }
+.acf .below > .kid-asks[hidden] { display: none; }
 .acf .kid-ask .gap { flex: 1; }
 .acf .composer.locked .box > :not(.lockover) { filter: blur(2.5px); opacity: .55; pointer-events: none; user-select: none; }
 .acf .composer .lockover { position: absolute; inset: 0; display: grid; place-items: center; }
@@ -998,7 +1004,7 @@ html, body { margin: 0; height: 100%; background: var(--acf-bg); }
 .acf dialog.confirm.cut h2 { margin: 0 0 8px; font-size: 15px; }
 .acf dialog.confirm.cut p { margin: 0 0 8px; }
 .acf dialog.confirm.cut ul { margin: 0 0 14px; padding-left: 18px; font-size: 13px; color: var(--acf-muted); }
-.acf .main > .kid-asks { display: flex; flex-direction: column; gap: 6px; }
+.acf .below > .kid-asks { display: flex; flex-direction: column; gap: 6px; }
 .acf .kid-ask { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--acf-line); border-radius: 10px; background: var(--acf-panel); font-size: 13px; min-width: 0; }
 .acf .kid-ask .kind { font-weight: 600; }
 .acf .kid-ask .who { white-space: nowrap; }
