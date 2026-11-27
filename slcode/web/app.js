@@ -406,15 +406,37 @@ export function mountAgentFront(root, transport, opts = {}) {
   }
   boot('connecting');
   // 맨 위 헤더 = 세션 이름·상태 … 설정·사이드바 버튼, 폭이 좁아도 늘 보인다 (사용자 2026-10-13). 전엔 왼쪽 레일이라 1100px 아래에서 숨었다
-  // inspect 스위치 — 헤더 상태 칸 옆 (ticket slcode-sidebar-revamp, 사용자 2026-11-25. 전엔 사이드바 '세션' 칸). 설정의 '새 세션 inspect' 를 켰거나 이 세션이 켜져 있을 때만 보인다.
-  // 누르면 확인 창(askInspect) — 켜고 끄면 벤더를 같은 대화로 다시 띄운다(대기 중일 때만). 값은 session.changed 로 온다
-  const inspBtn = h('button', { class: 'insp', hidden: '', onclick: () => { if (info) askInspect(!info.inspect); } }, h('span', { class: 'sw' }), h('span', { class: 'lb' }, 'inspect'));
+  // inspect 알약 — 헤더 상태 칸 옆 (ticket slcode-sidebar-revamp, 사용자 2026-11-25·27. 전엔 사이드바 '세션' 칸). 설정의 '새 세션 inspect' 를 켰거나 이 세션이 켜져 있을 때만 보인다.
+  // 상태 칸과 같은 알약이고 켬·끔은 글자 밝기로만. 마우스를 올리면 지금 상태·설명·켜기/끄기 단추가 든 팝오버가 떠 누를 수 있음을 알린다.
+  // 누르면 확인 창 없이 바로 바꾼다(사용자 2026-11-27 — 경고는 팝오버가 이미 보인다). 켜고 끄면 벤더를 같은 대화로 다시 띄운다(대기 중일 때만). 값은 session.changed 로 온다
+  // 아이콘(답변 아래 inspect 단추와 같은 것)은 ICONS 가 만들어진 뒤에 붙인다
+  // 서버는 벤더를 다시 띄운 뒤에야 session.changed 를 보내므로(0.5초쯤) 화면은 먼저 바꾼다(inspWant). 서버는 바꾸는 중의 요청을 거절하므로
+  // 그사이 또 누르면 원하는 값만 바꿔 두고, 앞 요청이 끝난 뒤 서버 값과 다르면 한 번 더 보낸다. 실패하면 서버 값으로 돌아간다
+  let inspWant = null, inspBusy = false;
+  const flipInsp = async () => {
+    if (!info) return;
+    inspWant = !(inspWant ?? !!info.inspect); paintInsp();
+    if (inspBusy) return;
+    inspBusy = true;
+    const id = current;
+    try { let real = !!info.inspect; while (inspWant !== real) { real = inspWant; await rpc('session.setInspect', { id, on: real }); } }
+    catch (e) { push(h('div', { class: 'meta err' }, e.message)); renderSide(); }
+    finally { inspBusy = false; inspWant = null; paintInsp(); }
+  };
+  const inspBtn = h('button', { class: 'insp', onclick: flipInsp }, h('span', { class: 'lb' }, 'inspect'));
+  const inspHead = h('b'), inspDesc = h('p'), inspAct = h('button', { class: 'act', onclick: flipInsp });
+  const inspWrap = h('span', { class: 'insp-wrap', hidden: '' }, inspBtn, h('div', { class: 'insp-pop' }, inspHead, inspDesc, inspAct));
   function paintInsp() {
-    inspBtn.hidden = !info || (!settings.inspect && !info.inspect);
-    if (inspBtn.hidden) return;
-    inspBtn.classList.toggle('on', !!info.inspect);
-    inspBtn.disabled = !(info.state === 'idle' || info.state === 'starting');
-    inspBtn.title = `inspect ${info.inspect ? '켬' : '끔'} — 누르면 ${info.inspect ? '끕니다' : '켭니다'}. ${info.vendor === 'codex' ? 'Codex' : 'Claude'} 를 같은 대화로 다시 띄웁니다 (대기 중일 때만)`;
+    inspWrap.hidden = !info || (!settings.inspect && !info.inspect);
+    if (inspWrap.hidden) return;
+    const can = info.state === 'idle' || info.state === 'starting';
+    const on = inspWant ?? !!info.inspect;
+    inspBtn.classList.toggle('on', on);
+    inspBtn.disabled = !can;
+    inspHead.textContent = `inspect ${on ? '켜짐' : '꺼짐'}`;
+    inspDesc.textContent = `요청 원문을 기록합니다. ${info.vendor === 'codex' ? '켜고 끄면 Codex 를 다시 띄웁니다.' : '켜고 끄면 이전 대화의 캐시가 깨질 수 있습니다.'}${can ? '' : ' 대기 중일 때만 바꿀 수 있습니다.'}`;
+    inspAct.textContent = on ? '끄기' : '켜기';
+    inspAct.hidden = !can;
   }
   // 입력창 쪽(팀원 승인·승인 카드·입력창)은 피드 아래 칸이 아니라 피드 바닥 위에 겹쳐 놓는다 — 대화가 알약 줄 뒤를 지나 입력 상자 뒤로 들어가 사라진다 (ticket slcode-feed-fade-under-composer, 사용자 2026-11-26: 흐림 없이).
   // 겹친 높이(--below)만큼 피드 아래 여백을 두어 맨 아래의 글이 가리지 않게 하고, 스크롤바 폭(--sbw)만큼 비켜 스크롤바는 끝까지 보인다.
@@ -423,7 +445,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   const center = h('div', { class: 'main' }, feed, below);
   center.addEventListener('pointerdown', () => el.classList.remove('peek'));
   el.append(
-    h('header', { class: 'hdr' }, nameRow, pill, inspBtn, bootEl, h('span', { class: 'gap' }), updBtn, gearBtn, sideBtn),
+    h('header', { class: 'hdr' }, nameRow, pill, inspWrap, bootEl, h('span', { class: 'gap' }), updBtn, gearBtn, sideBtn),
     center,
     side,
     settingsUi.el, prvDlg,
@@ -725,6 +747,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   };
   const logo = (vendor) => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('class', `lg ${vendor}`); s.innerHTML = `<path${vendor === 'codex' ? ' fill-rule="evenodd"' : ''} d="${LOGOS[vendor] ?? LOGOS.claude}"/>`; return s; };
   const icon = (name) => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.innerHTML = ICONS[name]; return s; };
+  inspBtn.prepend(icon('inspect'));
   const iconBtn = (name, title, onclick) => h('button', { class: 'ico', title, 'aria-label': title, onclick }, icon(name));
   const acts = (...btns) => h('div', { class: 'acts' }, ...btns);
   // 도구 줄 (ticket slcode-tool-card-polish, 사용자 2026-11-25) — 도구 아이콘(실행 중 깜박)·화면 이름·인자 한 줄, 실패면 줄 오른쪽 끝에 빨간 'exit N'·'실패'. 다른 MCP 는 흐린 '서버 · ' 뒤에 도구.
@@ -813,24 +836,6 @@ export function mountAgentFront(root, transport, opts = {}) {
   const forkBtn = (endSeq) => iconBtn('fork', '이 응답까지 복제', () => fork(endSeq));
   const inspectBtn = (endSeq) => { const b = iconBtn('inspect', '이 턴의 API 호출 보기', () => inspectUi.open(current, endSeq)); b.classList.add('insp'); return b; };
   const syncInspect = () => el.classList.toggle('inspectable', info?.inspect != null);
-  // 헤더 inspect 스위치의 확인 창 (사용자 2026-10-19, ticket slcode-inspect-default-on) — 켜고 끄면 벤더를 다시 띄워 다음 호출의 캐시가 깨질 수 있다
-  let inspectTo = false;
-  const inspectMsg = h('p', {});
-  const confirmInspect = h('dialog', { class: 'confirm' }, inspectMsg, h('div', { class: 'btns' },
-    h('button', { onclick: () => confirmInspect.close() }, '취소'),
-    h('button', { class: 'primary', onclick: () => {
-      confirmInspect.close();
-      rpc('session.setInspect', { id: current, on: inspectTo }).catch((e) => { push(h('div', { class: 'meta err' }, e.message)); renderSide(); });
-    } }, '계속')));
-  closeOnBackdrop(confirmInspect);
-  el.append(confirmInspect);
-  const askInspect = (on) => {
-    inspectTo = on;
-    inspectMsg.textContent = info?.vendor === 'codex'
-      ? `inspect 를 ${on ? '켜면' : '끄면'} Codex 를 같은 대화로 다시 띄웁니다. 이 세션에서 '이번 세션만 허용' 한 승인은 사라집니다.`
-      : `inspect 를 ${on ? '켜면' : '끄면'} Claude 를 같은 대화로 다시 띄웁니다. 다음 호출에서 프롬프트 캐시가 깨져 비용이 더 들 수 있고, 이 세션에서 '이번 세션만 허용' 한 승인 규칙은 사라집니다.`;
-    confirmInspect.showModal();
-  };
   // 메시지 턴 — 내부적으로는 사용자 턴이지만 화면은 사용자 말풍선이 아니라 왼쪽의 봉투 카드 (프로토타입, 사용자 2026-09-27).
   // 본문은 src/mail.ts formatMail 꼴 (MAIL_RE 는 그 정규식의 사본): <slcode-message id from name kind at [via] [re]>\n본문\n</slcode-message> 를 빈 줄로 이은 것.
   // via 는 실제로 넘긴 쪽 — outside 면 "세션 밖에서 보냄", 세션 id 면 "실제 발신" (ticket slcode-p2p-messaging, 2026-10-19).
@@ -1331,6 +1336,9 @@ export function mountAgentFront(root, transport, opts = {}) {
     const tick = popOpen === 'run' && bg.length;
     if (tick && !bgTick) bgTick = setInterval(() => rpc('session.bgList', { id: current }).then((r) => paintBg(r.tasks, true), () => {}), 2000); else if (!tick && bgTick) { clearInterval(bgTick); bgTick = null; }
     const sessions = family?.sessions.length ? family.sessions : current ? [{ id: current, title: info?.title ?? null, parent: null, live: true }] : [];
+    // 혼자(관련 세션이 이 세션 하나)면 세션 알약을 두지 않는다 (사용자 2026-11-26)
+    const alone = sessions.length <= 1;
+    if (popOpen === 'fam' && alone) popOpen = null;
     const pill = (key, cls, ...kids) => h('button', { class: `pl ${cls}${popOpen === key ? ' open' : ''}`, onclick: () => {
       popOpen = popOpen === key ? null : key;
       if (popOpen === 'fam') opts.preload?.(sessions.filter((x) => x.live && x.id !== current).map((x) => x.id));
@@ -1350,7 +1358,7 @@ export function mountAgentFront(root, transport, opts = {}) {
     for (const c of [...wk.children]) if (c !== term.el) c.remove();
     wk.prepend(...[
       up ? famGo(up, 'pl back', icon('chevron'), h('span', { class: 'nm' }, famName(up))) : null,
-      pill('fam', 'calm fam-chip', h('span', { class: 'rd' }), `세션 ${sessions.length} ▾`),
+      alone ? null : pill('fam', 'calm fam-chip', h('span', { class: 'rd' }), `세션 ${sessions.length} ▾`),
       n ? pill('run', 'busy', h('span', { class: 'rd' }), `${n} 실행 중`) : null,
       pop ? h('div', { class: 'pop' }, ...pop) : null].filter(Boolean));
     if (!term.el.parentNode) wk.append(term.el);

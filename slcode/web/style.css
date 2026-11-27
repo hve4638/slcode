@@ -1238,15 +1238,21 @@ svg.gi { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor; 
   .prpanel .pd { padding: 12px 0 0; }
 }
 
-/* 헤더 inspect 스위치 (ticket slcode-sidebar-revamp, 사용자 2026-11-25) — 상태 칸 옆. 설정의 새 세션 inspect 를 켰거나 이 세션이 켜져 있을 때만 */
-.acf .hdr button.insp { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px 0 8px; border-radius: 999px; border: 1px solid var(--acf-line); background: transparent; color: var(--acf-muted); font-size: 12px; }
-.acf .hdr button.insp[hidden] { display: none; }
-.acf .hdr button.insp:hover:not(:disabled) { background: var(--acf-soft); }
-.acf .hdr .insp .sw { position: relative; width: 22px; height: 12px; border-radius: 6px; background: var(--acf-soft); border: 1px solid var(--acf-line); }
-.acf .hdr .insp .sw::after { content: ""; position: absolute; top: 1px; left: 1px; width: 8px; height: 8px; border-radius: 50%; background: var(--acf-muted); transition: left .12s; }
-.acf .hdr .insp.on { color: var(--acf-accent); border-color: color-mix(in srgb, var(--acf-accent) 45%, var(--acf-line)); }
-.acf .hdr .insp.on .sw { background: color-mix(in srgb, var(--acf-accent) 30%, transparent); border-color: var(--acf-accent); }
-.acf .hdr .insp.on .sw::after { left: 11px; background: var(--acf-accent); }
+/* 헤더 inspect 알약 (ticket slcode-sidebar-revamp, 사용자 2026-11-25·27) — 상태 칸 옆. 설정의 새 세션 inspect 를 켰거나 이 세션이 켜져 있을 때만.
+   상태 칸('대기')과 같은 알약, 켬·끔은 눈에 띄지 않게 글자 밝기로만. 마우스를 올리면 바탕이 차고 팝오버(상태·설명·켜기/끄기)가 떠 누를 수 있음을 알린다 */
+.acf .hdr .insp-wrap { position: relative; flex: none; display: inline-flex; }
+.acf .hdr .insp-wrap[hidden] { display: none; }
+.acf .hdr button.insp { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 10px 0 8px; border-radius: 999px; border: 1px solid var(--acf-line); background: transparent; color: color-mix(in srgb, var(--acf-muted) 75%, transparent); font-size: 12px; cursor: pointer; transition: background .12s, border-color .12s; }
+.acf .hdr .insp-wrap:hover button.insp:not(:disabled), .acf .hdr button.insp:focus-visible { background: var(--acf-soft); border-color: color-mix(in srgb, var(--acf-fg) 22%, var(--acf-line)); }
+.acf .hdr button.insp:disabled { cursor: default; opacity: .6; }
+.acf .hdr .insp svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.acf .hdr .insp.on { color: var(--acf-fg); }
+.acf .hdr .insp-pop { display: none; position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; width: 250px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--acf-line); background: var(--acf-panel); box-shadow: 0 8px 24px var(--acf-shadow); font-size: 12px; }
+.acf .hdr .insp-pop::before { content: ""; position: absolute; top: -7px; left: 0; right: 0; height: 7px; }
+.acf .hdr .insp-wrap:hover .insp-pop, .acf .hdr .insp-wrap:focus-within .insp-pop { display: block; }
+.acf .hdr .insp-pop b { font-size: 13px; font-weight: 600; }
+.acf .hdr .insp-pop p { margin: 4px 0 0; color: var(--acf-muted); line-height: 1.45; white-space: normal; }
+.acf .hdr .insp-pop .act { margin-top: 8px; height: 24px; padding: 0 10px; font-size: 12px; }
 @container (max-width: 520px) { .acf .hdr .insp .lb { display: none; } }
 
 /* 입력창 위 알약 (ticket slcode-sidebar-revamp, 사용자 2026-11-25 — Paseo 참고 후보 C). "세션 N ▾" 은 늘, "N 실행 중" 은 있을 때만. 목록은 알약 위로 연다 */
@@ -1263,7 +1269,7 @@ svg.gi { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor; 
 .acf .wk .pl.busy .rd::after { animation: acf-blink 1.2s ease-in-out infinite; }
 .acf .wk .pop { position: absolute; bottom: calc(100% + 6px); left: 0; width: min(560px, 100%); max-height: 60vh; overflow-y: auto; padding: 5px; border: 1px solid var(--acf-line); border-radius: 12px; background: var(--acf-panel); box-shadow: 0 10px 30px var(--acf-shadow); z-index: 5; font-size: 13px; }
 .acf .wk .pop .gh { padding: 8px 10px 3px; font-size: 11px; font-weight: 600; color: var(--acf-muted); }
-.acf .wk .pop .r { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; column-gap: 9px; align-items: center; padding: 6px 8px; border-radius: 8px; color: inherit; text-decoration: none; cursor: pointer; }
+.acf .wk .pop .r { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 0 9px; font-size: inherit; align-items: center; padding: 6px 8px; border-radius: 8px; color: inherit; text-decoration: none; cursor: pointer; }
 .acf .wk .pop div.r.cur { cursor: default; }
 .acf .wk .pop .r:hover { background: var(--acf-soft); }
 .acf .wk .pop .r.cur { background: color-mix(in srgb, var(--acf-soft) 60%, transparent); }

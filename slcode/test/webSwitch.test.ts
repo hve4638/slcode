@@ -143,6 +143,8 @@ test('웹 복제 (ticket slcode-session-fork): 응답 아래 복제 버튼은 �
     const visible = `document.querySelector('.session-slot:not([inert])')`;
     const shown = (title: string, users: number) => `${visible}?.querySelector('.hdr .title')?.textContent === ${JSON.stringify(title)} && ${visible}.querySelectorAll('.user').length === ${users}`;
     await b.until(shown('A', 2), '원본 화면');
+    await b.until(`!!${visible}.querySelector('.wk')`, '입력창 위 줄');
+    assert.equal(await b.ev(`!${visible}.querySelector('.fam-chip')`), true, '혼자면 세션 알약이 없다');
     await b.until(`${visible}.querySelectorAll('button[title="이 응답까지 복제"]').length === 2`, '응답마다 복제 버튼');
     await b.ev(`${visible}.querySelectorAll('button[title="이 응답까지 복제"]')[0].click()`);
     await b.until(shown('A (forked)', 1), '첫 응답까지 복제한 화면');
