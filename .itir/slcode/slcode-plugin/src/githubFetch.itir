@@ -1,0 +1,10 @@
+role: GitHub 저장소 주소로 플러그인 원본을 받는다 (ticket slcode-plugin-manager-add, 사용자 2026-11-26: URL 은 GitHub 저장소) — PC 의 git 명령으로 얕게(--depth 1) clone 한다. 새 의존성을 넣지 않는다. 비밀번호를 묻지 않는다(GIT_TERMINAL_PROMPT=0) — 비공개 저장소는 사용자의 git 인증 설정이 있을 때만 받아진다. env 는 그대로 git 에 넘긴다(시험은 GIT_CONFIG_* 의 url.insteadOf 로 로컬 저장소를 가리킨다). 상수 — CLONE_MS: clone 한 번 2분.
+
+type GithubSource
+val CLONE_MS
+export fn githubSource(s) -> GithubSource {
+  role: https://github.com/<owner>/<repo>[.git][/tree/<ref>[/<하위 폴더>]] 이면 clone 주소·ref·하위 폴더, 아니면 null(폴더 경로로 본다). ref 는 /tree/ 뒤 첫 마디뿐 — / 가 든 브랜치 이름은 받지 못한다
+}
+export fn fetchGithub(src, into, env) -> Path {
+  role: into 에 clone 하고 플러그인 폴더(하위 폴더가 있으면 그 아래)를 돌려준다 — git 이 없거나 clone 이 실패·시간 초과면 git 의 fatal 줄로 던진다, 하위 폴더가 clone 밖을 가리키거나 없으면 던진다. into 는 부른 쪽이 지운다
+}

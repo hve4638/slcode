@@ -15,6 +15,7 @@ import http from 'node:http';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -223,12 +224,12 @@ export function fileHandler(req: http.IncomingMessage, res: http.ServerResponse,
   return true;
 }
 
-export const PLUGIN_METHODS = ['plugins.list', 'plugins.check', 'plugins.set', 'plugins.export'] as const;
+export const PLUGIN_METHODS = ['plugins.list', 'plugins.check', 'plugins.set', 'plugins.export', 'plugins.add', 'plugins.update'] as const;
 /** 에이전트 플러그인 관리 화면의 요청 (ticket slcode-agent-plugin-ui) — 시작 화면만 쓴다: 웹은 startPage 의 api/, superlite 카드는 `slcode start-call`.
  *  대화 화면(serve)에는 두지 않는다 (ticket slcode-agent-plugin-export-action, 사용자 2026-11-01). 바꾸는 것은 `slcode plugin set·export` 를 자식으로 돌린다:
  *  같은 경로이고, 빌드·하네스 CLI(claude·codex)가 serve 의 중계를 멈추지 않게 */
 export async function pluginMethod(dir: string, method: (typeof PLUGIN_METHODS)[number], params: unknown): Promise<unknown> {
-  const p = (params ?? {}) as { name?: unknown; set?: unknown; to?: unknown; remove?: unknown };
+  const p = (params ?? {}) as { name?: unknown; set?: unknown; to?: unknown; remove?: unknown; source?: unknown };
   switch (method) {
     case 'plugins.list': return { plugins: listPlugins(dir) };
     case 'plugins.check': {
@@ -244,6 +245,18 @@ export async function pluginMethod(dir: string, method: (typeof PLUGIN_METHODS)[
     case 'plugins.export': {
       if (typeof p.name !== 'string' || typeof p.to !== 'string') throw new CoreError(ERR.badRequest, 'plugins.export {name, to: claude|codex, remove?}');
       return { results: JSON.parse((await pluginCli(dir, ['export', p.name, '--to', p.to, ...(p.remove === true ? ['--remove'] : []), '--json'])).out) };
+    }
+    // 창에서 추가·업데이트 (ticket slcode-plugin-manager-add) — 상대 경로는 서버가 뜬 폴더 기준이 되어 받지 않는다. ~ 는 홈으로
+    case 'plugins.add': {
+      const src = typeof p.source === 'string' ? p.source.trim().replace(/^~(?=\/|$)/, os.homedir()) : '';
+      if (!/^https:\/\//.test(src) && !path.isAbsolute(src)) throw new CoreError(ERR.badRequest, 'plugins.add {source: <absolute folder path | github url>}');
+      const r = await pluginCli(dir, ['add', src]);
+      return { ...(JSON.parse(r.out) as object), warnings: r.err };
+    }
+    case 'plugins.update': {
+      if (typeof p.name !== 'string') throw new CoreError(ERR.badRequest, 'plugins.update {name}');
+      const r = await pluginCli(dir, ['update', p.name]);
+      return { ...(JSON.parse(r.out) as object), warnings: r.err };
     }
   }
 }

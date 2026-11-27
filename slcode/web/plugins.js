@@ -14,6 +14,18 @@ const el = (tag, attrs = {}, ...kids) => {
   n.append(...kids.flat().filter((x) => x != null && x !== false));
   return n;
 };
+const plus = () => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('aria-hidden', 'true'); s.innerHTML = '<path d="M12 5v14"/><path d="M5 12h14"/>'; return s; };
+/** 추가·업데이트 오류(slcode-plugin 의 영어 error: 줄)를 한 줄 한국어로 — 모르는 오류는 원문 그대로 (ticket slcode-plugin-manager-add, 사용자 2026-11-27 문구) */
+function human(msg) {
+  if (/^cannot fetch: git is not installed/.test(msg)) return 'GitHub 에서 받으려면 이 PC 에 git 이 있어야 합니다.';
+  if (/^cannot fetch .*(not found|could not read Username|Authentication failed|terminal prompts disabled)/i.test(msg)) return '저장소를 받지 못했습니다. 주소를 확인해 주세요. 비공개 저장소는 이 PC 의 git 에 로그인해 두어야 받을 수 있습니다.';
+  if (/^no slcode-plugin\.json in .*\/agent-plugins\/fetch\//.test(msg)) return 'slcode-plugin.json 이 없습니다. 저장소 안의 폴더라면 주소 끝에 /tree/<브랜치>/<폴더> 를 붙입니다.';
+  if (/^no slcode-plugin\.json in /.test(msg)) return '이 폴더에 slcode-plugin.json 이 없습니다.';
+  const nf = /^no folder (.+?)(?: in https:\/\/\S+)?$/.exec(msg);
+  if (nf) return `${nf[1]} 폴더가 없습니다.`;
+  if (/^plugins\.add \{source/.test(msg)) return '폴더는 / 나 ~ 로 시작하는 경로로 넣어 주세요.';
+  return msg;
+}
 const HARNESS = { claude: 'Claude', codex: 'Codex' };
 const SHOWN = ['claude', 'codex']; // slcode 가 띄우는 하네스 — gpt 하네스는 아직 없다
 
@@ -21,10 +33,13 @@ const SHOWN = ['claude', 'codex']; // slcode 가 띄우는 하네스 — gpt 하
 export function pluginsPanel(call, { onChange } = {}) {
   const root = el('div', { class: 'ppanel' });
   let rows = null, error = null, sel = null; // sel: 오른쪽에 보이는 플러그인 이름
+  /** 추가 화면 (ticket slcode-plugin-manager-add, 사용자 2026-11-27 시안 C: 목록의 "플러그인 추가" 가 오른쪽을 추가 화면으로) — draft 는 넣은 값(실패해도 남긴다) */
+  const add = { open: false, draft: '', busy: false, err: null };
   /** 플러그인별 화면 상태 — busy(하는 중인 일), err, notes(마지막 export 결과·set 경고), check(tsc 경고: null 이면 확인 중),
    *  pending(아직 적용하지 않은 바꿈 — 'part 이름' | 'opt 이름' → 값. 적용을 눌러야 plugin set 을 한 번 돌린다, 사용자 2026-10-31: 바꿀 때마다 빌드·export·검사가 돌아 느렸다) */
   const st = new Map();
-  const of = (name) => { if (!st.has(name)) st.set(name, { busy: null, err: null, notes: [], check: undefined, open: new Set(), pending: new Map() }); return st.get(name); };
+  /** up: 마지막 업데이트·다시 add 의 결과 { msg, ok } — 출처 줄 끝에 */
+  const of = (name) => { if (!st.has(name)) st.set(name, { busy: null, err: null, notes: [], check: undefined, open: new Set(), pending: new Map(), up: null }); return st.get(name); };
 
   async function load() {
     try { rows = (await call('plugins.list')).plugins; error = null; }
@@ -45,7 +60,7 @@ export function pluginsPanel(call, { onChange } = {}) {
     const s = of(name);
     if (s.busy) return;
     s.busy = label; s.err = null; draw();
-    try { await fn(s); } catch (e) { s.err = e.message; }
+    try { await fn(s); } catch (e) { s.err = human(e.message); }
     s.busy = null;
     await load();
   }
@@ -56,6 +71,28 @@ export function pluginsPanel(call, { onChange } = {}) {
     if (r.warnings.length || s.check !== undefined) s.check = r.warnings.filter((l) => !/: js\/ts hooks$/.test(l));
     onChange?.();
   });
+  /** add·update 결과를 그 플러그인 칸에 — 판이 바뀌면 옛 판 → 새 판, 내용만 바뀌면 업데이트했습니다, 같으면 바뀐 것 없음, 처음 설치면 없음(목록에 보인다). old 는 그 전의 판(없으면 처음). 경고는 적용(set) 뒤와 같은 자리 */
+  function landed(s, r, old, fresh) {
+    s.up = !r.changed ? { msg: fresh ? '이미 설치되어 있고 바뀐 것이 없습니다' : '바뀐 것이 없습니다' }
+      : old && old !== r.version ? { msg: `${old} → ${r.version}`, ok: true } : old ? { msg: '업데이트했습니다', ok: true } : null;
+    s.notes = [...(r.leftOut ?? []), ...(r.exports ?? []).flatMap((x) => x.notes)];
+    if (r.warnings?.length) s.check = r.warnings.filter((l) => !/: js\/ts hooks$/.test(l));
+    onChange?.();
+  }
+  const update = (r) => act(r.name, '업데이트하는 중', async (s) => { s.up = null; landed(s, await call('plugins.update', { name: r.name }), r.version, false); });
+  async function submit() {
+    const source = add.draft.trim();
+    if (!source || add.busy) return;
+    add.busy = true; add.err = null; draw();
+    try {
+      const r = await call('plugins.add', { source });
+      const name = r.base ?? r.name; // 애드온이면 합쳐진 플러그인을 연다
+      landed(of(name), r, rows?.find((x) => x.name === r.name)?.version ?? null, true);
+      Object.assign(add, { open: false, draft: '', busy: false });
+      sel = name;
+      await load();
+    } catch (e) { add.busy = false; add.err = human(e.message); draw(); }
+  }
   const exp = (name, h, remove) => act(name, remove ? `${HARNESS[h]} export 해제 중` : `${HARNESS[h]} 에 export 하는 중`, async (s) => {
     const r = (await call('plugins.export', { name, to: h, remove })).results[0];
     s.notes = r.notes.filter((n) => n !== 'not exported');
@@ -75,21 +112,32 @@ export function pluginsPanel(call, { onChange } = {}) {
   // 꼴 (사용자 2026-10-31): 왼쪽은 플러그인 목록(이름·판·등급·export), 오른쪽은 고른 플러그인의 자세한 내용. 좁으면 목록이 위로
   function draw() {
     if (rows && !rows.some((r) => r.name === sel)) sel = rows[0]?.name ?? null;
-    const cur = rows?.find((r) => r.name === sel);
+    const showAdd = add.open || (rows && !rows.length); // 빈 목록이면 처음부터 추가 화면
+    const cur = showAdd ? null : rows?.find((r) => r.name === sel);
     root.replaceChildren(...[
-      el('nav', { class: 'plist' }, ...(rows ?? []).map((r) => el('button', { class: 'pitem', 'aria-current': r.name === sel ? 'true' : null, onclick: () => { sel = r.name; draw(); } },
+      el('nav', { class: 'plist' }, ...(rows ?? []).map((r) => el('button', { class: 'pitem', 'aria-current': !showAdd && r.name === sel ? 'true' : null, onclick: () => { sel = r.name; add.open = false; draw(); } },
         el('span', { class: 'nm' }, r.name), el('span', { class: `grade ${r.grade}` }, r.grade),
         el('span', { class: 'sub' }, [r.version, r.exports.length ? `export ${r.exports.map((h) => HARNESS[h]).join('·')}` : null].filter(Boolean).join(' · ')))),
         rows && !rows.length ? el('p', { class: 'none' }, '설치한 플러그인이 없습니다') : null,
-        !rows && !error ? el('p', { class: 'none' }, '읽는 중…') : null),
+        !rows && !error ? el('p', { class: 'none' }, '읽는 중…') : null,
+        rows ? el('button', { class: 'add', 'aria-current': showAdd ? 'true' : null, onclick: () => { add.open = true; draw(); } }, plus(), '플러그인 추가') : null),
       el('div', { class: 'pdetail' },
-        el('p', { class: 'note' }, '바꾼 설정은 새 세션부터 적용됩니다.'),
+        showAdd ? null : el('p', { class: 'note' }, '바꾼 설정은 새 세션부터 적용됩니다.'),
         error ? el('p', { class: 'err' }, error) : null,
-        rows && !rows.length ? el('p', { class: 'none' }, 'slcode plugin add <폴더> 로 설치합니다.') : null,
+        showAdd ? addForm() : null,
         cur ? plugin(cur) : null,
         cur ? applyBar(cur.name) : null),
       ask].filter(Boolean));
   }
+  /** 추가 화면 — 칸 하나와 추가 단추. 실패 사유는 칸 아래 */
+  function addForm() {
+    const btn = el('button', { class: 'solid', disabled: add.busy || !add.draft.trim(), onclick: () => void submit() }, add.busy ? '추가하는 중…' : '추가');
+    const inp = el('input', { placeholder: '폴더 경로 또는 GitHub 주소', 'aria-label': '폴더 경로 또는 GitHub 주소', spellcheck: 'false', value: add.draft, disabled: add.busy,
+      oninput: () => { add.draft = inp.value; btn.disabled = !add.draft.trim(); }, onkeydown: (e) => { if (e.key === 'Enter') void submit(); } });
+    if (!add.busy) queueMicrotask(() => { if (inp.isConnected) { inp.focus(); inp.setSelectionRange(add.draft.length, add.draft.length); } });
+    return el('section', { class: 'addform' }, el('h3', {}, '플러그인 추가'), el('div', { class: 'row' }, inp, btn), add.err ? el('p', { class: 'err' }, add.err) : null);
+  }
+
   /** 적용 막대 — 바꾼 것이 있을 때만 보인다. 바꿀 때는 화면을 다시 그리지 않고 이것만 바꾼다(다시 그리면 입력칸을 떠나며 누른 다음 스위치의 클릭이 사라진다) */
   let bar = null;
   function applyBar(name) {
@@ -137,6 +185,10 @@ export function pluginsPanel(call, { onChange } = {}) {
       el('header', {}, el('h3', {}, r.name), el('span', { class: 'ver' }, r.version),
         el('span', { class: `grade ${r.grade}` }, r.grade),
         s.busy ? el('span', { class: 'busy' }, `${s.busy}…`) : null),
+      // 출처와 업데이트 (ticket slcode-plugin-manager-add) — 주소면 다시 받고 폴더면 다시 복사한다
+      el('div', { class: 'src' }, el('span', {}, '출처'), el('code', { title: r.source }, r.source),
+        s.up?.msg ? el('span', { class: s.up.ok ? 'ok' : null }, s.up.msg) : null,
+        el('button', { disabled: off, onclick: () => update(r) }, '업데이트')),
       lost.length ? el('div', { class: 'lost' }, ...lost.map((h) => fold(s, `lost.${h}`, `${HARNESS[h]} 에서 빠지는 것 ${r.lost[h].length}`, el('ul', {}, ...r.lost[h].map((x) => el('li', {}, x)))))) : null,
       r.parts.length ? el('div', { class: 'grp' }, el('h4', {}, 'part'), ...partLines(r, s, off)) : null,
       // 애드온 (ticket slcode-plugin-addon) — 켜고 끄는 단위가 아니라 스위치가 없다. part 는 위 목록에 함께 있다. 빠진 것은 사유를 보인다

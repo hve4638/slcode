@@ -16,6 +16,7 @@ import { exportTo, refreshExport, unexport, withPartConditions, EXPORT_HARNESSES
 import { checkScripts } from './scriptCheck.js';
 import { addonDir, assemble, dependentsOf, rootOf } from './agentAddons.js';
 import { ensureLauncher, PLUGIN_VERSION } from './launcher.js';
+import { fetchGithub, githubSource } from './githubFetch.js';
 export const AGENT_DIR = 'agent-plugins';
 /** 세션 폴더 안의 링크 폴더 — agent-plugins/<이름> → build/<식별자>/claude/<이름> (Codex 는 build/<식별자>/codex, 다시 실은 skill 의 빌드는 <이름>@skills) */
 export const SESSION_LINKS = 'agent-plugins';
@@ -153,27 +154,59 @@ function installTo(target, abs, m) {
     });
 }
 /** 원본을 installed/<이름>/ 에 복사한다(애드온은 addons/<이름>/). 내용 해시가 같으면 아무것도 하지 않는다. 새 판이면 기본 설정(맞는 값만 남긴다)으로 다시 빌드한다.
- *  manifest 가 없거나 깨졌으면 던진다. 베이스를 새 판으로 바꾸면 조건이 맞지 않는 애드온만 빌드에서 빠지고 leftOut 에 사유가 남는다 */
-export async function addPlugin(src, stateDir, env = process.env) {
-    const abs = path.resolve(src);
+ *  manifest 가 없거나 깨졌으면 던진다. 베이스를 새 판으로 바꾸면 조건이 맞지 않는 애드온만 빌드에서 빠지고 leftOut 에 사유가 남는다.
+ *  src 가 GitHub 주소면 agent-plugins/fetch/ 에 받아 설치하고 받은 폴더는 지운다(ticket slcode-plugin-manager-add). expect 는 update 가 주는 이름 — manifest 이름이 다르면 던진다 */
+export async function addPlugin(src, stateDir, env = process.env, expect) {
+    const gh = githubSource(src);
+    if (!gh) {
+        const abs = path.resolve(src);
+        if (!fs.statSync(abs, { throwIfNoEntry: false })?.isDirectory())
+            throw new Error(`no folder ${abs}`); // 옮기거나 지운 원본을 update 할 때
+        return addFrom(abs, abs, stateDir, env, expect);
+    }
+    const tmp = path.join(agentPaths(stateDir).dir, 'fetch', randomUUID());
+    try {
+        return await addFrom(await fetchGithub(gh, tmp, env), src.trim(), stateDir, env, expect);
+    }
+    finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+}
+/** 기록된 출처(source)에서 다시 가져온다 — 주소면 다시 받고 폴더면 다시 복사한다. 내용이 같으면 changed false (ticket slcode-plugin-manager-add) */
+export async function updatePlugin(name, stateDir, env = process.env) {
+    const c = readConfig(agentPaths(stateDir));
+    const e = c.plugins[name] ?? c.addons?.[name];
+    if (!e)
+        throw new Error(`no agent plugin ${name}`);
+    return addPlugin(e.source, stateDir, env, name);
+}
+/** abs 는 manifest 가 있는 폴더, source 는 config 에 적을 출처 */
+async function addFrom(abs, source, stateDir, env, expect) {
     const m = readManifest(abs);
+    if (expect && m.name !== expect)
+        throw new Error(`${source} now holds ${m.name}, not ${expect}`);
     const hash = sourceHash(abs, m);
     const ap = agentPaths(stateDir);
     const r = await locked(ap, () => {
         const c = readConfig(ap);
         if (m.addon)
-            return addAddon(ap, c, abs, m, hash, env);
+            return addAddon(ap, c, abs, source, m, hash, env);
         if (c.addons?.[m.name])
             throw new Error(`${m.name} is installed as an addon of ${c.addons[m.name].base} (slcode plugin remove ${m.name} first)`);
         const prev = c.plugins[m.name];
         const inst = path.join(ap.installed, m.name);
-        if (prev && prev.hash === hash && fs.existsSync(path.join(inst, MANIFEST)) && !toolMissing(ap, prev))
+        if (prev && prev.hash === hash && fs.existsSync(path.join(inst, MANIFEST)) && !toolMissing(ap, prev)) {
+            if (prev.source !== source) {
+                prev.source = source;
+                writeConfig(ap, c);
+            } // 마지막 add 의 출처를 update 가 따른다
             return { name: m.name, version: prev.version, changed: false, grade: prev.grade, lost: prev.lost, build: prev.builds.claude ?? null };
+        }
         checkCommands(abs, m, path.join(ap.dir, 'tools'));
         fs.mkdirSync(ap.installed, { recursive: true });
         installTo(inst, abs, m);
         const { grade, lost } = compat(inst, m);
-        const e = { ...prev, version: m.version, hash, source: abs, installedAt: Date.now(), grade, lost, values: prune(prev?.values, m), builds: {}, ...(prev?.exports?.length ? { exports: prev.exports } : {}) };
+        const e = { ...prev, version: m.version, hash, source, installedAt: Date.now(), grade, lost, values: prune(prev?.values, m), builds: {}, ...(prev?.exports?.length ? { exports: prev.exports } : {}) };
         defaultBuild(ap, m.name, e, c.addons);
         c.plugins[m.name] = e;
         writeConfig(ap, c);
@@ -185,13 +218,13 @@ export async function addPlugin(src, stateDir, env = process.env) {
     return r;
 }
 /** 애드온 add — 베이스가 없거나, 판 조건이 맞지 않거나, 이름이 겹치면 던진다. 합쳐질 플러그인을 다시 빌드한다 */
-function addAddon(ap, c, abs, m, hash, env) {
+function addAddon(ap, c, abs, source, m, hash, env) {
     const spec = m.addon;
     const addons = c.addons ?? {};
     if (c.plugins[m.name])
         throw new Error(`${m.name} is installed as a plugin (slcode plugin remove ${m.name} first)`);
     const prev = addons[m.name];
-    const entry = { version: m.version, hash, source: abs, installedAt: Date.now(), base: spec.base, range: spec.version, values: prune(prev?.values, m) };
+    const entry = { version: m.version, hash, source, installedAt: Date.now(), base: spec.base, range: spec.version, values: prune(prev?.values, m) };
     // 새 것을 맨 뒤에 두고 미리 합친다 — 이미 있는 애드온과 겹치면 새 것이 빠져 거절된다
     const { [m.name]: _old, ...others } = addons;
     const trial = { ...others, [m.name]: entry };
@@ -199,8 +232,13 @@ function addAddon(ap, c, abs, m, hash, env) {
     if (!root)
         throw new Error(`${m.name} needs base ${spec.base}, which is not installed (or the addons make a cycle)`);
     const e = c.plugins[root];
-    if (prev && prev.hash === hash && prev.base === spec.base && fs.existsSync(addonDir(ap, m.name)) && !toolMissing(ap, e))
+    if (prev && prev.hash === hash && prev.base === spec.base && fs.existsSync(addonDir(ap, m.name)) && !toolMissing(ap, e)) {
+        if (prev.source !== source) {
+            prev.source = source;
+            writeConfig(ap, c);
+        }
         return { name: m.name, version: prev.version, changed: false, grade: e.grade, lost: e.lost, build: e.builds.claude ?? null, base: root };
+    }
     const seen = assemble(ap, root, e, trial, (n) => (n === m.name ? abs : addonDir(ap, n)));
     const me = seen.addons.find((a) => a.name === m.name);
     if (!me.on)

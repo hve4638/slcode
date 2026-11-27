@@ -126,7 +126,9 @@ background 실행 (세션 안의 에이전트가 친다 — Claude 세션은 같
 * bg stop <id>                   프로세스 그룹에 SIGTERM, 5초 안에 끝나지 않으면 SIGKILL. 끝난 꼴을 출력한다 (메시지는 오지 않는다)
 * bg list                        이 세션의 작업 — id·상태·시작 시각·설명·명령·출력 파일
 에이전트 플러그인 (Claude·Codex 세션에 싣는다. 바꾼 설정은 새 세션부터, 떠 있는 세션은 사이드바의 다시 싣기로 — Codex 는 skill 만)
-  plugin add <folder>            slcode-plugin.json(애드온은 slcode-addon.json)이 있는 원본 폴더를 설치한다. 같은 내용이면 아무것도 하지 않는다
+  plugin add <folder|github url> slcode-plugin.json(애드온은 slcode-addon.json)이 있는 원본 폴더를 설치한다. 같은 내용이면 아무것도 하지 않는다
+                                 https://github.com/<owner>/<repo>[/tree/<브랜치·태그>[/<하위 폴더>]] 는 git 으로 받아 설치한다
+  plugin update <name>           설치할 때 준 폴더나 주소에서 다시 가져온다. 같은 내용이면 아무것도 하지 않는다
   plugin remove <name> [--cascade]
                                  설치와 설정, export 를 지운다 (없어도 성공). 의존하는 애드온이 있으면 --cascade 로 함께 지운다
   plugin set <name> <part>=on|off <option>=<value> ...
@@ -152,7 +154,7 @@ background 실행 (세션 안의 에이전트가 친다 — Claude 세션은 같
   profile rename <old> <new>     이름을 바꾼다 — 옛 이름(그 이름의 세션·--profile)은 새 이름으로 이어진다
   profile list [--json]
   start-page [folder] [--json]   superlite 카드의 시작 화면 html, --json 이면 그 목록 (플러그인이 쓴다)
-  start-call <method> [<json>]   superlite 카드 시작 화면의 요청 (plugins.list|check|set|export, prompt.list|create|remove|get|fetch|save [--cwd F], profile.list|add|set|remove|rename, provider.list|save|remove|models|keySave|keyRemove, 플러그인이 쓴다)
+  start-call <method> [<json>]   superlite 카드 시작 화면의 요청 (plugins.list|check|set|export|add|update, prompt.list|create|remove|get|fetch|save [--cwd F], profile.list|add|set|remove|rename, provider.list|save|remove|models|keySave|keyRemove, 플러그인이 쓴다)
   discard <s>                    시작 화면에서 연 빈 세션(첫 메시지 전)을 닫고 지운다 — 카드의 '시작 화면으로' (플러그인이 쓴다, new --from-start 로 연 세션)
 공통: --dir D (SLCODE_DIR 대체), --help, --version [--json] (--json 이면 {"version","build"} — build 는 dist/cli.js 의 mtime)`;
 

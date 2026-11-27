@@ -21,7 +21,7 @@ export type PluginEntry = {
     version: string;
     /** 설치한 원본의 내용 해시 — 같으면 add 가 아무것도 하지 않는다 */
     hash: string;
-    /** add 에 준 폴더 (기록만) */
+    /** add 에 준 폴더의 절대 경로나 GitHub 주소 — update 가 여기서 다시 가져온다 (ticket slcode-plugin-manager-add) */
     source: string;
     installedAt: number;
     grade: 'full' | 'partial';
@@ -75,8 +75,11 @@ export type AddResult = {
 /** export 한 플러그인이 있으면 훅 명령의 고정 런처를 이 사본 기준으로 맞춘다 (launcher.ts) — CLI 명령과 세션 시작 때. 사본의 node 가 바뀌어도 다음 실행에 고쳐진다 */
 export declare function refreshLauncher(ap: AgentPaths, c?: AgentConfig): void;
 /** 원본을 installed/<이름>/ 에 복사한다(애드온은 addons/<이름>/). 내용 해시가 같으면 아무것도 하지 않는다. 새 판이면 기본 설정(맞는 값만 남긴다)으로 다시 빌드한다.
- *  manifest 가 없거나 깨졌으면 던진다. 베이스를 새 판으로 바꾸면 조건이 맞지 않는 애드온만 빌드에서 빠지고 leftOut 에 사유가 남는다 */
-export declare function addPlugin(src: string, stateDir?: string, env?: NodeJS.ProcessEnv): Promise<AddResult>;
+ *  manifest 가 없거나 깨졌으면 던진다. 베이스를 새 판으로 바꾸면 조건이 맞지 않는 애드온만 빌드에서 빠지고 leftOut 에 사유가 남는다.
+ *  src 가 GitHub 주소면 agent-plugins/fetch/ 에 받아 설치하고 받은 폴더는 지운다(ticket slcode-plugin-manager-add). expect 는 update 가 주는 이름 — manifest 이름이 다르면 던진다 */
+export declare function addPlugin(src: string, stateDir?: string, env?: NodeJS.ProcessEnv, expect?: string): Promise<AddResult>;
+/** 기록된 출처(source)에서 다시 가져온다 — 주소면 다시 받고 폴더면 다시 복사한다. 내용이 같으면 changed false (ticket slcode-plugin-manager-add) */
+export declare function updatePlugin(name: string, stateDir?: string, env?: NodeJS.ProcessEnv): Promise<AddResult>;
 /** 원본·설정 항목·export 를 지운다. 없으면 성공 (removed false). export 를 먼저 해제한다 — 링크가 사라진 빌드를 가리키면 하네스가 오류를 낸다.
  *  이름이 애드온이면 그 애드온만 지우고 베이스를 다시 빌드한다. 의존하는 애드온이 있으면 cascade 없이는 던지고, cascade 면 함께 지운다 */
 export declare function removePlugin(name: string, stateDir?: string, env?: NodeJS.ProcessEnv, cascade?: boolean): Promise<{

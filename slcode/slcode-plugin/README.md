@@ -3,7 +3,7 @@
 slcode 에이전트 플러그인(`slcode-plugin.json` 형식)을 설치하고, 터미널의 claude·codex 에 export 하고, export 한 훅을 돌린다. 의존성 없는 순수 JS 이고 node 20 이상에서 돈다.
 
 ```
-node dist/cli.js add <폴더> | remove <이름> [--cascade] | set <이름> <part>=on|off <옵션>=<값> … | list [--json]
+node dist/cli.js add <폴더|GitHub 주소> | update <이름> | remove <이름> [--cascade] | set <이름> <part>=on|off <옵션>=<값> … | list [--json]
 node dist/cli.js export <이름> --to claude --to codex [--remove] [--json]
 node dist/cli.js --version
 ```

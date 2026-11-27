@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-// slcode-plugin 명령 (ticket slcode-plugin-split) — `slcode-plugin <add|remove|set|list|export|hook> …`. `slcode plugin …` 도 같은 함수(pluginCommand)를 부른다.
+// slcode-plugin 명령 (ticket slcode-plugin-split) — `slcode-plugin <add|update|remove|set|list|export|hook> …`. `slcode plugin …` 도 같은 함수(pluginCommand)를 부른다.
 // 쓰는 쪽(superlite-for-agents)은 자기 폴더에 넣어 간 사본을 자기 node 로 부른다: `<node> <사본>/dist/cli.js add <폴더>`. 결과는 stdout JSON(list·export 는 --json 일 때).
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { addPlugin, agentPaths, exportPlugin, listPlugins, orphanAddons, refreshLauncher, removePlugin, scriptWarnings, setPlugin } from './agentPlugins.js';
+import { addPlugin, agentPaths, exportPlugin, listPlugins, orphanAddons, refreshLauncher, removePlugin, scriptWarnings, setPlugin, updatePlugin } from './agentPlugins.js';
 import { defaultStateDir } from './paths.js';
 import { PLUGIN_VERSION } from './launcher.js';
 const print = (o) => console.log(JSON.stringify(o, null, 2));
@@ -21,10 +21,10 @@ export async function pluginCommand(sub, args, flags, dir, usage, tag = 'slcode-
         refreshLauncher(agentPaths(dir));
     }
     catch { } // 이 사본의 node 로 훅 런처를 맞춘다 (launcher.ts)
-    if (sub === 'add') {
+    if (sub === 'add' || sub === 'update') { // update 는 기록된 출처에서 다시 (ticket slcode-plugin-manager-add)
         if (args.length !== 1)
-            usage('plugin add <folder>');
-        const r = await addPlugin(args[0], dir);
+            usage(sub === 'add' ? 'plugin add <folder|github url>' : 'plugin update <name>');
+        const r = sub === 'add' ? await addPlugin(args[0], dir) : await updatePlugin(args[0], dir);
         print(r);
         if (r.build)
             await scriptReport(r.base ?? r.name, r.build);
@@ -67,7 +67,7 @@ export async function pluginCommand(sub, args, flags, dir, usage, tag = 'slcode-
         return;
     }
     if (sub !== 'list')
-        usage('plugin add|remove|set|list|export');
+        usage('plugin add|update|remove|set|list|export');
     const rows = listPlugins(dir);
     if (flags.json) {
         print(rows);
@@ -99,7 +99,9 @@ export async function pluginCommand(sub, args, flags, dir, usage, tag = 'slcode-
         console.log(`${a.name} ${a.version}  addon of ${a.base}, which is not installed (not loaded)`);
 }
 const HELP = `slcode-plugin ${PLUGIN_VERSION} — slcode 에이전트 플러그인을 설치하고 터미널의 claude·codex 에 export 한다
-  add <folder>                   slcode-plugin.json(애드온은 slcode-addon.json)이 있는 원본 폴더를 설치한다. 같은 내용이면 아무것도 하지 않는다
+  add <folder|github url>        slcode-plugin.json(애드온은 slcode-addon.json)이 있는 원본 폴더를 설치한다. 같은 내용이면 아무것도 하지 않는다
+                                 https://github.com/<owner>/<repo>[/tree/<브랜치·태그>[/<하위 폴더>]] 는 git 으로 받아 설치한다
+  update <name>                  설치할 때 준 폴더나 주소에서 다시 가져온다. 같은 내용이면 아무것도 하지 않는다
   remove <name> [--cascade]      설치와 설정, export 를 지운다 (없어도 성공). 의존하는 애드온이 있으면 --cascade 로 함께 지운다
   set <name> <part>=on|off <option>=<value> ...
                                  플러그인 기본 설정을 바꾼다 (필수 part 는 끌 수 없다)
