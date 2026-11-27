@@ -11,6 +11,7 @@ const ORIGIN = { builtin: 'Claude Code', user: '사용자', project: '프로젝�
 // 첫 메시지에서 Claude Code 가 쓰는 안내 문단의 이름 — 모르는 문단은 첫 문장이 이름 (Claude Code 2.1.322 기준)
 const CTX_NAMES = [[/^Attribution for git commits/, '커밋 표기 안내'], [/^The following deferred tools/, '나중에 불러오는 도구'], [/^The following MCP servers are configured but failed/, '연결 실패한 MCP'],
   [/^Available agent types/, '서브에이전트 목록'], [/^The following skills are available/, '스킬 목록'], [/^While bypass permissions mode/, '권한 우회 모드 안내'], [/^Today's date is/, '오늘 날짜']];
+const GROUP_NOTE = { 'system prompt': '요청의 system 에 들어가는 글', '첫 메시지': '첫 사용자 메시지에 Claude Code 가 붙이는 글' };
 const BUILTIN_STYLES = ['Explanatory', 'Learning']; // Claude Code 에 들어 있는 output style — 플러그인 것은 '<플러그인>:<이름>'
 const HOOK_FROM = { user: '사용자', project: '프로젝트', local: '프로젝트 local' };
 const tagOf = (source, plugin) => (source === 'plugin' ? `플러그인 ${plugin ?? ''}`.trim() : source === 'agent' ? `에이전트 플러그인 ${plugin ?? ''}`.trim() : ORIGIN[source] ?? source);
@@ -21,18 +22,38 @@ const dirOf = (p) => p.slice(0, p.lastIndexOf('/'));
 const mcpOf = (t) => /^mcp__(.+?)__/.exec(t)?.[1];
 
 /** h: app.js 의 요소 생성기, rpc: transport.request,
- *  get(): { id, ready, vendor, key, mcp, agentPlugins, translator, parts: { prompt(), plugins(), mcp(name) } } — key 가 바뀌면(세션·모델) 받은 것을 버린다. parts 는 Node 또는 null */
+ *  get(): { id, ready, vendor, key, mcp, agentPlugins, translator, copyBtn(text), parts: { prompt(), plugins(), mcp(name) } } — key 가 바뀌면(세션·모델) 받은 것을 버린다. parts 는 Node 또는 null */
 export function previewDialog(h, rpc, get) {
   let tab = 'prompt', filter = null, key = null, prompt = null, src = null; // prompt·src(session.sources): { loading } | { error } | 결과
   const sel = new Map(); // 탭 → 고른 줄의 k
   const files = new Map(); // 파일 경로 → { loading } | { error } | { text } | { binary } (file.get)
   const dirs = new Map(); // 폴더 → { loading } | { error } | { files, truncated } (file.list)
   const pick = new Map(); // 스킬 이름 → 고른 하위 파일(상대 경로)
-  const tabs = h('div', { class: 'tabs' }), list = h('div', { class: 'pvl' }), info = h('div', { class: 'pvb' });
+  const tabs = h('div', { class: 'tabs' }), list = h('div', { class: 'pvl' }), info = h('div', { class: 'pvb doc' });
   const dialog = h('dialog', { class: 'pvd' },
     h('header', {}, h('h2', {}, '세션 구성'), tabs, h('button', { class: 'ghost x', title: '닫기', 'aria-label': '닫기', onclick: () => dialog.close() }, glyph('x'))),
     h('div', { class: 'pvc' }, list, info));
   closeOnBackdrop(dialog);
+  // 지시문·AGENTS.md 탭은 줄을 차례로 쌓는다 — 목록의 줄을 누르면 그 자리로 스크롤하고(다른 묶음의 줄이면 그 묶음의 글로 바꾼다), 스크롤하면 지금 보는 줄을 목록에 표시한다 (사용자 2026-11-27)
+  let jump = null, lock = null, shownTab = null; // jump: 다음 paint 뒤에 갈 줄, lock: 눌러서 가는 동안 스크롤이 표시를 바꾸지 않게
+  const mark = (k) => { for (const b of list.querySelectorAll('.it[data-k]')) { const on = b.dataset.k === k; b.setAttribute('aria-current', String(on)); if (on) b.scrollIntoView({ block: 'nearest' }); } };
+  const secs = () => [...info.querySelectorAll('section[data-k]')];
+  /** 지금 보이는 묶음 안의 줄이면 그 자리로 간다 — smooth 가 false 면 바로(묶음을 바꾼 직후) */
+  const goto = (k, smooth = true) => { const s = secs().find((x) => x.dataset.k === k); if (!s) return false; sel.set(tab, k); lock = k; mark(k); s.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' }); return true; };
+  for (const ev of ['wheel', 'pointerdown', 'keydown', 'touchstart']) info.addEventListener(ev, () => { lock = null; }, { passive: true });
+  // 원문 상자에 포커스를 두고 Ctrl+A 를 누르면 그 상자의 글만 고른다
+  info.addEventListener('keydown', (e) => {
+    const p = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' ? e.target.closest?.('pre') : null;
+    if (!p) return;
+    e.preventDefault();
+    getSelection().selectAllChildren(p);
+  });
+  info.addEventListener('scroll', () => {
+    if (tab === 'feat' || lock) return;
+    const top = info.getBoundingClientRect().top + 64;
+    const cur = secs().filter((x) => x.getBoundingClientRect().top <= top).at(-1);
+    if (cur && sel.get(tab) !== cur.dataset.k) { sel.set(tab, cur.dataset.k); mark(cur.dataset.k); }
+  });
 
   function load(which) {
     const { id } = get();
@@ -65,7 +86,7 @@ export function previewDialog(h, rpc, get) {
   const fileBody = (p) => { const v = cached(files, p, 'file.get'); return v.loading ? empty('불러오는 중…') : v.error ? empty(`받지 못했습니다: ${v.error}`, true) : v.binary ? empty(`글이 아닌 파일 (${v.binary})`) : pre(v.text); };
   const names = (l) => h('div', { class: 'names' }, ...l.map((n) => h('div', {}, n)));
   const home = (p) => p.replace(/^\/(root|home\/[^/]+)(?=\/)/, '~');
-  // 목록 한 줄: { k, nm, tag?, side?, bad?, info: () => Node[] }, 묶음 이름은 { sec }, 그 밖의 Node 는 그대로
+  // 목록 한 줄: { k, nm, tag?, side?, bad?, text?(복사 단추가 복사할 원문 또는 그것을 주는 함수), info: () => Node[] }, 묶음 이름은 { sec }, 그 밖의 Node 는 그대로
   const it = (k, nm, tag, infoOf, more = {}) => ({ k, nm, tag, info: infoOf, ...more });
 
   // 출처 꼬리표 — Claude Code 플러그인 이름이 에이전트 플러그인이면 그쪽으로. 플러그인 MCP 는 이름이 plugin:<플러그인>:<서버>
@@ -127,12 +148,12 @@ export function previewDialog(h, rpc, get) {
       const bs = merge(p.blocks);
       const ctx = p.context.flatMap((t, i) => ctxSplit(t).map((x, j) => {
         const f = styleFile(/^Output Style: (.+)$/.exec(x.nm)?.[1]);
-        return it(`c${i}.${j}`, x.nm, ctxTag(g, x), () => [f ? kv([['위치', h('code', {}, f.path)]]) : null, pre(x.text)], { side: kchars(x.text.length) });
+        return it(`c${i}.${j}`, x.nm, ctxTag(g, x), () => [f ? kv([['위치', h('code', {}, f.path)]]) : null, pre(x.text)], { side: kchars(x.text.length), text: x.text });
       }));
       // 프로필 프롬프트를 쓰는 세션이면 그 첫 줄의 정보에 새 판 적용·바꾸기(app.js 의 조각) — 무엇을 쓰는지는 꼬리표가 보인다, 벤더 기본이면 두지 않는다 (사용자 2026-11-26)
       return [...bs.flatMap((b, i) => split(b).map((x, j) => it(b.source === 'prompt' && j === 0 ? 'sp' : `b${i}.${j}`, x.nm, tag(b), () => [
         b.source === 'prompt' && j === 0 ? g.parts.prompt() : null,
-        x.text == null ? empty('Codex 가 넣는 기본 지시문은 볼 수 없습니다') : pre(x.text)], { side: x.text == null ? null : kchars(x.text.length) }))),
+        x.text == null ? empty('Codex 가 넣는 기본 지시문은 볼 수 없습니다') : pre(x.text)], { side: x.text == null ? null : kchars(x.text.length), text: x.text }))),
         ...(ctx.length ? [{ sec: '첫 메시지' }, ...ctx] : [])];
     }, vendor === 'codex' ? '불러오는 중…' : '불러오는 중… Claude Code 를 한 번 돌려 받습니다 (요금 없음)')];
     return out;
@@ -143,7 +164,7 @@ export function previewDialog(h, rpc, get) {
     if (g.vendor === 'codex') return [empty('Codex 세션은 지시 파일 목록을 보이지 않습니다')];
     return wait(src, (s) => (!s.memory.length ? [empty(g.ready ? '없음' : '첫 턴 뒤')]
       : s.memory.map((m) => it(`m${m.path}`, m.path.split('/').pop(), tagOf(m.source), () => [kv([['위치', h('code', {}, m.path)], ['출처', tagOf(m.source)]]), fileBody(m.path)],
-        { side: home(dirOf(m.path)) }))));
+        { side: home(dirOf(m.path)), text: () => files.get(m.path)?.text }))));
   }
 
   /** 기능 — 스킬·도구·서브에이전트·훅·플러그인. 이름은 session.ready, 출처는 session.sources */
@@ -164,7 +185,7 @@ export function previewDialog(h, rpc, get) {
             : h('div', { class: 'files' }, ...d.files.map((f) => h('button', { class: 'it', 'aria-current': String(f.path === cur), onclick: () => { pick.set(k.name, f.path); paint(); } }, h('span', { class: 'nm' }, f.path), h('span', { class: 'sz' }, fmtSize(f.size)))),
               d.truncated ? empty('파일이 많아 앞의 것만 보입니다') : null),
           fileBody(`${dir}/${cur}`)];
-      })));
+      }, { text: () => (k.path ? files.get(`${dirOf(k.path)}/${pick.get(k.name) ?? 'SKILL.md'}`)?.text : null) })));
       const bi = s.skills.filter((k) => k.source === 'builtin').map((k) => k.name);
       if (bi.length) out.push(fold('sb', '스킬', bi, '원문은 Claude Code 안에 있어 볼 수 없습니다.'));
     }
@@ -183,7 +204,7 @@ export function previewDialog(h, rpc, get) {
       if (!sup) out.push(...ready.agents.map((n) => it(`a${n}`, n, null, () => [])));
       else {
         out.push(...s.agents.filter((a) => a.source !== 'builtin').map((a) => it(`a${a.name}`, a.name, tagOf(a.source, a.plugin),
-          () => [kv([['출처', tagOf(a.source, a.plugin)], ['위치', a.path ? h('code', {}, a.path) : null]]), a.path ? fileBody(a.path) : null])));
+          () => [kv([['출처', tagOf(a.source, a.plugin)], ['위치', a.path ? h('code', {}, a.path) : null]]), a.path ? fileBody(a.path) : null], { text: () => (a.path ? files.get(a.path)?.text : null) })));
         const ba = s.agents.filter((a) => a.source === 'builtin').map((a) => a.name);
         if (ba.length) out.push(fold('ab', '서브에이전트', ba, 'Claude Code 안에 들어 있는 서브에이전트입니다.'));
       }
@@ -192,7 +213,7 @@ export function previewDialog(h, rpc, get) {
     if (!sup) out.push({ sec: '훅' }, empty('Codex 세션은 훅 목록을 보이지 않습니다'));
     else if (s.hooks.length) out.push({ sec: `훅 ${s.hooks.length}` }, ...s.hooks.map((x, i) => {
       const from = HOOK_FROM[x.source] ?? tagOf(x.source, x.name);
-      return it(`h${i}`, x.matcher ? `${x.event} · ${x.matcher}` : x.event, from, () => [kv([['이벤트', x.event], ['matcher', x.matcher], ['출처', from]]), pre(x.what)]);
+      return it(`h${i}`, x.matcher ? `${x.event} · ${x.matcher}` : x.event, from, () => [kv([['이벤트', x.event], ['matcher', x.matcher], ['출처', from]]), pre(x.what)], { text: x.what });
     }));
     // 플러그인 — 출처 자체. 그 플러그인이 넣은 것만 보기로 이어진다
     const plug = ready.plugins.map((p) => ({ ...p, name: p.name.replace(/@inline$/, '') }));
@@ -221,15 +242,39 @@ export function previewDialog(h, rpc, get) {
     list.replaceChildren(...[
       filter ? h('div', { class: 'filter' }, h('span', {}, `출처: ${filter}`), h('button', { class: 'ghost', title: '거르기 풀기', 'aria-label': '거르기 풀기', onclick: () => { filter = null; paint(); } }, glyph('x'))) : null,
       ...shown.map((x) => (x.sec ? h('div', { class: 'gl' }, x.sec) : x.k == null ? x
-        : h('button', { class: 'it', 'aria-current': String(x === cur), onclick: () => { sel.set(tab, x.k); paint(); } },
+        : h('button', { class: 'it', 'data-k': x.k, 'aria-current': String(x === cur), onclick: () => { if (tab !== 'feat' && goto(x.k)) return; sel.set(tab, x.k); jump = x.k; paint(); } },
           h('span', { class: 'nm' }, x.nm), x.side ? h('span', { class: 'sz' }, x.side) : null, x.bad ? h('span', { class: 'bad' }, x.bad) : null,
           x.tag ? h('span', { class: 'tag', title: '이 출처만 보기', onclick: (e) => { e.stopPropagation(); filter = x.tag; paint(); } }, x.tag) : null))),
       filter && !rows.length ? empty('이 탭에는 이 출처의 것이 없습니다') : null].filter(Boolean));
-    info.replaceChildren(...(cur ? [h('h3', {}, cur.nm), ...cur.info()] : []).filter(Boolean));
+    // 오른쪽 칸은 세 탭 모두 같은 꼴 — 줄마다 작은 이름·출처·복사 단추와 그 아래 내용, 원문 상자는 눌러 포커스를 둘 수 있다(Ctrl+A).
+    // 지시문·AGENTS.md 는 고른 줄이 든 묶음의 줄을 모두 쌓고(지시문은 system prompt 와 첫 메시지를 한 화면에 잇지 않는다), 기능은 고른 줄 하나만 (사용자 2026-11-27)
+    const stack = tab !== 'feat';
+    let grp = null, curGrp = null;
+    for (const x of shown) { if (x.sec) grp = x.sec; else if (x === cur) curGrp = grp; }
+    const view = `${tab}|${stack ? curGrp : cur?.k}`, top = shownTab === view ? info.scrollTop : 0;
+    const out = [];
+    let box = null;
+    grp = null;
+    for (const x of rows.length ? shown : []) {
+      if (x.sec) grp = x.sec;
+      if (grp !== curGrp || (!stack && x !== cur)) continue;
+      if (x.sec) { out.push(h('div', { class: 'gh' }, h('b', {}, x.sec), h('span', {}, GROUP_NOTE[x.sec] ?? ''))); box = null; }
+      else if (x.k != null) {
+        if (!box) out.push(box = h('div', { class: 'grp' }));
+        const text = typeof x.text === 'function' ? x.text() : x.text;
+        box.append(h('section', { 'data-k': x.k }, h('div', { class: 'lb' }, h('span', { class: 'nm' }, x.nm), x.tag ? h('span', {}, x.tag) : null, text != null ? g.copyBtn(text) : null), ...x.info().filter(Boolean)));
+      }
+    }
+    for (const p of out.flatMap((x) => [...x.querySelectorAll('pre')])) p.tabIndex = 0;
+    info.replaceChildren(...out);
+    shownTab = view;
+    info.scrollTop = top;
+    if (stack && jump && goto(jump, top > 0)) jump = null;
+    if (!stack) jump = null;
   }
 
   /** which 를 주면 그 탭으로, k 를 주면 목록에서 그 줄을 고른다 */
-  const open = (which, k) => { if (which) tab = which; if (k) sel.set(tab, k); filter = null; if (!dialog.open) dialog.showModal(); paint(); };
+  const open = (which, k) => { if (which) tab = which; if (k) { sel.set(tab, k); jump = k; } filter = null; if (!dialog.open) dialog.showModal(); paint(); };
   /** 새 벤더 프로세스·다시 싣기 — 받은 것을 버리고 보이면 다시 받는다 */
   const reset = () => { prompt = null; src = null; files.clear(); dirs.clear(); paint(); };
   return { dialog, open, paint, reset };

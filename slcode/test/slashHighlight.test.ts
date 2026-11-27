@@ -412,6 +412,19 @@ test('웹: 사이드바는 고정 글 줄·활동 기록·"세션 구성" 한 �
     assert.deepEqual(await b.ev(`[document.querySelector('dialog.pvd').open, [...document.querySelectorAll('.pvd .tabs button')].map((x) => [x.textContent, x.getAttribute('aria-current')])]`), [true, [['지시문', 'true'], ['AGENTS.md', 'false'], ['기능', 'false']]]);
     // 지시문: system prompt 조각만, AGENTS.md: 첫 메시지에 붙는 CLAUDE.md
     assert.deepEqual(await b.ev(`[...document.querySelectorAll('.pvl .gl')].map((x) => x.textContent)`), ['system prompt']);
+    // 지시문 탭은 고른 줄이 든 묶음의 줄을 한 글로 잇고, 목록의 줄을 누르면 그 자리로 간다 (사용자 2026-11-27)
+    const group = (n: number) => `(() => { const out = []; let g = -1; for (const x of document.querySelector('.pvl').children) { if (x.classList.contains('gl')) g++; else if (g === ${n} && x.classList.contains('it')) out.push(x.querySelector('.nm').textContent); } return out; })()`;
+    const shownDoc = `[...document.querySelectorAll('.pvb.doc .grp > section .lb .nm')].map((x) => x.textContent)`;
+    await b.until(`${group(0)}.length > 0 && JSON.stringify(${shownDoc}) === JSON.stringify(${group(0)})`, '지시문 한 글');
+    assert.deepEqual(await b.ev(`[...document.querySelectorAll('.pvb.doc .gh b')].map((x) => x.textContent)`), ['system prompt']);
+    // 블록마다 복사 단추, 원문 상자에 포커스를 두고 Ctrl+A 를 누르면 그 상자의 글만 고른다
+    assert.deepEqual(await b.ev(`(() => { const p = document.querySelector('.pvb.doc section pre'); p.focus(); p.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true, cancelable: true })); return [getSelection().toString() === p.textContent, document.querySelectorAll('.pvb.doc section .lb button.ico').length === document.querySelectorAll('.pvb.doc section').length]; })()`), [true, true]);
+    // 다른 묶음의 줄을 누르면 그 묶음의 글로 바뀐다 — 두 묶음을 한 화면에 잇지 않는다
+    if (((await b.ev(group(1))) as string[]).length) {
+      await b.ev(`[...document.querySelectorAll('.pvl .it')].at(-1).click()`);
+      await b.until(`JSON.stringify(${shownDoc}) === JSON.stringify(${group(1)})`, '첫 메시지 글');
+      assert.equal(await b.ev(`[...document.querySelectorAll('.pvl .it')].at(-1).getAttribute('aria-current')`), 'true');
+    }
     await b.ev(`[...document.querySelectorAll('.pvd .tabs button')][1].click()`);
     await b.until(`!!${row('CLAUDE.md')}`, 'AGENTS.md 목록');
     assert.deepEqual(await b.ev(rows), [['CLAUDE.md', '사용자']]);

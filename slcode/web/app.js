@@ -458,7 +458,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   el.append(act.dialog);
   // 세션 구성 (ticket slcode-sidebar-revamp) — 사이드바의 한 줄로 여는 창. 모델을 바꾸면 system prompt 를 다시 받는다
   const pv = previewDialog(h, rpc, () => ({ id: current, ready, vendor: info?.vendor ?? ready?.vendor, key: `${current}|${modelKey}`,
-    mcp: mcpList(), agentPlugins: plugs?.plugins.map((p) => p.name) ?? [], translator: opts.translator, parts: { prompt: promptPart, plugins: plugPart, mcp: mcpPart } }));
+    mcp: mcpList(), agentPlugins: plugs?.plugins.map((p) => p.name) ?? [], translator: opts.translator, copyBtn: (text) => iconBtn('copy', '복사', copyOf(text)), parts: { prompt: promptPart, plugins: plugPart, mcp: mcpPart } }));
   el.append(pv.dialog);
   let family = null, refused = null; // 같은 가족의 세션(serve.sessions), 주소가 가리켰지만 열지 못한 세션
   let current = null, lastSeq = 0, curSeq = 0, replaying = false, info = null, ready = null, connected = false, exitNote = null;

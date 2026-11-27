@@ -1359,7 +1359,24 @@ svg.gi { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor; 
 .acf .pvb .empty { padding: 0; }
 .acf .pvl .empty.err, .acf .pvb .empty.err { color: var(--acf-err); }
 .acf .pvb { min-height: 0; overflow-y: auto; padding: 16px 20px 24px; display: flex; flex-direction: column; gap: 12px; }
-.acf .pvb h3 { margin: 0; font-size: 15px; overflow-wrap: anywhere; }
+/* 오른쪽 칸 — 세 탭 모두 같은 꼴 (사용자 2026-11-27): 묶음 이름 줄(.gh, 위에 붙어 있다)과 줄마다 작은 이름·출처·복사 단추(.lb), 그 아래 내용과 원문 상자(pre).
+   지시문·AGENTS.md 는 줄을 차례로 쌓고 기능은 고른 줄 하나. 원문 상자를 누르면 포커스가 가고 Ctrl+A 는 그 상자의 글만 고른다 */
+.acf .pvb.doc { gap: 0; padding-top: 0; }
+.acf .pvb.doc > .gh { flex: none; position: sticky; top: 0; z-index: 1; display: flex; align-items: baseline; gap: 10px; padding: 14px 0 8px; background: var(--acf-bg); }
+.acf .pvb.doc > .gh b { font-size: 15px; }
+.acf .pvb.doc > .gh span { font-size: 12px; color: var(--acf-muted); }
+.acf .pvb.doc > .grp { flex: none; display: flex; flex-direction: column; gap: 16px; }
+.acf .pvb.doc > .grp:first-child { padding-top: 14px; }
+.acf .pvb.doc section { display: flex; flex-direction: column; gap: 8px; scroll-margin-top: 46px; }
+.acf .pvb.doc section .lb { display: flex; gap: 8px; padding: 0 2px; font-size: 12px; color: var(--acf-muted); user-select: none; }
+.acf .pvb.doc section .lb .nm { font-weight: 600; color: var(--acf-fg); }
+.acf .pvb.doc section .lb .nm + span::before { content: "· "; }
+.acf .pvb.doc section .lb { align-items: center; min-height: 22px; }
+.acf .pvb.doc section .lb button.ico { margin-left: auto; width: 22px; height: 22px; padding: 0; border: 0; background: transparent; color: var(--acf-muted); border-radius: 5px; display: grid; place-items: center; cursor: pointer; }
+.acf .pvb.doc section .lb button.ico:hover { background: var(--acf-soft); color: var(--acf-fg); }
+.acf .pvb.doc section .lb button.ico svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.acf .pvb.doc section pre { border: 1px solid transparent; outline: none; }
+.acf .pvb.doc section pre:focus { border-color: var(--acf-line); }
 .acf .pvb .tx { flex: none; position: relative; }
 .acf .pvb .tx > .trbtn { position: absolute; top: 6px; right: 6px; }
 .acf .pvb .tx > pre { padding-right: 34px; }
