@@ -38,7 +38,7 @@ import { readScripts } from 'slcode-plugin/agentHooks';
 import { BUILD_FILES } from 'slcode-plugin/agentBuild';
 import { latestVersion, promptNames, sessionPrompt, type PromptRef } from './promptLibrary.js';
 import { claudeSessionExists } from './vendor.js';
-import { claudeConnection, claudeThinking, codexProviderArgs, codexProviderEnv, getProvider, providerOpenError, readProviders, type Provider } from './provider.js';
+import { claudeConnection, claudeThinking, codexProviderArgs, codexProviderEnv, getProvider, modelLimits, providerOpenError, readProviders, type Provider } from './provider.js';
 import { agentPaths, currentBuilds, loadSessionPlugins, reloadSessionPlugins, unlinkSessionPlugins, type Loaded, type SessionPlugins } from 'slcode-plugin/agentPlugins';
 import { HookRunner, type LoadedCommand } from 'slcode-plugin/hookRunner';
 import { commandTable, completeInput, fullName, resolveCommand } from './pluginCommands.js';
@@ -245,11 +245,15 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
   };
   // custom 세션의 연결 (provider.ts) — 주소는 inspect 면 proxy. Claude 는 ClaudeSession 의 connection, Codex 는 -c model_providers 인자
   const providerUrl = async () => (logFile.meta.inspect ? (await startProxy()).url : provider!.baseUrl);
-  const connection = async () => (provider && !codex ? claudeConnection(provider, logFile.meta.model, await providerUrl()) : undefined);
+  // 모델의 토큰 한도는 띄울 때마다 지금 값 (ticket slcode-provider-token-limits) — 세션 중에 창에서 고쳐도 다음에 띄울 때 맞는다. 띄운 값은 limitsUp
+  const limited = () => ({ ...provider!, limits: (getProvider(P.dir, provider!.id) ?? provider!).limits });
+  const limitsNow = () => (provider ? JSON.stringify(modelLimits(limited(), logFile.meta.model)) : '');
+  let limitsUp = limitsNow();
+  const connection = async () => (provider && !codex ? claudeConnection(limited(), logFile.meta.model, await providerUrl()) : undefined);
   // codex — 에이전트 플러그인의 MCP(-c mcp_servers…)는 inspect 를 바꿔 다시 띄울 때도 함께 (agent 는 아래에서 채운다)
   // codex 명령의 PATH 는 띄운 PATH 로 고정 (codexPathArgs) — inspect 를 바꿔 다시 띄울 때도
   const codexBaseArgs = () => [...(agent?.codex.args ?? []), ...codexPathArgs(codexEnv())];
-  const vendorArgs = async () => [...(codex ? codexBaseArgs() : []), ...(codex && provider ? codexProviderArgs(provider, await providerUrl()) : []), ...(logFile.meta.inspect && codex && !provider ? codexArgs((await startProxy()).url) : [])];
+  const vendorArgs = async () => [...(codex ? codexBaseArgs() : []), ...(codex && provider ? codexProviderArgs(limited(), logFile.meta.model, await providerUrl()) : []), ...(logFile.meta.inspect && codex && !provider ? codexArgs((await startProxy()).url) : [])];
   /** 지난 기록을 읽는 DB — 켠 적 없는 세션엔 만들지 않는다 */
   const readStore = () => {
     if (!store && InspectStore.exists(inspectDir)) {
@@ -369,11 +373,25 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
     if (switching) throw new CoreError(ERR.badRequest, 'inspect is already being switched');
     switching = true;
     logFile.updateMeta({ inspect: on });
-    try { if (s instanceof CodexSession) await s.reopen(await vendorArgs()); else await s.reopen(await vendorEnv(), await connection()); }
+    try { await reopenVendor(); }
     catch (e) { logFile.updateMeta({ inspect: !on }); if (on) { await inspect?.close(); inspect = null; } throw new CoreError(ERR.badRequest, (e as Error).message); }
     finally { switching = false; }
     if (!on) { await inspect?.close(); inspect = null; if (sweeper) { clearInterval(sweeper); sweeper = null; } }
     broadcast('session.changed', s.info());
+  }
+  /** 벤더를 같은 대화로 지금 env·인자로 다시 띄운다 (idle 일 때만) */
+  async function reopenVendor() {
+    const s = session as ClaudeSession | CodexSession, key = limitsNow();
+    if (s instanceof CodexSession) await s.reopen(await vendorArgs()); else await s.reopen(await vendorEnv(), await connection());
+    limitsUp = key;
+  }
+  /** 모델의 토큰 한도가 띄운 값과 다르면 다시 띄운다 (ticket slcode-provider-token-limits) — 한도는 벤더 env·인자라 떠 있는 동안 바뀌지 않는다.
+   *  사람이 보낸 턴을 넘기기 직전에 본다: 모델을 바꾸거나 창에서 고친 뒤 다음 턴부터 맞는다. 못 띄우면 지금 프로세스로 보낸다 */
+  async function freshLimits() {
+    if (!provider || switching || limitsNow() === limitsUp) return;
+    switching = true;
+    try { await reopenVendor(); } catch (e) { log(`token limits not applied: ${(e as Error).message}`); }
+    finally { switching = false; }
   }
   /** 1st party 감시 (사용자 결정 2026-10-19) — 내부 플래그가 듣지 않는다. 이 SDK 버전을 기록해 새 세션은 inspect 없이 시작하게 하고,
    *  이 세션은 지금 턴이 끝나 idle 이 되면 proxy 없이 다시 띄운다 */
@@ -500,6 +518,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreHandle> {
       // 기다리는 명령 뒤에, 턴 중이면 idle 까지 core 가 쥐고 있다가 하나씩 한 턴으로 (ticket slcode-queued-message-bubble, 사용자 결정 2026-11-08)
       const ref = typeof p.ref === 'string' ? p.ref : undefined;
       if (!p.origin && (waiting.length || draining || busy())) { waiting.push({ id: randomUUID(), text: p.text, att, ref }); queueChanged(); activity.sent(); return { ok: true, state: s.state }; }
+      if (!p.origin) await freshLimits();
       nextRef = ref ?? null;
       s.send(p.text, p.origin ?? null, att);
       if (!p.origin) activity.sent(); // 메시지 턴(origin mail 등)은 사람이 보낸 것이 아니다

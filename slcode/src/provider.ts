@@ -21,7 +21,12 @@ export type Provider = {
   tiers: { opus?: string; sonnet?: string; haiku?: string; subagent?: string };
   features: ProviderFeatures;
   env: Record<string, string>;
+  /** 모델마다의 토큰 한도 (ticket slcode-provider-token-limits, 사용자 결정 2026-11-27) — 벤더는 모르는 모델의 크기를 추정한다(Claude Code 200000·출력 32000, Codex 258400).
+   *  models 에 있는 모델만 남는다 */
+  limits: Record<string, ModelLimits>;
 };
+/** context: 컨텍스트 크기(ctx % 와 자동 압축의 기준), output: 한 응답의 최대 출력 토큰(Claude 엔진만 — Codex 는 설정이 없다) */
+export type ModelLimits = { context?: number; output?: number };
 /** 키 관리의 키 하나 — 여러 프로바이더가 keyRef 로 가리킨다 */
 export type ProviderKey = { id: string; name: string; value: string };
 export type ProviderModel = { id: string; name?: string; context?: number };
@@ -63,6 +68,7 @@ const fileOf = (dir: string) => path.join(dir, FILES.providers);
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 const strMap = (v: unknown): Record<string, string> => Object.fromEntries(Object.entries(v && typeof v === 'object' ? v : {}).filter(([k, x]) => k && typeof x === 'string'));
 const ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
+const count = (v: unknown): number | undefined => (typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : undefined);
 
 function normalize(v: unknown, keys: ProviderKey[] = []): Provider | null {
   const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
@@ -70,13 +76,19 @@ function normalize(v: unknown, keys: ProviderKey[] = []): Provider | null {
   if (!ID.test(id) || !vendor || !str(o.name)) return null;
   const f = (o.features && typeof o.features === 'object' ? o.features : {}) as Record<string, unknown>;
   const t = strMap(o.tiers);
+  const models = Array.isArray(o.models) ? [...new Set(o.models.filter((m): m is string => typeof m === 'string' && !!m.trim()).map((m) => m.trim()))] : [];
+  const lim = (o.limits && typeof o.limits === 'object' ? o.limits : {}) as Record<string, Record<string, unknown> | null>;
   return {
     id, name: str(o.name), template: TEMPLATES[str(o.template)] ? str(o.template) : 'custom', vendor, baseUrl: str(o.baseUrl).trim(),
     ...(() => { const ref = keys.find((k) => k.id === str(o.keyRef)); return ref ? { key: ref.value, keyRef: ref.id } : { key: str(o.key), keyRef: '' }; })(),
-    models: Array.isArray(o.models) ? [...new Set(o.models.filter((m): m is string => typeof m === 'string' && !!m.trim()).map((m) => m.trim()))] : [],
+    models,
     auth: o.auth === 'x-api-key' ? 'x-api-key' : 'bearer', headers: strMap(o.headers),
     tiers: Object.fromEntries(['opus', 'sonnet', 'haiku', 'subagent'].filter((k) => t[k]?.trim()).map((k) => [k, t[k].trim()])),
     features: { thinking: f.thinking === true, effort: f.effort === true, betas: f.betas === true }, env: strMap(o.env),
+    limits: Object.fromEntries(models.flatMap((m) => {
+      const context = count(lim[m]?.context), output = count(lim[m]?.output);
+      return context || output ? [[m, { ...(context ? { context } : {}), ...(output ? { output } : {}) }]] : [];
+    })),
   };
 }
 
@@ -175,11 +187,15 @@ export function publicProvider(p: Provider) {
 
 export const withoutConnection = (env: NodeJS.ProcessEnv): NodeJS.ProcessEnv => Object.fromEntries(Object.entries(env).filter(([k]) => !CONNECTION_ENV.includes(k)));
 
+/** 모델의 토큰 한도 — model 이 비면 첫 모델 */
+export const modelLimits = (p: Provider, model: string | null | undefined): ModelLimits => p.limits[model || p.models[0] || ''] ?? {};
+
 /** Claude 벤더의 연결 env — SDK env 와 플래그 settings.env 에 같은 값으로 들어간다 (~/.claude/settings.json 의 env 가 프로세스 env 를 덮는다, 2026-11-25 스파이크).
  *  키가 비어도 빈 값으로 두지 않는다 — 비면 Claude Code 가 사용자 claude.ai 로그인으로 넘어가 그 토큰을 이 주소로 보낸다 */
 export function claudeConnection(p: Provider, model: string | null | undefined, baseUrl = p.baseUrl): Record<string, string> {
   const m = model || p.models[0] || '';
   const key = p.key || 'none';
+  const lim = modelLimits(p, m);
   return {
     ...p.env,
     ANTHROPIC_BASE_URL: baseUrl,
@@ -187,6 +203,9 @@ export function claudeConnection(p: Provider, model: string | null | undefined, 
     ...(m ? { ANTHROPIC_MODEL: m, ANTHROPIC_DEFAULT_FABLE_MODEL: p.tiers.opus || m, ANTHROPIC_DEFAULT_OPUS_MODEL: p.tiers.opus || m, ANTHROPIC_DEFAULT_SONNET_MODEL: p.tiers.sonnet || m, ANTHROPIC_DEFAULT_HAIKU_MODEL: p.tiers.haiku || m } : {}),
     ...(p.tiers.subagent ? { CLAUDE_CODE_SUBAGENT_MODEL: p.tiers.subagent } : {}),
     ANTHROPIC_CUSTOM_HEADERS: Object.entries(p.headers).map(([k, v]) => `${k}: ${v}`).join('\n'),
+    // 모르는 모델 이름이면 Claude Code 가 쓰는 크기 — ctx % 와 자동 압축 기준(크기 − 출력 한도 − 약 13000)이 이 값을 따른다 (Claude Code 2.1.322 실측)
+    ...(lim.context ? { CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(lim.context) } : {}),
+    ...(lim.output ? { CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(lim.output) } : {}),
     // 1st party 내부 플래그와 tool search — 셸·사용자 settings.json 의 값도 덮는다
     _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL: '',
     ...(p.features.betas ? {} : { CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '1', ENABLE_TOOL_SEARCH: 'false' }),
@@ -198,9 +217,10 @@ export function claudeConnection(p: Provider, model: string | null | undefined, 
 export const claudeThinking = (p: Provider) => (p.features.thinking ? { type: 'enabled' as const, budgetTokens: 8192 } : { type: 'disabled' as const });
 
 /** Codex app-server 의 -c 인자. 값은 TOML — JSON 문자열은 TOML basic string 으로도 읽힌다 */
-export function codexProviderArgs(p: Provider, baseUrl = p.baseUrl): string[] {
+export function codexProviderArgs(p: Provider, model: string | null | undefined, baseUrl = p.baseUrl): string[] {
   const id = `slcode-${p.id}`, q = JSON.stringify;
   const headers = Object.entries(p.headers);
+  const { context } = modelLimits(p, model);
   return [
     '-c', `model_provider=${q(id)}`,
     '-c', `model_providers.${id}.name=${q(p.name)}`,
@@ -208,10 +228,17 @@ export function codexProviderArgs(p: Provider, baseUrl = p.baseUrl): string[] {
     '-c', `model_providers.${id}.wire_api="responses"`,
     ...(p.key ? ['-c', `model_providers.${id}.env_key=${q(PROVIDER_KEY_ENV)}`] : []),
     ...(headers.length ? ['-c', `model_providers.${id}.http_headers={${headers.map(([k, v]) => `${q(k)}=${q(v)}`).join(',')}}`] : []),
+    // Codex 는 이 값의 95% 를 창으로 보고 자동 압축도 그 안에서 돈다 (codex 0.172 실측). 출력 한도 설정은 없다
+    ...(context ? ['-c', `model_context_window=${context}`] : []),
   ];
 }
 export const codexProviderEnv = (p: Provider): Record<string, string> => ({ ...p.env, ...(p.key ? { [PROVIDER_KEY_ENV]: p.key } : {}) });
 
+/** 목록 항목의 컨텍스트 크기 — OpenRouter 는 context_length, llama.cpp 는 meta.n_ctx(서버가 띄운 크기. meta.n_ctx_train 은 학습 길이라 쓰지 않는다, 2026-11-27 실측) */
+const ctxOf = (m: Record<string, unknown>): number | undefined => {
+  const meta = (m.meta && typeof m.meta === 'object' ? m.meta : {}) as Record<string, unknown>;
+  return count(m.context_length) ?? count(meta.n_ctx);
+};
 /** 모델 목록 — 실패하면 사유로 던진다 (화면은 손으로 넣는 칸을 남긴다) */
 export async function fetchModels(p: Provider): Promise<ProviderModel[]> {
   const kind = TEMPLATES[p.template]?.list ?? 'auto';
@@ -231,7 +258,7 @@ export async function fetchModels(p: Provider): Promise<ProviderModel[]> {
     if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
     const body = await r.json() as { data?: unknown[]; models?: unknown[] };
     const rows = (body.data ?? body.models ?? []) as Record<string, unknown>[];
-    const out = rows.map((m) => ({ id: str(m.id) || str(m.name) || str(m.model), name: str(m.display_name) || (m.id ? str(m.name) : '') || undefined, context: typeof m.context_length === 'number' ? m.context_length : undefined }))
+    const out = rows.map((m) => ({ id: str(m.id) || str(m.name) || str(m.model), name: str(m.display_name) || (m.id ? str(m.name) : '') || undefined, context: ctxOf(m) }))
       .filter((m) => m.id);
     if (!out.length) throw new Error(`${url}: no models`);
     return out;

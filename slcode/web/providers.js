@@ -1,5 +1,5 @@
 // 프로바이더 관리 (ticket slcode-custom-provider, 사용자 결정 2026-11-25: 안 B) — 시작 화면(start.js)의 "프로바이더" 단추와 대화 화면 모델 메뉴의 "프로바이더 관리"(app.js)가 연다.
-// 꼴은 프로필 관리(profiles.js, style.css .prpanel)와 같다: 왼쪽 목록, 오른쪽 탭 "일반 · 세부". 바꾸면 바로 저장한다(provider.save — 준 칸만 바뀐다).
+// 꼴은 프로필 관리(profiles.js, style.css .prpanel)와 같다: 왼쪽 목록, 오른쪽 탭 "일반 · 모델 · 세부". 바꾸면 바로 저장한다(provider.save — 준 칸만 바뀐다).
 // 새 프로바이더는 템플릿을 고르는 창에서 만든다. 키는 화면에 오지 않는다(hasKey·keyTail) — 칸을 비워 두면 지금 키가 남는다.
 // 요청은 call(method, params) — 시작 화면은 api/·`slcode start-call`, 대화 화면은 serve 가 답한다 (providerMethods.ts).
 
@@ -84,9 +84,10 @@ export function providersPanel(call) {
         })) }),
         el('div', { class: 'grp' }, row({ label: '주소', desc: el('span', { class: 'mono' }, `${p.baseUrl.replace(/\/+$/, '')}${p.vendor === 'claude' ? '/v1/messages' : '/responses'}`) /* 실제로 보내는 주소 — /v1 을 두 번 붙이는 실수가 보인다 */, ctl: field(p.baseUrl, (v) => save(p, { baseUrl: v.trim() }), { class: 'val wide mono', spellcheck: 'false' }) })),
         el('div', { class: 'grp' }, row({ label: '키', ctl: keyCtl(p) })),
-        t.note ? el('p', { class: 'note' }, t.note) : null),
-      el('section', {}, el('h3', {}, '모델'), modelsBox(p)));
+        t.note ? el('p', { class: 'note' }, t.note) : null));
   }
+  // ---------- 탭: 모델 ---------- 모델 목록과 모델마다의 토큰 한도 (사용자 2026-11-27 — 일반에서 따로 뗐다)
+  const modelsTab = (p) => el('div', { class: 'pane' }, el('section', {}, modelsBox(p)));
   /** 키 칸 — 직접 넣거나(칸), 키 관리의 키를 고른다(칸 옆 네모 열쇠 단추). 키 관리의 키를 쓰면 칸은 그 이름을 보이며 잠긴다(회색) — × 로 비워야 직접 넣는다 (사용자 2026-11-26) */
   function keyCtl(p) {
     const ref = p.keyRef ? S.keys.find((k) => k.id === p.keyRef) : null;
@@ -109,11 +110,26 @@ export function providersPanel(call) {
     const list = S.fetched ? el('div', { class: 'fetch' },
       el('input', { class: 'val wide pq', placeholder: `검색 (${S.fetched.length}개)`, value: S.q, oninput: (e) => { S.q = e.target.value; S.refocus = true; draw(); } }),
       el('div', { class: 'opts' }, S.fetched.filter((m) => `${m.id} ${m.name ?? ''}`.toLowerCase().includes(S.q.toLowerCase())).slice(0, 200).map((m) =>
-        el('label', {}, el('input', { type: 'checkbox', checked: p.models.includes(m.id), onchange: (e) => { const on = e.target.checked; void save(p, (now) => ({ models: on ? [...now.models.filter((x) => x !== m.id), m.id] : now.models.filter((x) => x !== m.id) })); } }),
+        el('label', {}, el('input', { type: 'checkbox', checked: p.models.includes(m.id), onchange: (e) => { const on = e.target.checked; void save(p, (now) => ({ models: on ? [...now.models.filter((x) => x !== m.id), m.id] : now.models.filter((x) => x !== m.id),
+          ...(on && m.context && !now.limits?.[m.id]?.context ? { limits: { ...now.limits, [m.id]: { ...now.limits?.[m.id], context: m.context } } } : {}) })); } }),
           el('span', { class: 'mono' }, m.id), m.name && m.name !== m.id ? el('span', { class: 'meta' }, m.name) : null, m.context ? el('span', { class: 'meta ctx' }, `${Math.round(m.context / 1000)}k`) : null)))) : null;
+    // 모델마다의 토큰 한도 (ticket slcode-provider-token-limits, 사용자 결정 2026-11-27) — 비우면 벤더 기본. 출력 한도는 Claude 엔진만(Codex 는 설정이 없다)
+    const claude = p.vendor === 'claude';
+    const limit = (m, k) => field(p.limits?.[m]?.[k] ?? '', (v) => {
+      v = v.replace(/[\s,_]/g, '');
+      if (v && !/^[1-9]\d*$/.test(v)) { S.error = '토큰 수는 숫자로 넣어 주세요'; draw(); return; }
+      void save(p, (now) => { const cur = { ...now.limits?.[m] }; if (v) cur[k] = Number(v); else delete cur[k]; return { limits: { ...now.limits, [m]: cur } }; });
+    }, { class: 'val num mono', inputmode: 'numeric', placeholder: '자동', 'aria-label': `${m} ${k === 'context' ? '컨텍스트 크기' : '최대 출력 토큰'}` });
     return el('div', { class: 'models' },
-      el('div', { class: 'chips' }, p.models.length ? p.models.map((m, i) => el('span', { class: 'chip' }, el('span', { class: 'mono' }, m), i === 0 ? el('span', { class: 'meta' }, '기본') : null,
-        el('button', { class: 'tbtn ico', title: '빼기', 'aria-label': '빼기', onclick: () => void save(p, (now) => ({ models: now.models.filter((x) => x !== m) })) }, icon('x')))) : el('span', { class: 'desc' }, '모델이 없습니다')),
+      p.models.length ? el('div', { class: `mlist${claude ? '' : ' nout'}` },
+        el('div', { class: 'mhead' }, el('span', {}, '모델'), el('span', {}, '컨텍스트 크기'), claude ? el('span', {}, '최대 출력') : null, el('span', {})),
+        p.models.map((m, i) => el('div', { class: 'mrow' },
+          el('span', { class: 'mname' }, el('span', { class: 'mono' }, m), i === 0 ? el('span', { class: 'meta' }, '기본') : null),
+          limit(m, 'context'), claude ? limit(m, 'output') : null,
+          el('button', { class: 'tbtn ico', title: '빼기', 'aria-label': '빼기', onclick: () => void save(p, (now) => ({ models: now.models.filter((x) => x !== m) })) }, icon('x'))))) : el('div', { class: 'chips' }, el('span', { class: 'desc' }, '모델이 없습니다')),
+      p.models.length ? el('p', { class: 'note' }, claude
+        ? '비워 두면 Claude Code 가 모르는 모델을 컨텍스트 200000, 출력 32000 토큰으로 봅니다. 실제 크기가 더 작으면 자동 압축 전에 요청이 넘칩니다.'
+        : '비워 두면 Codex 가 모르는 모델을 컨텍스트 약 258000 토큰으로 봅니다. 실제 크기가 더 작으면 자동 압축 전에 요청이 넘칩니다.') : null,
       el('div', { class: 'addrow' }, input, fetchBtn),
       S.fetchErr ? el('p', { class: 'note err' }, `목록을 받지 못했습니다: ${S.fetchErr}`) : null,
       list);
@@ -259,8 +275,8 @@ export function providersPanel(call) {
         el('button', { class: 'add', onclick: () => newDialog() }, icon('plus'), '새 프로바이더')),
       p ? el('div', { class: 'pdetail' },
         head(p),
-        el('div', { class: 'tabs', role: 'tablist' }, [['general', '일반'], ['detail', '세부']].map(([k, label]) => el('button', { class: 'tab', role: 'tab', 'aria-selected': String(S.tab === k), onclick: () => { S.tab = k; draw(); } }, label))),
-        (S.tab === 'detail' ? detailTab : generalTab)(p))
+        el('div', { class: 'tabs', role: 'tablist' }, [['general', '일반'], ['models', '모델'], ['detail', '세부']].map(([k, label]) => el('button', { class: 'tab', role: 'tab', 'aria-selected': String(S.tab === k), onclick: () => { S.tab = k; draw(); } }, label))),
+        ({ general: generalTab, models: modelsTab, detail: detailTab }[S.tab] ?? generalTab)(p))
         : el('div', { class: 'pdetail' }, el('div', { class: 'none' }, 'OpenRouter 같은 제3자 프로바이더나 Ollama 같은 로컬 모델을 추가하면 모델 메뉴의 custom 칸에서 고를 수 있습니다.'),
           el('button', { class: 'btn solid', onclick: () => newDialog() }, icon('plus'), '새 프로바이더')));
     if (S.refocus) { S.refocus = false; const i = body.querySelector('.pq'); i?.focus(); i?.setSelectionRange(S.q.length, S.q.length); }

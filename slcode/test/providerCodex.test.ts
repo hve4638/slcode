@@ -17,7 +17,7 @@ test('codex custom 세션: app-server 에 -c model_provider·model_providers 인
   const dir = tmp('slcode-provx-'), work = tmp('slcode-provx-work-');
   const envFile = path.join(dir, 'env.json');
   Object.assign(process.env, { SLCODE_DIR: dir, SLCODE_GRACE_SECS: '1', SLCODE_CODEX_BIN: `${process.execPath} ${FAKE}`, FAKE_CODEX_ENV: envFile });
-  saveProvider(dir, { name: 'Local', template: 'ollama', vendor: 'codex', baseUrl: 'http://127.0.0.1:9/v1', key: 'ollama', models: ['qwen:7b'] });
+  saveProvider(dir, { name: 'Local', template: 'ollama', vendor: 'codex', baseUrl: 'http://127.0.0.1:9/v1', key: 'ollama', models: ['qwen:7b'], limits: { 'qwen:7b': { context: 32768, output: 4096 } } });
   const { runCore } = await import('../src/core.ts');
   const { connectSession } = await import('../src/client.ts');
   const { EventLog } = await import('../src/eventLog.ts');
@@ -33,6 +33,7 @@ test('codex custom 세션: app-server 에 -c model_provider·model_providers 인
     assert.match(args, /model_provider="slcode-local"/);
     assert.match(args, /model_providers\.slcode-local\.base_url="http:\/\/127\.0\.0\.1:9\/v1"/);
     assert.doesNotMatch(args, /openai_base_url/);
+    assert.match(args, /model_context_window=32768/, '모델의 컨텍스트 한도 (ticket slcode-provider-token-limits)');
     c = await connectSession(core.sock);
     await c.request('session.attach', { id });
     const m = await c.request('session.models', { id });

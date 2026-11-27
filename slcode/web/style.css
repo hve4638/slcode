@@ -1412,7 +1412,16 @@ svg.gi { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor; 
 .prpanel.prv .add { margin-top: 4px; }
 .prpanel.prv .chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 0 10px; }
 .prpanel.prv .chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 2px 0 9px; border-radius: 12px; background: var(--acf-soft); font-size: 12px; }
-.prpanel.prv .chip .meta, .prpanel.prv .fetch .meta { font-size: 11px; color: var(--acf-muted); }
+.prpanel.prv .chip .meta, .prpanel.prv .mlist .meta, .prpanel.prv .fetch .meta { font-size: 11px; color: var(--acf-muted); }
+/* 모델 목록과 모델마다의 토큰 한도 (ticket slcode-provider-token-limits) — 이름 · 컨텍스트 크기 · 최대 출력(Claude 엔진만) · 빼기 */
+.prpanel.prv .mlist { display: grid; grid-template-columns: minmax(0, 1fr) 110px 110px 26px; gap: 4px 8px; align-items: center; max-width: 520px; padding: 6px 0 2px; }
+.prpanel.prv .mlist.nout { grid-template-columns: minmax(0, 1fr) 110px 26px; }
+.prpanel.prv .mlist .mhead, .prpanel.prv .mlist .mrow { display: contents; }
+.prpanel.prv .mlist .mhead span { font-size: 11px; color: var(--acf-muted); }
+.prpanel.prv .mlist .mname { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; }
+.prpanel.prv .mlist .mname .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prpanel.prv .mlist input.val.num { width: 100%; font-variant-numeric: tabular-nums; }
+.prpanel.prv .mlist + .note { margin-bottom: 10px; }
 .prpanel.prv .addrow { display: flex; gap: 8px; align-items: center; }
 .prpanel.prv .fetch { margin-top: 10px; max-width: 520px; border: 1px solid var(--acf-line); border-radius: 8px; padding: 8px; }
 .prpanel.prv .fetch input.val { width: 100%; }

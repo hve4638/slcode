@@ -6,12 +6,12 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { claudeConnection, codexProviderArgs, CONNECTION_ENV, fetchModels, getProvider, publicProvider, readKeys, readProviders, removeKey, removeProvider, saveKey, saveProvider, withoutConnection, type Provider } from '../src/provider.ts';
+import { claudeConnection, codexProviderArgs, CONNECTION_ENV, fetchModels, getProvider, modelLimits, publicProvider, readKeys, readProviders, removeKey, removeProvider, saveKey, saveProvider, withoutConnection, type Provider } from '../src/provider.ts';
 
 const tmp = (p: string) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function until(f: () => boolean, ms = 30000) { const t0 = Date.now(); while (!f() && Date.now() - t0 < ms) await sleep(50); assert.ok(f(), 'timed out'); }
-const base: Provider = { id: 'p', name: 'P', template: 'custom', vendor: 'claude', baseUrl: 'http://x', key: 'k-123', keyRef: '', models: ['m1', 'm2'], auth: 'bearer', headers: {}, tiers: {}, features: { thinking: false, effort: false, betas: false }, env: {} };
+const base: Provider = { id: 'p', name: 'P', template: 'custom', vendor: 'claude', baseUrl: 'http://x', key: 'k-123', keyRef: '', models: ['m1', 'm2'], auth: 'bearer', headers: {}, tiers: {}, features: { thinking: false, effort: false, betas: false }, env: {}, limits: {} };
 
 test('providers.json: 이름에서 id, 고치기는 준 칸만, key 를 빼면 남는다. 파일은 0600, 화면으로는 키 없이. 템플릿에 없는 엔진·주소 오류는 거절', () => {
   const dir = tmp('slcode-prov-');
@@ -103,10 +103,28 @@ test('claudeConnection: Bearer 면 AUTH_TOKEN + 빈 API_KEY, 빈 키도 비워 �
 });
 
 test('codexProviderArgs: model_provider·model_providers.<id> 를 -c 로, 키가 없으면 env_key 를 빼고 헤더는 inline table', () => {
-  const a = codexProviderArgs({ ...base, vendor: 'codex', headers: { 'HTTP-Referer': 'r "q"' } }, 'http://proxy/v1');
+  const a = codexProviderArgs({ ...base, vendor: 'codex', headers: { 'HTTP-Referer': 'r "q"' } }, null, 'http://proxy/v1');
   assert.deepEqual(a, ['-c', 'model_provider="slcode-p"', '-c', 'model_providers.slcode-p.name="P"', '-c', 'model_providers.slcode-p.base_url="http://proxy/v1"', '-c', 'model_providers.slcode-p.wire_api="responses"',
     '-c', 'model_providers.slcode-p.env_key="SLCODE_PROVIDER_KEY"', '-c', 'model_providers.slcode-p.http_headers={"HTTP-Referer"="r \\"q\\""}']);
-  assert.equal(codexProviderArgs({ ...base, vendor: 'codex', key: '' }).some((x) => x.includes('env_key')), false);
+  assert.equal(codexProviderArgs({ ...base, vendor: 'codex', key: '' }, null).some((x) => x.includes('env_key')), false);
+});
+
+test('모델의 토큰 한도 (ticket slcode-provider-token-limits): 모델마다 저장, 목록에 없는 모델·틀린 값은 버린다. Claude 는 env 둘, Codex 는 model_context_window 만', () => {
+  const dir = tmp('slcode-provl-');
+  const a = saveProvider(dir, { name: 'L', vendor: 'claude', baseUrl: 'http://l', models: ['m1', 'm2'], limits: { m1: { context: 131072, output: 16384 }, m2: { context: -1, output: 1.5 }, gone: { context: 9 } } });
+  assert.deepEqual(a.limits, { m1: { context: 131072, output: 16384 } });
+  assert.deepEqual(getProvider(dir, a.id)!.limits, a.limits, '디스크에서 다시 읽어도 같다');
+  assert.deepEqual(saveProvider(dir, { id: a.id, models: ['m2'] }).limits, {}, '모델을 빼면 그 한도도 빠진다');
+  const p = { ...base, limits: { m1: { context: 131072, output: 16384 }, m2: { context: 50000 } }, env: { CLAUDE_CODE_MAX_OUTPUT_TOKENS: '999', API_TIMEOUT_MS: '1' } };
+  assert.deepEqual(modelLimits(p, null), { context: 131072, output: 16384 }, '모델을 안 고르면 첫 모델');
+  const c = claudeConnection(p, 'm1');
+  assert.equal(c.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '131072'); assert.equal(c.CLAUDE_CODE_MAX_OUTPUT_TOKENS, '16384', '추가 env 보다 앞선다'); assert.equal(c.API_TIMEOUT_MS, '1');
+  const c2 = claudeConnection(p, 'm2');
+  assert.equal(c2.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '50000'); assert.equal(c2.CLAUDE_CODE_MAX_OUTPUT_TOKENS, '999', '한도가 없으면 추가 env 그대로');
+  assert.equal('CLAUDE_CODE_MAX_CONTEXT_TOKENS' in claudeConnection(base, 'm1'), false, '한도가 없으면 넣지 않는다');
+  const x = codexProviderArgs({ ...p, vendor: 'codex' }, 'm2');
+  assert.deepEqual(x.slice(-2), ['-c', 'model_context_window=50000']);
+  assert.equal(codexProviderArgs({ ...base, vendor: 'codex' }, 'm1').some((v) => v.startsWith('model_context_window')), false);
 });
 
 test('fetchModels: Claude 엔진은 <주소>/v1/models(Anthropic 헤더), Codex 엔진은 <주소>/models, Ollama 는 /api/tags. 목록 API 가 없는 템플릿·실패는 사유로', async () => {
@@ -114,7 +132,9 @@ test('fetchModels: Claude 엔진은 <주소>/v1/models(Anthropic 헤더), Codex 
   const srv = http.createServer((req, res) => {
     seen.push({ url: req.url!, h: req.headers });
     const u = req.url!.split('?')[0];
-    const body = u === '/api/tags' ? { models: [{ name: 'qwen:7b' }] } : u === '/v1/models' ? { data: [{ id: 'a', display_name: 'A' }] } : u === '/v1/x/models' ? { object: 'list', data: [{ id: 'b', context_length: 8192 }] } : null;
+    const body = u === '/api/tags' ? { models: [{ name: 'qwen:7b' }] } : u === '/v1/models' ? { data: [{ id: 'a', display_name: 'A' }] } : u === '/v1/x/models' ? { object: 'list', data: [{ id: 'b', context_length: 8192 }] }
+      // llama.cpp (2026-11-27 DGX 실측 꼴) — models[] 와 data[] 를 같이 주고, 띄운 크기는 data[].meta.n_ctx
+      : u === '/lc/v1/models' ? { models: [{ name: 'q', model: 'q' }], object: 'list', data: [{ id: 'q', owned_by: 'llamacpp', meta: { n_ctx: 131072, n_ctx_train: 262144 } }] } : null;
     res.writeHead(body ? 200 : 404, { 'content-type': 'application/json' }).end(JSON.stringify(body ?? {}));
   });
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()));
@@ -124,6 +144,7 @@ test('fetchModels: Claude 엔진은 <주소>/v1/models(Anthropic 헤더), Codex 
     assert.equal(seen[0].h['x-api-key'], 'k-123'); assert.equal(seen[0].h['anthropic-version'], '2023-06-01');
     assert.deepEqual(await fetchModels({ ...base, vendor: 'codex', baseUrl: `${url}/v1/x` }), [{ id: 'b', name: undefined, context: 8192 }]);
     assert.equal(seen[1].h.authorization, 'Bearer k-123');
+    assert.deepEqual(await fetchModels({ ...base, template: 'llamacpp', baseUrl: `${url}/lc` }), [{ id: 'q', name: undefined, context: 131072 }], 'llama.cpp 는 n_ctx_train 이 아니라 n_ctx');
     assert.deepEqual((await fetchModels({ ...base, template: 'ollama', baseUrl: `${url}/v1` })).map((m) => m.id), ['qwen:7b']);
     await assert.rejects(fetchModels({ ...base, template: 'deepseek' }), /no model list API/);
     await assert.rejects(fetchModels({ ...base, vendor: 'codex', baseUrl: `${url}/nope` }), /HTTP 404/);
@@ -132,14 +153,16 @@ test('fetchModels: Claude 엔진은 <주소>/v1/models(Anthropic 헤더), Codex 
 
 /** Anthropic Messages 흉내 — 요청마다 경로·인증·모델·beta·1st party 표지 헤더를 남기고 "OK <모델>" */
 async function fakeMessages() {
-  const reqs: { path: string; auth?: string; xkey?: string; model?: string; firstParty: boolean; tools: number; thinking?: unknown; referer?: string }[] = [];
+  const reqs: { path: string; auth?: string; xkey?: string; model?: string; firstParty: boolean; tools: number; thinking?: unknown; referer?: string; maxTokens?: number }[] = [];
   const srv = http.createServer((req, res) => {
     let body = '';
     req.on('data', (c) => (body += c));
     req.on('end', () => {
       let j: any = {}; try { j = JSON.parse(body); } catch {}
-      reqs.push({ path: req.url!, auth: req.headers.authorization, xkey: req.headers['x-api-key'] as string | undefined, model: j.model, firstParty: !!req.headers['x-claude-code-request-class'], tools: j.tools?.length ?? 0, thinking: j.thinking, referer: req.headers['http-referer'] as string | undefined });
+      reqs.push({ path: req.url!, auth: req.headers.authorization, xkey: req.headers['x-api-key'] as string | undefined, model: j.model, firstParty: !!req.headers['x-claude-code-request-class'], tools: j.tools?.length ?? 0, thinking: j.thinking, referer: req.headers['http-referer'] as string | undefined, maxTokens: j.max_tokens });
       if (!req.url?.startsWith('/v1/messages') || req.url.includes('count_tokens')) { res.writeHead(200, { 'content-type': 'application/json' }).end('{"input_tokens":5}'); return; }
+      // 스트리밍이 아닌 요청(setModel 의 모델 확인)은 JSON 한 번
+      if (!j.stream) { res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id: 'msg_v', type: 'message', role: 'assistant', model: j.model, content: [{ type: 'text', text: 'OK' }], stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 5, output_tokens: 1 } })); return; }
       const ev = (t: string, d: object) => `event: ${t}\ndata: ${JSON.stringify({ type: t, ...d })}\n\n`;
       res.writeHead(200, { 'content-type': 'text/event-stream' }).end([
         ev('message_start', { message: { id: 'msg_1', type: 'message', role: 'assistant', model: j.model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 5, output_tokens: 1 } } }),
@@ -213,6 +236,47 @@ test('claude custom 세션: 셸·--env·~/.claude/settings.json 의 연결 값 �
   await assert.rejects(runCore({ dir, cwd: work, resume: id }), /provider fake is gone/);
   assert.equal(official.reqs.length, 0);
   prov.srv.closeAllConnections(); prov.srv.close(); official.srv.closeAllConnections(); official.srv.close();
+  process.env = saved;
+});
+
+test('claude custom 세션의 토큰 한도 (ticket slcode-provider-token-limits): ctx max·max_tokens 가 모델의 한도를 따르고, 창에서 고치거나 모델을 바꾸면 다음 턴 전에 다시 띄워 맞춘다', { timeout: 180000 }, async () => {
+  const prov = await fakeMessages();
+  const saved = { ...process.env };
+  for (const k of Object.keys(process.env)) if (k.startsWith('CLAUDE') || k.startsWith('ANTHROPIC')) delete process.env[k];
+  const dir = tmp('slcode-provt-'), home = tmp('slcode-provt-home-'), work = tmp('slcode-provt-work-');
+  Object.assign(process.env, { HOME: home, SLCODE_DIR: dir, SLCODE_GRACE_SECS: '1', SLCODE_CLAUDE_PEER: '0' });
+  saveProvider(dir, { name: 'Fake', vendor: 'claude', baseUrl: prov.url, key: 'k', models: ['fake/alpha', 'fake/beta'], limits: { 'fake/alpha': { context: 50000, output: 4096 } } });
+  const { runCore } = await import('../src/core.ts');
+  const { connectSession } = await import('../src/client.ts');
+  const { EventLog } = await import('../src/eventLog.ts');
+  const { corePaths } = await import('../src/paths.ts');
+  const core = await runCore({ dir, cwd: work, provider: 'fake' });
+  const id = core.session.id;
+  let c: Awaited<ReturnType<typeof connectSession>> | null = null;
+  try {
+    c = await connectSession(core.sock);
+    await c.request('session.attach', { id });
+    const main = () => prov.reqs.filter((r) => r.tools > 0);
+    const turn = async (text: string) => {
+      const n = main().length;
+      await c!.request('session.send', { id, text });
+      await until(() => main().length > n && EventLog.open(corePaths(dir).sessionsDir, id)!.since(0).filter((e) => e.ev.kind === 'turn.end').length >= main().length);
+      return main().at(-1)!;
+    };
+    const max = async () => (await c!.request('session.status', { id })).context?.max;
+    assert.equal((await turn('hi')).maxTokens, 4096);
+    assert.equal(await max(), 50000);
+    saveProvider(dir, { id: 'fake', limits: { 'fake/alpha': { context: 60000, output: 2048 } } }); // 창에서 고친다
+    assert.equal((await turn('again')).maxTokens, 2048, '고친 한도로 다시 띄웠다');
+    assert.equal(await max(), 60000);
+    await c.request('session.setModel', { id, model: 'fake/beta' }); // 한도가 없는 모델 — Claude Code 기본
+    const r = await turn('beta');
+    assert.equal(r.model, 'fake/beta'); assert.equal(r.maxTokens, 32000);
+    assert.equal(await max(), 200000);
+    const n = EventLog.open(corePaths(dir).sessionsDir, id)!.since(0).filter((e) => e.ev.kind === 'turn.end').length;
+    assert.equal(n, 3, '다시 띄워도 같은 세션의 대화');
+  } finally { c?.close(); await core.close('test'); }
+  prov.srv.closeAllConnections(); prov.srv.close();
   process.env = saved;
 });
 
