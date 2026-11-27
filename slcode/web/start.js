@@ -2,7 +2,7 @@
 // 목록은 마지막 활동 순 — 꺼진 세션은 꺼진 지 얼마나 됐는지, 떠 있는 세션은 초록 점으로 열려 있다고만(누르지 못한다). 왼쪽의 꺼진 세션을 누르면 이어서 연다.
 // 오른쪽은 아직 누르지 못한다. 프로필은 세션에 들어가 대화 화면 가운데에서 고른다 — 프로필 설정은 나중에 이 화면의 설정에 둔다(사용자).
 // 웹(entry.ts 가 세션을 띄우기 전에 서빙)과 superlite 카드(views/session.js 가 플러그인 문서에 그린다)가 같은 화면을 쓴다. <html data-start> 가 입구:
-// web 이면 같은 출처의 api/<동작> 에 POST, card 면 카드에 {type: 'slcode.start.<동작>', id} 를 보내고 {re: id, result|error} 를 받는다.
+// web 이면 같은 출처의 api/<동작> 에 POST, card 면 카드에 {type: 'slcode.start.<동작>', id, params} 를 보내고 {re: id, result|error} 를 받는다.
 // 동작은 list({cwd, here, all} — startPage.ts StartList), go({new: true} | {resume: <id>}), 에이전트 플러그인 관리의 plugins.list·check·set·export (serve.pluginMethod),
 // system prompt 목록·편집 창의 prompt.list·create·remove·get·fetch·save (promptMethods.ts), 프로필 관리의 profile.list·add·set·remove·rename (profileMethods.ts).
 
@@ -22,7 +22,7 @@ addEventListener('message', (e) => {
   if (d.error !== undefined) w.reject(new Error(d.error)); else w.resolve(d.result);
 });
 function call(action, args = {}) {
-  if (mode === 'card') return new Promise((resolve, reject) => { const id = ++seq; waits.set(id, { resolve, reject }); const m = { type: `slcode.start.${action}`, id, ...args }; if (cardHost) cardHost(m); else parent.postMessage(m, '*'); });
+  if (mode === 'card') return new Promise((resolve, reject) => { const id = ++seq; waits.set(id, { resolve, reject }); const m = { type: `slcode.start.${action}`, id, params: args }; /* 인자는 params 에 — id 는 요청 번호 (views/session.js HOST) */ if (cardHost) cardHost(m); else parent.postMessage(m, '*'); });
   return fetch(`api/${action}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(args) })
     .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`); return j; });
 }

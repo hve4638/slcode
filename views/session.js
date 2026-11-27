@@ -532,19 +532,19 @@ export function mount(el, ctx) {
   const VERB = { 'slcode.open': 'open', 'slcode.download': 'download' };
   const HOST = {
     'slcode.update': (d) => host('checkUpdate', { version: d.version, build: d.build }), 'slcode.restart': handoff,
-    // 시작 화면 (renderStart)
+    // 시작 화면 (renderStart) — 요청의 인자는 params 에. 메시지의 id 는 요청 번호라 인자의 id(provider.remove 의 프로바이더)와 섞이면 답이 화면에 닿지 않았다 (ticket slcode-provider-panel-slow)
     'slcode.start.list': () => host('startList', c.start),
-    'slcode.start.go': (d) => { void begin(typeof d.resume === 'string' ? { resume: d.resume } : { new: true }); return {}; },
+    'slcode.start.go': ({ params: d }) => { void begin(typeof d?.resume === 'string' ? { resume: d.resume } : { new: true }); return {}; },
     // 에이전트 플러그인 관리 — slcode 의 입구는 시작 화면뿐이라 카드도 중계한다 (ticket slcode-agent-plugin-export-action)
-    ...Object.fromEntries(['list', 'check', 'set', 'export'].map((m) => [`slcode.start.plugins.${m}`, ({ type, id, ...params }) => host('startCall', `plugins.${m}`, params)])),
+    ...Object.fromEntries(['list', 'check', 'set', 'export'].map((m) => [`slcode.start.plugins.${m}`, ({ params }) => host('startCall', `plugins.${m}`, params)])),
     // system prompt 목록·편집 창 (ticket slcode-profile-system-prompt → slcode-prompt-library) — 가져오기는 이 카드가 연 폴더에서 돌린다
-    ...Object.fromEntries(['list', 'create', 'remove', 'get', 'fetch', 'save', 'describe', 'copy', 'rename'].map((m) => [`slcode.start.prompt.${m}`, ({ type, id, ...params }) => host('startCall', `prompt.${m}`, params, c.start)])),
+    ...Object.fromEntries(['list', 'create', 'remove', 'get', 'fetch', 'save', 'describe', 'copy', 'rename'].map((m) => [`slcode.start.prompt.${m}`, ({ params }) => host('startCall', `prompt.${m}`, params, c.start)])),
     // 편집 창 블록의 번역 단추 (ticket slcode-prompt-block-translate) — 대화의 번역 단추와 같은 translator·캐시
-    'slcode.start.translate': ({ text, fresh }) => tr.translate(String(text), { fresh: !!fresh }).then((pairs) => ({ pairs })),
+    'slcode.start.translate': ({ params: { text, fresh } }) => tr.translate(String(text), { fresh: !!fresh }).then((pairs) => ({ pairs })),
     // 프로필 관리 (ticket slcode-profile-manager)
-    ...Object.fromEntries(['list', 'add', 'set', 'remove', 'rename'].map((m) => [`slcode.start.profile.${m}`, ({ type, id, ...params }) => host('startCall', `profile.${m}`, params)])),
+    ...Object.fromEntries(['list', 'add', 'set', 'remove', 'rename'].map((m) => [`slcode.start.profile.${m}`, ({ params }) => host('startCall', `profile.${m}`, params)])),
     // 프로바이더 관리 (ticket slcode-custom-provider)
-    ...Object.fromEntries(['list', 'save', 'remove', 'models'].map((m) => [`slcode.start.provider.${m}`, ({ type, id, ...params }) => host('startCall', `provider.${m}`, params)])),
+    ...Object.fromEntries(['list', 'save', 'remove', 'models', 'keySave', 'keyRemove'].map((m) => [`slcode.start.provider.${m}`, ({ params }) => host('startCall', `provider.${m}`, params)])),
     'slcode.back': backToStart,
     // 같은 가족의 세션으로 (ticket slcode-web-session-url) — renderer 가 그 세션의 카드로 옮긴다. 다른 터미널·다른 superlite 세션 탭에 있어도 찾아가고, 카드가 없으면 이 카드 옆에 연다
     'slcode.goto': (d) => { void ctx.post({ type: 'goto', id: String(d.target) }); return {}; },

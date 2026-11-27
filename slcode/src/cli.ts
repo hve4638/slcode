@@ -16,20 +16,14 @@ import { CLAUDE_PREFIX } from './claudePeer.js';
 import { EventLog } from './eventLog.js';
 import { corePaths, readOrCreateToken } from './paths.js';
 import { readSettings } from './settings.js';
-import { inspectBlocked } from './inspect.js';
-import { runEntry, type EntryHandle } from './entry.js';
+import type { EntryHandle } from './entry.js';
 import { reachable, closedSessions, closedTime, discardSession, isLoopback, sockAlive } from './live.js';
-import { startList, startPageHtml } from './startPage.js';
-import { promptMethod, PROMPT_METHODS, type PromptMethod } from './promptMethods.js';
-import { pluginMethod, PLUGIN_METHODS, serveSession } from './serve.js';
-import { findVendorSession, forkClaude, vendorResumeCommand } from './vendor.js';
-import { forkSession } from './fork.js';
-import { pullHistory } from './history.js';
+// 무거운 모듈(SDK·serve 를 끌어오는 것)은 쓰는 동사에서 import 한다 — 시작 화면 카드는 요청마다 `slcode start-call` 을 띄워, 정적 import 면 요청 하나에 0.25초가 들었다 (ticket slcode-provider-panel-slow)
+import type { PromptMethod } from './promptMethods.js';
 import { CLAUDE_EFFORTS, sessionEnv, sessionParams } from './base.js';
 import { randomUUID } from 'node:crypto';
-import { pluginCommand } from 'slcode-plugin/cli';
-import { addProfile, getProfile, listProfiles, removeProfile, renameProfile, setProfile, type Profile } from './profiles.js';
-import { profileMethod, PROFILE_METHODS, type ProfileMethod } from './profileMethods.js';
+import type { Profile } from './profiles.js';
+import type { ProfileMethod } from './profileMethods.js';
 import { providerMethod, PROVIDER_METHODS, type ProviderMethod } from './providerMethods.js';
 import { findAgent, listAgents, type AgentDef } from './teamAgents.js';
 import { createWorktree, removeWorktree, worktreeLoss, type Loss } from './worktree.js';
@@ -496,9 +490,10 @@ async function printWeb(log: EventLog) {
  *  띄우고 교체한다 (entry.ts). 카드 서비스(--stdio)·--no-web 은 이 프로세스가 곧 serve 다 */
 /** 세션의 inspect — --no-inspect 면 끔. 새 세션은 들어온 입구(--stdio 면 superlite 카드, 아니면 웹)의 설정을 따르되, Claude 는 이 SDK 에서 막혔으면 끔.
  *  이어받는 세션은 넘기지 않는다 (meta 를 따른다) */
-function inspectOf(resume: string | undefined): boolean | undefined {
+async function inspectOf(resume: string | undefined): Promise<boolean | undefined> {
   if (flags['no-inspect']) return false;
   if (resume || !readSettings(P.dir, flags.stdio ? 'superlite' : 'web').inspect) return undefined;
+  const { inspectBlocked } = await import('./inspect.js');
   const blocked = flags.vendor === 'codex' ? null : inspectBlocked(path.join(P.dir, FILES.inspectBlocked));
   if (blocked) err(`warning: not recording with inspect — it is blocked for this Claude Code (Agent SDK ${blocked})`);
   return !blocked;
@@ -512,7 +507,8 @@ const newParams = () => (flags.param ? sessionParams(flags.param) : undefined);
 async function serve(opts: { cwd: string; resume?: string }) {
   try {
     const entry = !flags.stdio && !flags['no-web'];
-    const inspect = inspectOf(opts.resume), noTeam = noTeamOf(opts.resume);
+    const inspect = await inspectOf(opts.resume), noTeam = noTeamOf(opts.resume);
+    const [{ runEntry }, { serveSession }] = await Promise.all([import('./entry.js'), import('./serve.js')]);
     const h = entry ? await runEntry({
       dir: flags.dir, ...opts, title: flags.title, raw: flags.raw, inspect, noTeam, permissionMode: flags.mode, model: flags.model, effort: flags.effort, profile: flags.profile, env: newEnv(), params: newParams(), prompt: firstPrompt, vendor: flags.vendor === 'codex' ? 'codex' : 'claude',
       host: flags.host, port: flags.port ? Number(flags.port) : undefined, log: err,
@@ -544,11 +540,12 @@ async function startWeb(cwd: string) {
     void h.close('signal').then(() => { err(`session ${id} closed. To continue: slcode resume ${id}`); process.exit(0); });
   };
   process.on('SIGINT', stop); process.on('SIGTERM', stop); process.on('SIGHUP', stop);
+  const { runEntry } = await import('./entry.js');
   try {
     for (;;) {
       h = null;
       h = await runEntry({
-        dir: flags.dir, cwd, inspect: inspectOf(undefined), noTeam: noTeamOf(undefined), host: flags.host, port, log: err,
+        dir: flags.dir, cwd, inspect: await inspectOf(undefined), noTeam: noTeamOf(undefined), host: flags.host, port, log: err,
         choose: (url) => {
           port = Number(new URL(url).port); // 돌아오면 같은 주소 — 화면이 그 주소를 다시 읽는다
           if (shown) return;
@@ -627,7 +624,8 @@ async function pickClosed(cwd: string) {
 }
 // Codex 의 effort 는 모델마다 열려 있어 이름을 보지 않는다 — 모델에 없는 값은 벤더가 뜬 뒤 core 가 알린다
 /** 새 세션 옵션 검사 — 아무것도 열기 전에 (ticket slcode-new-effort-prompt, 사용자 결정 2026-10-23: 이름 오타는 거절) */
-function checkNew(): void {
+async function checkNew(): Promise<void> {
+  const { getProfile, listProfiles } = await import('./profiles.js');
   if (flags.profile !== undefined && !getProfile(flags.profile, P.dir)) usage(`no profile '${flags.profile}' (${listProfiles(P.dir).map((r) => r.name).join('|')})`);
   try { newEnv(); newParams(); } catch (e) { usage((e as Error).message); }
   if (flags.effort === undefined) return;
@@ -667,6 +665,7 @@ async function attachStdio(log: EventLog) {
   const client = await connectSession(log.sockPath);
   const url = webUrl(await client.request('server.info', {}));
   client.close();
+  const { serveSession } = await import('./serve.js');
   const h = await serveSession({
     dir: flags.dir, cwd: log.meta.cwd, web: false, stdio: true, attach: { id: log.meta.id, sock: log.sockPath, url, takeover: flags.takeover }, log: err,
     webSock: process.env.SUPERLITE_SERVICE_WEB || undefined,
@@ -688,7 +687,7 @@ try {
       // 폴더는 꼭 적는다 — 폴더 없이 새 세션을 고르는 곳은 시작 화면(slcode) (사용자 2026-10-30)
       if (rest[0] === undefined) usage('new needs a folder: slcode new <folder> (slcode alone opens the start screen)');
       const cwd = folderArg(rest[0]);
-      checkNew();
+      await checkNew();
       if (toCard()) newCard(cwd);
       await serve({ cwd });
       break;
@@ -710,7 +709,7 @@ try {
       const cwd = folderArg(rest[0]);
       const last = (await closedSessions(P.sessionsDir, cwd))[0];
       if (last) { onlyNew(); await resumeLog(openLog(last.id)); break; }
-      checkNew();
+      await checkNew();
       err(`no closed session in ${cwd}, starting a new one`);
       if (toCard()) newCard(cwd);
       await serve({ cwd });
@@ -726,6 +725,7 @@ try {
       // 벤더 하네스의 세션을 복제해 slcode 세션으로 (ticket vendor-import 2026-10-07 → slcode-import-history 사용자 결정 2026-10-15: 원본은 벤더에 그대로)
       const vid = rest[0];
       if (!vid) usage('import <vendor session id>');
+      const [{ pullHistory }, { findVendorSession, forkClaude }] = await Promise.all([import('./history.js'), import('./vendor.js')]);
       onlyNew();
       if (flags.vendor !== undefined && flags.vendor !== 'claude' && flags.vendor !== 'codex') usage('--vendor claude|codex');
       // slcode 세션이 이어 쓰는 벤더 세션(export 뒤 벤더에서 이어 간 복제본, 옛 import 의 원본)이면 복제하지 않고 늘어난 턴을 그 세션에 붙인다
@@ -764,7 +764,7 @@ try {
     case 'team': { // 팀원 (ticket slcode-team-agent) — 세션 안 전용
       if (rest[0] === 'clean-worktree') { await teamCleanWorktree(rest.slice(1)); break; }
       if (rest[0] !== 'new') usage('team new [--cwd <folder> | --worktree [name]] [--subagent|--teammate|--detached] [--agent A] [-n name] [-m model] [-e effort] [--mode M] [-o JSON] [-- <instructions>] | team clean-worktree <teammate> | --self [--key K]');
-      checkNew();
+      await checkNew();
       await teamNew(rest.slice(1));
       break;
     }
@@ -772,6 +772,7 @@ try {
       onlyNew();
       const me = process.env.SLCODE_SESSION_ID;
       if (rest[0] === undefined && !me) usage('fork <s> — outside a slcode session the session is required');
+      const { forkSession } = await import('./fork.js');
       const log = await forkSession(P.sessionsDir, rest[0] === undefined ? me! : resolve(rest[0]), { title: flags.title }).catch((e: Error) => { err(e.message); process.exit(1); });
       err(`forked ${log.meta.parent!.id} as ${log.meta.id} (${log.meta.title}) in ${log.meta.cwd} — the original is untouched`);
       // 세션 안에서 친 명령이 superlite 밖이면 웹을 서빙하며 그 셸을 붙잡지 않는다 — 열 길만 알린다
@@ -785,6 +786,7 @@ try {
       let live = false;
       try { (await connectSession(log.sockPath)).close(); live = true; } catch {}
       if (live) err(`session ${log.meta.id} is live — close it first (slcode close ${log.meta.id}); both at once fork the conversation`);
+      const { vendorResumeCommand } = await import('./vendor.js');
       console.log(vendorResumeCommand(log.meta.vendor, log.meta.cwd, log.meta.vendorSessionId));
       break;
     }
@@ -961,11 +963,12 @@ try {
       break;
     }
     // ---- 에이전트 플러그인 (ticket slcode-agent-plugin)
-    case 'plugin': { const [sub, ...args] = rest; await pluginCommand(sub, args, flags, P.dir, usage, 'slcode'); break; } // slcode-plugin 과 같은 명령 (ticket slcode-plugin-split)
+    case 'plugin': { const [sub, ...args] = rest; const { pluginCommand } = await import('slcode-plugin/cli'); await pluginCommand(sub, args, flags, P.dir, usage, 'slcode'); break; } // slcode-plugin 과 같은 명령 (ticket slcode-plugin-split)
     case 'hook': { process.exitCode = await (await import('slcode-plugin/hookMain')).main(rest); break; } // export 한 hooks.json 은 상태 폴더의 런처로 hookMain.js 를 바로 부른다 (빨리 뜨게)
     // ---- 세션 시작 프로필 (ticket slcode-session-profile)
     case 'profile': {
       const [sub, ...args] = rest;
+      const { addProfile, listProfiles, removeProfile, renameProfile, setProfile } = await import('./profiles.js');
       if (sub === 'add') { if (args.length < 1) usage('profile add <name> [--from <profile>] [<key>=<value> ...]'); print(await addProfile(args[0], flags.from, P.dir, args.slice(1))); break; }
       if (sub === 'remove') { if (args.length !== 1) usage('profile remove <name>'); print(await removeProfile(args[0], P.dir)); break; }
       if (sub === 'set') { const unset = flags.unset ?? []; if (args.length < 1 || (args.length < 2 && !unset.length)) usage('profile set <name> [--unset <key> ...] <key>=<value> ...'); const r = await setProfile(args[0], args.slice(1), P.dir, unset); if (flags.json) print(r); else console.log(describeProfile(r.name, r.profile)); break; }
@@ -978,15 +981,18 @@ try {
     }
     case 'start-page': { // superlite 카드의 시작 화면 (views/session.js) — css·모듈을 넣은 html 한 장. --json 이면 화면의 list(프로필·플러그인·그 폴더의 꺼진 세션)
       const cwd = path.resolve(rest[0] ?? process.cwd());
+      const { startList, startPageHtml } = await import('./startPage.js');
       if (flags.json) print(await startList(P.dir, cwd)); else process.stdout.write(startPageHtml(P.dir, 'superlite', cwd, true));
       break;
     }
     case 'start-call': { // 카드 시작 화면의 에이전트 플러그인 관리 (ticket slcode-agent-plugin-export-action) — 웹 시작 화면의 api/<method> 와 같은 것을 카드가 CLI 로
       const [method, params] = rest;
+      if ((PROVIDER_METHODS as readonly string[]).includes(method)) { print(await providerMethod(P.dir, method as ProviderMethod, params ? JSON.parse(params) : {})); break; } // 프로바이더 관리 (ticket slcode-custom-provider)
+      const { profileMethod, PROFILE_METHODS } = await import('./profileMethods.js');
+      if ((PROFILE_METHODS as readonly string[]).includes(method)) { print(await profileMethod(P.dir, method as ProfileMethod, params ? JSON.parse(params) : {})); break; } // 프로필 관리 (ticket slcode-profile-manager)
+      const [{ promptMethod, PROMPT_METHODS }, { pluginMethod, PLUGIN_METHODS }] = await Promise.all([import('./promptMethods.js'), import('./serve.js')]);
       // prompt.* 는 system prompt 편집 창 (ticket slcode-profile-system-prompt) — 폴더는 --cwd(카드가 연 폴더), 없으면 지금 폴더
       if ((PROMPT_METHODS as readonly string[]).includes(method)) { print(await promptMethod(P.dir, path.resolve(flags.cwd ?? '.'), method as PromptMethod, params ? JSON.parse(params) : {})); break; }
-      if ((PROFILE_METHODS as readonly string[]).includes(method)) { print(await profileMethod(P.dir, method as ProfileMethod, params ? JSON.parse(params) : {})); break; } // 프로필 관리 (ticket slcode-profile-manager)
-      if ((PROVIDER_METHODS as readonly string[]).includes(method)) { print(await providerMethod(P.dir, method as ProviderMethod, params ? JSON.parse(params) : {})); break; } // 프로바이더 관리 (ticket slcode-custom-provider)
       if (!(PLUGIN_METHODS as readonly string[]).includes(method)) usage(`start-call <${[...PLUGIN_METHODS, ...PROMPT_METHODS, ...PROFILE_METHODS, ...PROVIDER_METHODS].join('|')}> [<json>]`);
       print(await pluginMethod(P.dir, method as (typeof PLUGIN_METHODS)[number], params ? JSON.parse(params) : {}));
       break;
