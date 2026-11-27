@@ -93,6 +93,7 @@ svg.gi { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor; 
 .acf .fam-back:hover { text-decoration: underline; }
 .acf .hdr .pill { flex: none; }
 .acf .hdr .boot { flex: none; font-family: var(--acf-mono); font-size: 12px; color: var(--acf-muted); white-space: nowrap; }
+.acf .hdr .boot.err { color: var(--acf-err); }
 .acf .hdr .title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .acf .hdr .name-row { position: relative; display: flex; align-items: center; max-width: 100%; min-width: 0; }
 .acf .hdr .title { cursor: text; }
@@ -705,11 +706,13 @@ svg.gi { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor; 
 .acf .side .act-sec { padding: 10px 4px 12px; }
 .acf .side .act-sec .sh { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
 .acf .side .act-sec h4 { margin: 0; font-size: 12px; font-weight: 600; color: var(--acf-muted); flex: 1; }
-.acf .side .open-pv { display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 4px; border: 0; background: none; color: var(--acf-fg); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.acf .side .open-pv { display: flex; align-items: center; gap: 8px; width: calc(100% + 16px); margin: 0 -8px; padding: 10px 12px; border: 0; background: none; color: var(--acf-fg); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
 .acf .side .open-pv:hover { background: var(--acf-soft); }
 .acf .side .open-pv .t { flex: 1; }
 .acf .side .open-pv .n.bad { color: var(--acf-err); font-size: 12px; }
+.acf .side .open-pv.export { margin-top: auto; } /* 세션 내보내기 — 사이드바 맨 아래 (사용자 2026-11-27) */
 .acf .side .open-pv svg { width: 14px; height: 14px; flex: none; color: var(--acf-muted); fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; transform: rotate(-90deg); }
+.acf .side .open-pv.export svg { transform: none; }
 .acf .side .empty { color: var(--acf-muted); }
 /* 우편 턴 — 왼쪽, 흐릿한 카드. 에이전트 간 통신이라 눈에 띄지 않게: 강조색 없음, 옅은 테두리, 흐린 글자 (사용자 2026-09-27) */
 .acf .mail { align-self: stretch; display: flex; flex-direction: column; gap: 6px; opacity: .7; }
@@ -1035,6 +1038,16 @@ svg.gi { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor; 
 .acf dialog.confirm.cut h2 { margin: 0 0 8px; font-size: 15px; }
 .acf dialog.confirm.cut p { margin: 0 0 8px; }
 .acf dialog.confirm.cut ul { margin: 0 0 14px; padding-left: 18px; font-size: 13px; color: var(--acf-muted); }
+/* 세션 내보내기 모달 (ticket slcode-session-bundle, 사용자 2026-11-27) — 이름·경로 두 칸, 경로 아래 폴더 자동완성(슬래시 명령 목록과 같은 꼴) */
+.acf dialog.confirm.export { width: min(480px, calc(100vw - 24px)); }
+.acf dialog.confirm.export h2 { margin: 0 0 12px; font-size: 15px; }
+.acf dialog.confirm.export label { display: flex; flex-direction: column; gap: 4px; margin: 0 0 10px; font-size: 13px; color: var(--acf-muted); }
+.acf dialog.confirm.export input { height: 28px; padding: 0 8px; border: 1px solid var(--acf-line); border-radius: 6px; background: var(--acf-bg); color: var(--acf-fg); font: 13px var(--acf-mono); }
+.acf dialog.confirm.export input:focus { outline: none; border-color: var(--acf-accent); }
+.acf dialog.confirm.export p.err { margin: 0 0 10px; font-size: 13px; color: var(--acf-err); }
+.acf dialog.confirm.export p.err[hidden] { display: none; }
+.acf .menu.dirs { max-height: 240px; }
+.acf .menu.dirs .name { max-width: none; }
 .acf .below > .kid-asks { display: flex; flex-direction: column; gap: 6px; }
 .acf .kid-ask { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--acf-line); border-radius: 10px; background: var(--acf-panel); font-size: 13px; min-width: 0; }
 .acf .kid-ask .kind { font-weight: 600; }

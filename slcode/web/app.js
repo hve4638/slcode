@@ -397,6 +397,13 @@ export function mountAgentFront(root, transport, opts = {}) {
   // 그리기(0.1초 안팎)는 따로 안 보인다 — 칠할 틈을 주려고 쉬면 그 사이 온 실시간 이벤트가 기록보다 먼저 그려진다.
   // 그 뒤의 '시작 중' 은 첫 메시지 전 Claude Code 상태(init 이 첫 프롬프트 뒤에 온다, 실측)라 단계에 넣지 않는다
   const bootEl = h('span', { class: 'boot', hidden: '' });
+  // 내보내기 결과 — 헤더 빈 자리에 잠깐 (사용자 2026-11-27). 꼴은 bootEl 과 같다
+  const exportNote = h('span', { class: 'boot', hidden: '' });
+  let exportNoteTimer = null;
+  const flashExport = (text, err = false) => {
+    exportNote.textContent = text; exportNote.classList.toggle('err', err); exportNote.hidden = false;
+    clearTimeout(exportNoteTimer); exportNoteTimer = setTimeout(() => { exportNote.hidden = true; }, err ? 6000 : 3000);
+  };
   let bootStage = null, bootSince = 0, bootTimer = null;
   const bootPaint = () => { bootEl.hidden = !bootStage; bootEl.textContent = bootStage ? `${bootStage}… (${fmtDur(Date.now() - bootSince)})` : ''; };
   function boot(stage) {
@@ -445,7 +452,7 @@ export function mountAgentFront(root, transport, opts = {}) {
   const center = h('div', { class: 'main' }, feed, below);
   center.addEventListener('pointerdown', () => el.classList.remove('peek'));
   el.append(
-    h('header', { class: 'hdr' }, nameRow, pill, inspWrap, bootEl, h('span', { class: 'gap' }), updBtn, gearBtn, sideBtn),
+    h('header', { class: 'hdr' }, nameRow, pill, inspWrap, bootEl, exportNote, h('span', { class: 'gap' }), updBtn, gearBtn, sideBtn),
     center,
     side,
     settingsUi.el, prvDlg,
@@ -834,6 +841,77 @@ export function mountAgentFront(root, transport, opts = {}) {
     finally { note.remove(); forking = false; }
   }
   const forkBtn = (endSeq) => iconBtn('fork', '이 응답까지 복제', () => fork(endSeq));
+  // 세션 내보내기 모달 (ticket slcode-session-bundle, 사용자 2026-11-27) — 이름·경로 두 칸, serve 머신의 그 폴더에 쓴다(브라우저 다운로드 없음). 결과는 헤더에 잠깐(flashExport).
+  // 이름 기본값은 serve.exportName('<세션 이름>.slsession', 있으면 -1·-2…) — 경로를 바꾸면 이름을 손대지 않았을 때만 그 폴더 기준으로 다시.
+  // 경로는 폴더 자동완성(file.complete): 입력이 멈추고 COMPLETE_WAIT 뒤에 묻고, COMPLETE_TIMEOUT 을 넘기거나 늦게 온 옛 답은 버린다. ↑↓ 고르기, Tab·Enter 채우기
+  const COMPLETE_WAIT = 150, COMPLETE_TIMEOUT = 1000;
+  const expName = h('input', { spellcheck: 'false', autocomplete: 'off', oninput: () => { expNameTouched = true; } });
+  const expDir = h('input', { spellcheck: 'false', autocomplete: 'off' });
+  const expErr = h('p', { class: 'err', hidden: '' });
+  const expGo = h('button', { class: 'primary', onclick: () => void doExport() }, '내보내기');
+  const expDirs = h('div', { class: 'menu slash dirs', popover: 'manual' });
+  const expDlg = h('dialog', { class: 'confirm export', onclose: () => hideDirs() },
+    h('h2', {}, '세션 내보내기'),
+    h('label', {}, h('span', {}, '이름'), expName),
+    h('label', {}, h('span', {}, '경로'), expDir),
+    expErr,
+    h('div', { class: 'btns' }, h('button', { onclick: () => expDlg.close() }, '취소'), expGo),
+    expDirs);
+  closeOnBackdrop(expDlg);
+  el.append(expDlg);
+  let expNameTouched = false, expTimer = null, dirSeq = 0, nameSeq = 0, dirItems = [], dirSel = -1;
+  const inTime = (p) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error('timeout')), COMPLETE_TIMEOUT))]);
+  const showErr = (msg) => { expErr.textContent = msg ?? ''; expErr.hidden = !msg; };
+  function hideDirs() { clearTimeout(expTimer); dirSeq++; dirItems = []; dirSel = -1; if (expDirs.matches(':popover-open')) expDirs.hidePopover(); }
+  function paintDirs() {
+    if (!dirItems.length) { if (expDirs.matches(':popover-open')) expDirs.hidePopover(); return; }
+    expDirs.replaceChildren(...dirItems.map((d, i) => h('button', { class: 'item', 'aria-selected': String(i === dirSel), onmousedown: (e) => { e.preventDefault(); pickDir(d); } },
+      h('span', { class: 'name' }, `${d.slice(0, -1).split('/').pop()}/`))));
+    if (!expDirs.matches(':popover-open')) expDirs.showPopover();
+    const r = expDir.getBoundingClientRect();
+    Object.assign(expDirs.style, { left: `${r.left}px`, top: `${r.bottom + 4}px`, minWidth: `${r.width}px` });
+    expDirs.querySelector('[aria-selected=true]')?.scrollIntoView({ block: 'nearest' });
+  }
+  async function completeDir() {
+    const seq = ++dirSeq, v = expDir.value;
+    if (!v.startsWith('/')) { dirItems = []; paintDirs(); return; }
+    try { const r = await inTime(rpc('file.complete', { path: v })); if (seq !== dirSeq) return; dirItems = r.dirs; dirSel = -1; paintDirs(); } catch { if (seq === dirSeq) { dirItems = []; paintDirs(); } }
+  }
+  async function suggestName() {
+    const seq = ++nameSeq;
+    if (expNameTouched || !expDir.value.startsWith('/')) return;
+    try { const r = await inTime(rpc('serve.exportName', { id: current, dir: expDir.value })); if (seq === nameSeq && !expNameTouched) expName.value = r.name; } catch {}
+  }
+  const dirChanged = () => { showErr(null); clearTimeout(expTimer); expTimer = setTimeout(() => { void completeDir(); void suggestName(); }, COMPLETE_WAIT); };
+  function pickDir(d) { expDir.value = d; expDir.focus(); dirChanged(); }
+  expDir.addEventListener('input', dirChanged);
+  expDir.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== expDir) hideDirs(); }, 0));
+  expDir.addEventListener('keydown', (e) => {
+    const open = dirItems.length > 0;
+    if (open && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) { e.preventDefault(); dirSel = e.key === 'ArrowDown' ? (dirSel + 1 < dirItems.length ? dirSel + 1 : -1) : (dirSel < 0 ? dirItems.length - 1 : dirSel - 1); paintDirs(); } // -1 은 고르지 않음
+    else if (open && e.key === 'Tab' && !e.shiftKey) { e.preventDefault(); pickDir(dirItems[Math.max(dirSel, 0)]); }
+    else if (open && e.key === 'Enter' && dirSel >= 0) { e.preventDefault(); pickDir(dirItems[dirSel]); }
+    else if (open && e.key === 'Escape') { e.preventDefault(); hideDirs(); }
+    else if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); void doExport(); }
+  });
+  expName.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); void doExport(); } });
+  async function exportSession() {
+    if (!current) return;
+    expNameTouched = false; expName.value = ''; expDir.value = ''; showErr(null); hideDirs();
+    expDlg.showModal();
+    try { const r = await rpc('serve.exportName', { id: current }); if (!expDir.value) expDir.value = r.dir; if (!expNameTouched) expName.value = r.name; } catch (e) { showErr(e.message); }
+    expName.focus(); expName.setSelectionRange(0, Math.max(0, expName.value.lastIndexOf('.slsession')));
+  }
+  async function doExport() {
+    hideDirs(); showErr(null); expGo.disabled = true;
+    try {
+      const { path: p } = await rpc('serve.export', { id: current, dir: expDir.value, name: expName.value.trim() });
+      expDlg.close();
+      const cwd = info?.cwd ?? ready?.cwd;
+      flashExport(`export as ${cwd && p.startsWith(`${cwd}/`) ? `./${p.slice(cwd.length + 1)}` : p}`);
+    } catch (e) { showErr(e.message); }
+    finally { expGo.disabled = false; }
+  }
   const inspectBtn = (endSeq) => { const b = iconBtn('inspect', '이 턴의 API 호출 보기', () => inspectUi.open(current, endSeq)); b.classList.add('insp'); return b; };
   const syncInspect = () => el.classList.toggle('inspectable', info?.inspect != null);
   // 메시지 턴 — 내부적으로는 사용자 턴이지만 화면은 사용자 말풍선이 아니라 왼쪽의 봉투 카드 (프로토타입, 사용자 2026-09-27).
@@ -1469,7 +1547,9 @@ export function mountAgentFront(root, transport, opts = {}) {
       h('div', { class: 'act-sec' }, h('div', { class: 'sh' }, h('h4', {}, '활동 기록'), act.more), act.body),
       h('hr'),
       h('button', { class: 'open-pv', onclick: () => pv.open() }, h('span', { class: 't' }, '세션 구성'), failed.length ? h('span', { class: 'n bad' }, 'MCP 실패') : null, icon('chevron')),
-      h('hr'));
+      h('hr'),
+      // 세션 내보내기 (ticket slcode-session-bundle, 사용자 2026-11-27) — 사이드바 맨 아래
+      h('button', { class: 'open-pv export', onclick: () => exportSession() }, h('span', { class: 't' }, '세션 내보내기'), icon('download')));
     pv.paint();
   }
 

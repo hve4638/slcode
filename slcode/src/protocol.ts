@@ -446,6 +446,12 @@ export type ServeMethods = {
   /** 세션 복제 (ticket slcode-session-fork) — id 의 기록을 seq(그 턴의 turn.end)까지, 없으면 마지막으로 끝난 턴까지 복제한 새 세션. 진행 중인 턴은 넣지 않는다.
    *  웹 입구는 그 core 를 띄워 이 serve 가 소유한다(가족 메뉴로 간다). 카드는 저장만 하고 화면이 플러그인에 그 카드를 열어 달라고 한다 */
   'serve.fork': { params: { id: string; seq?: number }; result: { id: string } };
+  /** 세션 내보내기 모달 (ticket slcode-session-bundle) — id 의 세션 파일을 serve 머신의 dir/name 에 쓴다. 있는 파일은 덮어쓰지 않는다 */
+  'serve.export': { params: { id: string; dir: string; name: string }; result: { path: string } };
+  /** 모달의 기본값 — dir(없으면 세션 폴더)과 그 폴더에 없는 '<세션 이름 또는 id>[-N].slsession' */
+  'serve.exportName': { params: { id: string; dir?: string }; result: { dir: string; name: string } };
+  /** 경로 자동완성 — path 가 '/' 로 끝나면 그 폴더 안, 아니면 마지막 조각으로 시작하는 폴더. 끝에 '/' 를 붙인 절대 경로, 최대 50개 */
+  'file.complete': { params: { path: string }; result: { dirs: string[]; truncated: boolean } };
   /** [업데이트] — 웹(TCP) 입구만. 설치 폴더의 package.json version·dist/cli.js mtime 을 이 serve 가 뜰 때의 것과 견준다.
    *  카드는 serve 가 아니라 플러그인이 확인한다 (원격 deploy 경로는 내용 해시라 serve 가 자기 폴더를 봐서는 모른다) */
   'update.run': { params: Record<string, never>; result: UpdateCheck };

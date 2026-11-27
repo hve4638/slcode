@@ -32,10 +32,12 @@ export const glyph = (name) => { const s = document.createElementNS('http://www.
 
 /** 바깥(배경)을 누르면 닫는다 — 누른 곳과 뗀 곳이 둘 다 배경일 때만. click 은 둘의 공통 조상에서 나므로, 창 안에서 끌다가 밖에서 떼도 target 이 dialog 라 닫혔다 (사용자 2026-10-20) */
 export function closeOnBackdrop(dlg) {
-  let down = null, up = null;
-  dlg.addEventListener('pointerdown', (e) => { down = e.target; });
-  dlg.addEventListener('pointerup', (e) => { up = e.target; });
-  dlg.addEventListener('click', (e) => { if (e.target === dlg && down === dlg && up === dlg) dlg.close(); });
+  // 배경은 dialog 사각형 밖 — target 만 보면 dialog 자신의 안쪽 여백·칸 사이를 누른 것도 dialog 라 닫혔다 (확인 창·내보내기 모달, 사용자 2026-11-27)
+  const out = (e) => { if (e.target !== dlg) return false; const r = dlg.getBoundingClientRect(); return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom; };
+  let down = false, up = false;
+  dlg.addEventListener('pointerdown', (e) => { down = out(e); });
+  dlg.addEventListener('pointerup', (e) => { up = out(e); });
+  dlg.addEventListener('click', (e) => { if (down && up && out(e)) dlg.close(); });
 }
 
 const known = (id) => (THEMES.some((x) => x.id === id) ? id : 'system');

@@ -62,6 +62,8 @@ export type SessionMeta = {
   worktree?: Worktree;
   /** 이 세션은 팀원을 만들지 못한다 — 설정의 "새 세션 팀원" 을 끄고 열었거나 noTeam 팀원 */
   noTeam?: boolean;
+  /** 세션 파일에서 들여온 세션의 원래 세션 id·폴더·내보낸 시각 (ticket slcode-session-bundle) — 들여온 세션에만 있다 */
+  movedFrom?: { id: string; cwd: string; exportedAt: number };
 };
 
 /** turn.rewound 가 버린 턴(그 seq 부터)을 뺀 이벤트 — 버린 턴은 벤더 쪽에도 없으므로 대화 되돌리기의 유지 지점·다시 import 의 기준에서 뺀다. 코드만 되돌린 표지(conversation false)는 대화를 버리지 않는다 */

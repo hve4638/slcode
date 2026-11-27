@@ -9,8 +9,8 @@ import type { Vendor } from './protocol.js';
 
 export type VendorSession = { vendor: Vendor; id: string; cwd: string; file: string };
 
-const claudeHome = () => process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
-const codexHome = () => process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+export const claudeHome = (): string => process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+export const codexHome = (): string => process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
 
 /** 파일 앞부분(최대 1MB)의 완성된 줄들 — 세션 기록은 클 수 있어 통째로 읽지 않는다 */
 function headLines(file: string, max = 1 << 20): string[] {

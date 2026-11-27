@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 단독 실행 진입점 — 동사 하나를 받아 한 번 부르고 끝난다. 인자 없는 slcode 는 도움말만 (ticket slcode-verbs, 사용자 확정 2026-10-02).
-//   세션 수명  new [folder] | resume [<s>] | continue [folder] | import <벤더 세션 id> | export <s> | list [--all] [--json] | rename <s> <title> | close <s> | delete <s>
+//   세션 수명  new [folder] | resume [<s>] | continue [folder] | import <파일> [folder] | import --from claude|codex <벤더 세션 id> | export <s> [<파일>] | list [--all] [--json] | rename <s> <title> | close <s> | delete <s>
 //   대화       prompt <s> <text> | interrupt <s>
 //   조회       status <s> | pending <s> | last <s> [--turn N] | log <s> [--since N] [--tail N]      — 평문 기본, --json 이면 같은 내용을 JSON 으로
 //   응답       respond <s> <req> allow|deny [--remember] | respond <s> <req> --answer <text> | respond <s> <req> --json '<updatedInput>'
@@ -62,7 +62,10 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
                                  resume <s> --stdio --takeover: 살아 있는 세션의 소유권을 빼앗아 붙는다 (카드 핸드오프)
   resume [<s>]                   저장된 세션을 다시 띄운다. <s> 가 없으면 현재 폴더의 꺼진 세션 목록 (superlite 안이면 카드에서 고른다)
   continue [folder]              그 폴더에서 가장 최근에 꺼진 세션을 resume (없으면 새 세션)
-  import <벤더 세션 id> [--vendor claude|codex] [--title T]
+  import <file> [folder] [--title T]
+                                 export <s> <file> 로 쓴 세션 파일을 그 폴더(없으면 지금 폴더)의 새 세션으로 들여와 resume.
+                                 지난 대화와 모델 기억이 이어진다. 늘 새 세션 id — 같은 파일을 두 번 들여오면 세션이 둘
+  import --from claude|codex <벤더 세션 id> [--title T]
                                  Claude Code·Codex 세션을 복제해 slcode 세션으로 만들고 resume (원본은 그대로, 폴더는 벤더 기록에서).
                                  이전 대화도 옮겨 보인다 (Claude 는 마지막 compact 뒤부터). 같은 원본을 다시 import 하면 또 새 복제본.
                                  slcode 세션이 이어 쓰는 벤더 세션 id(export 뒤 벤더에서 이어 간 것)면 늘어난 턴을 그 세션에 붙인다
@@ -70,6 +73,8 @@ const HELP = `usage: slcode [옵션] | slcode <동사> ...   (<s>·<to> 는 세�
                                  마지막으로 끝난 턴까지 복제한다 (진행 중인 턴은 넣지 않는다). 세션 안에서 <s> 를 빼면 지금 세션.
                                  제목은 생략 시 "<원본 이름> (forked)" (둘째부터 "(forked N)"). 세션 안이고 superlite 밖이면 id 만 출력한다 (slcode resume <id> 로 연다)
   export <s>                     그 세션을 벤더 하네스에서 이어 갈 명령을 출력 (cd <폴더> && claude --resume <id> | codex resume <id>)
+  export <s> <file>              그 세션을 파일 하나로 (다른 머신·다른 폴더로 옮길 때, slcode import <file> 로 들여온다).
+                                 도구 출력까지 대화 전체가 들어간다 — 비밀처럼 다룬다
   list [--all] [--json]          살아 있는 세션 — 줄마다 id·벤더·상태·제목·폴더, 팀원은 leader <id>, 세션 안이면 자기 줄 끝에 <- you
                                  (--all 은 꺼진 세션까지, --json 이면 JSON)
   rename <s> <title> | close <s> [--force] | delete <s>
@@ -725,11 +730,23 @@ try {
       break;
     case 'import': {
       // 벤더 하네스의 세션을 복제해 slcode 세션으로 (ticket vendor-import 2026-10-07 → slcode-import-history 사용자 결정 2026-10-15: 원본은 벤더에 그대로)
-      const vid = rest[0];
-      if (!vid) usage('import <vendor session id>');
-      const [{ pullHistory }, { findVendorSession, forkClaude }] = await Promise.all([import('./history.js'), import('./vendor.js')]);
       onlyNew();
-      if (flags.vendor !== undefined && flags.vendor !== 'claude' && flags.vendor !== 'codex') usage('--vendor claude|codex');
+      if (flags.vendor !== undefined) usage('import --from claude|codex <vendor session id> — --vendor is gone');
+      if (flags.from === undefined) {
+        // 세션 파일 들여오기 (ticket slcode-session-bundle, bundle.ts) — 늘 새 세션 id·새 벤더 세션, 실행 위치는 받은 폴더(없으면 지금 폴더)
+        const file = rest[0];
+        if (!file || !fs.existsSync(file) || !fs.statSync(file).isFile()) usage(`import <file> [folder] | import --from claude|codex <vendor session id>${file ? ` — no file ${file}` : ''}`);
+        const cwd = folderArg(rest[1]);
+        const { importBundle } = await import('./bundle.js');
+        const log = await importBundle(file, P.sessionsDir, P.dir, cwd, { title: flags.title, mode: flags.mode }).catch((e: Error) => { err(e.message); process.exit(1); });
+        err(`imported ${log.meta.movedFrom!.id} as ${log.meta.id} (${cwd})`);
+        await resumeLog(log, ['raw', 'no-inspect', 'no-web', 'dir']); // --title·--mode 는 위 기록(meta)에 들어갔다
+        break;
+      }
+      if (flags.from !== 'claude' && flags.from !== 'codex') usage('import --from claude|codex <vendor session id>');
+      const vid = rest[0];
+      if (!vid) usage('import --from claude|codex <vendor session id>');
+      const [{ pullHistory }, { findVendorSession, forkClaude }] = await Promise.all([import('./history.js'), import('./vendor.js')]);
       // slcode 세션이 이어 쓰는 벤더 세션(export 뒤 벤더에서 이어 간 복제본, 옛 import 의 원본)이면 복제하지 않고 늘어난 턴을 그 세션에 붙인다
       const own = EventLog.list(P.sessionsDir).find((m) => m.vendorSessionId === vid);
       if (own) {
@@ -744,8 +761,8 @@ try {
         await resumeLog(log);
         break;
       }
-      const found = findVendorSession(vid, flags.vendor as 'claude' | 'codex' | undefined);
-      if (!found) { err(`no ${flags.vendor ?? 'claude or codex'} session ${vid}`); process.exit(1); }
+      const found = findVendorSession(vid, flags.from);
+      if (!found) { err(`no ${flags.from} session ${vid}`); process.exit(1); }
       if (!fs.existsSync(found.cwd)) { err(`session folder is gone: ${found.cwd}`); process.exit(1); }
       const prior = EventLog.list(P.sessionsDir).filter((m) => m.forkFrom === found.id).map((m) => m.id);
       if (prior.length) err(`${found.id} was already imported as ${prior.join(', ')} — making another copy`);
@@ -784,6 +801,17 @@ try {
     }
     case 'export': {
       const log = openLog(rest[0]);
+      if (rest[1] !== undefined) {
+        // 세션 파일 (ticket slcode-session-bundle, bundle.ts) — 다른 머신·다른 폴더로 옮길 때. 비밀 값은 거르지 않고 알린다 (사용자 2026-11-25)
+        if (await sockAlive(log.sockPath)) err(`session ${log.meta.id} is live — the file has the conversation up to now`);
+        const { exportBundle } = await import('./bundle.js');
+        let r: { bytes: number };
+        try { r = exportBundle(log, P.dir, rest[1]); }
+        catch (e) { err((e as NodeJS.ErrnoException).code === 'EEXIST' ? `${rest[1]} already exists` : (e as Error).message); process.exit(1); }
+        err(`exported ${log.meta.id} to ${rest[1]} (${Math.ceil(r.bytes / 1024)} KB) — import it with: slcode import ${rest[1]} [folder]`);
+        err(`warning: the file holds the whole conversation, tool output included — treat it like a secret`);
+        break;
+      }
       if (!log.meta.vendorSessionId) { err(`session ${log.meta.id} has no ${log.meta.vendor} session yet (no turn)`); process.exit(1); }
       let live = false;
       try { (await connectSession(log.sockPath)).close(); live = true; } catch {}

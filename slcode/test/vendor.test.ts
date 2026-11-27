@@ -43,7 +43,7 @@ function withEnv<T>(env: Record<string, string>, f: () => T): T {
   try { return f(); } finally { for (const [k, v] of Object.entries(old)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
 }
 
-test('findVendorSession: claude·codex 기록에서 폴더를 읽고, --vendor 로 좁히고, 이상한 id 는 거절', () => {
+test('findVendorSession: claude·codex 기록에서 폴더를 읽고, 벤더로 좁히고, 이상한 id 는 거절', () => {
   const { work, env } = homes();
   withEnv(env, () => {
     const c = findVendorSession(CID)!;
@@ -85,7 +85,7 @@ test('import (claude): 복제본으로 slcode 세션 — 이전 대화가 표지
   const src = withEnv(env, () => findVendorSession(CID, 'claude')!.file);
   const before = fs.readFileSync(src, 'utf8');
   const started = path.join(env.CLAUDE_CONFIG_DIR, 'started');
-  const err = await importOnce(t, dir, env, [CID, '--title', 'imp'], () => fs.existsSync(started));
+  const err = await importOnce(t, dir, env, ['--from', 'claude', CID, '--title', 'imp'], () => fs.existsSync(started));
   assert.match(err, new RegExp(`imported claude session ${CID} as \\w+ \\(${work}, 2 earlier turns\\) — a copy \\([0-9a-f-]{36}\\), the original is untouched`));
   assert.ok(fs.existsSync(started), '세션 프로세스의 claude 가 CLAUDE_CONFIG_DIR 의 설정을 읽는다 (core 가 지우지 않는다)');
 
@@ -117,7 +117,7 @@ test('import (claude): 복제본으로 slcode 세션 — 이전 대화가 표지
   assert.equal(live.code, 0); assert.match(live.stderr, /is live — close it first/);
 
   // 같은 원본을 또 — 새 복제본·새 slcode 세션 (사용자 2026-10-15: 여러 번 복제 허용)
-  const again = await importOnce(t, dir, env, [CID]);
+  const again = await importOnce(t, dir, env, ['--from', 'claude', CID]);
   assert.match(again, new RegExp(`${CID} was already imported as ${meta.id} — making another copy`));
   assert.equal(sessions(dir).length, 2);
 });
@@ -125,7 +125,7 @@ test('import (claude): 복제본으로 slcode 세션 — 이전 대화가 표지
 test('import (claude): slcode 세션이 이어 쓰는 벤더 세션 id 면 복제하지 않고 늘어난 턴을 붙인다', async (t) => {
   const { env } = homes();
   const dir = tmp('slcode-vi-');
-  await importOnce(t, dir, env, [CID]);
+  await importOnce(t, dir, env, ['--from', 'claude', CID]);
   const [meta] = sessions(dir);
   const n = events(dir, meta.id).length;
   // export 뒤 벤더에서 한 턴 더 — 복제본 기록 끝에 프롬프트와 답을 잇는다
@@ -135,7 +135,7 @@ test('import (claude): slcode 세션이 이어 쓰는 벤더 세션 id 면 복�
     { ...last, type: 'user', uuid: 'u-more', parentUuid: last.uuid, message: { role: 'user', content: 'one more' } },
     { ...last, uuid: 'a-more', parentUuid: 'u-more', message: { ...last.message, id: 'msg-more', content: [{ type: 'text', text: 'ok' }] } },
   ].map((o) => JSON.stringify(o)).join('\n') + '\n');
-  const err = await importOnce(t, dir, env, [meta.vendorSessionId!]);
+  const err = await importOnce(t, dir, env, ['--from', 'claude', meta.vendorSessionId!]);
   assert.match(err, new RegExp(`pulled 1 turn from claude into ${meta.id}`));
   assert.equal(sessions(dir).length, 1, '새 세션을 만들지 않는다');
   const added = events(dir, meta.id).slice(n);
@@ -146,7 +146,7 @@ test('import (claude): slcode 세션이 이어 쓰는 벤더 세션 id 면 복�
 test('import (codex): 원본 thread 의 턴을 옮기고 첫 기동이 thread/fork; fork 한 thread id 를 다시 import 하면 늘어난 턴만', async (t) => {
   const { work, turns, env } = homes();
   const dir = tmp('slcode-vi-');
-  const err = await importOnce(t, dir, env, [XID], () => !!sessions(dir)[0]?.vendorSessionId); // 첫 기동의 thread/fork 까지
+  const err = await importOnce(t, dir, env, ['--from', 'codex', XID], () => !!sessions(dir)[0]?.vendorSessionId); // 첫 기동의 thread/fork 까지
   assert.match(err, new RegExp(`imported codex session ${XID} as \\w+ \\(${work}, 2 earlier turns\\) — a copy, the original is untouched`));
   const [meta] = sessions(dir);
   assert.deepEqual([meta.forkFrom, meta.vendorSessionId], [XID, `fork-${XID}`]);
@@ -155,7 +155,7 @@ test('import (codex): 원본 thread 의 턴을 옮기고 첫 기동이 thread/fo
 
   fs.writeFileSync(turns, JSON.stringify([...tt, { ...tt[1], id: 'turn-3', items: [{ type: 'userMessage', id: 'um3', content: [{ type: 'text', text: 'third' }] }, { type: 'agentMessage', id: 'am3', text: 'done' }] }]));
   const n = events(dir, meta.id).length;
-  assert.match(await importOnce(t, dir, env, [`fork-${XID}`]), new RegExp(`pulled 1 turn from codex into ${meta.id}`));
+  assert.match(await importOnce(t, dir, env, ['--from', 'codex', `fork-${XID}`]), new RegExp(`pulled 1 turn from codex into ${meta.id}`));
   const added = events(dir, meta.id).slice(n);
   assert.deepEqual(added.filter((e) => e.kind === 'turn.start' || e.kind === 'text.delta').map((e) => e.text), ['third', 'done']);
 });
@@ -163,10 +163,13 @@ test('import (codex): 원본 thread 의 턴을 옮기고 첫 기동이 thread/fo
 test('import·export 실패: 없는 id, 턴 없는 세션', async () => {
   const { env } = homes();
   const dir = tmp('slcode-vi-');
-  const nf = await run(dir, env, ['import', 'deadbeef']);
-  assert.equal(nf.code, 1); assert.match(nf.stderr, /no claude or codex session deadbeef/);
-  assert.equal((await run(dir, env, ['import', CID, '--vendor', 'gpt'])).code, 2);
-  assert.equal((await run(dir, env, ['import', CID, '--fork'])).code, 2, '--fork 는 없앴다 (늘 복제)');
+  const nf = await run(dir, env, ['import', '--from', 'codex', 'deadbeef']);
+  assert.equal(nf.code, 1); assert.match(nf.stderr, /no codex session deadbeef/);
+  const bare = await run(dir, env, ['import', CID]);
+  assert.equal(bare.code, 2, '위치 인자는 파일 — 벤더 id 는 --from 으로 (ticket slcode-session-bundle)'); assert.match(bare.stderr, /import --from claude\|codex/);
+  assert.equal((await run(dir, env, ['import', CID, '--vendor', 'claude'])).code, 2, '--vendor 는 없앴다');
+  assert.equal((await run(dir, env, ['import', '--from', 'gpt', CID])).code, 2);
+  assert.equal((await run(dir, env, ['import', '--from', 'claude', CID, '--fork'])).code, 2, '--fork 는 없앴다 (늘 복제)');
   EventLog.create(corePaths(dir).sessionsDir, { id: 'eeee0000', vendor: 'claude', cwd: '/x', title: null, vendorSessionId: null, createdAt: 1, permissionMode: null, raw: false }).close();
   const ex = await run(dir, env, ['export', 'eeee0000']);
   assert.equal(ex.code, 1); assert.match(ex.stderr, /no claude session yet/);

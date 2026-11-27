@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { fileHandler, loadWeb, serveSession, staticHandler } from '../src/serve.ts';
 import { connectSession } from '../src/client.ts';
 import { sendMail } from '../src/mail.ts';
@@ -566,5 +567,43 @@ test('세션 주소: /ws?id= 는 켜진 자손에만 붙고, 관계 없는 세�
     assert.ok(x[3].error, `${id}: 그 세션은 열리지 않는다`);
   }
   for (const [c, s] of [[owners[0], child], [owners[2], other]] as const) { const gone = c.done; c.request('session.close', { id: s.id }).catch(() => {}); await gone; }
+  await h.close('test');
+});
+
+test('세션 내보내기 모달(serve.exportName·serve.export·file.complete): 기본은 세션 폴더의 "<이름>.slsession", 있으면 -1, 있는 파일은 덮어쓰지 않는다 (ticket slcode-session-bundle)', async () => {
+  const dir = isolated();
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-work-'));
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'slcode-out-'));
+  for (const d of ['alpha', 'alps', 'beta', '.hid']) fs.mkdirSync(path.join(out, d));
+  fs.writeFileSync(path.join(out, 'alfile'), '');
+  const h = await serveSession({ dir, cwd: work, title: 'a/b' });
+  const id = h.session.id;
+  const r = await wsCalls(h.url!, [{ method: 'core.auth', params: { token: '' } },
+    { method: 'serve.exportName', params: { id } },
+    { method: 'serve.export', params: { id, dir: work, name: 'a-b.slsession' } },
+    { method: 'serve.exportName', params: { id, dir: work } },
+    { method: 'serve.export', params: { id, dir: work, name: 'a-b.slsession' } },
+    { method: 'serve.export', params: { id, dir: path.join(work, 'nope'), name: 'x.slsession' } },
+    { method: 'serve.export', params: { id, dir: work, name: '../x.slsession' } },
+    { method: 'serve.export', params: { id: 'zzzz', dir: work, name: 'x.slsession' } },
+    { method: 'file.complete', params: { path: path.join(out, 'al') } },
+    { method: 'file.complete', params: { path: `${out}/` } },
+    { method: 'file.complete', params: { path: `${out}/.` } },
+    { method: 'file.complete', params: { path: path.join(out, 'none', 'x') } }]);
+  assert.deepEqual(r[1].result, { dir: work, name: 'a-b.slsession' }, '기본은 세션 폴더, / 는 -');
+  const file = path.join(work, 'a-b.slsession');
+  assert.deepEqual(r[2].result, { path: file });
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  const b = JSON.parse(zlib.gunzipSync(fs.readFileSync(file)).toString('utf8'));
+  assert.deepEqual([b.format, b.meta.id, b.meta.title], ['slcode.session', id, 'a/b']);
+  assert.equal(r[3].result.name, 'a-b-1.slsession', '있으면 -1');
+  assert.match(r[4].error.message, /a-b\.slsession already exists/);
+  assert.match(r[5].error.message, /no folder/);
+  assert.match(r[6].error.message, /bad file name/);
+  assert.match(r[7].error.message, /not reachable from this screen/);
+  assert.deepEqual(r[8].result, { dirs: [`${out}/alpha/`, `${out}/alps/`], truncated: false }, '폴더만, 그 조각으로 시작하는 것');
+  assert.deepEqual(r[9].result.dirs, [`${out}/alpha/`, `${out}/alps/`, `${out}/beta/`], '숨김은 빼고');
+  assert.deepEqual(r[10].result.dirs, [`${out}/.hid/`], '. 을 치면 숨김도');
+  assert.deepEqual(r[11].result, { dirs: [], truncated: false });
   await h.close('test');
 });

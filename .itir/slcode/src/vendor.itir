@@ -1,9 +1,15 @@
 import { Vendor } from './protocol'
 
-role: 벤더 하네스(Claude Code·Codex)가 직접 저장한 세션 찾기 (ticket vendor-import, 사용자 2026-10-07) — `slcode import`·`export` 가 쓴다. claude 는 $CLAUDE_CONFIG_DIR(기본 ~/.claude)/projects/<슬러그>/<id>.jsonl, 슬러그는 되돌릴 수 없어 줄의 cwd 필드에서 폴더를 읽는다. codex 는 $CODEX_HOME(기본 ~/.codex)/sessions/**/rollout-*-<id>.jsonl 첫 줄 session_meta.payload.cwd. 기록은 클 수 있어 앞 1MB 만 읽는다
+role: 벤더 하네스(Claude Code·Codex)가 직접 저장한 세션 찾기 (ticket vendor-import, 사용자 2026-10-07) — `slcode import`·`export`·bundle(세션 파일)이 쓴다. claude 는 $CLAUDE_CONFIG_DIR(기본 ~/.claude)/projects/<슬러그>/<id>.jsonl, 슬러그는 되돌릴 수 없어 줄의 cwd 필드에서 폴더를 읽는다. codex 는 $CODEX_HOME(기본 ~/.codex)/sessions/**/rollout-*-<id>.jsonl 첫 줄 session_meta.payload.cwd. 기록은 클 수 있어 앞 1MB 만 읽는다
 
 export fn findVendorSession(id, vendor) -> VendorSession? {
   role: 벤더 세션 id 로 기록 파일·폴더를 찾는다. vendor 를 주면 그쪽만, 없으면 claude 먼저. 영숫자·- 밖 글자가 든 id 는 거절(경로 조각 방지)
+}
+export fn claudeHome() -> String {
+  role: Claude Code 설정 폴더 — $CLAUDE_CONFIG_DIR, 없으면 ~/.claude
+}
+export fn codexHome() -> String {
+  role: Codex 설정 폴더 — $CODEX_HOME, 없으면 ~/.codex
 }
 export fn claudeSessionExists(id, env) -> Bool {
   role: 이 id 의 Claude 대화 기록(<설정 폴더>/projects/*/<id>.jsonl)이 있는지 — 설정 폴더는 넘긴 벤더 env 의 CLAUDE_CONFIG_DIR(없으면 그 HOME 의 .claude), 세션 env 가 바꿀 수 있어서다. claude 는 첫 프롬프트 전에는 기록을 쓰지 않는다 (ticket slcode-resume-empty-claude)

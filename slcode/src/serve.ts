@@ -26,6 +26,8 @@ import { readSettings, watchSettings, writeSettings } from './settings.js';
 import { CoreError, ERR, FILES, type SessionInfo, type SettingsKind, type SettingsPatch, type UpdateCheck } from './protocol.js';
 import { inspectBlocked } from './inspect.js';
 import { forkSession } from './fork.js';
+import { exportBundle } from './bundle.js';
+import { EventLog } from './eventLog.js';
 import { cleanInspect, inspectUsage } from './inspectDb.js';
 import { providerMethod, PROVIDER_METHODS } from './providerMethods.js';
 import { listPlugins, scriptWarnings } from 'slcode-plugin/agentPlugins';
@@ -39,7 +41,7 @@ const TYPES: Record<string, string> = {
 /** 화면 연결(웹·stdio)에서는 부를 수 없는 제어 메서드 — 소유권·웹 주소 등록(토큰이 붙은 url 을 돌려준다)·core 교체는 serve 의 제어 연결만 */
 const CONTROL_ONLY = new Set(['core.own', 'serve.register', 'core.retire']);
 /** serve 가 답하는 메서드 (ServeMethods) — core 로 넘기지 않는다 */
-const SERVE_METHODS = new Set(['settings.get', 'settings.set', 'serve.info', 'serve.sessions', 'update.run', 'serve.restart', 'start.back', 'inspect.usage', 'inspect.clean', 'web.files', 'file.get', 'file.list', 'file.resolve', 'serve.fork', ...PROVIDER_METHODS]);
+const SERVE_METHODS = new Set(['settings.get', 'settings.set', 'serve.info', 'serve.sessions', 'update.run', 'serve.restart', 'start.back', 'inspect.usage', 'inspect.clean', 'web.files', 'file.get', 'file.list', 'file.resolve', 'serve.fork', 'serve.export', 'serve.exportName', 'file.complete', ...PROVIDER_METHODS]);
 /** 프레임의 요청·응답 id — 앞머리만 본다 (첨부가 실린 큰 프레임을 해석하지 않게). 화면·core 는 id 를 맨 앞에 쓴다 ({id, method, params}·{id, result}). 아니면 null */
 const idOf = (line: string): string | null => /^\{"id":(-?\d+|"(?:[^"\\]|\\.)*")[,}]/.exec(line)?.[1] ?? null;
 /** 인증 전 줄 세워 둘 수 있는 요청 수 — 인증 안 된 원격 클라이언트가 serve 메모리를 키우지 못하게 */
@@ -164,6 +166,30 @@ function localFile(want: string): { path: string; type: string } | null {
 export function fileResolve(want: unknown): { path: string | null } {
   if (typeof want !== 'string' || !path.isAbsolute(want)) throw new CoreError(ERR.badRequest, 'absolute path required');
   return { path: existingFile(want) };
+}
+
+/** 내보내기 모달의 경로 자동완성 (file.complete, ticket slcode-session-bundle) — '/' 로 끝나면 그 폴더 안, 아니면 마지막 조각으로 시작하는 폴더.
+ *  폴더만(가리키는 링크 포함), 숨김은 조각이 '.' 로 시작할 때만, 이름 순 COMPLETE_MAX 개까지. 없는 폴더면 빈 목록 */
+const COMPLETE_MAX = 50;
+export function fileComplete(want: unknown): { dirs: string[]; truncated: boolean } {
+  if (typeof want !== 'string' || !path.isAbsolute(want)) throw new CoreError(ERR.badRequest, 'absolute path required');
+  const inside = want.endsWith('/') || want.endsWith(path.sep);
+  const parent = inside ? want : path.dirname(want), part = inside ? '' : path.basename(want);
+  let ents: fs.Dirent[];
+  try { ents = fs.readdirSync(parent, { withFileTypes: true }); } catch { return { dirs: [], truncated: false }; }
+  const names = ents.filter((e) => e.name.startsWith(part) && (part.startsWith('.') || !e.name.startsWith('.'))
+    && (e.isDirectory() || (e.isSymbolicLink() && !!fs.statSync(path.join(parent, e.name), { throwIfNoEntry: false })?.isDirectory())))
+    .map((e) => e.name).sort((a, b) => (a < b ? -1 : 1));
+  return { dirs: names.slice(0, COMPLETE_MAX).map((n) => path.join(parent, n) + '/'), truncated: names.length > COMPLETE_MAX };
+}
+
+/** 내보내기 기본 이름 — '<세션 이름 또는 id>.slsession', 파일 이름에 못 쓰는 글자는 -, dir 에 있으면 -1·-2… */
+export function exportName(log: EventLog, dir: string): string {
+  const base = (log.meta.title ?? log.meta.id).replace(/[\\/:*?"<>|\x00-\x1f]/g, '-').trim() || log.meta.id;
+  for (let n = 0; ; n++) {
+    const name = `${base}${n ? `-${n}` : ''}.slsession`;
+    if (!fs.existsSync(path.join(dir, name))) return name;
+  }
 }
 
 /** 카드 모드의 file (file.get) — 화면이 포트로 받아 blob 주소로 그린다. 범위는 fileHandler 와 같다 */
@@ -406,6 +432,24 @@ export async function serveSession(opts: ServeOptions): Promise<ServeHandle> {
           if (kind === 'web') await ownFork((await spawnCore({ dir: P.dir, cwd: fork.meta.cwd, resume: fork.meta.id })).sock, fork.meta.id);
           return { id: fork.meta.id };
         }
+        case 'serve.export': case 'serve.exportName': { // 세션 내보내기 모달 (ticket slcode-session-bundle, 사용자 2026-11-27) — 이 화면이 갈 수 있는 세션만
+          const p = m.params as { id?: unknown; dir?: unknown; name?: unknown } | undefined;
+          const id = String(p?.id ?? '');
+          if (!(await familySessions(P.sessionsDir, sid, kind === 'superlite')).some((s) => s.id === id)) throw new CoreError(ERR.badRequest, `session ${id} is not reachable from this screen`);
+          const src = EventLog.open(P.sessionsDir, id);
+          if (!src) throw new CoreError(ERR.badRequest, `no session ${id}`);
+          const dir = p?.dir === undefined && m.method === 'serve.exportName' ? src.meta.cwd : String(p?.dir ?? '');
+          if (!path.isAbsolute(dir)) throw new CoreError(ERR.badRequest, 'absolute folder required');
+          if (m.method === 'serve.exportName') return { dir, name: exportName(src, dir) };
+          if (!fs.statSync(dir, { throwIfNoEntry: false })?.isDirectory()) throw new CoreError(ERR.badRequest, `no folder ${dir}`);
+          const name = String(p?.name ?? '');
+          if (!name || name === '.' || name === '..' || /[\\/]/.test(name)) throw new CoreError(ERR.badRequest, `bad file name ${name}`);
+          const file = path.join(dir, name);
+          try { exportBundle(src, P.dir, file); }
+          catch (e) { throw new CoreError(ERR.badRequest, (e as NodeJS.ErrnoException).code === 'EEXIST' ? `${name} already exists` : (e as Error).message); }
+          return { path: file };
+        }
+        case 'file.complete': return fileComplete((m.params as { path?: unknown } | undefined)?.path);
         case 'web.files': return webFiles(web, P.dir, kind);
         case 'file.get': return fileGet((m.params as { path?: unknown } | undefined)?.path);
         case 'file.list': return fileList((m.params as { path?: unknown } | undefined)?.path);
